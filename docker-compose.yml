@@ -1,0 +1,221 @@
+version: '3.8'
+
+services:
+  # Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: agentnet-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agentnet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-agentnet}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./services/registry/init-db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentnet"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agentnet-network
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: agentnet-redis
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-your_redis_password}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --requirepass ${REDIS_PASSWORD:-your_redis_password}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agentnet-network
+
+  # Registry Service
+  registry:
+    build:
+      context: ./services/registry
+      dockerfile: Dockerfile
+    container_name: agentnet-registry
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-agentnet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-agentnet}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-your_redis_password}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your_jwt_secret_key}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-3600}
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: 6831
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/registry/app:/app/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - agentnet-network
+
+  # Payment Service
+  payment:
+    build:
+      context: ./services/payment
+      dockerfile: Dockerfile
+    container_name: agentnet-payment
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-agentnet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-agentnet}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-your_redis_password}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your_jwt_secret_key}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-3600}
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: 6831
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/payment/app:/app/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+    networks:
+      - agentnet-network
+
+  # Auto-Refund Worker
+  worker:
+    build:
+      context: ./services/worker
+      dockerfile: Dockerfile
+    container_name: agentnet-worker
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-agentnet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-agentnet}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-your_redis_password}
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: 6831
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/worker:/app
+    command: python -m app.worker
+    networks:
+      - agentnet-network
+
+  # Telegram Bot
+  telegram-bot:
+    build:
+      context: ./services/telegram-bot
+      dockerfile: Dockerfile
+    container_name: agentnet-telegram-bot
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-your_telegram_bot_token}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-your_redis_password}
+      REGISTRY_URL: http://registry:8000
+      PAYMENT_URL: http://payment:8001
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: 6831
+    depends_on:
+      redis:
+        condition: service_healthy
+      registry:
+        condition: service_started
+      payment:
+        condition: service_started
+    volumes:
+      - ./services/telegram-bot:/app
+    command: python -m app.bot
+    networks:
+      - agentnet-network
+
+  # Dashboard
+  dashboard:
+    build:
+      context: ./services/dashboard
+      dockerfile: Dockerfile
+    container_name: agentnet-dashboard
+    environment:
+      NEXT_PUBLIC_REGISTRY_API_URL: ${NEXT_PUBLIC_REGISTRY_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_PAYMENT_API_URL: ${NEXT_PUBLIC_PAYMENT_API_URL:-http://localhost:8001}
+      NEXT_PUBLIC_JAEGER_URL: ${NEXT_PUBLIC_JAEGER_URL:-http://localhost:16686}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your_jwt_secret_key}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-3600}
+    ports:
+      - "3000:3000"
+    depends_on:
+      registry:
+        condition: service_started
+      payment:
+        condition: service_started
+    volumes:
+      - ./services/dashboard:/app
+      - /app/node_modules
+    command: npm run dev
+    networks:
+      - agentnet-network
+
+  # Jaeger
+  jaeger:
+    image: jaegertracing/all-in-one:1.40
+    container_name: agentnet-jaeger
+    environment:
+      COLLECTOR_ZIPKIN_HOST_PORT: 9411
+      COLLECTOR_OTLP_ENABLED: true
+    ports:
+      - "5775:5775/udp"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16686:16686"
+      - "14268:14268"
+      - "14250:14250"
+      - "9411:9411"
+    volumes:
+      - jaeger_data:/badger
+    networks:
+      - agentnet-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  jaeger_data:
+
+networks:
+  agentnet-network:
+    driver: bridge
