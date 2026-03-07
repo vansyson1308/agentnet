@@ -14,7 +14,7 @@ from ...models import (
 from ...schemas import (
     TaskCreate, TaskUpdate, Task as TaskSchema, SpanCreate, SpanInDB
 )
-from ...auth import get_current_agent, hash_input
+from ...auth import get_current_agent, get_current_user_or_agent, hash_input
 from ...websocket_manager import manager
 from ...tracing import get_tracer
 
@@ -61,9 +61,30 @@ def validate_input_against_schema(input_data: Dict, capability: Dict):
 async def create_task_session(
     task: TaskCreate,
     db: Session = Depends(get_db),
-    current_agent: Agent = Depends(get_current_agent)
+    current_user_or_agent = Depends(get_current_user_or_agent)
 ):
     """Create a task session and lock escrow."""
+    # Get the caller agent - can be authenticated as agent or as user who owns the agent
+    from ...models import User
+    if isinstance(current_user_or_agent, Agent):
+        current_agent = current_user_or_agent
+    elif isinstance(current_user_or_agent, User):
+        # User must own the caller agent
+        current_agent = db.query(Agent).filter(
+            Agent.id == task.caller_agent_id,
+            Agent.user_id == current_user_or_agent.id
+        ).first()
+        if not current_agent:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Caller agent must belong to the authenticated user"
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication"
+        )
+
     # Verify that the caller agent is the current agent
     if task.caller_agent_id != current_agent.id:
         raise HTTPException(
@@ -80,7 +101,7 @@ async def create_task_session(
         )
 
     # Check if the callee agent is active
-    if callee_agent.status != "active":
+    if callee_agent.status not in ("active", "unverified"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Callee agent is {callee_agent.status}, not active"
@@ -243,7 +264,7 @@ async def create_task_session(
 async def start_task(
     task_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_agent: Agent = Depends(get_current_agent)
+    current_user_or_agent = Depends(get_current_user_or_agent)
 ):
     """Callee confirms start. Updates status to in_progress."""
     task_session = db.query(TaskSession).filter(TaskSession.id == task_id).first()
@@ -295,7 +316,7 @@ async def confirm_task(
     task_id: uuid.UUID,
     output: Dict[str, Any],
     db: Session = Depends(get_db),
-    current_agent: Agent = Depends(get_current_agent)
+    current_user_or_agent = Depends(get_current_user_or_agent)
 ):
     """Callee reports completion. Releases escrow via DB triggers."""
     task_session = db.query(TaskSession).filter(TaskSession.id == task_id).first()
@@ -402,7 +423,7 @@ async def fail_task(
     task_id: uuid.UUID,
     error_message: str,
     db: Session = Depends(get_db),
-    current_agent: Agent = Depends(get_current_agent)
+    current_user_or_agent = Depends(get_current_user_or_agent)
 ):
     """Callee reports failure. Triggers refund via DB triggers."""
     task_session = db.query(TaskSession).filter(TaskSession.id == task_id).first()
@@ -497,7 +518,7 @@ async def fail_task(
 async def get_task(
     task_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_agent: Agent = Depends(get_current_agent)
+    current_user_or_agent = Depends(get_current_user_or_agent)
 ):
     """Get task status."""
     task_session = db.query(TaskSession).filter(TaskSession.id == task_id).first()
@@ -521,7 +542,7 @@ async def get_task(
 async def get_trace(
     trace_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_agent: Agent = Depends(get_current_agent)
+    current_user_or_agent = Depends(get_current_user_or_agent)
 ):
     """Retrieve full span tree for a trace."""
     spans = db.query(Span).filter(Span.trace_id == trace_id).order_by(Span.created_at).all()
@@ -540,7 +561,7 @@ async def get_trace(
             "duration_ms": span.duration_ms,
             "status": span.status.value if span.status else None,
             "credits_used": span.credits_used,
-            "metadata": span.metadata or {},
+            "extra_data": span.extra_data or {},
             "created_at": span.created_at.isoformat() if span.created_at else None
         })
 

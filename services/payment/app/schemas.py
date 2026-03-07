@@ -68,6 +68,8 @@ class ApprovalRequestCreate(BaseModel):
     currency: str = "credits"
     description: str
     callback_url: Optional[str] = None
+    task_session_id: Optional[UUID4] = None  # Link to task for escrow approval
+    expires_in_hours: Optional[int] = 24  # Approval timeout
 
 class ApprovalRequestUpdate(BaseModel):
     approved: bool
@@ -84,6 +86,11 @@ class ApprovalRequestInDB(BaseModel):
     created_at: datetime
     updated_at: datetime
     responded_at: Optional[datetime] = None
+    # New fields for task escrow approvals
+    task_session_id: Optional[UUID4] = None
+    expires_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    denied_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

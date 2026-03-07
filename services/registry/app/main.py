@@ -1,7 +1,6 @@
 import os
 import logging
 from fastapi import FastAPI, Depends, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import time
 import asyncio
@@ -10,6 +9,7 @@ from .database import engine, Base
 from .api import router as api_router
 from .tracing import configure_tracing
 from .websocket_manager import manager
+from .security import setup_cors, setup_security_headers
 
 # Configure logging
 logging.basicConfig(
@@ -25,14 +25,9 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Configure security (CORS and headers)
+setup_cors(app)
+setup_security_headers(app)
 
 # Configure tracing
 tracer_provider = configure_tracing(app, engine)

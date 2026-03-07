@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Database
   postgres:
@@ -61,6 +59,7 @@ services:
       JWT_EXPIRATION: ${JWT_EXPIRATION:-3600}
       JAEGER_AGENT_HOST: jaeger
       JAEGER_AGENT_PORT: 6831
+      ENVIRONMENT: development
     ports:
       - "8000:8000"
     depends_on:
@@ -94,6 +93,7 @@ services:
       JWT_EXPIRATION: ${JWT_EXPIRATION:-3600}
       JAEGER_AGENT_HOST: jaeger
       JAEGER_AGENT_PORT: 6831
+      ENVIRONMENT: development
     ports:
       - "8001:8001"
     depends_on:
@@ -124,6 +124,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-your_redis_password}
       JAEGER_AGENT_HOST: jaeger
       JAEGER_AGENT_PORT: 6831
+      ENVIRONMENT: development
     depends_on:
       postgres:
         condition: service_healthy
@@ -135,68 +136,13 @@ services:
     networks:
       - agentnet-network
 
-  # Telegram Bot
-  telegram-bot:
-    build:
-      context: ./services/telegram-bot
-      dockerfile: Dockerfile
-    container_name: agentnet-telegram-bot
-    environment:
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-your_telegram_bot_token}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-your_redis_password}
-      REGISTRY_URL: http://registry:8000
-      PAYMENT_URL: http://payment:8001
-      JAEGER_AGENT_HOST: jaeger
-      JAEGER_AGENT_PORT: 6831
-    depends_on:
-      redis:
-        condition: service_healthy
-      registry:
-        condition: service_started
-      payment:
-        condition: service_started
-    volumes:
-      - ./services/telegram-bot:/app
-    command: python -m app.bot
-    networks:
-      - agentnet-network
-
-  # Dashboard
-  dashboard:
-    build:
-      context: ./services/dashboard
-      dockerfile: Dockerfile
-    container_name: agentnet-dashboard
-    environment:
-      NEXT_PUBLIC_REGISTRY_API_URL: ${NEXT_PUBLIC_REGISTRY_API_URL:-http://localhost:8000}
-      NEXT_PUBLIC_PAYMENT_API_URL: ${NEXT_PUBLIC_PAYMENT_API_URL:-http://localhost:8001}
-      NEXT_PUBLIC_JAEGER_URL: ${NEXT_PUBLIC_JAEGER_URL:-http://localhost:16686}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your_jwt_secret_key}
-      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
-      JWT_EXPIRATION: ${JWT_EXPIRATION:-3600}
-    ports:
-      - "3000:3000"
-    depends_on:
-      registry:
-        condition: service_started
-      payment:
-        condition: service_started
-    volumes:
-      - ./services/dashboard:/app
-      - /app/node_modules
-    command: npm run dev
-    networks:
-      - agentnet-network
-
-  # Jaeger
+  # Jaeger (tracing)
   jaeger:
     image: jaegertracing/all-in-one:1.40
     container_name: agentnet-jaeger
     environment:
       COLLECTOR_ZIPKIN_HOST_PORT: 9411
-      COLLECTOR_OTLP_ENABLED: true
+      COLLECTOR_OTLP_ENABLED: "true"
     ports:
       - "5775:5775/udp"
       - "6831:6831/udp"
@@ -208,6 +154,24 @@ services:
       - "9411:9411"
     volumes:
       - jaeger_data:/badger
+    networks:
+      - agentnet-network
+
+  # Dashboard (local dev telemetry)
+  dashboard:
+    build:
+      context: ./services/dashboard
+      dockerfile: Dockerfile
+    container_name: agentnet-dashboard
+    environment:
+      REGISTRY_URL: http://registry:8000
+      PAYMENT_URL: http://payment:8001
+      DASHBOARD_PORT: 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      - registry
+      - payment
     networks:
       - agentnet-network
 

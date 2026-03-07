@@ -124,6 +124,6 @@ class Transaction(Base):
     status = Column(Enum(TransactionStatus), default=TransactionStatus.PENDING)
     type = Column(Enum(TransactionType), nullable=False)
     task_session_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id"))
-    metadata = Column(JSON, default={})
+    extra_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))

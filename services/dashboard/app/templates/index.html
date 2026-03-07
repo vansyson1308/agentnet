@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgentNet Dashboard</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
+        .header { background: #1a1a2e; color: white; padding: 1rem 2rem; }
+        .header h1 { font-size: 1.5rem; }
+        .nav { display: flex; gap: 1rem; margin-top: 1rem; }
+        .nav a { color: #aaa; text-decoration: none; padding: 0.5rem 1rem; border-radius: 4px; }
+        .nav a:hover, .nav a.active { background: #16213e; color: white; }
+        .container { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; }
+        .card { background: white; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .card h2 { font-size: 1.2rem; margin-bottom: 1rem; color: #333; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .stat { background: #f8f9fa; padding: 1rem; border-radius: 6px; text-align: center; }
+        .stat-value { font-size: 2rem; font-weight: bold; color: #1a1a2e; }
+        .stat-label { color: #666; font-size: 0.9rem; margin-top: 0.5rem; }
+        .section { display: none; }
+        .section.active { display: block; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; }
+        .badge { padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem; }
+        .badge-success { background: #d4edda; color: #155724; }
+        .badge-warning { background: #fff3cd; color: #856404; }
+        .badge-danger { background: #f8d7da; color: #721c24; }
+        .form-group { margin-bottom: 1rem; }
+        .form-group label { display: block; margin-bottom: 0.5rem; font-weight: 500; }
+        .form-group input { width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; }
+        .btn { background: #1a1a2e; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; }
+        .btn:hover { background: #16213e; }
+        .services-status { display: flex; gap: 1rem; margin-bottom: 1rem; }
+        .service { padding: 0.5rem 1rem; background: #f0f0f0; border-radius: 4px; font-size: 0.9rem; }
+        .service.ok { background: #d4edda; }
+        .service.unavailable { background: #f8d7da; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>AgentNet Dashboard</h1>
+        <nav class="nav">
+            <a href="#" class="active" data-section="overview">Overview</a>
+            <a href="#" data-section="traces">Traces</a>
+            <a href="#" data-section="approvals">Approvals</a>
+        </nav>
+    </div>
+
+    <div class="container">
+        <!-- Overview Section -->
+        <div id="overview" class="section active">
+            <div class="card">
+                <h2>Services Status</h2>
+                <div id="services-status" class="services-status">Loading...</div>
+            </div>
+
+            <div class="card">
+                <h2>Platform Metrics</h2>
+                <div class="stats">
+                    <div class="stat">
+                        <div class="stat-value" id="agent-count">-</div>
+                        <div class="stat-label">Total Agents</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="active-agents">-</div>
+                        <div class="stat-label">Active Agents</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="wallet-count">-</div>
+                        <div class="stat-label">Wallets</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="task-count">-</div>
+                        <div class="stat-label">Total Tasks</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Financial Summary</h2>
+                <div class="stats">
+                    <div class="stat">
+                        <div class="stat-value" id="total-credits">-</div>
+                        <div class="stat-label">Total Credits</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="reserved-credits">-</div>
+                        <div class="stat-label">Reserved Credits</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="tx-completed">-</div>
+                        <div class="stat-label">Completed Transactions</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="pending-tx">-</div>
+                        <div class="stat-label">Pending Transactions</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Traces Section -->
+        <div id="traces" class="section">
+            <div class="card">
+                <h2>Query Traces</h2>
+                <div class="form-group">
+                    <label>Trace ID</label>
+                    <input type="text" id="trace-id-input" placeholder="Enter trace ID...">
+                </div>
+                <div class="form-group">
+                    <label>Task Session ID</label>
+                    <input type="text" id="task-session-input" placeholder="Enter task session ID...">
+                </div>
+                <button class="btn" onclick="queryTraces()">Query</button>
+            </div>
+
+            <div class="card">
+                <h2>Trace Results</h2>
+                <div id="trace-results">
+                    <p style="color: #666;">Enter a trace ID to view spans.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Approvals Section -->
+        <div id="approvals" class="section">
+            <div class="card">
+                <h2>Approval Requests</h2>
+                <div class="form-group">
+                    <label>Filter by Status</label>
+                    <select id="approval-status" style="width: 100%; padding: 0.5rem;">
+                        <option value="">All</option>
+                        <option value="pending">Pending</option>
+                        <option value="approved">Approved</option>
+                        <option value="denied">Denied</option>
+                    </select>
+                </div>
+                <button class="btn" onclick="loadApprovals()">Load Approvals</button>
+            </div>
+
+            <div class="card">
+                <h2>Approval List</h2>
+                <div id="approval-results">
+                    <p style="color: #666;">Click "Load Approvals" to view.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Navigation
+        document.querySelectorAll('.nav a').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                document.querySelectorAll('.nav a').forEach(l => l.classList.remove('active'));
+                document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+                link.classList.add('active');
+                document.getElementById(link.dataset.section).classList.add('active');
+            });
+        });
+
+        // Load overview on page load
+        async function loadOverview() {
+            try {
+                const resp = await fetch('/api/overview');
+                const data = await resp.json();
+
+                // Services status
+                const health = await fetch('/api/health');
+                const healthData = await health.json();
+                document.getElementById('services-status').innerHTML =
+                    Object.entries(healthData.services || {}).map(([name, status]) =>
+                        `<span class="service ${status}">${name}: ${status}</span>`
+                    ).join('');
+
+                // Stats
+                document.getElementById('agent-count').textContent = data.agents?.count ?? 0;
+                document.getElementById('active-agents').textContent = data.agents?.active ?? 0;
+                document.getElementById('wallet-count').textContent = data.wallets?.count ?? 0;
+                document.getElementById('task-count').textContent = data.tasks?.total ?? 0;
+                document.getElementById('total-credits').textContent = data.wallets?.total_credits ?? 0;
+                document.getElementById('reserved-credits').textContent = data.wallets?.reserved_credits ?? 0;
+                document.getElementById('tx-completed').textContent = data.transactions?.completed ?? 0;
+                document.getElementById('pending-tx').textContent = data.transactions?.pending ?? 0;
+            } catch (e) {
+                console.error('Error loading overview:', e);
+            }
+        }
+
+        // Query traces
+        async function queryTraces() {
+            const traceId = document.getElementById('trace-id-input').value;
+            const taskSessionId = document.getElementById('task-session-input').value;
+
+            if (!traceId && !taskSessionId) {
+                document.getElementById('trace-results').innerHTML = '<p style="color: red;">Please enter a trace ID or task session ID.</p>';
+                return;
+            }
+
+            try {
+                const params = new URLSearchParams();
+                if (traceId) params.append('trace_id', traceId);
+                if (taskSessionId) params.append('task_session_id', taskSessionId);
+
+                const resp = await fetch(`/api/traces?${params}`);
+                const data = await resp.json();
+
+                if (data.spans && data.spans.length > 0) {
+                    const html = `
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Event</th>
+                                    <th>Agent</th>
+                                    <th>Capability</th>
+                                    <th>Duration (ms)</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${data.spans.map(s => `
+                                    <tr>
+                                        <td>${s.event}</td>
+                                        <td>${s.agent_id?.substring(0, 8)}...</td>
+                                        <td>${s.capability || '-'}</td>
+                                        <td>${s.duration_ms || '-'}</td>
+                                        <td><span class="badge badge-${s.status === 'success' ? 'success' : 'danger'}">${s.status || '-'}</span></td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                        <p style="margin-top: 1rem; color: #666;">Total spans: ${data.total_spans}</p>
+                    `;
+                    document.getElementById('trace-results').innerHTML = html;
+                } else {
+                    document.getElementById('trace-results').innerHTML = '<p>No spans found.</p>';
+                }
+            } catch (e) {
+                document.getElementById('trace-results').innerHTML = `<p style="color: red;">Error: ${e.message}</p>`;
+            }
+        }
+
+        // Load approvals
+        async function loadApprovals() {
+            document.getElementById('approval-results').innerHTML = '<p>Loading...</p>';
+            try {
+                const status = document.getElementById('approval-status').value;
+                const params = status ? `?status=${status}` : '';
+                const resp = await fetch(`/api/approvals${params}`);
+                const data = await resp.json();
+
+                if (data.approvals && data.approvals.length > 0) {
+                    document.getElementById('approval-results').innerHTML = `
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Amount</th>
+                                    <th>Status</th>
+                                    <th>Created</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${data.approvals.map(a => `
+                                    <tr>
+                                        <td>${a.id?.substring(0, 8)}...</td>
+                                        <td>${a.amount} ${a.currency}</td>
+                                        <td><span class="badge badge-${a.status === 'approved' ? 'success' : a.status === 'pending' ? 'warning' : 'danger'}">${a.status}</span></td>
+                                        <td>${new Date(a.created_at).toLocaleString()}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                } else {
+                    document.getElementById('approval-results').innerHTML = '<p>No approvals found.</p>';
+                }
+            } catch (e) {
+                document.getElementById('approval-results').innerHTML = `<p style="color: red;">Error: ${e.message}</p>`;
+            }
+        }
+
+        // Initialize
+        loadOverview();
+    </script>
+</body>
+</html>

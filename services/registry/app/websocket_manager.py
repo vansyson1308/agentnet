@@ -172,23 +172,38 @@ class ConnectionManager:
             Wallet.owner_id == agent_id
         ).first()
 
-    def _lock_escrow(self, db: Session, wallet: Wallet, amount: int) -> bool:
-        """Reserve credits in wallet for escrow. Returns False if insufficient."""
-        available = wallet.balance_credits - wallet.reserved_credits
-        if available < amount:
-            return False
+    def _lock_escrow(self, db: Session, wallet: Wallet, amount: int, currency: CurrencyType) -> tuple[bool, str]:
+        """
+        Reserve funds in wallet for escrow. Returns (success, error_message).
+        Supports both CREDITS and USDC (matching REST path).
+        """
+        if currency == CurrencyType.CREDITS:
+            available = wallet.balance_credits - wallet.reserved_credits
+            if available < amount:
+                return False, f"Insufficient credits: available {available}, needed {amount}"
 
-        # Check spending cap
-        if wallet.daily_spent + amount > wallet.spending_cap:
-            return False
+            # Check spending cap for credits
+            if wallet.daily_spent + amount > wallet.spending_cap:
+                return False, f"Spending cap exceeded: {wallet.daily_spent}/{wallet.spending_cap}"
 
-        wallet.reserved_credits += amount
+            wallet.reserved_credits += amount
+        else:  # USDC
+            available = float(wallet.balance_usdc) - float(wallet.reserved_usdc)
+            if available < amount:
+                return False, f"Insufficient USDC: available {available}, needed {amount}"
+
+            wallet.reserved_usdc += amount
+
         db.flush()
-        return True
+        return True, ""
 
-    def _release_escrow(self, db: Session, wallet: Wallet, amount: int):
-        """Release reserved credits back to wallet."""
-        wallet.reserved_credits = max(0, wallet.reserved_credits - amount)
+    def _release_escrow(self, db: Session, wallet: Wallet, amount: int, currency: CurrencyType):
+        """Release reserved funds back to wallet. Supports both CREDITS and USDC."""
+        if currency == CurrencyType.CREDITS:
+            wallet.reserved_credits = max(0, wallet.reserved_credits - amount)
+        else:  # USDC
+            wallet.reserved_usdc = max(0, float(wallet.reserved_usdc) - amount)
+
         db.flush()
 
     # ─── Input Validation ────────────────────────────────────────────────
@@ -300,9 +315,17 @@ class ConnectionManager:
         if validation_err:
             return self._error(msg_id, -32602, validation_err)
 
-        # Check payment
+        # Check payment - support both CREDITS and USDC (matching REST path)
         payment = params["payment"]
         max_budget = payment.get("max_budget", 0)
+        currency_str = payment.get("currency", "credits").lower()
+
+        # Validate currency
+        if currency_str not in ("credits", "usdc"):
+            return self._error(msg_id, -32602, f"Unsupported currency: {currency_str}")
+
+        currency_type = CurrencyType.CREDITS if currency_str == "credits" else CurrencyType.USDC
+
         if max_budget < capability_price:
             return self._error(
                 msg_id, -32602,
@@ -316,16 +339,12 @@ class ConnectionManager:
 
         escrow_amount = int(capability_price)
 
-        if not self._lock_escrow(db, caller_wallet, escrow_amount):
-            available = caller_wallet.balance_credits - caller_wallet.reserved_credits
-            return self._error(
-                msg_id, -32602,
-                f"Insufficient funds or spending cap exceeded. "
-                f"Available: {available}, needed: {escrow_amount}, "
-                f"daily spent: {caller_wallet.daily_spent}/{caller_wallet.spending_cap}"
-            )
+        # Lock escrow based on currency (matching REST path logic)
+        success, error_msg = self._lock_escrow(db, caller_wallet, escrow_amount, currency_type)
+        if not success:
+            return self._error(msg_id, -32602, error_msg)
 
-        # Compute real input hash
+        # Compute real input hash (same as REST path)
         input_hash = hash_input(params["input"])
 
         # Build task session
@@ -346,7 +365,7 @@ class ConnectionManager:
             capability=requested_capability,
             input_hash=input_hash,
             escrow_amount=escrow_amount,
-            currency=CurrencyType.CREDITS,
+            currency=currency_type,
             status=TaskStatus.INITIATED,
             timeout_at=timeout_at,
         )
@@ -358,7 +377,7 @@ class ConnectionManager:
             from_wallet=caller_wallet.id,
             to_wallet=callee_wallet.id if callee_wallet else None,
             amount=escrow_amount,
-            currency=CurrencyType.CREDITS,
+            currency=currency_type,
             status=TransactionStatus.PENDING,
             type=TransactionType.PAYMENT,
             task_session_id=task_session.id,
@@ -390,6 +409,7 @@ class ConnectionManager:
             "trace_id": str(trace_id),
             "span_id": span_id,
             "escrow_amount": escrow_amount,
+            "currency": currency_str,
             "message": "Task session created with escrow locked",
         })
 
@@ -685,9 +705,9 @@ class ConnectionManager:
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.utcnow()
 
-            # Release reserved credits (trigger will handle the actual transfer)
+            # Release reserved funds (trigger will handle the actual transfer)
             if caller_wallet:
-                self._release_escrow(db, caller_wallet, task.escrow_amount)
+                self._release_escrow(db, caller_wallet, task.escrow_amount, task.currency)
         else:
             # Deny — cancel transaction and release escrow
             transaction.status = TransactionStatus.CANCELLED
@@ -695,7 +715,7 @@ class ConnectionManager:
             task.error_message = "Payment denied by owner"
 
             if caller_wallet:
-                self._release_escrow(db, caller_wallet, task.escrow_amount)
+                self._release_escrow(db, caller_wallet, task.escrow_amount, task.currency)
 
         db.commit()
 

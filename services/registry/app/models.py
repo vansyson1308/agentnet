@@ -6,11 +6,18 @@ import enum
 import uuid
 from .database import Base
 
+
+def _enum_column(enum_cls, **kwargs):
+    """Create an enum column that uses string values (not enum names)."""
+    return Column(Enum(enum_cls, native_enum=False, values_callable=lambda x: [e.value for e in x]), **kwargs)
+
+
 # Enum classes
 class KYCStatus(str, enum.Enum):
     PENDING = "pending"
     VERIFIED = "verified"
     REJECTED = "rejected"
+
 
 class AgentStatus(str, enum.Enum):
     ACTIVE = "active"
@@ -19,9 +26,11 @@ class AgentStatus(str, enum.Enum):
     BANNED = "banned"
     SUSPENDED = "suspended"
 
+
 class WalletOwnerType(str, enum.Enum):
     USER = "user"
     AGENT = "agent"
+
 
 class TaskStatus(str, enum.Enum):
     INITIATED = "initiated"
@@ -31,16 +40,19 @@ class TaskStatus(str, enum.Enum):
     TIMEOUT = "timeout"
     REFUNDED = "refunded"
 
+
 class SpanStatus(str, enum.Enum):
     SUCCESS = "success"
     FAILED = "failed"
     TIMEOUT = "timeout"
+
 
 class TransactionStatus(str, enum.Enum):
     PENDING = "pending"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
 
 class TransactionType(str, enum.Enum):
     PAYMENT = "payment"
@@ -49,10 +61,12 @@ class TransactionType(str, enum.Enum):
     DEPOSIT = "deposit"
     REFUND = "refund"
 
+
 class ReferralStatus(str, enum.Enum):
     PENDING = "pending"
     COMPLETED = "completed"
     REJECTED = "rejected"
+
 
 class OfferStatus(str, enum.Enum):
     PENDING = "pending"
@@ -60,9 +74,11 @@ class OfferStatus(str, enum.Enum):
     REJECTED = "rejected"
     EXPIRED = "expired"
 
+
 class CurrencyType(str, enum.Enum):
     CREDITS = "credits"
     USDC = "usdc"
+
 
 # User model
 class User(Base):
@@ -72,7 +88,7 @@ class User(Base):
     email = Column(String, unique=True, nullable=False)
     phone = Column(String)
     password_hash = Column(String, nullable=False)
-    kyc_status = Column(Enum(KYCStatus), default=KYCStatus.PENDING)
+    kyc_status = _enum_column(KYCStatus, default="pending")
     telegram_id = Column(String)
     notification_settings = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -80,6 +96,7 @@ class User(Base):
 
     # Relationships
     agents = relationship("Agent", back_populates="user", cascade="all, delete-orphan")
+
 
 # Agent model
 class Agent(Base):
@@ -92,7 +109,7 @@ class Agent(Base):
     capabilities = Column(JSON, nullable=False, default=[])
     endpoint = Column(String, nullable=False)
     public_key = Column(String, nullable=False)
-    status = Column(Enum(AgentStatus), default=AgentStatus.UNVERIFIED)
+    status = _enum_column(AgentStatus, default="unverified")
     verify_score = Column(Integer, default=0)
     timeout_count = Column(Integer, default=0)
     offer_rate_7d = Column(Float, default=0)
@@ -109,12 +126,13 @@ class Agent(Base):
     sent_offers = relationship("Offer", foreign_keys="Offer.from_agent_id", back_populates="from_agent")
     received_offers = relationship("Offer", foreign_keys="Offer.to_agent_id", back_populates="to_agent")
 
+
 # Wallet model
 class Wallet(Base):
     __tablename__ = "wallets"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    owner_type = Column(Enum(WalletOwnerType), nullable=False)
+    owner_type = _enum_column(WalletOwnerType, nullable=False)
     owner_id = Column(UUID(as_uuid=True), nullable=False)
     balance_credits = Column(Integer, nullable=False, default=0)
     balance_usdc = Column(Numeric(20, 6), nullable=False, default=0)
@@ -130,8 +148,9 @@ class Wallet(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    outgoing_transactions = relationship("Transaction", foreign_keys="Transaction.from_wallet", back_populates="from_wallet")
-    incoming_transactions = relationship("Transaction", foreign_keys="Transaction.to_wallet", back_populates="to_wallet")
+    outgoing_transactions = relationship("Transaction", foreign_keys="Transaction.from_wallet", back_populates="from_wallet_rel")
+    incoming_transactions = relationship("Transaction", foreign_keys="Transaction.to_wallet", back_populates="to_wallet_rel")
+
 
 # TaskSession model
 class TaskSession(Base):
@@ -146,8 +165,8 @@ class TaskSession(Base):
     capability = Column(String, nullable=False)
     input_hash = Column(String)
     escrow_amount = Column(Integer, nullable=False)
-    currency = Column(Enum(CurrencyType), nullable=False, default=CurrencyType.CREDITS)
-    status = Column(Enum(TaskStatus), default=TaskStatus.INITIATED)
+    currency = _enum_column(CurrencyType, nullable=False, default="credits")
+    status = _enum_column(TaskStatus, default="initiated")
     timeout_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
@@ -161,6 +180,7 @@ class TaskSession(Base):
     transactions = relationship("Transaction", back_populates="task_session")
     offers = relationship("Offer", back_populates="core_task")
 
+
 # Span model
 class Span(Base):
     __tablename__ = "spans"
@@ -173,13 +193,14 @@ class Span(Base):
     event = Column(String, nullable=False)
     capability = Column(String)
     duration_ms = Column(Integer)
-    status = Column(Enum(SpanStatus))
+    status = _enum_column(SpanStatus)
     credits_used = Column(Integer)
-    metadata = Column(JSON, default={})
+    extra_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
     agent = relationship("Agent", back_populates="spans")
+
 
 # Transaction model
 class Transaction(Base):
@@ -189,11 +210,11 @@ class Transaction(Base):
     from_wallet = Column(UUID(as_uuid=True), ForeignKey("wallets.id"))
     to_wallet = Column(UUID(as_uuid=True), ForeignKey("wallets.id"))
     amount = Column(Integer, nullable=False)
-    currency = Column(Enum(CurrencyType), nullable=False, default=CurrencyType.CREDITS)
-    status = Column(Enum(TransactionStatus), default=TransactionStatus.PENDING)
-    type = Column(Enum(TransactionType), nullable=False)
+    currency = _enum_column(CurrencyType, nullable=False, default="credits")
+    status = _enum_column(TransactionStatus, default="pending")
+    type = _enum_column(TransactionType, nullable=False)
     task_session_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id"))
-    metadata = Column(JSON, default={})
+    extra_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
 
@@ -202,6 +223,7 @@ class Transaction(Base):
     to_wallet_rel = relationship("Wallet", foreign_keys=[to_wallet], back_populates="incoming_transactions")
     task_session = relationship("TaskSession", back_populates="transactions")
 
+
 # Referral model
 class Referral(Base):
     __tablename__ = "referrals"
@@ -209,7 +231,7 @@ class Referral(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     inviter_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
     invitee_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
-    status = Column(Enum(ReferralStatus), default=ReferralStatus.PENDING)
+    status = _enum_column(ReferralStatus, default="pending")
     reward_amount = Column(Integer)
     device_fingerprint = Column(String)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -218,6 +240,7 @@ class Referral(Base):
     # Relationships
     inviter_agent = relationship("Agent", foreign_keys=[inviter_agent_id], back_populates="inviter_referrals")
     invitee_agent = relationship("Agent", foreign_keys=[invitee_agent_id], back_populates="invitee_referrals")
+
 
 # Offer model
 class Offer(Base):
@@ -230,9 +253,9 @@ class Offer(Base):
     title = Column(String, nullable=False)
     description = Column(Text)
     price = Column(Integer, nullable=False)
-    currency = Column(Enum(CurrencyType), nullable=False, default=CurrencyType.CREDITS)
+    currency = _enum_column(CurrencyType, nullable=False, default="credits")
     expires_at = Column(DateTime(timezone=True), nullable=False)
-    status = Column(Enum(OfferStatus), default=OfferStatus.PENDING)
+    status = _enum_column(OfferStatus, default="pending")
     baseline_quality_score = Column(Float)
     blocked = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
