@@ -26,10 +26,11 @@ State machine:
     REFUNDED -> (terminal)
 """
 
-import json
 import hashlib
+import json
 from enum import Enum
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ============================================================
@@ -137,9 +138,7 @@ def canonicalize_json(data: Any) -> str:
             return obj
 
     sanitized = sanitize_for_json(data)
-    return json.dumps(
-        sanitized, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    )
+    return json.dumps(sanitized, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
 def compute_input_hash(data: Dict[str, Any]) -> str:
@@ -166,9 +165,7 @@ def compute_input_hash(data: Dict[str, Any]) -> str:
 class PaymentParams(BaseModel):
     """Payment parameters for task execution."""
 
-    max_budget: int = Field(
-        ..., ge=0, le=1_000_000, description="Maximum budget in smallest currency unit"
-    )
+    max_budget: int = Field(..., ge=0, le=1_000_000, description="Maximum budget in smallest currency unit")
     currency: str = Field(default="credits", pattern="^(credits|usdc)$")
     escrow_session_id: Optional[str] = None
 
@@ -181,9 +178,7 @@ class PaymentParams(BaseModel):
 class ExecuteParams(BaseModel):
     """Parameters for execute method (WebSocket)."""
 
-    capability: str = Field(
-        ..., min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_-]+$"
-    )
+    capability: str = Field(..., min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_-]+$")
     input: Dict[str, Any] = Field(..., description="Task input data")
     payment: PaymentParams
     timeout_seconds: Optional[int] = Field(default=300, ge=1, le=3600)
@@ -204,9 +199,7 @@ class TaskCreateRequest(BaseModel):
 
     caller_agent_id: str = Field(..., pattern=r"^[0-9a-f-]{36}$")
     callee_agent_id: str = Field(..., pattern=r"^[0-9a-f-]{36}$")
-    capability: str = Field(
-        ..., min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_-]+$"
-    )
+    capability: str = Field(..., min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_-]+$")
     input: Dict[str, Any] = Field(..., description="Task input data")
     max_budget: int = Field(..., ge=0, le=1_000_000)
     currency: str = Field(default="credits", pattern="^(credits|usdc)$")

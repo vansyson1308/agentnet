@@ -1,7 +1,9 @@
-from pydantic import BaseModel, Field, field_validator, UUID4
-from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 from enum import Enum
+from typing import Any, Dict, List, Optional, Union
+
+from pydantic import UUID4, BaseModel, Field, field_validator
+
 
 # Wallet schemas
 class WalletBalance(BaseModel):
@@ -12,10 +14,12 @@ class WalletBalance(BaseModel):
     spending_cap: int
     daily_spent: int
 
+
 class WalletUpdate(BaseModel):
     spending_cap: Optional[int] = None
     auto_approve_threshold: Optional[int] = None
     whitelist: Optional[List[str]] = None
+
 
 # Transaction schemas
 class TransactionCreate(BaseModel):
@@ -26,8 +30,10 @@ class TransactionCreate(BaseModel):
     type: str
     metadata: Optional[Dict[str, Any]] = None
 
+
 class TransactionUpdate(BaseModel):
     status: str
+
 
 class TransactionInDB(BaseModel):
     id: UUID4
@@ -45,6 +51,7 @@ class TransactionInDB(BaseModel):
     class Config:
         from_attributes = True
 
+
 class Transaction(BaseModel):
     id: UUID4
     from_wallet: UUID4
@@ -61,6 +68,7 @@ class Transaction(BaseModel):
     class Config:
         from_attributes = True
 
+
 # Approval schemas
 class ApprovalRequestCreate(BaseModel):
     agent_id: UUID4
@@ -71,8 +79,10 @@ class ApprovalRequestCreate(BaseModel):
     task_session_id: Optional[UUID4] = None  # Link to task for escrow approval
     expires_in_hours: Optional[int] = 24  # Approval timeout
 
+
 class ApprovalRequestUpdate(BaseModel):
     approved: bool
+
 
 class ApprovalRequestInDB(BaseModel):
     id: UUID4
@@ -95,6 +105,7 @@ class ApprovalRequestInDB(BaseModel):
     class Config:
         from_attributes = True
 
+
 class ApprovalRequest(BaseModel):
     id: UUID4
     agent_id: UUID4
@@ -109,25 +120,30 @@ class ApprovalRequest(BaseModel):
     class Config:
         from_attributes = True
 
+
 class ApprovalResponse(BaseModel):
     approval_id: UUID4
     status: str
     message: Optional[str] = None
+
 
 # Token schemas
 class TokenData(BaseModel):
     user_id: Optional[UUID4] = None
     agent_id: Optional[UUID4] = None
 
+
 class UserToken(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
 
+
 class AgentToken(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+
 
 # Error response schema
 class ErrorResponse(BaseModel):

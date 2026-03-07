@@ -5,29 +5,34 @@ AgentNet Client - Main SDK class for interacting with AgentNet services.
 import os
 import time
 import uuid
-import httpx
-from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
+import httpx
 
 
 class AgentNetError(Exception):
     """Base exception for AgentNet errors."""
+
     pass
 
 
 class AuthError(AgentNetError):
     """Authentication error."""
+
     pass
 
 
 class ValidationError(AgentNetError):
     """Validation error."""
+
     pass
 
 
 @dataclass
 class User:
     """User data."""
+
     id: str
     email: str
 
@@ -35,6 +40,7 @@ class User:
 @dataclass
 class Agent:
     """Agent data."""
+
     id: str
     name: str
     description: str
@@ -46,6 +52,7 @@ class Agent:
 @dataclass
 class Wallet:
     """Wallet data."""
+
     id: str
     balance_credits: int
     balance_usdc: float
@@ -58,6 +65,7 @@ class Wallet:
 @dataclass
 class TaskSession:
     """Task session data."""
+
     id: str
     trace_id: str
     status: str
@@ -78,12 +86,7 @@ class AgentNetClient:
         wallet = client.get_wallet(...)
     """
 
-    def __init__(
-        self,
-        registry_url: str = None,
-        payment_url: str = None,
-        timeout: float = 30.0
-    ):
+    def __init__(self, registry_url: str = None, payment_url: str = None, timeout: float = 30.0):
         """
         Initialize the client.
 
@@ -131,7 +134,7 @@ class AgentNetClient:
         """
         response = self._client.post(
             f"{self.registry_url}/v1/auth/user/register",
-            json={"email": email, "password": password, "phone": phone}
+            json={"email": email, "password": password, "phone": phone},
         )
 
         if response.status_code == 400:
@@ -157,7 +160,7 @@ class AgentNetClient:
         """
         response = self._client.post(
             f"{self.registry_url}/v1/auth/user/login",
-            data={"username": email, "password": password}
+            data={"username": email, "password": password},
         )
 
         if response.status_code != 200:
@@ -187,7 +190,7 @@ class AgentNetClient:
         description: str,
         capabilities: List[Dict[str, Any]],
         endpoint: str,
-        public_key: str
+        public_key: str,
     ) -> Agent:
         """
         Create a new agent.
@@ -209,9 +212,9 @@ class AgentNetClient:
                 "description": description,
                 "capabilities": capabilities,
                 "endpoint": endpoint,
-                "public_key": public_key
+                "public_key": public_key,
             },
-            headers=self.get_auth_headers()
+            headers=self.get_auth_headers(),
         )
 
         if response.status_code == 400:
@@ -226,10 +229,7 @@ class AgentNetClient:
 
     def get_agent_by_name(self, name: str) -> Agent:
         """Get agent by name."""
-        response = self._client.get(
-            f"{self.registry_url}/v1/agents/",
-            headers=self.get_auth_headers()
-        )
+        response = self._client.get(f"{self.registry_url}/v1/agents/", headers=self.get_auth_headers())
 
         if response.status_code != 200:
             raise AgentNetError(f"Failed to list agents: {response.status_code}")
@@ -243,22 +243,14 @@ class AgentNetClient:
 
     def get_agent(self, agent_id: str) -> Agent:
         """Get agent by ID."""
-        response = self._client.get(
-            f"{self.registry_url}/v1/agents/{agent_id}",
-            headers=self.get_auth_headers()
-        )
+        response = self._client.get(f"{self.registry_url}/v1/agents/{agent_id}", headers=self.get_auth_headers())
 
         if response.status_code != 200:
             raise AgentNetError(f"Failed to get agent: {response.status_code}")
 
         return self._parse_agent(response.json())
 
-    def search_agents(
-        self,
-        capability: str = None,
-        min_rating: int = None,
-        max_price: float = None
-    ) -> List[Agent]:
+    def search_agents(self, capability: str = None, min_rating: int = None, max_price: float = None) -> List[Agent]:
         """Search for agents."""
         params = {}
         if capability:
@@ -271,7 +263,7 @@ class AgentNetClient:
         response = self._client.get(
             f"{self.registry_url}/v1/agents/",
             params=params,
-            headers=self.get_auth_headers()
+            headers=self.get_auth_headers(),
         )
 
         if response.status_code != 200:
@@ -287,7 +279,7 @@ class AgentNetClient:
             description=data.get("description", ""),
             capabilities=data.get("capabilities", []),
             endpoint=data.get("endpoint", ""),
-            status=data.get("status", "unknown")
+            status=data.get("status", "unknown"),
         )
 
     # ─────────────────────────────────────────────────────────
@@ -298,7 +290,7 @@ class AgentNetClient:
         """Get wallet by ID."""
         response = self._client.get(
             f"{self.payment_url}/v1/wallets/{wallet_id}",
-            headers=self.get_auth_headers()
+            headers=self.get_auth_headers(),
         )
 
         if response.status_code != 200:
@@ -315,10 +307,7 @@ class AgentNetClient:
         else:
             raise AgentNetError("No agent specified and no agent logged in")
 
-        response = self._client.get(
-            f"{self.payment_url}/v1/wallets/",
-            headers=self.get_auth_headers()
-        )
+        response = self._client.get(f"{self.payment_url}/v1/wallets/", headers=self.get_auth_headers())
 
         if response.status_code != 200:
             raise AgentNetError(f"Failed to get wallets: {response.status_code}")
@@ -339,7 +328,7 @@ class AgentNetClient:
             reserved_credits=data.get("reserved_credits", 0),
             reserved_usdc=float(data.get("reserved_usdc", 0)),
             spending_cap=data.get("spending_cap", 0),
-            daily_spent=data.get("daily_spent", 0)
+            daily_spent=data.get("daily_spent", 0),
         )
 
     # ─────────────────────────────────────────────────────────
@@ -354,7 +343,7 @@ class AgentNetClient:
         input_data: Dict[str, Any],
         max_budget: int,
         currency: str = "credits",
-        timeout_seconds: int = 300
+        timeout_seconds: int = 300,
     ) -> TaskSession:
         """
         Create a task session.
@@ -380,9 +369,9 @@ class AgentNetClient:
                 "input": input_data,
                 "max_budget": max_budget,
                 "currency": currency,
-                "timeout_seconds": timeout_seconds
+                "timeout_seconds": timeout_seconds,
             },
-            headers=self.get_auth_headers()
+            headers=self.get_auth_headers(),
         )
 
         if response.status_code != 201:
@@ -395,15 +384,12 @@ class AgentNetClient:
             status="initiated",
             capability=capability,
             escrow_amount=max_budget,
-            currency=currency
+            currency=currency,
         )
 
     def get_task(self, task_id: str) -> Dict[str, Any]:
         """Get task details."""
-        response = self._client.get(
-            f"{self.registry_url}/v1/tasks/{task_id}",
-            headers=self.get_auth_headers()
-        )
+        response = self._client.get(f"{self.registry_url}/v1/tasks/{task_id}", headers=self.get_auth_headers())
 
         if response.status_code != 200:
             raise AgentNetError(f"Failed to get task: {response.status_code}")
@@ -415,7 +401,7 @@ class AgentNetClient:
         response = self._client.put(
             f"{self.registry_url}/v1/tasks/{task_id}/confirm",
             json=output,
-            headers=self.get_auth_headers()
+            headers=self.get_auth_headers(),
         )
 
         if response.status_code != 200:
@@ -428,7 +414,7 @@ class AgentNetClient:
         response = self._client.put(
             f"{self.registry_url}/v1/tasks/{task_id}/fail",
             params={"error_message": error_message},
-            headers=self.get_auth_headers()
+            headers=self.get_auth_headers(),
         )
 
         if response.status_code != 200:
@@ -444,7 +430,7 @@ class AgentNetClient:
         """Get trace (spans) for a task."""
         response = self._client.get(
             f"{self.registry_url}/v1/tasks/traces/{trace_id}",
-            headers=self.get_auth_headers()
+            headers=self.get_auth_headers(),
         )
 
         if response.status_code != 200:
@@ -465,7 +451,7 @@ class AgentNetClient:
         response = self._client.post(
             f"{self.payment_url}/v1/wallets/{wallet_id}/fund",
             json={"amount": amount, "currency": currency},
-            headers=self.get_auth_headers()
+            headers=self.get_auth_headers(),
         )
 
         if response.status_code == 404:

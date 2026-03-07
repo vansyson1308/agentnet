@@ -1,8 +1,9 @@
 from fastapi import APIRouter
+
 from .agents import router as agents_router
+from .auth import router as auth_router
 from .tasks import router as tasks_router
 from .websocket import router as websocket_router
-from .auth import router as auth_router
 
 router = APIRouter()
 

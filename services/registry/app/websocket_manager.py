@@ -1,36 +1,47 @@
+import asyncio
 import json
 import logging
-from typing import Dict, Optional
-import uuid
-import redis.asyncio as redis
 import os
-import asyncio
+import uuid
 from datetime import datetime, timedelta
+from typing import Dict, Optional
 
+import redis.asyncio as redis
 from fastapi import WebSocket
-from sqlalchemy.orm import Session
 from sqlalchemy import func as sql_func
+from sqlalchemy.orm import Session
 
+from .auth import TokenData, hash_input, verify_token
+from .database import get_db
 from .models import (
-    Agent, AgentStatus, TaskSession, TaskStatus, CurrencyType,
-    Wallet, WalletOwnerType, Transaction, TransactionStatus, TransactionType,
-    Offer, OfferStatus, Referral, ReferralStatus
+    Agent,
+    AgentStatus,
+    CurrencyType,
+    Offer,
+    OfferStatus,
+    Referral,
+    ReferralStatus,
+    TaskSession,
+    TaskStatus,
+    Transaction,
+    TransactionStatus,
+    TransactionType,
+    Wallet,
+    WalletOwnerType,
 )
 from .schemas import WebSocketMessage, WebSocketResponse
-from .database import get_db
-from .auth import verify_token, TokenData, hash_input
 
 logger = logging.getLogger(__name__)
 
 # Rate limit constants
-EXECUTE_RATE_LIMIT = 100       # max transactions per hour per agent
-OFFER_RATE_LIMIT = 10          # max offers per hour per agent
-MAX_REFERRALS_PER_AGENT = 5    # max referrals per inviter
+EXECUTE_RATE_LIMIT = 100  # max transactions per hour per agent
+OFFER_RATE_LIMIT = 10  # max offers per hour per agent
+MAX_REFERRALS_PER_AGENT = 5  # max referrals per inviter
 OFFER_ELIGIBILITY_MIN_TASKS = 10
 OFFER_ELIGIBILITY_MIN_SUCCESS = 0.90
 OFFER_ELIGIBILITY_MIN_QUALITY = 3.5
 OFFER_TASK_RATIO_THRESHOLD = 0.80
-APPROVAL_TTL_SECONDS = 300     # 5-minute approval timeout
+APPROVAL_TTL_SECONDS = 300  # 5-minute approval timeout
 
 
 class ConnectionManager:
@@ -46,9 +57,7 @@ class ConnectionManager:
             f"redis://:{os.getenv('REDIS_PASSWORD', 'your_redis_password')}"
             f"@{os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', '6379')}/0"
         )
-        self.redis_client = await redis.from_url(
-            redis_url, encoding="utf-8", decode_responses=True
-        )
+        self.redis_client = await redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
         self.pubsub = self.redis_client.pubsub()
         await self.pubsub.subscribe("agent_messages")
         asyncio.create_task(self.listen_for_messages())
@@ -167,10 +176,7 @@ class ConnectionManager:
 
     def _get_agent_wallet(self, db: Session, agent_id: str) -> Optional[Wallet]:
         """Get wallet for an agent."""
-        return db.query(Wallet).filter(
-            Wallet.owner_type == WalletOwnerType.AGENT,
-            Wallet.owner_id == agent_id
-        ).first()
+        return db.query(Wallet).filter(Wallet.owner_type == WalletOwnerType.AGENT, Wallet.owner_id == agent_id).first()
 
     def _lock_escrow(self, db: Session, wallet: Wallet, amount: int, currency: CurrencyType) -> tuple[bool, str]:
         """
@@ -180,17 +186,26 @@ class ConnectionManager:
         if currency == CurrencyType.CREDITS:
             available = wallet.balance_credits - wallet.reserved_credits
             if available < amount:
-                return False, f"Insufficient credits: available {available}, needed {amount}"
+                return (
+                    False,
+                    f"Insufficient credits: available {available}, needed {amount}",
+                )
 
             # Check spending cap for credits
             if wallet.daily_spent + amount > wallet.spending_cap:
-                return False, f"Spending cap exceeded: {wallet.daily_spent}/{wallet.spending_cap}"
+                return (
+                    False,
+                    f"Spending cap exceeded: {wallet.daily_spent}/{wallet.spending_cap}",
+                )
 
             wallet.reserved_credits += amount
         else:  # USDC
             available = float(wallet.balance_usdc) - float(wallet.reserved_usdc)
             if available < amount:
-                return False, f"Insufficient USDC: available {available}, needed {amount}"
+                return (
+                    False,
+                    f"Insufficient USDC: available {available}, needed {amount}",
+                )
 
             wallet.reserved_usdc += amount
 
@@ -216,6 +231,7 @@ class ConnectionManager:
 
         try:
             import jsonschema
+
             jsonschema.validate(instance=input_data, schema=input_schema)
             return None
         except ImportError:
@@ -259,7 +275,11 @@ class ConnectionManager:
 
     def _error(self, msg_id, code: int, message: str) -> dict:
         """Build a JSON-RPC error response."""
-        return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": message}}
+        return {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {"code": code, "message": message},
+        }
 
     def _result(self, msg_id, result: dict) -> dict:
         """Build a JSON-RPC success response."""
@@ -295,18 +315,26 @@ class ConnectionManager:
             return self._error(msg_id, -32602, "Callee agent not found")
 
         if callee_agent.status != AgentStatus.ACTIVE:
-            return self._error(msg_id, -32602, f"Callee agent is {callee_agent.status.value}, not active")
+            return self._error(
+                msg_id,
+                -32602,
+                f"Callee agent is {callee_agent.status.value}, not active",
+            )
 
         # Find the requested capability
         requested_capability = params["capability"]
         capability_meta = None
-        for cap in (callee_agent.capabilities or []):
+        for cap in callee_agent.capabilities or []:
             if cap["name"] == requested_capability:
                 capability_meta = cap
                 break
 
         if capability_meta is None:
-            return self._error(msg_id, -32602, f"Callee does not have capability '{requested_capability}'")
+            return self._error(
+                msg_id,
+                -32602,
+                f"Callee does not have capability '{requested_capability}'",
+            )
 
         capability_price = capability_meta.get("price", 0)
 
@@ -328,8 +356,9 @@ class ConnectionManager:
 
         if max_budget < capability_price:
             return self._error(
-                msg_id, -32602,
-                f"Insufficient payment: capability costs {capability_price}, provided {max_budget}"
+                msg_id,
+                -32602,
+                f"Insufficient payment: capability costs {capability_price}, provided {max_budget}",
             )
 
         # ── Escrow locking (critical security fix) ──
@@ -404,14 +433,17 @@ class ConnectionManager:
         }
         await self.send_to_agent(forward_message, str(callee_agent_id))
 
-        return self._result(msg_id, {
-            "task_session_id": str(task_session.id),
-            "trace_id": str(trace_id),
-            "span_id": span_id,
-            "escrow_amount": escrow_amount,
-            "currency": currency_str,
-            "message": "Task session created with escrow locked",
-        })
+        return self._result(
+            msg_id,
+            {
+                "task_session_id": str(task_session.id),
+                "trace_id": str(trace_id),
+                "span_id": span_id,
+                "escrow_amount": escrow_amount,
+                "currency": currency_str,
+                "message": "Task session created with escrow locked",
+            },
+        )
 
     # ─── stream_execute ──────────────────────────────────────────────────
 
@@ -447,51 +479,71 @@ class ConnectionManager:
             return self._error(msg_id, -32602, "Sender agent not found")
 
         # Must have completed at least N core tasks
-        completed_tasks = db.query(sql_func.count(TaskSession.id)).filter(
-            TaskSession.callee_agent_id == sender_agent_id,
-            TaskSession.status == TaskStatus.COMPLETED,
-        ).scalar() or 0
+        completed_tasks = (
+            db.query(sql_func.count(TaskSession.id))
+            .filter(
+                TaskSession.callee_agent_id == sender_agent_id,
+                TaskSession.status == TaskStatus.COMPLETED,
+            )
+            .scalar()
+            or 0
+        )
 
         if completed_tasks < OFFER_ELIGIBILITY_MIN_TASKS:
             return self._error(
-                msg_id, -32602,
+                msg_id,
+                -32602,
                 f"Must complete at least {OFFER_ELIGIBILITY_MIN_TASKS} tasks before sending offers "
-                f"(current: {completed_tasks})"
+                f"(current: {completed_tasks})",
             )
 
         # Must have ≥ 90% success rate
-        total_tasks = db.query(sql_func.count(TaskSession.id)).filter(
-            TaskSession.callee_agent_id == sender_agent_id,
-            TaskSession.status.in_([
-                TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT
-            ]),
-        ).scalar() or 1
+        total_tasks = (
+            db.query(sql_func.count(TaskSession.id))
+            .filter(
+                TaskSession.callee_agent_id == sender_agent_id,
+                TaskSession.status.in_([TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT]),
+            )
+            .scalar()
+            or 1
+        )
 
         success_rate = completed_tasks / total_tasks
         if success_rate < OFFER_ELIGIBILITY_MIN_SUCCESS:
             return self._error(
-                msg_id, -32602,
-                f"Success rate too low: {success_rate:.1%} (minimum {OFFER_ELIGIBILITY_MIN_SUCCESS:.0%})"
+                msg_id,
+                -32602,
+                f"Success rate too low: {success_rate:.1%} (minimum {OFFER_ELIGIBILITY_MIN_SUCCESS:.0%})",
             )
 
         # Quality score check
         if sender_agent.verify_score < OFFER_ELIGIBILITY_MIN_QUALITY:
             return self._error(
-                msg_id, -32602,
-                f"Quality score too low: {sender_agent.verify_score} "
-                f"(minimum {OFFER_ELIGIBILITY_MIN_QUALITY})"
+                msg_id,
+                -32602,
+                f"Quality score too low: {sender_agent.verify_score} " f"(minimum {OFFER_ELIGIBILITY_MIN_QUALITY})",
             )
 
         # Offer/task ratio penalty
-        total_offers_7d = db.query(sql_func.count(Offer.id)).filter(
-            Offer.from_agent_id == sender_agent_id,
-            Offer.created_at >= datetime.utcnow() - timedelta(days=7),
-        ).scalar() or 0
+        total_offers_7d = (
+            db.query(sql_func.count(Offer.id))
+            .filter(
+                Offer.from_agent_id == sender_agent_id,
+                Offer.created_at >= datetime.utcnow() - timedelta(days=7),
+            )
+            .scalar()
+            or 0
+        )
 
-        total_tasks_7d = db.query(sql_func.count(TaskSession.id)).filter(
-            TaskSession.callee_agent_id == sender_agent_id,
-            TaskSession.created_at >= datetime.utcnow() - timedelta(days=7),
-        ).scalar() or 1
+        total_tasks_7d = (
+            db.query(sql_func.count(TaskSession.id))
+            .filter(
+                TaskSession.callee_agent_id == sender_agent_id,
+                TaskSession.created_at >= datetime.utcnow() - timedelta(days=7),
+            )
+            .scalar()
+            or 1
+        )
 
         offer_rate = total_offers_7d / total_tasks_7d
         if offer_rate > OFFER_TASK_RATIO_THRESHOLD:
@@ -555,20 +607,28 @@ class ConnectionManager:
 
         # Publish to Redis for Telegram bot
         if self.redis_client:
-            await self.redis_client.publish("notifications", json.dumps({
-                "type": "offer_received",
-                "offer_id": str(offer.id),
-                "to_agent_id": str(params["to_agent_id"]),
-                "from_agent_id": sender_agent_id,
-                "title": offer.title,
-                "price": offer.price,
-            }))
+            await self.redis_client.publish(
+                "notifications",
+                json.dumps(
+                    {
+                        "type": "offer_received",
+                        "offer_id": str(offer.id),
+                        "to_agent_id": str(params["to_agent_id"]),
+                        "from_agent_id": sender_agent_id,
+                        "title": offer.title,
+                        "price": offer.price,
+                    }
+                ),
+            )
 
-        return self._result(msg_id, {
-            "offer_id": str(offer.id),
-            "status": "pending",
-            "message": "Offer created and sent to target agent",
-        })
+        return self._result(
+            msg_id,
+            {
+                "offer_id": str(offer.id),
+                "status": "pending",
+                "message": "Offer created and sent to target agent",
+            },
+        )
 
     # ─── referral_invite ─────────────────────────────────────────────────
 
@@ -600,24 +660,32 @@ class ConnectionManager:
             return self._error(msg_id, -32602, "Inviter agent not found")
 
         # Max 5 referrals per user (across all their agents)
-        user_agent_ids = [
-            a.id for a in db.query(Agent).filter(Agent.user_id == inviter_agent.user_id).all()
-        ]
-        existing_referrals = db.query(sql_func.count(Referral.id)).filter(
-            Referral.inviter_agent_id.in_(user_agent_ids),
-        ).scalar() or 0
+        user_agent_ids = [a.id for a in db.query(Agent).filter(Agent.user_id == inviter_agent.user_id).all()]
+        existing_referrals = (
+            db.query(sql_func.count(Referral.id))
+            .filter(
+                Referral.inviter_agent_id.in_(user_agent_ids),
+            )
+            .scalar()
+            or 0
+        )
 
         if existing_referrals >= MAX_REFERRALS_PER_AGENT:
             return self._error(
-                msg_id, -32602,
-                f"Maximum referral limit reached ({MAX_REFERRALS_PER_AGENT} per user)"
+                msg_id,
+                -32602,
+                f"Maximum referral limit reached ({MAX_REFERRALS_PER_AGENT} per user)",
             )
 
         # Check for duplicate referral
-        existing = db.query(Referral).filter(
-            Referral.inviter_agent_id == sender_agent_id,
-            Referral.invitee_agent_id == invitee_agent_id,
-        ).first()
+        existing = (
+            db.query(Referral)
+            .filter(
+                Referral.inviter_agent_id == sender_agent_id,
+                Referral.invitee_agent_id == invitee_agent_id,
+            )
+            .first()
+        )
         if existing:
             return self._error(msg_id, -32602, "Referral already exists for this agent pair")
 
@@ -646,11 +714,14 @@ class ConnectionManager:
         }
         await self.send_to_agent(notification, str(invitee_agent_id))
 
-        return self._result(msg_id, {
-            "referral_id": str(referral.id),
-            "status": "pending",
-            "message": "Referral invite sent",
-        })
+        return self._result(
+            msg_id,
+            {
+                "referral_id": str(referral.id),
+                "status": "pending",
+                "message": "Referral invite sent",
+            },
+        )
 
     # ─── approve_payment ─────────────────────────────────────────────────
 
@@ -688,10 +759,14 @@ class ConnectionManager:
             return self._error(msg_id, -32602, "Not authorized to approve this payment")
 
         # Find the pending transaction
-        transaction = db.query(Transaction).filter(
-            Transaction.task_session_id == task_session_id,
-            Transaction.status == TransactionStatus.PENDING,
-        ).first()
+        transaction = (
+            db.query(Transaction)
+            .filter(
+                Transaction.task_session_id == task_session_id,
+                Transaction.status == TransactionStatus.PENDING,
+            )
+            .first()
+        )
 
         if not transaction:
             return self._error(msg_id, -32602, "No pending transaction found for this task")
@@ -721,19 +796,27 @@ class ConnectionManager:
 
         # Publish notification
         if self.redis_client:
-            await self.redis_client.publish("notifications", json.dumps({
-                "type": "payment_approved" if approved else "payment_denied",
-                "task_session_id": task_session_id,
-                "caller_agent_id": str(task.caller_agent_id),
-                "callee_agent_id": str(task.callee_agent_id),
-                "amount": task.escrow_amount,
-            }))
+            await self.redis_client.publish(
+                "notifications",
+                json.dumps(
+                    {
+                        "type": "payment_approved" if approved else "payment_denied",
+                        "task_session_id": task_session_id,
+                        "caller_agent_id": str(task.caller_agent_id),
+                        "callee_agent_id": str(task.callee_agent_id),
+                        "amount": task.escrow_amount,
+                    }
+                ),
+            )
 
-        return self._result(msg_id, {
-            "task_session_id": task_session_id,
-            "status": "approved" if approved else "denied",
-            "message": f"Payment {'approved and completed' if approved else 'denied and refunded'}",
-        })
+        return self._result(
+            msg_id,
+            {
+                "task_session_id": task_session_id,
+                "status": "approved" if approved else "denied",
+                "message": f"Payment {'approved and completed' if approved else 'denied and refunded'}",
+            },
+        )
 
 
 # Global connection manager singleton

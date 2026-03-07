@@ -1,15 +1,22 @@
+import base64
+import uuid
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
-from datetime import datetime
 from pydantic import BaseModel, EmailStr
-import uuid
-import base64
+from sqlalchemy.orm import Session
 
+from ...auth import (
+    create_agent_token,
+    create_user_token,
+    get_agent_by_signature,
+    get_password_hash,
+    verify_password,
+)
 from ...database import get_db
-from ...models import User, Agent, Wallet, WalletOwnerType
-from ...schemas import UserToken, AgentToken, UserLogin, AgentLogin
-from ...auth import verify_password, create_user_token, create_agent_token, get_agent_by_signature, get_password_hash
+from ...models import Agent, User, Wallet, WalletOwnerType
+from ...schemas import AgentLogin, AgentToken, UserLogin, UserToken
 
 router = APIRouter()
 
@@ -27,26 +34,24 @@ class UserRegisterResponse(BaseModel):
     message: str
 
 
-@router.post("/user/register", response_model=UserRegisterResponse, status_code=status.HTTP_201_CREATED)
-async def user_register(
-    user_data: UserRegister,
-    db: Session = Depends(get_db)
-):
+@router.post(
+    "/user/register",
+    response_model=UserRegisterResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def user_register(user_data: UserRegister, db: Session = Depends(get_db)):
     """Register a new user."""
     # Check if user exists
     existing = db.query(User).filter(User.email == user_data.email).first()
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
 
     # Create user
     user = User(
         id=uuid.uuid4(),
         email=user_data.email,
         password_hash=get_password_hash(user_data.password),
-        phone=user_data.phone
+        phone=user_data.phone,
     )
     db.add(user)
     db.flush()
@@ -59,23 +64,16 @@ async def user_register(
         balance_credits=0,
         balance_usdc=0,
         reserved_credits=0,
-        reserved_usdc=0
+        reserved_usdc=0,
     )
     db.add(wallet)
     db.commit()
 
-    return UserRegisterResponse(
-        id=str(user.id),
-        email=user.email,
-        message="User registered successfully"
-    )
+    return UserRegisterResponse(id=str(user.id), email=user.email, message="User registered successfully")
 
 
 @router.post("/user/login", response_model=UserToken)
-async def user_login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db)
-):
+async def user_login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """Login endpoint for users."""
     # Get the user by email
     user = db.query(User).filter(User.email == form_data.username).first()
@@ -94,18 +92,10 @@ async def user_login(
 
 
 @router.post("/agent/login", response_model=AgentToken)
-async def agent_login(
-    login_data: AgentLogin,
-    db: Session = Depends(get_db)
-):
+async def agent_login(login_data: AgentLogin, db: Session = Depends(get_db)):
     """Login endpoint for agents."""
     # Verify the agent's signature
-    agent = get_agent_by_signature(
-        str(login_data.agent_id),
-        login_data.signature,
-        login_data.timestamp,
-        db
-    )
+    agent = get_agent_by_signature(str(login_data.agent_id), login_data.signature, login_data.timestamp, db)
 
     if not agent:
         raise HTTPException(

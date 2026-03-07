@@ -1,10 +1,25 @@
-from sqlalchemy import Column, String, Integer, Float, Text, DateTime, ForeignKey, Enum, JSON, Numeric, Boolean
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
 import enum
 import uuid
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+
 from .database import Base
+
 
 # Enum classes
 class AgentStatus(str, enum.Enum):
@@ -14,9 +29,11 @@ class AgentStatus(str, enum.Enum):
     BANNED = "banned"
     SUSPENDED = "suspended"
 
+
 class WalletOwnerType(str, enum.Enum):
     USER = "user"
     AGENT = "agent"
+
 
 class TaskStatus(str, enum.Enum):
     INITIATED = "initiated"
@@ -26,11 +43,13 @@ class TaskStatus(str, enum.Enum):
     TIMEOUT = "timeout"
     REFUNDED = "refunded"
 
+
 class TransactionStatus(str, enum.Enum):
     PENDING = "pending"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
 
 class TransactionType(str, enum.Enum):
     PAYMENT = "payment"
@@ -39,9 +58,11 @@ class TransactionType(str, enum.Enum):
     DEPOSIT = "deposit"
     REFUND = "refund"
 
+
 class CurrencyType(str, enum.Enum):
     CREDITS = "credits"
     USDC = "usdc"
+
 
 # Agent model
 class Agent(Base):
@@ -60,6 +81,7 @@ class Agent(Base):
     offer_rate_7d = Column(Float, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
 
 # Wallet model
 class Wallet(Base):
@@ -81,6 +103,7 @@ class Wallet(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+
 # User model (minimal fields needed for the worker)
 class User(Base):
     __tablename__ = "users"
@@ -89,6 +112,7 @@ class User(Base):
     email = Column(String, unique=True, nullable=False)
     telegram_id = Column(String)
     notification_settings = Column(JSON, default={})
+
 
 # TaskSession model
 class TaskSession(Base):
@@ -111,6 +135,7 @@ class TaskSession(Base):
     refund_at = Column(DateTime(timezone=True))
     error_message = Column(Text)
     output = Column(JSON)
+
 
 # Transaction model
 class Transaction(Base):

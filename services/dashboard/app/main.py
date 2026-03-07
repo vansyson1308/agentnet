@@ -14,10 +14,11 @@ Run:
 Access at http://localhost:8080
 """
 
-import os
 import logging
-from flask import Flask, jsonify, render_template, request
+import os
+
 import httpx
+from flask import Flask, jsonify, render_template, request
 
 # Configure logging
 logging.basicConfig(
@@ -72,6 +73,7 @@ def call_payment(endpoint: str, method: str = "GET", data: dict = None):
 # ─────────────────────────────────────────────────────────
 # Routes
 # ─────────────────────────────────────────────────────────
+
 
 @app.route("/")
 def index():

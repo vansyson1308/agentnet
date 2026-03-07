@@ -10,10 +10,11 @@ Source of truth: PostgreSQL triggers handle balance updates on transaction compl
 Application code only handles reserved_* fields.
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
-from datetime import datetime
 import uuid
+from datetime import datetime
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 # ============================================================
@@ -42,12 +43,12 @@ class TestTransactionCompletion:
         old_status = "pending"
         new_status = "completed"
 
-        trigger_should_fire = (new_status == "completed" and old_status != "completed")
+        trigger_should_fire = new_status == "completed" and old_status != "completed"
         assert trigger_should_fire is True, "Trigger should fire on pending→completed"
 
         # Verify trigger does NOT fire for cancelled
         new_status_cancelled = "cancelled"
-        trigger_should_not_fire = (new_status_cancelled == "completed" and old_status != "completed")
+        trigger_should_not_fire = new_status_cancelled == "completed" and old_status != "completed"
         assert trigger_should_not_fire is False, "Trigger should NOT fire on cancelled"
 
     def test_escrow_release_on_completion(self):
@@ -139,15 +140,15 @@ class TestNoDoubleCredit:
         """
         # These are the ONLY fields that app code should modify for escrow
         app_modifiable_fields = [
-            'reserved_credits',
-            'reserved_usdc',
-            'daily_spent',  # but this is also handled by trigger on completion
+            "reserved_credits",
+            "reserved_usdc",
+            "daily_spent",  # but this is also handled by trigger on completion
         ]
 
         # Fields that should ONLY be modified by DB triggers
         trigger_only_fields = [
-            'balance_credits',
-            'balance_usdc',
+            "balance_credits",
+            "balance_usdc",
         ]
 
         # Document the invariant

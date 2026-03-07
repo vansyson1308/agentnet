@@ -8,31 +8,39 @@ Features:
 - Worker integration for expiry handling
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
-from typing import List, Optional
 import uuid
-import httpx
 from datetime import datetime
+from typing import List, Optional
 
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
+from ...approval_workflow import (
+    APPROVAL_ALLOWED_TRANSITIONS,
+    EscrowApprovalStatus,
+    get_approval_timeout,
+    is_idempotent_action,
+    validate_approval_transition,
+)
+from ...auth import get_current_agent, get_current_user
 from ...database import get_db
 from ...models import (
-    ApprovalRequest, User, Agent, Wallet,
-    ApprovalStatus, WalletOwnerType, TaskSession, TaskStatus,
-    Transaction, TransactionStatus, TransactionType, CurrencyType
+    Agent,
+    ApprovalRequest,
+    ApprovalStatus,
+    CurrencyType,
+    TaskSession,
+    TaskStatus,
+    Transaction,
+    TransactionStatus,
+    TransactionType,
+    User,
+    Wallet,
+    WalletOwnerType,
 )
-from ...schemas import (
-    ApprovalRequestCreate, ApprovalRequestUpdate,
-    ApprovalRequest as ApprovalRequestSchema, ApprovalResponse
-)
-from ...auth import get_current_user, get_current_agent
-from ...approval_workflow import (
-    EscrowApprovalStatus,
-    validate_approval_transition,
-    is_idempotent_action,
-    get_approval_timeout,
-    APPROVAL_ALLOWED_TRANSITIONS,
-)
+from ...schemas import ApprovalRequest as ApprovalRequestSchema
+from ...schemas import ApprovalRequestCreate, ApprovalRequestUpdate, ApprovalResponse
 
 router = APIRouter()
 
@@ -41,11 +49,12 @@ router = APIRouter()
 # Create Approval Request
 # ─────────────────────────────────────────────────────────
 
+
 @router.post("/", response_model=ApprovalResponse)
 async def create_approval_request(
     approval_request: ApprovalRequestCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Create an approval request.
@@ -57,71 +66,60 @@ async def create_approval_request(
     # Check if this is a task escrow approval
     if approval_request.task_session_id:
         # Validate task session exists and belongs to user's agent
-        task = db.query(TaskSession).filter(
-            TaskSession.id == approval_request.task_session_id
-        ).first()
+        task = db.query(TaskSession).filter(TaskSession.id == approval_request.task_session_id).first()
 
         if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Task session not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task session not found")
 
         # Get the caller agent and verify ownership
-        caller_agent = db.query(Agent).filter(
-            Agent.id == task.caller_agent_id
-        ).first()
+        caller_agent = db.query(Agent).filter(Agent.id == task.caller_agent_id).first()
 
         if not caller_agent or caller_agent.user_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only the task caller's owner can create approval request"
+                detail="Only the task caller's owner can create approval request",
             )
 
         # Check task status is appropriate for approval
         if task.status not in [TaskStatus.INITIATED, TaskStatus.IN_PROGRESS]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Task is in {task.status} status, cannot create approval"
+                detail=f"Task is in {task.status} status, cannot create approval",
             )
 
         # Check if approval already exists for this task
-        existing = db.query(ApprovalRequest).filter(
-            ApprovalRequest.task_session_id == approval_request.task_session_id,
-            ApprovalRequest.status == ApprovalStatus.PENDING
-        ).first()
+        existing = (
+            db.query(ApprovalRequest)
+            .filter(
+                ApprovalRequest.task_session_id == approval_request.task_session_id,
+                ApprovalRequest.status == ApprovalStatus.PENDING,
+            )
+            .first()
+        )
 
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Pending approval already exists for this task"
+                detail="Pending approval already exists for this task",
             )
 
         agent_id = task.caller_agent_id
     else:
         # Legacy: auto-approve threshold request
-        agent = db.query(Agent).filter(
-            Agent.id == approval_request.agent_id
-        ).first()
+        agent = db.query(Agent).filter(Agent.id == approval_request.agent_id).first()
 
         if not agent or agent.user_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to create approval for this agent"
+                detail="Not authorized to create approval for this agent",
             )
         agent_id = agent.id
 
     # Get wallet
-    wallet = db.query(Wallet).filter(
-        Wallet.owner_type == WalletOwnerType.AGENT,
-        Wallet.owner_id == agent_id
-    ).first()
+    wallet = db.query(Wallet).filter(Wallet.owner_type == WalletOwnerType.AGENT, Wallet.owner_id == agent_id).first()
 
     if not wallet:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent wallet not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent wallet not found")
 
     # Calculate expiry
     expires_at = get_approval_timeout(approval_request.expires_in_hours)
@@ -150,7 +148,7 @@ async def create_approval_request(
     return ApprovalResponse(
         approval_id=db_approval.id,
         status=db_approval.status.value,
-        message="Approval request created"
+        message="Approval request created",
     )
 
 
@@ -158,32 +156,28 @@ async def create_approval_request(
 # Approve Request
 # ─────────────────────────────────────────────────────────
 
+
 @router.post("/{approval_id}/approve", response_model=ApprovalResponse)
 async def approve_request(
     approval_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Approve an approval request.
 
     Idempotent: approving an already APPROVED request returns success (no-op).
     """
-    approval = db.query(ApprovalRequest).filter(
-        ApprovalRequest.id == approval_id
-    ).first()
+    approval = db.query(ApprovalRequest).filter(ApprovalRequest.id == approval_id).first()
 
     if not approval:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Approval request not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request not found")
 
     # Authorization: only the user who owns the approval can approve
     if approval.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to approve this request"
+            detail="Not authorized to approve this request",
         )
 
     # Check current status
@@ -194,20 +188,14 @@ async def approve_request(
         return ApprovalResponse(
             approval_id=approval.id,
             status=approval.status.value,
-            message="Already approved (idempotent)"
+            message="Already approved (idempotent)",
         )
 
     # Validate transition
-    is_valid, error = validate_approval_transition(
-        current_status,
-        EscrowApprovalStatus.APPROVED
-    )
+    is_valid, error = validate_approval_transition(current_status, EscrowApprovalStatus.APPROVED)
 
     if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
 
     # Update approval
     now = datetime.utcnow()
@@ -217,16 +205,18 @@ async def approve_request(
 
     # If this is a task escrow approval, also update the transaction
     if approval.task_session_id:
-        task = db.query(TaskSession).filter(
-            TaskSession.id == approval.task_session_id
-        ).first()
+        task = db.query(TaskSession).filter(TaskSession.id == approval.task_session_id).first()
 
         if task:
             # Find pending transaction for this task
-            transaction = db.query(Transaction).filter(
-                Transaction.task_session_id == approval.task_session_id,
-                Transaction.status == TransactionStatus.PENDING
-            ).first()
+            transaction = (
+                db.query(Transaction)
+                .filter(
+                    Transaction.task_session_id == approval.task_session_id,
+                    Transaction.status == TransactionStatus.PENDING,
+                )
+                .first()
+            )
 
             if transaction:
                 # Mark transaction as approved
@@ -243,17 +233,20 @@ async def approve_request(
 
     # Callback if provided
     if approval.callback_url:
-        await _send_callback(approval.callback_url, {
-            "approval_id": str(approval.id),
-            "status": "approved",
-            "amount": approval.amount,
-            "currency": approval.currency.value
-        })
+        await _send_callback(
+            approval.callback_url,
+            {
+                "approval_id": str(approval.id),
+                "status": "approved",
+                "amount": approval.amount,
+                "currency": approval.currency.value,
+            },
+        )
 
     return ApprovalResponse(
         approval_id=approval.id,
         status=approval.status.value,
-        message="Approved successfully"
+        message="Approved successfully",
     )
 
 
@@ -261,12 +254,13 @@ async def approve_request(
 # Deny Request
 # ─────────────────────────────────────────────────────────
 
+
 @router.post("/{approval_id}/deny", response_model=ApprovalResponse)
 async def deny_request(
     approval_id: uuid.UUID,
     reason: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """
     Deny an approval request.
@@ -274,21 +268,16 @@ async def deny_request(
     Idempotent: denying an already DENIED request returns success (no-op).
     When denying a task escrow approval, reserved funds are released.
     """
-    approval = db.query(ApprovalRequest).filter(
-        ApprovalRequest.id == approval_id
-    ).first()
+    approval = db.query(ApprovalRequest).filter(ApprovalRequest.id == approval_id).first()
 
     if not approval:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Approval request not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request not found")
 
     # Authorization
     if approval.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to deny this request"
+            detail="Not authorized to deny this request",
         )
 
     # Check current status
@@ -299,20 +288,14 @@ async def deny_request(
         return ApprovalResponse(
             approval_id=approval.id,
             status=approval.status.value,
-            message="Already denied (idempotent)"
+            message="Already denied (idempotent)",
         )
 
     # Validate transition
-    is_valid, error = validate_approval_transition(
-        current_status,
-        EscrowApprovalStatus.DENIED
-    )
+    is_valid, error = validate_approval_transition(current_status, EscrowApprovalStatus.DENIED)
 
     if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
 
     # Update approval
     now = datetime.utcnow()
@@ -324,16 +307,18 @@ async def deny_request(
 
     # If this is a task escrow approval, release reserved funds
     if approval.task_session_id:
-        task = db.query(TaskSession).filter(
-            TaskSession.id == approval.task_session_id
-        ).first()
+        task = db.query(TaskSession).filter(TaskSession.id == approval.task_session_id).first()
 
         if task:
             # Release reserved funds
-            wallet = db.query(Wallet).filter(
-                Wallet.owner_type == WalletOwnerType.AGENT,
-                Wallet.owner_id == task.caller_agent_id
-            ).first()
+            wallet = (
+                db.query(Wallet)
+                .filter(
+                    Wallet.owner_type == WalletOwnerType.AGENT,
+                    Wallet.owner_id == task.caller_agent_id,
+                )
+                .first()
+            )
 
             if wallet:
                 if task.currency == CurrencyType.CREDITS:
@@ -342,10 +327,14 @@ async def deny_request(
                     wallet.reserved_usdc = max(0, float(wallet.reserved_usdc) - task.escrow_amount)
 
             # Update transaction
-            transaction = db.query(Transaction).filter(
-                Transaction.task_session_id == approval.task_session_id,
-                Transaction.status == TransactionStatus.PENDING
-            ).first()
+            transaction = (
+                db.query(Transaction)
+                .filter(
+                    Transaction.task_session_id == approval.task_session_id,
+                    Transaction.status == TransactionStatus.PENDING,
+                )
+                .first()
+            )
 
             if transaction:
                 transaction.status = TransactionStatus.CANCELLED
@@ -367,13 +356,14 @@ async def deny_request(
     return ApprovalResponse(
         approval_id=approval.id,
         status=approval.status.value,
-        message="Denied successfully"
+        message="Denied successfully",
     )
 
 
 # ─────────────────────────────────────────────────────────
 # List Approvals
 # ─────────────────────────────────────────────────────────
+
 
 @router.get("/", response_model=List[ApprovalRequestSchema])
 async def list_approvals(
@@ -382,12 +372,10 @@ async def list_approvals(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """List approval requests for the current user."""
-    query = db.query(ApprovalRequest).filter(
-        ApprovalRequest.user_id == current_user.id
-    )
+    query = db.query(ApprovalRequest).filter(ApprovalRequest.user_id == current_user.id)
 
     if status_filter:
         query = query.filter(ApprovalRequest.status == status_filter)
@@ -395,9 +383,7 @@ async def list_approvals(
     if task_session_id:
         query = query.filter(ApprovalRequest.task_session_id == task_session_id)
 
-    approvals = query.order_by(
-        ApprovalRequest.created_at.desc()
-    ).offset(skip).limit(limit).all()
+    approvals = query.order_by(ApprovalRequest.created_at.desc()).offset(skip).limit(limit).all()
 
     return approvals
 
@@ -406,19 +392,20 @@ async def list_approvals(
 async def get_approval(
     approval_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """Get a specific approval request."""
-    approval = db.query(ApprovalRequest).filter(
-        ApprovalRequest.id == approval_id,
-        ApprovalRequest.user_id == current_user.id
-    ).first()
+    approval = (
+        db.query(ApprovalRequest)
+        .filter(
+            ApprovalRequest.id == approval_id,
+            ApprovalRequest.user_id == current_user.id,
+        )
+        .first()
+    )
 
     if not approval:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Approval request not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request not found")
 
     return approval
 
@@ -427,10 +414,9 @@ async def get_approval(
 # Worker: Expire Pending Approvals
 # ─────────────────────────────────────────────────────────
 
+
 @router.post("/worker/expire")
-async def expire_pending_approvals(
-    db: Session = Depends(get_db)
-):
+async def expire_pending_approvals(db: Session = Depends(get_db)):
     """
     Worker endpoint to expire pending approvals that have timed out.
 
@@ -440,10 +426,14 @@ async def expire_pending_approvals(
     now = datetime.utcnow()
 
     # Find expired pending approvals
-    expired = db.query(ApprovalRequest).filter(
-        ApprovalRequest.status == ApprovalStatus.PENDING,
-        ApprovalRequest.expires_at < now
-    ).all()
+    expired = (
+        db.query(ApprovalRequest)
+        .filter(
+            ApprovalRequest.status == ApprovalStatus.PENDING,
+            ApprovalRequest.expires_at < now,
+        )
+        .all()
+    )
 
     expired_count = 0
 
@@ -456,16 +446,18 @@ async def expire_pending_approvals(
 
         # If task escrow approval, release reserved funds
         if approval.task_session_id:
-            task = db.query(TaskSession).filter(
-                TaskSession.id == approval.task_session_id
-            ).first()
+            task = db.query(TaskSession).filter(TaskSession.id == approval.task_session_id).first()
 
             if task and task.status in [TaskStatus.INITIATED, TaskStatus.IN_PROGRESS]:
                 # Release reserved funds
-                wallet = db.query(Wallet).filter(
-                    Wallet.owner_type == WalletOwnerType.AGENT,
-                    Wallet.owner_id == task.caller_agent_id
-                ).first()
+                wallet = (
+                    db.query(Wallet)
+                    .filter(
+                        Wallet.owner_type == WalletOwnerType.AGENT,
+                        Wallet.owner_id == task.caller_agent_id,
+                    )
+                    .first()
+                )
 
                 if wallet:
                     if task.currency == CurrencyType.CREDITS:
@@ -474,10 +466,14 @@ async def expire_pending_approvals(
                         wallet.reserved_usdc = max(0, float(wallet.reserved_usdc) - task.escrow_amount)
 
                 # Cancel transaction
-                transaction = db.query(Transaction).filter(
-                    Transaction.task_session_id == approval.task_session_id,
-                    Transaction.status == TransactionStatus.PENDING
-                ).first()
+                transaction = (
+                    db.query(Transaction)
+                    .filter(
+                        Transaction.task_session_id == approval.task_session_id,
+                        Transaction.status == TransactionStatus.PENDING,
+                    )
+                    .first()
+                )
 
                 if transaction:
                     transaction.status = TransactionStatus.CANCELLED
@@ -495,13 +491,14 @@ async def expire_pending_approvals(
 
     return {
         "expired_count": expired_count,
-        "message": f"Expired {expired_count} pending approvals"
+        "message": f"Expired {expired_count} pending approvals",
     }
 
 
 # ─────────────────────────────────────────────────────────
 # Notification Helpers (Stubs)
 # ─────────────────────────────────────────────────────────
+
 
 async def _send_approval_notification(db: Session, approval: ApprovalRequest, action: str):
     """

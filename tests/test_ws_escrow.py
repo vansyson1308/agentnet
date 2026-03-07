@@ -9,10 +9,11 @@ These tests verify:
 Note: These tests don't require full app imports (which need ed25519).
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
-import json
 import hashlib
+import json
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 # ============================================================
@@ -64,9 +65,9 @@ class TestInputHash:
         input_data = {
             "messages": [
                 {"role": "user", "content": "hello"},
-                {"role": "assistant", "content": "hi"}
+                {"role": "assistant", "content": "hi"},
             ],
-            "temperature": 0.7
+            "temperature": 0.7,
         }
 
         hash1 = hash_input(input_data)

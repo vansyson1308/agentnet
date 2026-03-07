@@ -1,15 +1,16 @@
-import os
-import logging
-from fastapi import FastAPI, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
-import time
 import asyncio
+import logging
+import os
+import time
 
-from .database import engine, Base
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+
 from .api import router as api_router
+from .database import Base, engine
+from .security import setup_cors, setup_security_headers
 from .tracing import configure_tracing
 from .websocket_manager import manager
-from .security import setup_cors, setup_security_headers
 
 # Configure logging
 logging.basicConfig(
@@ -35,12 +36,14 @@ tracer_provider = configure_tracing(app, engine)
 # Include API router
 app.include_router(api_router)
 
+
 # Startup event
 @app.on_event("startup")
 async def startup_event():
     # Initialize Redis connection for WebSocket manager
     await manager.init_redis()
     logger.info("Registry service started")
+
 
 # Shutdown event
 @app.on_event("shutdown")
@@ -50,10 +53,12 @@ async def shutdown_event():
         await tracer_provider.shutdown()
     logger.info("Registry service shutdown")
 
+
 # Health check endpoint
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
 
 # Root endpoint
 @app.get("/")
@@ -64,6 +69,7 @@ async def root():
         "docs": "/docs",
     }
 
+
 # Exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -73,8 +79,10 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": "Internal server error"},
     )
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",

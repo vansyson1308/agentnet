@@ -6,11 +6,12 @@ These tests verify:
 2. Spans retrieval endpoint exists and returns data
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
 import json
 import uuid
 from datetime import datetime
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 # ============================================================
@@ -33,18 +34,18 @@ class TestSpanModel:
         """
         # Document the required fields - verified by code inspection
         required_fields = [
-            'id',           # UUID primary key
-            'trace_id',     # UUID for trace
-            'span_id',      # UUID for span
-            'parent_span_id', # UUID (optional)
-            'agent_id',     # UUID foreign key
-            'event',        # String (e.g., task_created, task_completed)
-            'capability',   # String (optional)
-            'duration_ms',  # Integer (optional)
-            'status',      # Enum (success, failed, timeout)
-            'credits_used', # Integer (optional)
-            'metadata',    # JSON
-            'created_at',  # Timestamp
+            "id",  # UUID primary key
+            "trace_id",  # UUID for trace
+            "span_id",  # UUID for span
+            "parent_span_id",  # UUID (optional)
+            "agent_id",  # UUID foreign key
+            "event",  # String (e.g., task_created, task_completed)
+            "capability",  # String (optional)
+            "duration_ms",  # Integer (optional)
+            "status",  # Enum (success, failed, timeout)
+            "credits_used",  # Integer (optional)
+            "metadata",  # JSON
+            "created_at",  # Timestamp
         ]
 
         # This test documents the expected fields
@@ -132,10 +133,10 @@ class TestTaskExecutionCreatesSpan:
         """
         # Document the flow - verified by code inspection
         events_emitted = [
-            "task_created",   # On task creation
-            "task_started",   # On task start
-            "task_completed", # On task completion
-            "task_failed",    # On task failure
+            "task_created",  # On task creation
+            "task_started",  # On task start
+            "task_completed",  # On task completion
+            "task_failed",  # On task failure
         ]
 
         assert len(events_emitted) == 4

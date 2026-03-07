@@ -8,9 +8,10 @@ Tests:
 4. Different keys have separate limits
 """
 
-import pytest
 import time
 from unittest.mock import patch
+
+import pytest
 
 
 class TestRateLimiter:
@@ -92,12 +93,10 @@ class TestRateLimitMiddleware:
 
     def test_rate_limit_headers_set(self):
         """Rate limit headers should be set on responses."""
-        from fastapi import FastAPI, Depends
+        from fastapi import Depends, FastAPI
         from fastapi.testclient import TestClient
-        from services.registry.app.security import (
-            InMemoryRateLimiter,
-            check_rate_limit
-        )
+
+        from services.registry.app.security import InMemoryRateLimiter, check_rate_limit
 
         # Create test app with rate limiting
         app = FastAPI()
@@ -117,10 +116,11 @@ class TestRateLimitMiddleware:
         """Should return 429 when rate limit exceeded."""
         from fastapi import FastAPI, HTTPException
         from fastapi.testclient import TestClient
-        from services.registry.app.security import InMemoryRateLimiter
 
         # Reset global limiter
         import services.registry.app.security as security_module
+        from services.registry.app.security import InMemoryRateLimiter
+
         security_module._rate_limiter = InMemoryRateLimiter(requests_per_minute=2)
 
         app = FastAPI()
@@ -132,7 +132,7 @@ class TestRateLimitMiddleware:
                 raise HTTPException(
                     status_code=429,
                     detail="Rate limit exceeded",
-                    headers={"X-RateLimit-Remaining": "0"}
+                    headers={"X-RateLimit-Remaining": "0"},
                 )
             return {"ok": True}
 
@@ -165,10 +165,10 @@ class TestRateLimitConfiguration:
     def test_custom_rate_limit_from_env(self):
         """Should use custom rate limit from environment."""
         with patch.dict("os.environ", {"RATE_LIMIT_PER_MINUTE": "100"}):
-            from services.registry.app.security import get_rate_limiter
-
             # Reset global
             import services.registry.app.security as security_module
+            from services.registry.app.security import get_rate_limiter
+
             security_module._rate_limiter = None
 
             limiter = get_rate_limiter()

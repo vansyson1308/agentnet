@@ -8,18 +8,19 @@ Provides:
 """
 
 import os
+import time
+from collections import defaultdict
 from typing import List, Optional
-from fastapi import FastAPI, Request, HTTPException
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
-import time
-from collections import defaultdict
-
 
 # ============================================================
 # CORS Configuration
 # ============================================================
+
 
 def get_cors_origins() -> List[str]:
     """
@@ -43,9 +44,7 @@ def get_cors_origins() -> List[str]:
         # Production: require explicit allowlist
         allowed = os.getenv("CORS_ALLOWED_ORIGINS", "")
         if not allowed:
-            raise ValueError(
-                "CORS_ALLOWED_ORIGINS must be set in non-development environments"
-            )
+            raise ValueError("CORS_ALLOWED_ORIGINS must be set in non-development environments")
         return [origin.strip() for origin in allowed.split(",") if origin.strip()]
 
 
@@ -73,6 +72,7 @@ def setup_cors(app: FastAPI):
 # Rate Limiting
 # ============================================================
 
+
 class InMemoryRateLimiter:
     """
     Simple in-memory rate limiter for development.
@@ -90,9 +90,7 @@ class InMemoryRateLimiter:
         minute_ago = now - 60
 
         # Clean old requests
-        self.requests[key] = [
-            t for t in self.requests[key] if t > minute_ago
-        ]
+        self.requests[key] = [t for t in self.requests[key] if t > minute_ago]
 
         if len(self.requests[key]) >= self.requests_per_minute:
             return False
@@ -104,9 +102,7 @@ class InMemoryRateLimiter:
         """Get remaining requests for key."""
         now = time.time()
         minute_ago = now - 60
-        self.requests[key] = [
-            t for t in self.requests[key] if t > minute_ago
-        ]
+        self.requests[key] = [t for t in self.requests[key] if t > minute_ago]
         return max(0, self.requests_per_minute - len(self.requests[key]))
 
 
@@ -131,13 +127,14 @@ async def check_rate_limit(key: str) -> bool:
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded. Try again later.",
-            headers={"X-RateLimit-Remaining": str(remaining)}
+            headers={"X-RateLimit-Remaining": str(remaining)},
         )
 
 
 # ============================================================
 # Security Headers Middleware
 # ============================================================
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to all responses."""
@@ -162,6 +159,7 @@ def setup_security_headers(app: FastAPI):
 # ============================================================
 # Configuration
 # ============================================================
+
 
 def is_development() -> bool:
     """Check if running in development mode."""

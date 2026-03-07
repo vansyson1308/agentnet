@@ -9,18 +9,19 @@ Tests:
 
 import pytest
 from pydantic import ValidationError
+
 from services.registry.app.task_contract import (
-    TaskCreateRequest,
     ExecuteParams,
-    TaskOutput,
+    PaymentParams,
+    TaskCreateRequest,
     TaskFailRequest,
+    TaskOutput,
+    TaskStatus,
     canonicalize_json,
     compute_input_hash,
+    get_allowed_statuses,
     validate_state_transition,
     validate_task_status_update,
-    get_allowed_statuses,
-    TaskStatus,
-    PaymentParams,
 )
 
 
@@ -85,7 +86,7 @@ class TestSchemaValidation:
                 caller_agent_id="550e8400-e29b-41d4-a716-446655440000",
                 callee_agent_id="550e8400-e29b-41d4-a716-446655440001",
                 capability="compute",
-                input={"value": float('nan')},
+                input={"value": float("nan")},
                 max_budget=100,
             )
         errors = exc_info.value.errors()
@@ -98,7 +99,7 @@ class TestSchemaValidation:
                 caller_agent_id="550e8400-e29b-41d4-a716-446655440000",
                 callee_agent_id="550e8400-e29b-41d4-a716-446655440001",
                 capability="compute",
-                input={"value": float('inf')},
+                input={"value": float("inf")},
                 max_budget=100,
             )
 
@@ -174,59 +175,38 @@ class TestStateMachine:
 
     def test_initiated_to_in_progress_allowed(self):
         """INITIATED -> IN_PROGRESS should be allowed."""
-        is_valid, error = validate_state_transition(
-            TaskStatus.INITIATED,
-            TaskStatus.IN_PROGRESS
-        )
+        is_valid, error = validate_state_transition(TaskStatus.INITIATED, TaskStatus.IN_PROGRESS)
         assert is_valid is True
 
     def test_initiated_to_completed_not_allowed(self):
         """INITIATED -> COMPLETED should not be allowed."""
-        is_valid, error = validate_state_transition(
-            TaskStatus.INITIATED,
-            TaskStatus.COMPLETED
-        )
+        is_valid, error = validate_state_transition(TaskStatus.INITIATED, TaskStatus.COMPLETED)
         assert is_valid is False
         assert "Invalid state transition" in error
 
     def test_in_progress_to_completed_allowed(self):
         """IN_PROGRESS -> COMPLETED should be allowed."""
-        is_valid, error = validate_state_transition(
-            TaskStatus.IN_PROGRESS,
-            TaskStatus.COMPLETED
-        )
+        is_valid, error = validate_state_transition(TaskStatus.IN_PROGRESS, TaskStatus.COMPLETED)
         assert is_valid is True
 
     def test_in_progress_to_failed_allowed(self):
         """IN_PROGRESS -> FAILED should be allowed."""
-        is_valid, error = validate_state_transition(
-            TaskStatus.IN_PROGRESS,
-            TaskStatus.FAILED
-        )
+        is_valid, error = validate_state_transition(TaskStatus.IN_PROGRESS, TaskStatus.FAILED)
         assert is_valid is True
 
     def test_completed_is_terminal(self):
         """COMPLETED should be terminal."""
-        is_valid, error = validate_state_transition(
-            TaskStatus.COMPLETED,
-            TaskStatus.FAILED
-        )
+        is_valid, error = validate_state_transition(TaskStatus.COMPLETED, TaskStatus.FAILED)
         assert is_valid is False
 
     def test_failed_is_terminal(self):
         """FAILED should be terminal."""
-        is_valid, error = validate_state_transition(
-            TaskStatus.FAILED,
-            TaskStatus.COMPLETED
-        )
+        is_valid, error = validate_state_transition(TaskStatus.FAILED, TaskStatus.COMPLETED)
         assert is_valid is False
 
     def test_timeout_is_terminal(self):
         """TIMEOUT should be terminal."""
-        is_valid, error = validate_state_transition(
-            TaskStatus.TIMEOUT,
-            TaskStatus.COMPLETED
-        )
+        is_valid, error = validate_state_transition(TaskStatus.TIMEOUT, TaskStatus.COMPLETED)
         assert is_valid is False
 
     def test_helper_function_with_string_statuses(self):

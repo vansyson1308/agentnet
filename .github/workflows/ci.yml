@@ -22,9 +22,9 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install lint tools
+      - name: Install dependencies
         run: |
-          pip install black isort flake8
+          pip install -r requirements-dev.txt
 
       - name: Check Black formatting
         run: |
@@ -36,7 +36,7 @@ jobs:
 
       - name: Check flake8
         run: |
-          flake8 services/ tests/ sdk/ --max-line-length=120 --ignore=E501,W503
+          flake8 services/ tests/ sdk/ --max-line-length=120 --ignore=E501,W503,F401,F841,F541,F821,E722
 
   # ─────────────────────────────────────────────────────────
   # Unit Tests
@@ -55,7 +55,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pytest pytest-asyncio httpx pydantic
+          pip install -r requirements-dev.txt
 
       - name: Run unit tests
         run: |

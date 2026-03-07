@@ -36,11 +36,12 @@ Step 5: Cleanup
 =================================================================
 """
 
-import pytest
-import uuid
-import time
 import os
+import time
+import uuid
+
 import httpx
+import pytest
 
 # Test configuration
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://localhost:8000")
@@ -57,12 +58,13 @@ TEST_PREFIX = f"test_{uuid.uuid4().hex[:8]}"
 def get_db_connection():
     """Get direct DB connection for verification."""
     import psycopg2
+
     conn = psycopg2.connect(
         host=POSTGRES_HOST,
         port=5432,
         user=POSTGRES_USER,
         password=POSTGRES_PASSWORD,
-        dbname=POSTGRES_DB
+        dbname=POSTGRES_DB,
     )
     return conn
 
@@ -71,6 +73,7 @@ def is_service_available(url: str) -> bool:
     """Check if a service is available."""
     try:
         import requests
+
         resp = requests.get(f"{url}/health", timeout=2)
         return resp.status_code == 200
     except Exception:
@@ -92,19 +95,12 @@ def test_user(http_client):
     # Register user
     response = http_client.post(
         "/v1/auth/user/register",
-        json={
-            "email": email,
-            "password": password,
-            "phone": "+1234567890"
-        }
+        json={"email": email, "password": password, "phone": "+1234567890"},
     )
 
     # If registration succeeded (201) or user already exists (400), login to get token
     if response.status_code in (200, 201, 400):
-        response = http_client.post(
-            "/v1/auth/user/login",
-            data={"username": email, "password": password}
-        )
+        response = http_client.post("/v1/auth/user/login", data={"username": email, "password": password})
 
     assert response.status_code == 200, f"Auth failed: {response.status_code} {response.text}"
     token = response.json()["access_token"]
@@ -129,21 +125,18 @@ def test_agent(http_client, test_user):
                     "description": "Test capability",
                     "price": 10,
                     "input_schema": {"type": "object"},
-                    "output_schema": {"type": "object"}
+                    "output_schema": {"type": "object"},
                 }
             ],
             "endpoint": "http://localhost:9000",
-            "public_key": "test_public_key_12345"
+            "public_key": "test_public_key_12345",
         },
-        headers={"Authorization": f"Bearer {test_user['token']}"}
+        headers={"Authorization": f"Bearer {test_user['token']}"},
     )
 
     # May return 400 if already exists - get existing
     if response.status_code == 400:
-        response = http_client.get(
-            "/v1/agents/",
-            headers={"Authorization": f"Bearer {test_user['token']}"}
-        )
+        response = http_client.get("/v1/agents/", headers={"Authorization": f"Bearer {test_user['token']}"})
         if response.status_code == 200:
             agents = response.json()
             agent = next((a for a in agents if a.get("name") == agent_name), None)
@@ -156,21 +149,14 @@ def test_agent(http_client, test_user):
     else:
         pytest.skip(f"Agent creation failed: {response.status_code}")
 
-    return {
-        "id": agent["id"],
-        "name": agent_name,
-        "token": test_user['token']
-    }
+    return {"id": agent["id"], "name": agent_name, "token": test_user["token"]}
 
 
 @pytest.fixture(scope="module")
 def test_wallet(http_client, test_agent):
     """Get agent wallet with test funds."""
     # Get wallets
-    response = http_client.get(
-        "/v1/wallets/",
-        headers={"Authorization": f"Bearer {test_agent['token']}"}
-    )
+    response = http_client.get("/v1/wallets/", headers={"Authorization": f"Bearer {test_agent['token']}"})
 
     if response.status_code != 200:
         pytest.skip("Could not get wallets")
@@ -186,9 +172,8 @@ def test_wallet(http_client, test_agent):
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE wallets SET balance_credits = balance_credits + 1000 "
-            "WHERE id = %s",
-            (wallet["id"],)
+            "UPDATE wallets SET balance_credits = balance_credits + 1000 " "WHERE id = %s",
+            (wallet["id"],),
         )
         conn.commit()
         cursor.close()
@@ -214,7 +199,7 @@ class TestIntegrationHappyPath:
         # Register
         response = http_client.post(
             "/v1/auth/user/register",
-            json={"email": email, "password": password, "phone": "+1234567890"}
+            json={"email": email, "password": password, "phone": "+1234567890"},
         )
 
         assert response.status_code == 201, f"Register failed: {response.text}"
@@ -224,10 +209,7 @@ class TestIntegrationHappyPath:
         print(f"User registered: {email}")
 
         # Login
-        response = http_client.post(
-            "/v1/auth/user/login",
-            data={"username": email, "password": password}
-        )
+        response = http_client.post("/v1/auth/user/login", data={"username": email, "password": password})
 
         assert response.status_code == 200, f"Login failed: {response.text}"
         token_data = response.json()
@@ -250,15 +232,16 @@ class TestIntegrationHappyPath:
                     {
                         "name": "compute",
                         "description": "Compute capability",
-                        "version": "1.0", "price": 5,
+                        "version": "1.0",
+                        "price": 5,
                         "input_schema": {"type": "object"},
-                        "output_schema": {"type": "object"}
+                        "output_schema": {"type": "object"},
                     }
                 ],
                 "endpoint": "http://localhost:9000",
-                "public_key": "test_key_12345"
+                "public_key": "test_key_12345",
             },
-            headers={"Authorization": f"Bearer {test_user['token']}"}
+            headers={"Authorization": f"Bearer {test_user['token']}"},
         )
 
         # May exist from previous run
@@ -272,7 +255,7 @@ class TestIntegrationHappyPath:
 
         response = http_client.get(
             f"/v1/wallets/{test_wallet['id']}",
-            headers={"Authorization": f"Bearer {test_agent['token']}"}
+            headers={"Authorization": f"Bearer {test_agent['token']}"},
         )
 
         assert response.status_code == 200, f"Wallet query failed: {response.text}"
@@ -293,9 +276,9 @@ class TestIntegrationHappyPath:
                 "input": {"test": "data"},
                 "max_budget": 50,
                 "currency": "credits",
-                "timeout_seconds": 300
+                "timeout_seconds": 300,
             },
-            headers={"Authorization": f"Bearer {test_agent['token']}"}
+            headers={"Authorization": f"Bearer {test_agent['token']}"},
         )
 
         if response.status_code == 200:
@@ -309,7 +292,7 @@ class TestIntegrationHappyPath:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT status, escrow_amount, currency FROM task_sessions WHERE id = %s",
-                    (task_id,)
+                    (task_id,),
                 )
                 result = cursor.fetchone()
                 cursor.close()
@@ -339,9 +322,9 @@ class TestIntegrationHappyPath:
                 "input": {"test": "timeout"},
                 "max_budget": 25,
                 "currency": "credits",
-                "timeout_seconds": 1
+                "timeout_seconds": 1,
             },
-            headers={"Authorization": f"Bearer {test_agent['token']}"}
+            headers={"Authorization": f"Bearer {test_agent['token']}"},
         )
 
         if response.status_code == 200:
@@ -355,10 +338,7 @@ class TestIntegrationHappyPath:
             try:
                 conn = get_db_connection()
                 cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT status FROM task_sessions WHERE id = %s",
-                    (task_id,)
-                )
+                cursor.execute("SELECT status FROM task_sessions WHERE id = %s", (task_id,))
                 result = cursor.fetchone()
                 cursor.close()
                 conn.close()
@@ -377,9 +357,7 @@ class TestDBInvariants:
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT COUNT(*) FROM wallets WHERE reserved_credits < 0 OR reserved_usdc < 0"
-            )
+            cursor.execute("SELECT COUNT(*) FROM wallets WHERE reserved_credits < 0 OR reserved_usdc < 0")
             count = cursor.fetchone()[0]
             cursor.close()
             conn.close()

@@ -9,15 +9,17 @@ Tests:
 5. Expiry: worker handles expired approvals
 """
 
-import pytest
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
+
+import pytest
+
 from services.payment.app.approval_workflow import (
-    EscrowApprovalStatus,
-    validate_approval_transition,
-    is_idempotent_action,
-    get_approval_timeout,
     APPROVAL_ALLOWED_TRANSITIONS,
+    EscrowApprovalStatus,
+    get_approval_timeout,
+    is_idempotent_action,
+    validate_approval_transition,
 )
 
 
@@ -26,51 +28,33 @@ class TestApprovalStateMachine:
 
     def test_pending_to_approved_allowed(self):
         """PENDING -> APPROVED should be allowed."""
-        is_valid, error = validate_approval_transition(
-            EscrowApprovalStatus.PENDING,
-            EscrowApprovalStatus.APPROVED
-        )
+        is_valid, error = validate_approval_transition(EscrowApprovalStatus.PENDING, EscrowApprovalStatus.APPROVED)
         assert is_valid is True
         assert error is None
 
     def test_pending_to_denied_allowed(self):
         """PENDING -> DENIED should be allowed."""
-        is_valid, error = validate_approval_transition(
-            EscrowApprovalStatus.PENDING,
-            EscrowApprovalStatus.DENIED
-        )
+        is_valid, error = validate_approval_transition(EscrowApprovalStatus.PENDING, EscrowApprovalStatus.DENIED)
         assert is_valid is True
 
     def test_pending_to_expired_allowed(self):
         """PENDING -> EXPIRED should be allowed (via worker)."""
-        is_valid, error = validate_approval_transition(
-            EscrowApprovalStatus.PENDING,
-            EscrowApprovalStatus.EXPIRED
-        )
+        is_valid, error = validate_approval_transition(EscrowApprovalStatus.PENDING, EscrowApprovalStatus.EXPIRED)
         assert is_valid is True
 
     def test_approved_is_terminal(self):
         """APPROVED should be terminal."""
-        is_valid, error = validate_approval_transition(
-            EscrowApprovalStatus.APPROVED,
-            EscrowApprovalStatus.DENIED
-        )
+        is_valid, error = validate_approval_transition(EscrowApprovalStatus.APPROVED, EscrowApprovalStatus.DENIED)
         assert is_valid is False
 
     def test_denied_is_terminal(self):
         """DENIED should be terminal."""
-        is_valid, error = validate_approval_transition(
-            EscrowApprovalStatus.DENIED,
-            EscrowApprovalStatus.APPROVED
-        )
+        is_valid, error = validate_approval_transition(EscrowApprovalStatus.DENIED, EscrowApprovalStatus.APPROVED)
         assert is_valid is False
 
     def test_expired_is_terminal(self):
         """EXPIRED should be terminal."""
-        is_valid, error = validate_approval_transition(
-            EscrowApprovalStatus.EXPIRED,
-            EscrowApprovalStatus.APPROVED
-        )
+        is_valid, error = validate_approval_transition(EscrowApprovalStatus.EXPIRED, EscrowApprovalStatus.APPROVED)
         assert is_valid is False
 
 
@@ -79,24 +63,15 @@ class TestIdempotency:
 
     def test_approve_already_approved_is_idempotent(self):
         """Approving an already APPROVED request should be idempotent."""
-        assert is_idempotent_action(
-            EscrowApprovalStatus.APPROVED,
-            EscrowApprovalStatus.APPROVED
-        ) is True
+        assert is_idempotent_action(EscrowApprovalStatus.APPROVED, EscrowApprovalStatus.APPROVED) is True
 
     def test_deny_already_denied_is_idempotent(self):
         """Denying an already DENIED request should be idempotent."""
-        assert is_idempotent_action(
-            EscrowApprovalStatus.DENIED,
-            EscrowApprovalStatus.DENIED
-        ) is True
+        assert is_idempotent_action(EscrowApprovalStatus.DENIED, EscrowApprovalStatus.DENIED) is True
 
     def test_approve_pending_is_not_idempotent(self):
         """Approving a PENDING request is not idempotent."""
-        assert is_idempotent_action(
-            EscrowApprovalStatus.PENDING,
-            EscrowApprovalStatus.APPROVED
-        ) is False
+        assert is_idempotent_action(EscrowApprovalStatus.PENDING, EscrowApprovalStatus.APPROVED) is False
 
 
 class TestApprovalTimeout:

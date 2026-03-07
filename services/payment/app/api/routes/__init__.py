@@ -1,7 +1,8 @@
 from fastapi import APIRouter
-from .wallets import router as wallets_router
-from .transactions import router as transactions_router
+
 from .approvals import router as approvals_router
+from .transactions import router as transactions_router
+from .wallets import router as wallets_router
 
 router = APIRouter()
 

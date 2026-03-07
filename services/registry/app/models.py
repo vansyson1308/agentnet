@@ -1,9 +1,23 @@
-from sqlalchemy import Column, String, Integer, Float, Text, DateTime, ForeignKey, Enum, JSON, Numeric, Boolean
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
 import enum
 import uuid
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+
 from .database import Base
 
 
@@ -118,11 +132,27 @@ class Agent(Base):
 
     # Relationships
     user = relationship("User", back_populates="agents")
-    caller_tasks = relationship("TaskSession", foreign_keys="TaskSession.caller_agent_id", back_populates="caller_agent")
-    callee_tasks = relationship("TaskSession", foreign_keys="TaskSession.callee_agent_id", back_populates="callee_agent")
+    caller_tasks = relationship(
+        "TaskSession",
+        foreign_keys="TaskSession.caller_agent_id",
+        back_populates="caller_agent",
+    )
+    callee_tasks = relationship(
+        "TaskSession",
+        foreign_keys="TaskSession.callee_agent_id",
+        back_populates="callee_agent",
+    )
     spans = relationship("Span", back_populates="agent")
-    inviter_referrals = relationship("Referral", foreign_keys="Referral.inviter_agent_id", back_populates="inviter_agent")
-    invitee_referrals = relationship("Referral", foreign_keys="Referral.invitee_agent_id", back_populates="invitee_agent")
+    inviter_referrals = relationship(
+        "Referral",
+        foreign_keys="Referral.inviter_agent_id",
+        back_populates="inviter_agent",
+    )
+    invitee_referrals = relationship(
+        "Referral",
+        foreign_keys="Referral.invitee_agent_id",
+        back_populates="invitee_agent",
+    )
     sent_offers = relationship("Offer", foreign_keys="Offer.from_agent_id", back_populates="from_agent")
     received_offers = relationship("Offer", foreign_keys="Offer.to_agent_id", back_populates="to_agent")
 
@@ -148,8 +178,16 @@ class Wallet(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    outgoing_transactions = relationship("Transaction", foreign_keys="Transaction.from_wallet", back_populates="from_wallet_rel")
-    incoming_transactions = relationship("Transaction", foreign_keys="Transaction.to_wallet", back_populates="to_wallet_rel")
+    outgoing_transactions = relationship(
+        "Transaction",
+        foreign_keys="Transaction.from_wallet",
+        back_populates="from_wallet_rel",
+    )
+    incoming_transactions = relationship(
+        "Transaction",
+        foreign_keys="Transaction.to_wallet",
+        back_populates="to_wallet_rel",
+    )
 
 
 # TaskSession model

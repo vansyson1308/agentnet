@@ -20,9 +20,9 @@ Idempotency:
     - Cannot approve/deny EXPIRED requests (must be re-created)
 """
 
-from enum import Enum
-from typing import Dict, Set, Tuple, Optional
 from datetime import datetime, timedelta
+from enum import Enum
+from typing import Dict, Optional, Set, Tuple
 
 
 class EscrowApprovalStatus(str, Enum):
@@ -81,15 +81,9 @@ def is_idempotent_action(
 
     Example: Approving an already APPROVED request is idempotent (no-op).
     """
-    if (
-        current_status == EscrowApprovalStatus.APPROVED
-        and action == EscrowApprovalStatus.APPROVED
-    ):
+    if current_status == EscrowApprovalStatus.APPROVED and action == EscrowApprovalStatus.APPROVED:
         return True
-    if (
-        current_status == EscrowApprovalStatus.DENIED
-        and action == EscrowApprovalStatus.DENIED
-    ):
+    if current_status == EscrowApprovalStatus.DENIED and action == EscrowApprovalStatus.DENIED:
         return True
     return False
 

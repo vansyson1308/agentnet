@@ -1,9 +1,23 @@
-from sqlalchemy import Column, String, Integer, Float, Text, DateTime, ForeignKey, Enum, JSON, Numeric, Boolean
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
 import enum
 import uuid
+
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+
 from .database import Base
 
 
@@ -198,7 +212,7 @@ class ApprovalRequest(Base):
     responded_at = Column(DateTime(timezone=True))
 
     # Fields for task escrow payment approvals
-    task_session_id = Column(UUID(as_uuid=True), ForeignKey('task_sessions.id'), nullable=True)
+    task_session_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id"), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
     approved_at = Column(DateTime(timezone=True), nullable=True)
     denied_at = Column(DateTime(timezone=True), nullable=True)

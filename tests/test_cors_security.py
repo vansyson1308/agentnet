@@ -7,8 +7,9 @@ Tests:
 3. CORS headers properly set on responses
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from httpx import Response
 
@@ -30,7 +31,13 @@ class TestCORSConfiguration:
 
     def test_prod_mode_requires_explicit_origins(self):
         """Production mode should require explicit CORS_ALLOWED_ORIGINS."""
-        with patch.dict("os.environ", {"ENVIRONMENT": "production", "CORS_ALLOWED_ORIGINS": "https://app.example.com,https://admin.example.com"}):
+        with patch.dict(
+            "os.environ",
+            {
+                "ENVIRONMENT": "production",
+                "CORS_ALLOWED_ORIGINS": "https://app.example.com,https://admin.example.com",
+            },
+        ):
             from services.registry.app.security import get_cors_origins
 
             origins = get_cors_origins()
@@ -49,7 +56,13 @@ class TestCORSConfiguration:
 
     def test_random_origin_not_in_allowed_list(self):
         """Random/or suspicious origins should not be in allowed list."""
-        with patch.dict("os.environ", {"ENVIRONMENT": "production", "CORS_ALLOWED_ORIGINS": "https://app.example.com"}):
+        with patch.dict(
+            "os.environ",
+            {
+                "ENVIRONMENT": "production",
+                "CORS_ALLOWED_ORIGINS": "https://app.example.com",
+            },
+        ):
             from services.registry.app.security import get_cors_origins
 
             origins = get_cors_origins()
@@ -63,6 +76,7 @@ class TestCORSConfiguration:
         """Responses should include security headers."""
         # Create minimal app to test middleware
         from fastapi import FastAPI
+
         from services.registry.app.security import setup_security_headers
 
         app = FastAPI()
@@ -88,6 +102,7 @@ class TestSecurityHeadersMiddleware:
         """All required security headers should be present."""
         from fastapi import FastAPI, Request
         from fastapi.testclient import TestClient
+
         from services.registry.app.security import SecurityHeadersMiddleware
 
         app = FastAPI()
