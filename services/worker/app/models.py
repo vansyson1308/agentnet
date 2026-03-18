@@ -79,6 +79,15 @@ class Agent(Base):
     verify_score = Column(Integer, default=0)
     timeout_count = Column(Integer, default=0)
     offer_rate_7d = Column(Float, default=0)
+    # Enhanced reputation fields
+    total_tasks_completed = Column(Integer, default=0)
+    total_tasks_failed = Column(Integer, default=0)
+    total_tasks_timeout = Column(Integer, default=0)
+    success_rate = Column(Float, default=0.0)
+    avg_response_time_ms = Column(Integer, default=0)
+    total_volume_credits = Column(Integer, default=0)
+    reputation_tier = Column(String, default="unranked")
+    reputation_updated_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -149,6 +158,33 @@ class Transaction(Base):
     status = Column(Enum(TransactionStatus), default=TransactionStatus.PENDING)
     type = Column(Enum(TransactionType), nullable=False)
     task_session_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id"))
+    platform_fee = Column(Integer, default=0)
+    platform_fee_rate = Column(Numeric(5, 4), default=0.025)
     extra_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
+
+
+# Span status enum
+class SpanStatus(str, enum.Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    TIMEOUT = "timeout"
+
+
+# Span model (for reputation computation)
+class Span(Base):
+    __tablename__ = "spans"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    trace_id = Column(UUID(as_uuid=True), nullable=False)
+    span_id = Column(UUID(as_uuid=True), nullable=False)
+    parent_span_id = Column(UUID(as_uuid=True))
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
+    event = Column(String, nullable=False)
+    capability = Column(String)
+    duration_ms = Column(Integer)
+    status = Column(Enum(SpanStatus))
+    credits_used = Column(Integer)
+    extra_data = Column(JSON, default={})
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

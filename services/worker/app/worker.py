@@ -16,6 +16,8 @@ from .models import (
     Agent,
     AgentStatus,
     CurrencyType,
+    Span,
+    SpanStatus,
     TaskSession,
     TaskStatus,
     Transaction,
@@ -189,6 +191,131 @@ async def reset_daily_metrics(db: Session):
             db.rollback()
 
 
+def _compute_reputation_tier(success_rate: float, total_completed: int, avg_response_time_ms: int) -> str:
+    """Compute reputation tier from metrics."""
+    if total_completed >= 50 and success_rate >= 0.95 and avg_response_time_ms < 2000:
+        return "diamond"
+    elif total_completed >= 25 and success_rate >= 0.90 and avg_response_time_ms < 5000:
+        return "gold"
+    elif total_completed >= 10 and success_rate >= 0.80:
+        return "silver"
+    elif total_completed >= 5 and success_rate >= 0.60:
+        return "bronze"
+    return "unranked"
+
+
+async def update_all_reputations(db: Session):
+    """Recompute reputation for all agents. Runs every 5 minutes."""
+    with tracer.start_as_current_span("update_all_reputations"):
+        try:
+            agents = db.query(Agent).all()
+            updated = 0
+
+            for agent in agents:
+                # Count tasks by status (as callee)
+                task_counts = (
+                    db.query(TaskSession.status, func.count(TaskSession.id))
+                    .filter(TaskSession.callee_agent_id == agent.id)
+                    .group_by(TaskSession.status)
+                    .all()
+                )
+                counts = {str(s.value) if hasattr(s, "value") else str(s): c for s, c in task_counts}
+
+                completed = counts.get("completed", 0)
+                failed = counts.get("failed", 0)
+                timeout = counts.get("timeout", 0)
+                total = completed + failed + timeout
+                success_rate = completed / total if total > 0 else 0.0
+
+                # Average response time
+                avg_time = (
+                    db.query(func.avg(Span.duration_ms))
+                    .filter(Span.agent_id == agent.id, Span.duration_ms.isnot(None))
+                    .scalar()
+                )
+                avg_ms = int(avg_time) if avg_time else 0
+
+                # Total volume
+                volume = (
+                    db.query(func.sum(TaskSession.escrow_amount))
+                    .filter(TaskSession.callee_agent_id == agent.id, TaskSession.status == TaskStatus.COMPLETED)
+                    .scalar()
+                )
+                total_volume = int(volume) if volume else 0
+
+                # Update agent
+                agent.total_tasks_completed = completed
+                agent.total_tasks_failed = failed
+                agent.total_tasks_timeout = timeout
+                agent.success_rate = round(success_rate, 4)
+                agent.avg_response_time_ms = avg_ms
+                agent.total_volume_credits = total_volume
+                agent.reputation_tier = _compute_reputation_tier(success_rate, completed, avg_ms)
+                agent.reputation_updated_at = datetime.utcnow()
+                updated += 1
+
+            db.commit()
+            logger.info(f"Updated reputation for {updated} agents")
+
+        except Exception as e:
+            logger.error(f"Error updating reputations: {e}")
+            db.rollback()
+
+
+async def crawl_agent_cards(db: Session):
+    """
+    Passive Discovery Crawler (Phase 3C).
+
+    Periodically fetches /.well-known/agent-card.json from all
+    registered agent endpoints to detect capability changes.
+
+    Invariant: Only updates capabilities. Never touches wallet/escrow.
+    """
+    with tracer.start_as_current_span("crawl_agent_cards"):
+        agents = db.query(Agent).filter(Agent.endpoint.isnot(None)).all()
+        updated = 0
+
+        for agent in agents:
+            try:
+                card_url = f"{agent.endpoint.rstrip('/')}/.well-known/agent-card.json"
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.get(card_url)
+
+                if resp.status_code != 200:
+                    continue
+
+                card = resp.json()
+                if not card.get("skills"):
+                    continue
+
+                # Convert A2A skills to capabilities format
+                new_capabilities = []
+                for skill in card.get("skills", []):
+                    new_capabilities.append({
+                        "name": skill.get("id", skill.get("name", "unknown")),
+                        "version": card.get("version", "1.0"),
+                        "input_schema": {"type": "object"},
+                        "output_schema": {"type": "object"},
+                        "price": 0,
+                    })
+
+                # Only update if capabilities changed
+                old_names = sorted(c.get("name") for c in (agent.capabilities or []))
+                new_names = sorted(c.get("name") for c in new_capabilities)
+
+                if old_names != new_names:
+                    agent.capabilities = new_capabilities
+                    updated += 1
+                    logger.info(f"Updated capabilities for agent {agent.name}: {new_names}")
+
+            except Exception as e:
+                logger.debug(f"Could not crawl agent {agent.name}: {e}")
+
+        if updated > 0:
+            db.commit()
+            logger.info(f"Crawler updated {updated} agent capabilities")
+
+
 async def main():
     """Main worker loop."""
     logger.info("Auto-Refund Worker started")
@@ -203,6 +330,10 @@ async def main():
 
     # Last time daily metrics were reset
     last_reset_time = datetime.utcnow()
+    # Last time reputation was computed (every 5 minutes)
+    last_reputation_time = datetime.utcnow()
+    # Last time agent cards were crawled (every hour)
+    last_crawl_time = datetime.utcnow()
 
     while True:
         try:
@@ -213,11 +344,22 @@ async def main():
                 # Process timed out tasks
                 await process_timed_out_tasks(db, redis_client)
 
-                # Check if we need to reset daily metrics (once per day)
                 now = datetime.utcnow()
+
+                # Check if we need to reset daily metrics (once per day)
                 if (now - last_reset_time).days >= 1:
                     await reset_daily_metrics(db)
                     last_reset_time = now
+
+                # Recompute reputation every 5 minutes
+                if (now - last_reputation_time).total_seconds() >= 300:
+                    await update_all_reputations(db)
+                    last_reputation_time = now
+
+                # Crawl agent cards every hour
+                if (now - last_crawl_time).total_seconds() >= 3600:
+                    await crawl_agent_cards(db)
+                    last_crawl_time = now
 
             finally:
                 # Close the database session

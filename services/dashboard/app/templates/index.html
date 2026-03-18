@@ -44,6 +44,7 @@
         <h1>AgentNet Dashboard</h1>
         <nav class="nav">
             <a href="#" class="active" data-section="overview">Overview</a>
+            <a href="#" data-section="agents">Agents</a>
             <a href="#" data-section="traces">Traces</a>
             <a href="#" data-section="approvals">Approvals</a>
         </nav>
@@ -102,6 +103,28 @@
             </div>
         </div>
 
+        <!-- Agents Section -->
+        <div id="agents" class="section">
+            <div class="card">
+                <h2>Registered Agents</h2>
+                <button class="btn" onclick="loadAgents()">Refresh</button>
+                <div id="agent-list" style="margin-top: 1rem;">
+                    <p style="color: #666;">Click Refresh to load agents.</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>A2A Agent Card Viewer</h2>
+                <div class="form-group">
+                    <label>Agent ID</label>
+                    <input type="text" id="card-agent-id" placeholder="Enter agent ID to view its A2A card...">
+                </div>
+                <button class="btn" onclick="viewAgentCard()">View Card</button>
+                <button class="btn" onclick="viewRegistryCard()" style="margin-left:0.5rem;background:#16213e;">Registry Card</button>
+                <pre id="card-viewer" style="margin-top:1rem;background:#f8f9fa;padding:1rem;border-radius:6px;overflow-x:auto;display:none;"></pre>
+            </div>
+        </div>
+
         <!-- Traces Section -->
         <div id="traces" class="section">
             <div class="card">
@@ -151,6 +174,14 @@
     </div>
 
     <script>
+        // XSS protection — escape HTML entities in user-supplied data
+        function esc(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = String(str);
+            return div.innerHTML;
+        }
+
         // Navigation
         document.querySelectorAll('.nav a').forEach(link => {
             link.addEventListener('click', (e) => {
@@ -280,6 +311,78 @@
                 }
             } catch (e) {
                 document.getElementById('approval-results').innerHTML = `<p style="color: red;">Error: ${e.message}</p>`;
+            }
+        }
+
+        // Load agents
+        async function loadAgents() {
+            document.getElementById('agent-list').innerHTML = '<p>Loading...</p>';
+            try {
+                const resp = await fetch('/api/agents');
+                const data = await resp.json();
+
+                if (data.agents && data.agents.length > 0) {
+                    document.getElementById('agent-list').innerHTML = `
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Status</th>
+                                    <th>Score</th>
+                                    <th>Capabilities</th>
+                                    <th>Endpoint</th>
+                                    <th>A2A Card</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${data.agents.map(a => `
+                                    <tr>
+                                        <td><strong>${esc(a.name)}</strong></td>
+                                        <td><span class="badge badge-${a.status === 'active' ? 'success' : a.status === 'suspended' ? 'danger' : 'warning'}">${esc(a.status)}</span></td>
+                                        <td>${esc(String(a.verify_score))}/100</td>
+                                        <td>${esc((a.capabilities || []).map(c => c.name).join(', ') || '-')}</td>
+                                        <td style="font-size:0.8rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;">${esc(a.endpoint)}</td>
+                                        <td><button class="btn" style="font-size:0.75rem;padding:0.25rem 0.5rem;" onclick="document.getElementById('card-agent-id').value='${esc(a.id)}';viewAgentCard();">View</button></td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                } else {
+                    document.getElementById('agent-list').innerHTML = '<p>No agents registered.</p>';
+                }
+            } catch (e) {
+                document.getElementById('agent-list').innerHTML = `<p style="color:red;">Error: ${e.message}</p>`;
+            }
+        }
+
+        // View A2A Agent Card
+        async function viewAgentCard() {
+            const agentId = document.getElementById('card-agent-id').value;
+            if (!agentId) return;
+            try {
+                const resp = await fetch(`/api/agents/${agentId}/card`);
+                const data = await resp.json();
+                const viewer = document.getElementById('card-viewer');
+                viewer.textContent = JSON.stringify(data, null, 2);
+                viewer.style.display = 'block';
+            } catch (e) {
+                document.getElementById('card-viewer').textContent = `Error: ${e.message}`;
+                document.getElementById('card-viewer').style.display = 'block';
+            }
+        }
+
+        // View Registry Card
+        async function viewRegistryCard() {
+            try {
+                const resp = await fetch('/api/registry-card');
+                const data = await resp.json();
+                const viewer = document.getElementById('card-viewer');
+                viewer.textContent = JSON.stringify(data, null, 2);
+                viewer.style.display = 'block';
+            } catch (e) {
+                document.getElementById('card-viewer').textContent = `Error: ${e.message}`;
+                document.getElementById('card-viewer').style.display = 'block';
             }
         }
 

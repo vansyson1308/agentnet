@@ -89,6 +89,14 @@ class OfferStatus(str, enum.Enum):
     EXPIRED = "expired"
 
 
+class InteractionType(str, enum.Enum):
+    TASK_COMPLETED = "task_completed"
+    TASK_FAILED = "task_failed"
+    OFFER_ACCEPTED = "offer_accepted"
+    OFFER_REJECTED = "offer_rejected"
+    REFERRAL = "referral"
+
+
 class CurrencyType(str, enum.Enum):
     CREDITS = "credits"
     USDC = "usdc"
@@ -127,6 +135,15 @@ class Agent(Base):
     verify_score = Column(Integer, default=0)
     timeout_count = Column(Integer, default=0)
     offer_rate_7d = Column(Float, default=0)
+    # Enhanced reputation fields (Phase 2B)
+    total_tasks_completed = Column(Integer, default=0)
+    total_tasks_failed = Column(Integer, default=0)
+    total_tasks_timeout = Column(Integer, default=0)
+    success_rate = Column(Float, default=0.0)  # completed / total
+    avg_response_time_ms = Column(Integer, default=0)
+    total_volume_credits = Column(Integer, default=0)
+    reputation_tier = Column(String, default="unranked")  # unranked/bronze/silver/gold/diamond
+    reputation_updated_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -252,6 +269,8 @@ class Transaction(Base):
     status = _enum_column(TransactionStatus, default="pending")
     type = _enum_column(TransactionType, nullable=False)
     task_session_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id"))
+    platform_fee = Column(Integer, default=0)
+    platform_fee_rate = Column(Numeric(5, 4), default=0.025)
     extra_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
@@ -302,3 +321,40 @@ class Offer(Base):
     from_agent = relationship("Agent", foreign_keys=[from_agent_id], back_populates="sent_offers")
     to_agent = relationship("Agent", foreign_keys=[to_agent_id], back_populates="received_offers")
     core_task = relationship("TaskSession", back_populates="offers")
+    negotiation_rounds = relationship("NegotiationRound", back_populates="offer", order_by="NegotiationRound.round_number")
+
+
+# NegotiationRound model (Phase 2C — multi-round price negotiation)
+class NegotiationRound(Base):
+    __tablename__ = "negotiation_rounds"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    offer_id = Column(UUID(as_uuid=True), ForeignKey("offers.id"), nullable=False)
+    round_number = Column(Integer, nullable=False)
+    proposed_by_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=False)
+    proposed_price = Column(Integer, nullable=False)
+    proposed_terms = Column(Text)
+    status = _enum_column(OfferStatus, default="pending")  # pending/accepted/rejected
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    offer = relationship("Offer", back_populates="negotiation_rounds")
+    proposed_by = relationship("Agent", foreign_keys=[proposed_by_agent_id])
+
+
+# AgentInteraction model (Phase 3A — Social Graph)
+class AgentInteraction(Base):
+    __tablename__ = "agent_interactions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    from_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    to_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    interaction_type = _enum_column(InteractionType, nullable=False)
+    count = Column(Integer, nullable=False, default=1)
+    total_volume = Column(Integer, nullable=False, default=0)
+    last_interaction_at = Column(DateTime(timezone=True), server_default=func.now())
+    first_interaction_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    from_agent = relationship("Agent", foreign_keys=[from_agent_id])
+    to_agent = relationship("Agent", foreign_keys=[to_agent_id])

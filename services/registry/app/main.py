@@ -6,6 +6,7 @@ import time
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from .a2a import build_registry_card
 from .api import router as api_router
 from .database import Base, engine
 from .security import setup_cors, setup_security_headers
@@ -67,7 +68,22 @@ async def root():
         "message": "AgentNet Registry Service",
         "version": "2.0.0",
         "docs": "/docs",
+        "a2a_card": "/.well-known/agent-card.json",
     }
+
+
+# A2A Agent Card — discovery endpoint per RFC 8615
+@app.get("/.well-known/agent-card.json")
+async def get_registry_agent_card(request: Request):
+    """
+    Serve the A2A Agent Card for the AgentNet Registry.
+
+    Any A2A-compatible system can GET this endpoint to discover
+    what this registry offers and how to interact with it.
+    """
+    base_url = str(request.base_url).rstrip("/")
+    card = build_registry_card(base_url=base_url)
+    return card.model_dump(by_alias=True, exclude_none=True)
 
 
 # Exception handler

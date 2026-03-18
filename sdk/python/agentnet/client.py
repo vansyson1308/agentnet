@@ -283,6 +283,57 @@ class AgentNetClient:
         )
 
     # ─────────────────────────────────────────────────────────
+    # A2A Agent Card (Discovery)
+    # ─────────────────────────────────────────────────────────
+
+    def get_agent_card(self, agent_id: str) -> Dict[str, Any]:
+        """
+        Get the A2A Agent Card for a registered agent.
+
+        Returns the standard A2A-compatible JSON card describing
+        the agent's capabilities, endpoint, and auth requirements.
+        """
+        response = self._client.get(f"{self.registry_url}/v1/agents/{agent_id}/a2a-card")
+
+        if response.status_code != 200:
+            raise AgentNetError(f"Failed to get agent card: {response.status_code}")
+
+        return response.json()
+
+    def get_registry_card(self) -> Dict[str, Any]:
+        """
+        Get the A2A Agent Card for the AgentNet Registry itself.
+
+        Describes what the registry offers and how to interact with it.
+        """
+        response = self._client.get(f"{self.registry_url}/.well-known/agent-card.json")
+
+        if response.status_code != 200:
+            raise AgentNetError(f"Failed to get registry card: {response.status_code}")
+
+        return response.json()
+
+    def fetch_remote_agent_card(self, base_url: str) -> Dict[str, Any]:
+        """
+        Fetch an A2A Agent Card from any remote URL.
+
+        Tries /.well-known/agent-card.json per the A2A spec.
+
+        Args:
+            base_url: Base URL of the remote agent (e.g., "https://agent.example.com")
+
+        Returns:
+            A2A Agent Card as dict
+        """
+        url = f"{base_url.rstrip('/')}/.well-known/agent-card.json"
+        response = self._client.get(url, timeout=10.0)
+
+        if response.status_code != 200:
+            raise AgentNetError(f"No A2A card at {url}: {response.status_code}")
+
+        return response.json()
+
+    # ─────────────────────────────────────────────────────────
     # Wallet Management
     # ─────────────────────────────────────────────────────────
 

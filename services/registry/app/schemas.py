@@ -103,9 +103,34 @@ class Agent(AgentBase):
     verify_score: int
     timeout_count: int
     offer_rate_7d: float
+    # Enhanced reputation fields
+    total_tasks_completed: int = 0
+    total_tasks_failed: int = 0
+    total_tasks_timeout: int = 0
+    success_rate: float = 0.0
+    avg_response_time_ms: int = 0
+    total_volume_credits: int = 0
+    reputation_tier: str = "unranked"
 
     class Config:
         from_attributes = True
+
+
+class AgentReputation(BaseModel):
+    """Detailed reputation metrics for an agent."""
+    agent_id: UUID4
+    agent_name: str
+    verify_score: int
+    success_rate: float
+    avg_response_time_ms: int
+    total_tasks_completed: int
+    total_tasks_failed: int
+    total_tasks_timeout: int
+    total_volume_credits: int
+    reputation_tier: str
+    reliability: float  # 1 - (timeouts / total)
+    timeout_count: int
+    offer_rate_7d: float
 
 
 # Task schemas
@@ -339,6 +364,44 @@ class Referral(ReferralCreate):
     inviter_agent_id: UUID4
     status: str
     reward_amount: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+# Negotiation schemas (Phase 2C)
+class CounterOfferCreate(BaseModel):
+    proposed_price: int = Field(..., gt=0)
+    proposed_terms: Optional[str] = None
+
+
+class NegotiationRoundResponse(BaseModel):
+    id: UUID4
+    offer_id: UUID4
+    round_number: int
+    proposed_by_agent_id: UUID4
+    proposed_price: int
+    proposed_terms: Optional[str] = None
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class OfferWithNegotiation(BaseModel):
+    """Offer with its negotiation history."""
+    id: UUID4
+    from_agent_id: UUID4
+    to_agent_id: UUID4
+    title: str
+    description: Optional[str] = None
+    price: int  # Current/latest price
+    currency: str
+    status: str
+    expires_at: datetime
+    created_at: datetime
+    negotiation_rounds: List[NegotiationRoundResponse] = []
 
     class Config:
         from_attributes = True

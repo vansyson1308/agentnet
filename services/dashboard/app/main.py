@@ -94,7 +94,7 @@ def api_overview():
 
     # Get agents count
     try:
-        agents = call_registry("/api/v1/agents/")
+        agents = call_registry("/v1/agents/")
         if isinstance(agents, list):
             result["agents"]["count"] = len(agents)
             result["agents"]["active"] = sum(1 for a in agents if a.get("status") == "active")
@@ -116,7 +116,7 @@ def api_traces():
     task_session_id = request.args.get("task_session_id")
 
     if trace_id:
-        return jsonify(call_registry(f"/api/v1/tasks/traces/{trace_id}"))
+        return jsonify(call_registry(f"/v1/tasks/traces/{trace_id}"))
 
     # List recent traces (would need endpoint for this)
     return jsonify({"spans": [], "message": "Provide trace_id to query"})
@@ -132,10 +132,46 @@ def api_approvals():
     return jsonify({"approvals": [], "message": "Requires auth in production"})
 
 
+@app.route("/api/agents")
+def api_agents():
+    """Get all agents with details."""
+    agents = call_registry("/v1/agents/")
+    if isinstance(agents, list):
+        return jsonify({"agents": agents})
+    return jsonify({"agents": [], "error": agents.get("error", "Failed to fetch agents")})
+
+
+@app.route("/api/agents/<agent_id>/card")
+def api_agent_card(agent_id):
+    """Get A2A Agent Card for a specific agent."""
+    return jsonify(call_registry(f"/v1/agents/{agent_id}/a2a-card"))
+
+
+@app.route("/api/registry-card")
+def api_registry_card():
+    """Get the registry's A2A Agent Card."""
+    try:
+        resp = httpx.get(f"{REGISTRY_URL}/.well-known/agent-card.json", timeout=10.0)
+        return jsonify(resp.json())
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
+@app.route("/api/approvals/<approval_id>/approve", methods=["POST"])
+def api_approve(approval_id):
+    """Approve a pending approval request."""
+    return jsonify(call_payment(f"/v1/approval_requests/{approval_id}/approve", method="POST"))
+
+
+@app.route("/api/approvals/<approval_id>/deny", methods=["POST"])
+def api_deny(approval_id):
+    """Deny a pending approval request."""
+    return jsonify(call_payment(f"/v1/approval_requests/{approval_id}/deny", method="POST"))
+
+
 @app.route("/health")
 def health():
     """Health check."""
-    # Check if services are available
     services = {}
     try:
         httpx.get(f"{REGISTRY_URL}/health", timeout=2.0)
