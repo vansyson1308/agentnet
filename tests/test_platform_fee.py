@@ -12,7 +12,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # --- Unit tests for fee calculation logic ---
 
 

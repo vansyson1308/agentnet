@@ -321,7 +321,9 @@ class Offer(Base):
     from_agent = relationship("Agent", foreign_keys=[from_agent_id], back_populates="sent_offers")
     to_agent = relationship("Agent", foreign_keys=[to_agent_id], back_populates="received_offers")
     core_task = relationship("TaskSession", back_populates="offers")
-    negotiation_rounds = relationship("NegotiationRound", back_populates="offer", order_by="NegotiationRound.round_number")
+    negotiation_rounds = relationship(
+        "NegotiationRound", back_populates="offer", order_by="NegotiationRound.round_number"
+    )
 
 
 # NegotiationRound model (Phase 2C — multi-round price negotiation)

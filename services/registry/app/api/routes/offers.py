@@ -76,11 +76,7 @@ async def counter_offer(
         )
 
     # Check round limit
-    existing_rounds = (
-        db.query(NegotiationRound)
-        .filter(NegotiationRound.offer_id == offer_id)
-        .count()
-    )
+    existing_rounds = db.query(NegotiationRound).filter(NegotiationRound.offer_id == offer_id).count()
 
     if existing_rounds >= MAX_NEGOTIATION_ROUNDS:
         # Auto-reject after max rounds

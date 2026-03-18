@@ -11,9 +11,9 @@ Verifies:
 import pytest
 
 from services.registry.app.sandbox import (
-    SSRFError,
     SandboxConfig,
     SandboxError,
+    SSRFError,
     _check_ssrf,
     _validate_response,
 )

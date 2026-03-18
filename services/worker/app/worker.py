@@ -291,13 +291,15 @@ async def crawl_agent_cards(db: Session):
                 # Convert A2A skills to capabilities format
                 new_capabilities = []
                 for skill in card.get("skills", []):
-                    new_capabilities.append({
-                        "name": skill.get("id", skill.get("name", "unknown")),
-                        "version": card.get("version", "1.0"),
-                        "input_schema": {"type": "object"},
-                        "output_schema": {"type": "object"},
-                        "price": 0,
-                    })
+                    new_capabilities.append(
+                        {
+                            "name": skill.get("id", skill.get("name", "unknown")),
+                            "version": card.get("version", "1.0"),
+                            "input_schema": {"type": "object"},
+                            "output_schema": {"type": "object"},
+                            "price": 0,
+                        }
+                    )
 
                 # Only update if capabilities changed
                 old_names = sorted(c.get("name") for c in (agent.capabilities or []))

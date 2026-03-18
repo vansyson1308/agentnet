@@ -62,22 +62,26 @@ async def get_agent_connections(
     connections = []
     for interaction in interactions:
         # Determine the "other" agent
-        other_id = (
-            interaction.to_agent_id
-            if interaction.from_agent_id == agent_id
-            else interaction.from_agent_id
-        )
+        other_id = interaction.to_agent_id if interaction.from_agent_id == agent_id else interaction.from_agent_id
         other_agent = db.query(Agent).filter(Agent.id == other_id).first()
 
-        connections.append({
-            "agent_id": str(other_id),
-            "agent_name": other_agent.name if other_agent else "unknown",
-            "interaction_type": interaction.interaction_type.value if hasattr(interaction.interaction_type, "value") else str(interaction.interaction_type),
-            "count": interaction.count,
-            "total_volume": interaction.total_volume,
-            "last_interaction": interaction.last_interaction_at.isoformat() if interaction.last_interaction_at else None,
-            "direction": "outgoing" if interaction.from_agent_id == agent_id else "incoming",
-        })
+        connections.append(
+            {
+                "agent_id": str(other_id),
+                "agent_name": other_agent.name if other_agent else "unknown",
+                "interaction_type": (
+                    interaction.interaction_type.value
+                    if hasattr(interaction.interaction_type, "value")
+                    else str(interaction.interaction_type)
+                ),
+                "count": interaction.count,
+                "total_volume": interaction.total_volume,
+                "last_interaction": (
+                    interaction.last_interaction_at.isoformat() if interaction.last_interaction_at else None
+                ),
+                "direction": "outgoing" if interaction.from_agent_id == agent_id else "incoming",
+            }
+        )
 
     return {
         "agent_id": str(agent_id),
@@ -177,14 +181,16 @@ async def get_agent_recommendations(
             if not has_cap:
                 continue
 
-        recommendations.append({
-            "agent_id": str(rec_id),
-            "name": rec_agent.name,
-            "reputation_tier": rec_agent.reputation_tier,
-            "success_rate": rec_agent.success_rate,
-            "endorsement_strength": int(strength),
-            "reason": f"Endorsed by {int(strength)} of your trusted connections",
-        })
+        recommendations.append(
+            {
+                "agent_id": str(rec_id),
+                "name": rec_agent.name,
+                "reputation_tier": rec_agent.reputation_tier,
+                "success_rate": rec_agent.success_rate,
+                "endorsement_strength": int(strength),
+                "reason": f"Endorsed by {int(strength)} of your trusted connections",
+            }
+        )
 
     return {
         "agent_id": str(agent_id),

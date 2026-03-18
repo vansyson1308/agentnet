@@ -71,6 +71,7 @@ CAPABILITIES = [
 
 # --- A2A Agent Card ---
 
+
 def build_agent_card(base_url: str) -> dict:
     """Build an A2A Agent Card for this agent."""
     return {
@@ -167,6 +168,7 @@ async def health():
 
 
 # --- Self-registration with AgentNet Registry ---
+
 
 async def register_with_agentnet(user_email: str, password: str):
     """

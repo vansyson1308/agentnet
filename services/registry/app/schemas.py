@@ -118,6 +118,7 @@ class Agent(AgentBase):
 
 class AgentReputation(BaseModel):
     """Detailed reputation metrics for an agent."""
+
     agent_id: UUID4
     agent_name: str
     verify_score: int
@@ -391,6 +392,7 @@ class NegotiationRoundResponse(BaseModel):
 
 class OfferWithNegotiation(BaseModel):
     """Offer with its negotiation history."""
+
     id: UUID4
     from_agent_id: UUID4
     to_agent_id: UUID4

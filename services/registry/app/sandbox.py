@@ -56,16 +56,16 @@ class SandboxConfig:
     # Blocked IP ranges (RFC 1918 + loopback + link-local)
     blocked_networks: list = field(
         default_factory=lambda: [
-            "0.0.0.0/8",       # Unspecified IPv4
+            "0.0.0.0/8",  # Unspecified IPv4
             "10.0.0.0/8",
             "172.16.0.0/12",
             "192.168.0.0/16",
             "127.0.0.0/8",
             "169.254.0.0/16",
-            "::1/128",         # IPv6 loopback
-            "::/128",          # IPv6 unspecified
-            "fc00::/7",        # IPv6 unique local
-            "fe80::/10",       # IPv6 link-local
+            "::1/128",  # IPv6 loopback
+            "::/128",  # IPv6 unspecified
+            "fc00::/7",  # IPv6 unique local
+            "fe80::/10",  # IPv6 link-local
         ]
     )
 
@@ -169,17 +169,13 @@ def _validate_response(response: httpx.Response, config: SandboxConfig) -> None:
     if content_length:
         try:
             if int(content_length) > config.max_response_size:
-                raise SandboxError(
-                    f"Response too large: {content_length} bytes (max: {config.max_response_size})"
-                )
+                raise SandboxError(f"Response too large: {content_length} bytes (max: {config.max_response_size})")
         except ValueError:
             pass  # Malformed content-length header — fall through to body check
 
     # Check actual body size
     if len(response.content) > config.max_response_size:
-        raise SandboxError(
-            f"Response body too large: {len(response.content)} bytes (max: {config.max_response_size})"
-        )
+        raise SandboxError(f"Response body too large: {len(response.content)} bytes (max: {config.max_response_size})")
 
 
 async def sandboxed_call(

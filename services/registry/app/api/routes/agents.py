@@ -14,7 +14,7 @@ from ...auth import get_current_agent, get_current_user
 from ...database import get_db
 from ...models import Agent, AgentStatus, User, Wallet, WalletOwnerType
 from ...reputation import compute_agent_reputation
-from ...sandbox import SSRFError, SandboxError, SandboxTimeoutError, sandboxed_call
+from ...sandbox import SandboxError, SandboxTimeoutError, SSRFError, sandboxed_call
 from ...schemas import Agent as AgentSchema
 from ...schemas import (
     AgentCreate,
@@ -370,8 +370,10 @@ async def report_task(
 # Phase 2D: Proxy Registration (import agent by URL)
 # ─────────────────────────────────────────────────────────
 
+
 class ImportAgentRequest(BaseModel):
     """Request to import an external agent via its URL."""
+
     url: str
     name_override: Optional[str] = None
 
@@ -436,21 +438,27 @@ async def import_agent(
     # Convert A2A skills to AgentNet capabilities
     capabilities = []
     for skill in card.get("skills", []):
-        capabilities.append({
-            "name": skill.get("id", skill.get("name", "unknown")),
-            "version": card.get("version", "1.0"),
-            "input_schema": {"type": "object"},
-            "output_schema": {"type": "object"},
-            "price": 0,  # External agents set their own pricing
-        })
+        capabilities.append(
+            {
+                "name": skill.get("id", skill.get("name", "unknown")),
+                "version": card.get("version", "1.0"),
+                "input_schema": {"type": "object"},
+                "output_schema": {"type": "object"},
+                "price": 0,  # External agents set their own pricing
+            }
+        )
 
     agent_name = request.name_override or card["name"]
 
     # Check for duplicate
-    existing = db.query(Agent).filter(
-        Agent.user_id == current_user.id,
-        Agent.name == agent_name,
-    ).first()
+    existing = (
+        db.query(Agent)
+        .filter(
+            Agent.user_id == current_user.id,
+            Agent.name == agent_name,
+        )
+        .first()
+    )
 
     if existing:
         raise HTTPException(
@@ -502,6 +510,7 @@ async def import_agent(
 # ─────────────────────────────────────────────────────────
 # Phase 2E: Reputation-Based Routing
 # ─────────────────────────────────────────────────────────
+
 
 @router.get("/discover/{capability_name}")
 async def discover_best_agent(
@@ -577,17 +586,19 @@ async def discover_best_agent(
                 cap_price = cap.get("price", 0)
                 break
 
-        results.append({
-            "agent_id": str(agent.id),
-            "name": agent.name,
-            "description": agent.description,
-            "reputation_tier": agent.reputation_tier,
-            "success_rate": agent.success_rate,
-            "verify_score": agent.verify_score,
-            "avg_response_time_ms": agent.avg_response_time_ms,
-            "price": cap_price,
-            "total_tasks_completed": agent.total_tasks_completed,
-        })
+        results.append(
+            {
+                "agent_id": str(agent.id),
+                "name": agent.name,
+                "description": agent.description,
+                "reputation_tier": agent.reputation_tier,
+                "success_rate": agent.success_rate,
+                "verify_score": agent.verify_score,
+                "avg_response_time_ms": agent.avg_response_time_ms,
+                "price": cap_price,
+                "total_tasks_completed": agent.total_tasks_completed,
+            }
+        )
 
     return {
         "capability": capability_name,
