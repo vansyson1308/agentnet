@@ -262,6 +262,70 @@ async def update_all_reputations(db: Session):
             db.rollback()
 
 
+async def process_timed_out_simulations(db: Session, redis_client):
+    """
+    Check for simulations that have exceeded their timeout and mark them as failed.
+
+    Invariant: Does NOT modify wallet tables. Escrow refund is handled
+    via task_session timeout (existing process_timed_out_tasks logic).
+    """
+    with tracer.start_as_current_span("process_timed_out_simulations"):
+        try:
+            from .models import TaskSession as TS
+
+            now = datetime.utcnow()
+            timeout_seconds = int(os.getenv("SIMULATION_TIMEOUT_SECONDS", "3600"))
+            cutoff = now - timedelta(seconds=timeout_seconds)
+
+            # Find running simulations that started before the cutoff
+            # We query task_sessions with capability 'swarm_simulation' that are still active
+            stuck_sims = (
+                db.query(TS)
+                .filter(
+                    and_(
+                        TS.capability == "swarm_simulation",
+                        TS.status.in_([TaskStatus.INITIATED, TaskStatus.IN_PROGRESS]),
+                        TS.created_at < cutoff,
+                    )
+                )
+                .all()
+            )
+
+            if stuck_sims:
+                logger.info(
+                    f"Found {len(stuck_sims)} timed-out simulation task sessions"
+                )
+
+            for task in stuck_sims:
+                try:
+                    task.status = TaskStatus.TIMEOUT
+                    task.error_message = "Simulation timed out"
+                    task.refund_at = now
+                    db.commit()
+
+                    if redis_client:
+                        await redis_client.publish(
+                            "simulation_updates",
+                            json.dumps(
+                                {
+                                    "simulation_id": str(task.id),
+                                    "user_id": "",
+                                    "progress_pct": -1,
+                                    "message": "Simulation timed out",
+                                    "status": "timeout",
+                                }
+                            ),
+                        )
+
+                    logger.info(f"Marked simulation task {task.id} as timed out")
+                except Exception as e:
+                    logger.error(f"Error timing out simulation task {task.id}: {e}")
+                    db.rollback()
+
+        except Exception as e:
+            logger.debug(f"Simulation timeout check skipped: {e}")
+
+
 async def crawl_agent_cards(db: Session):
     """
     Passive Discovery Crawler (Phase 3C).
@@ -336,6 +400,8 @@ async def main():
     last_reputation_time = datetime.utcnow()
     # Last time agent cards were crawled (every hour)
     last_crawl_time = datetime.utcnow()
+    # Last time simulation timeouts were checked (every 60s)
+    last_sim_timeout_time = datetime.utcnow()
 
     while True:
         try:
@@ -357,6 +423,11 @@ async def main():
                 if (now - last_reputation_time).total_seconds() >= 300:
                     await update_all_reputations(db)
                     last_reputation_time = now
+
+                # Check simulation timeouts every 60 seconds
+                if (now - last_sim_timeout_time).total_seconds() >= 60:
+                    await process_timed_out_simulations(db, redis_client)
+                    last_sim_timeout_time = now
 
                 # Crawl agent cards every hour
                 if (now - last_crawl_time).total_seconds() >= 3600:

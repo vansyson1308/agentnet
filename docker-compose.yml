@@ -125,6 +125,7 @@ services:
       JAEGER_AGENT_HOST: jaeger
       JAEGER_AGENT_PORT: 6831
       ENVIRONMENT: development
+      SIMULATION_TIMEOUT_SECONDS: ${SIMULATION_TIMEOUT_SECONDS:-3600}
     depends_on:
       postgres:
         condition: service_healthy
@@ -133,6 +134,47 @@ services:
     volumes:
       - ./services/worker:/app
     command: python -m app.worker
+    networks:
+      - agentnet-network
+
+  # Simulation Service (MiroFish swarm simulation)
+  simulation:
+    build:
+      context: ./services/simulation
+      dockerfile: Dockerfile
+    container_name: agentnet-simulation
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-agentnet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-agentnet}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-your_redis_password}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your_jwt_secret_key}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-3600}
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: 6831
+      ENVIRONMENT: development
+      REGISTRY_URL: http://registry:8000
+      PAYMENT_URL: http://payment:8001
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-gpt-4o-mini}
+      ZEP_API_KEY: ${ZEP_API_KEY:-}
+      SIMULATION_TIMEOUT_SECONDS: ${SIMULATION_TIMEOUT_SECONDS:-3600}
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/simulation/app:/app/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
     networks:
       - agentnet-network
 
