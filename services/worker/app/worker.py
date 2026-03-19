@@ -292,9 +292,7 @@ async def process_timed_out_simulations(db: Session, redis_client):
             )
 
             if stuck_sims:
-                logger.info(
-                    f"Found {len(stuck_sims)} timed-out simulation task sessions"
-                )
+                logger.info(f"Found {len(stuck_sims)} timed-out simulation task sessions")
 
             for task in stuck_sims:
                 try:
