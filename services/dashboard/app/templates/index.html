@@ -41,12 +41,13 @@
 </head>
 <body>
     <div class="header">
-        <h1>AgentNet Dashboard</h1>
+        <h1>AgentNet Observer Dashboard</h1>
+        <p style="color:#94a3b8;font-size:0.85rem;margin-top:0.25rem;">Human-readable view of autonomous agent activity &mdash; agents act, humans observe</p>
         <nav class="nav">
-            <a href="#" class="active" data-section="overview">Overview</a>
-            <a href="#" data-section="agents">Agents</a>
-            <a href="#" data-section="traces">Traces</a>
-            <a href="#" data-section="approvals">Approvals</a>
+            <a href="#" class="active" data-section="overview">Agent Economy Overview</a>
+            <a href="#" data-section="agents">Registered Agents</a>
+            <a href="#" data-section="traces">Audit Trail</a>
+            <a href="#" data-section="approvals">Escrow Approvals</a>
         </nav>
     </div>
 
@@ -54,20 +55,20 @@
         <!-- Overview Section -->
         <div id="overview" class="section active">
             <div class="card">
-                <h2>Services Status</h2>
+                <h2>Agent Infrastructure Status</h2>
                 <div id="services-status" class="services-status">Loading...</div>
             </div>
 
             <div class="card">
-                <h2>Platform Metrics</h2>
+                <h2>Agent Economy Metrics</h2>
                 <div class="stats">
                     <div class="stat">
                         <div class="stat-value" id="agent-count">-</div>
-                        <div class="stat-label">Total Agents</div>
+                        <div class="stat-label">Registered Agents</div>
                     </div>
                     <div class="stat">
                         <div class="stat-value" id="active-agents">-</div>
-                        <div class="stat-label">Active Agents</div>
+                        <div class="stat-label">Active (Discoverable)</div>
                     </div>
                     <div class="stat">
                         <div class="stat-value" id="wallet-count">-</div>
@@ -81,24 +82,43 @@
             </div>
 
             <div class="card">
-                <h2>Financial Summary</h2>
+                <h2>Escrow &amp; Settlement Summary</h2>
                 <div class="stats">
                     <div class="stat">
                         <div class="stat-value" id="total-credits">-</div>
-                        <div class="stat-label">Total Credits</div>
+                        <div class="stat-label">Total Agent Credits</div>
                     </div>
                     <div class="stat">
                         <div class="stat-value" id="reserved-credits">-</div>
-                        <div class="stat-label">Reserved Credits</div>
+                        <div class="stat-label">Escrow Reserved</div>
                     </div>
                     <div class="stat">
                         <div class="stat-value" id="tx-completed">-</div>
-                        <div class="stat-label">Completed Transactions</div>
+                        <div class="stat-label">Settled Transactions</div>
                     </div>
                     <div class="stat">
                         <div class="stat-value" id="pending-tx">-</div>
-                        <div class="stat-label">Pending Transactions</div>
+                        <div class="stat-label">Pending Settlement</div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+            <div class="card">
+                <h2>Agent Task Lifecycle</h2>
+                <p style="color:#666;font-size:0.85rem;margin-bottom:0.75rem;">Agents progress through these states autonomously. Humans observe but do not mediate.</p>
+                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                    <span class="badge" style="background:#e0e7ff;color:#3730a3;">Registered</span>
+                    <span style="color:#aaa;">&rarr;</span>
+                    <span class="badge" style="background:#dbeafe;color:#1e40af;">Discovered</span>
+                    <span style="color:#aaa;">&rarr;</span>
+                    <span class="badge badge-warning">Escrow Reserved</span>
+                    <span style="color:#aaa;">&rarr;</span>
+                    <span class="badge" style="background:#fef3c7;color:#92400e;">In Progress</span>
+                    <span style="color:#aaa;">&rarr;</span>
+                    <span class="badge badge-success">Settled</span>
+                    <span style="color:#aaa;">&rarr;</span>
+                    <span class="badge" style="background:#d1fae5;color:#065f46;">Reputation Updated</span>
                 </div>
             </div>
         </div>
@@ -107,6 +127,7 @@
         <div id="agents" class="section">
             <div class="card">
                 <h2>Registered Agents</h2>
+                <p style="color:#666;font-size:0.85rem;margin-bottom:0.5rem;">Agents that have self-registered their capabilities, endpoints, and pricing on the network.</p>
                 <button class="btn" onclick="loadAgents()">Refresh</button>
                 <div id="agent-list" style="margin-top: 1rem;">
                     <p style="color: #666;">Click Refresh to load agents.</p>
@@ -128,7 +149,8 @@
         <!-- Traces Section -->
         <div id="traces" class="section">
             <div class="card">
-                <h2>Query Traces</h2>
+                <h2>Query Audit Trail</h2>
+                <p style="color:#666;font-size:0.85rem;margin-bottom:0.5rem;">Every agent interaction is traced with spans. Query by trace ID to see the full attestation chain.</p>
                 <div class="form-group">
                     <label>Trace ID</label>
                     <input type="text" id="trace-id-input" placeholder="Enter trace ID...">
@@ -141,7 +163,7 @@
             </div>
 
             <div class="card">
-                <h2>Trace Results</h2>
+                <h2>Attestation Spans</h2>
                 <div id="trace-results">
                     <p style="color: #666;">Enter a trace ID to view spans.</p>
                 </div>
@@ -151,7 +173,8 @@
         <!-- Approvals Section -->
         <div id="approvals" class="section">
             <div class="card">
-                <h2>Approval Requests</h2>
+                <h2>Escrow Approval Requests</h2>
+                <p style="color:#666;font-size:0.85rem;margin-bottom:0.5rem;">Agent payment approvals pending human authorization (optional safeguard for high-value transactions).</p>
                 <div class="form-group">
                     <label>Filter by Status</label>
                     <select id="approval-status" style="width: 100%; padding: 0.5rem;">
@@ -165,7 +188,7 @@
             </div>
 
             <div class="card">
-                <h2>Approval List</h2>
+                <h2>Pending Settlements</h2>
                 <div id="approval-results">
                     <p style="color: #666;">Click "Load Approvals" to view.</p>
                 </div>
