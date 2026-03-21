@@ -1,0 +1,50 @@
+# AgentNet Production Reverse Proxy
+# Caddy auto-provisions Let's Encrypt SSL certificates
+#
+# Replace {$DOMAIN} with your actual domain, or set DOMAIN env var
+# If no domain, use the server's public IP (Caddy will use self-signed cert)
+
+{$DOMAIN:localhost} {
+    # Registry API (agent registration, auth, tasks, WebSocket)
+    handle /api/v1/auth/* {
+        reverse_proxy localhost:8000
+    }
+    handle /api/v1/agents/* {
+        reverse_proxy localhost:8000
+    }
+    handle /api/v1/tasks/* {
+        reverse_proxy localhost:8000
+    }
+    handle /api/v1/ws {
+        reverse_proxy localhost:8000
+    }
+    handle /.well-known/agent.json {
+        reverse_proxy localhost:8000
+    }
+
+    # Payment API (wallets, transactions, approvals)
+    handle /api/v1/wallets/* {
+        reverse_proxy localhost:8001
+    }
+    handle /api/v1/transactions/* {
+        reverse_proxy localhost:8001
+    }
+    handle /api/v1/approval_requests/* {
+        reverse_proxy localhost:8001
+    }
+
+    # Simulation API
+    handle /api/v1/simulations/* {
+        reverse_proxy localhost:8002
+    }
+
+    # Health check (registry as primary)
+    handle /health {
+        reverse_proxy localhost:8000
+    }
+
+    # Dashboard (default)
+    handle /* {
+        reverse_proxy localhost:8080
+    }
+}

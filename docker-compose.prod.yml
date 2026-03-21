@@ -1,0 +1,60 @@
+# Production overrides for docker-compose.yml
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Changes from development:
+# - No volume mounts (no hot-reload)
+# - No --reload flag on uvicorn
+# - Multi-worker uvicorn for performance
+# - restart: unless-stopped for all services
+# - DB/Redis ports not exposed externally
+# - Jaeger restricted to localhost
+# - ENVIRONMENT set to production
+
+services:
+  postgres:
+    ports: []
+
+  redis:
+    ports: []
+
+  registry:
+    volumes: []
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      JAEGER_ENABLED: "${JAEGER_ENABLED:-false}"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS}"
+      REGISTRY_PUBLIC_URL: "${REGISTRY_PUBLIC_URL}"
+
+  payment:
+    volumes: []
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --workers 2
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      JAEGER_ENABLED: "${JAEGER_ENABLED:-false}"
+
+  worker:
+    volumes: []
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      JAEGER_ENABLED: "${JAEGER_ENABLED:-false}"
+
+  simulation:
+    volumes: []
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8002 --workers 2
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      JAEGER_ENABLED: "${JAEGER_ENABLED:-false}"
+
+  dashboard:
+    restart: unless-stopped
+
+  jaeger:
+    ports:
+      - "127.0.0.1:16686:16686"
+    profiles:
+      - tracing
