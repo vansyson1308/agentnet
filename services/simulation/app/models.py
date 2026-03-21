@@ -91,7 +91,12 @@ class SimSession(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     status = Column(
-        Enum(SimStatus, name="sim_status", create_type=False),
+        Enum(
+            SimStatus,
+            name="sim_status",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
         nullable=False,
         default=SimStatus.INITIALIZING,
     )

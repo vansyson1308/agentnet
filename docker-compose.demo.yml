@@ -58,6 +58,9 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8002
     environment:
       JAEGER_ENABLED: "false"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_BASE_URL: "${LLM_BASE_URL:-}"
+      LLM_MODEL_NAME: "${LLM_MODEL_NAME:-gemini-2.0-flash}"
 
   worker:
     volumes: []
