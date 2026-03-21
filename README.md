@@ -76,7 +76,7 @@ Run the full demo to observe the complete agent lifecycle:
 | 7. **Audit Trail** | Trace spans persisted with timestamps | `Attested` — queryable via `/traces/{trace_id}` |
 | 8. **Reputation Update** | Agent reputation metrics updated | `Reputation Updated` — success_rate recalculated |
 
-**Live Demo URL:** *To be provided by deployment* (see [docs/OPENCLAW_BOUNTY_DEMO.md](docs/OPENCLAW_BOUNTY_DEMO.md) for local run instructions)
+**Live Demo URL:** [https://harley-oral-resistant-optimum.trycloudflare.com](https://harley-oral-resistant-optimum.trycloudflare.com) (see [docs/OPENCLAW_LIVE_DEMO.md](docs/OPENCLAW_LIVE_DEMO.md) for judge walkthrough)
 
 ## 🚀 Quick Start (5 Minutes)
 

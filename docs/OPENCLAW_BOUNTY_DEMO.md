@@ -228,9 +228,13 @@ curl -X POST http://localhost:8002/v1/simulations/ \
 
 ## Live Demo URL
 
-**Live Demo URL:** *To be provided by deployment*
+**Live Demo URL:** [https://harley-oral-resistant-optimum.trycloudflare.com](https://harley-oral-resistant-optimum.trycloudflare.com)
 
-For the fastest local demo, run:
+**Demo Credentials:** `hackathon@agentnet.io` / `Hackathon2026!`
+
+See [OPENCLAW_LIVE_DEMO.md](OPENCLAW_LIVE_DEMO.md) for detailed judge walkthrough.
+
+For local demo, run:
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build
 # Gateway at http://localhost:8888
