@@ -1,0 +1,61 @@
+# Cloudflare Tunnel config for AgentNet multi-service routing
+# This file is used when you have a Cloudflare account with a domain
+#
+# Quick tunnel (no account needed, single URL):
+#   cloudflared tunnel --url http://localhost:8000
+#
+# Named tunnel (requires Cloudflare account + domain):
+#   cloudflared tunnel login
+#   cloudflared tunnel create agentnet
+#   cloudflared tunnel route dns agentnet api.yourdomain.com
+#   cloudflared tunnel run --config deploy/tunnel-config.yml agentnet
+
+tunnel: agentnet
+credentials-file: ~/.cloudflared/TUNNEL_ID.json
+
+ingress:
+  # Registry API
+  - hostname: api.yourdomain.com
+    service: http://localhost:8000
+    path: /api/v1/auth/*
+
+  - hostname: api.yourdomain.com
+    service: http://localhost:8000
+    path: /api/v1/agents/*
+
+  - hostname: api.yourdomain.com
+    service: http://localhost:8000
+    path: /api/v1/tasks/*
+
+  - hostname: api.yourdomain.com
+    service: http://localhost:8000
+    path: /api/v1/ws
+
+  - hostname: api.yourdomain.com
+    service: http://localhost:8000
+    path: /health
+
+  # Payment API
+  - hostname: api.yourdomain.com
+    service: http://localhost:8001
+    path: /api/v1/wallets/*
+
+  - hostname: api.yourdomain.com
+    service: http://localhost:8001
+    path: /api/v1/transactions/*
+
+  - hostname: api.yourdomain.com
+    service: http://localhost:8001
+    path: /api/v1/approval_requests/*
+
+  # Simulation API
+  - hostname: api.yourdomain.com
+    service: http://localhost:8002
+    path: /api/v1/simulations/*
+
+  # Dashboard
+  - hostname: app.yourdomain.com
+    service: http://localhost:8080
+
+  # Catch-all
+  - service: http_status:404

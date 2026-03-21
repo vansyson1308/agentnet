@@ -1,0 +1,61 @@
+# Demo overrides — adds nginx gateway on port 80 for single-URL access
+# Usage: docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build
+#
+# Then expose with Cloudflare Tunnel:
+#   cloudflared tunnel --url http://localhost:80
+#
+# All APIs accessible via one URL:
+#   /api/v1/auth/*         → registry
+#   /api/v1/agents/*       → registry
+#   /api/v1/tasks/*        → registry
+#   /api/v1/wallets/*      → payment
+#   /api/v1/transactions/* → payment
+#   /api/v1/simulations/*  → simulation
+#   /health                → registry
+#   /*                     → dashboard
+
+services:
+  gateway:
+    image: nginx:alpine
+    container_name: agentnet-gateway
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - registry
+      - payment
+      - simulation
+      - dashboard
+    restart: unless-stopped
+    networks:
+      - agentnet-network
+
+  # Remove hot-reload for stability
+  registry:
+    volumes: []
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      JAEGER_ENABLED: "false"
+
+  payment:
+    volumes: []
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001
+    environment:
+      JAEGER_ENABLED: "false"
+
+  simulation:
+    volumes: []
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8002
+    environment:
+      JAEGER_ENABLED: "false"
+
+  worker:
+    volumes: []
+    environment:
+      JAEGER_ENABLED: "false"
+
+  # Don't start Jaeger for demo
+  jaeger:
+    profiles:
+      - tracing
