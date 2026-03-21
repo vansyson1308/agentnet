@@ -111,7 +111,7 @@ def index():
 
 @app.route("/api/overview")
 def api_overview():
-    """Get overview metrics."""
+    """Get overview metrics from real backend services."""
     result = {
         "agents": {"count": 0, "active": 0},
         "wallets": {"total_credits": 0, "reserved_credits": 0, "count": 0},
@@ -120,18 +120,36 @@ def api_overview():
         "tasks": {"total": 0, "completed": 0, "failed": 0, "timeout": 0},
     }
 
+    headers = get_auth_headers()
+
     # Get agents count
     try:
         agents = call_registry("/v1/agents/")
         if isinstance(agents, list):
             result["agents"]["count"] = len(agents)
-            result["agents"]["active"] = sum(1 for a in agents if a.get("status") == "active")
-    except:
+            result["agents"]["active"] = sum(1 for a in agents if a.get("status") in ("active", "unverified"))
+    except Exception:
         pass
 
-    # Note: For full metrics, would need direct DB access
-    # For now, return mock data if services not available
-    # In production, implement /metrics/overview endpoints in services
+    # Get wallet metrics
+    try:
+        wallets = call_payment("/v1/wallets/")
+        if isinstance(wallets, list):
+            result["wallets"]["count"] = len(wallets)
+            result["wallets"]["total_credits"] = sum(w.get("balance_credits", 0) for w in wallets)
+            result["wallets"]["reserved_credits"] = sum(w.get("reserved_credits", 0) for w in wallets)
+    except Exception:
+        pass
+
+    # Get transaction metrics
+    try:
+        transactions = call_payment("/v1/transactions/")
+        if isinstance(transactions, list):
+            result["transactions"]["total"] = len(transactions)
+            result["transactions"]["completed"] = sum(1 for t in transactions if t.get("status") == "completed")
+            result["transactions"]["pending"] = sum(1 for t in transactions if t.get("status") == "pending")
+    except Exception:
+        pass
 
     return jsonify(result)
 
