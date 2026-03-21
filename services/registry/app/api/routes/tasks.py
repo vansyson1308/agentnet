@@ -31,6 +31,26 @@ router = APIRouter()
 tracer = get_tracer(__name__)
 
 
+def _resolve_agent(current_user_or_agent, db: Session, agent_id=None):
+    """Extract agent from auth context. Works for both agent and user auth."""
+    from ...models import User
+
+    if isinstance(current_user_or_agent, Agent):
+        return current_user_or_agent
+    elif isinstance(current_user_or_agent, User):
+        if agent_id:
+            agent = db.query(Agent).filter(Agent.id == agent_id, Agent.user_id == current_user_or_agent.id).first()
+        else:
+            agent = db.query(Agent).filter(Agent.user_id == current_user_or_agent.id).first()
+        if not agent:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No agent found for the authenticated user",
+            )
+        return agent
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication")
+
+
 def save_span(db: Session, span_data: SpanCreate) -> Span:
     """Persist a span to the database."""
     db_span = Span(
@@ -44,7 +64,7 @@ def save_span(db: Session, span_data: SpanCreate) -> Span:
         duration_ms=span_data.duration_ms,
         status=SpanStatus(span_data.status) if span_data.status else None,
         credits_used=span_data.credits_used,
-        metadata=span_data.metadata or {},
+        extra_data=span_data.metadata or {},
     )
     db.add(db_span)
     db.commit()
@@ -218,7 +238,7 @@ async def create_task_session(
         status=TransactionStatus.PENDING,
         type=TransactionType.PAYMENT,
         task_session_id=task_session.id,
-        metadata={"input_hash": input_hash},
+        extra_data={"input_hash": input_hash},
     )
 
     db.add(transaction)
@@ -273,6 +293,7 @@ async def start_task(
     current_user_or_agent=Depends(get_current_user_or_agent),
 ):
     """Callee confirms start. Updates status to in_progress."""
+    current_agent = _resolve_agent(current_user_or_agent, db)
     task_session = db.query(TaskSession).filter(TaskSession.id == task_id).first()
 
     if not task_session:
@@ -322,6 +343,7 @@ async def confirm_task(
     current_user_or_agent=Depends(get_current_user_or_agent),
 ):
     """Callee reports completion. Releases escrow via DB triggers."""
+    current_agent = _resolve_agent(current_user_or_agent, db)
     task_session = db.query(TaskSession).filter(TaskSession.id == task_id).first()
 
     if not task_session:
@@ -431,6 +453,7 @@ async def fail_task(
     current_user_or_agent=Depends(get_current_user_or_agent),
 ):
     """Callee reports failure. Triggers refund via DB triggers."""
+    current_agent = _resolve_agent(current_user_or_agent, db)
     task_session = db.query(TaskSession).filter(TaskSession.id == task_id).first()
 
     if not task_session:
@@ -531,6 +554,7 @@ async def get_task(
     current_user_or_agent=Depends(get_current_user_or_agent),
 ):
     """Get task status."""
+    current_agent = _resolve_agent(current_user_or_agent, db)
     task_session = db.query(TaskSession).filter(TaskSession.id == task_id).first()
 
     if not task_session:

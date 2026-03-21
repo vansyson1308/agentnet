@@ -35,10 +35,38 @@ REGISTRY_URL = os.getenv("REGISTRY_URL", "http://localhost:8000")
 PAYMENT_URL = os.getenv("PAYMENT_URL", "http://localhost:8001")
 
 
+_cached_token = {"token": None, "expires": 0}
+
+
 def get_auth_headers():
-    """Get auth headers - for dev, use a simple token or session."""
-    # In production, implement proper auth
-    # For dev dashboard, we assume services allow localhost
+    """Get auth headers using a service account for dashboard API calls."""
+    import time
+
+    now = time.time()
+    if _cached_token["token"] and _cached_token["expires"] > now:
+        return {"Authorization": f"Bearer {_cached_token['token']}"}
+
+    # Try to login as dashboard service user
+    dashboard_email = os.getenv("DASHBOARD_USER_EMAIL", "")
+    dashboard_password = os.getenv("DASHBOARD_USER_PASSWORD", "")
+
+    if not dashboard_email or not dashboard_password:
+        return {}
+
+    try:
+        resp = httpx.post(
+            f"{REGISTRY_URL}/v1/auth/user/login",
+            data={"username": dashboard_email, "password": dashboard_password},
+            timeout=5.0,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            _cached_token["token"] = data.get("access_token")
+            _cached_token["expires"] = now + 3500
+            return {"Authorization": f"Bearer {_cached_token['token']}"}
+    except Exception as e:
+        logger.warning(f"Dashboard auto-login failed: {e}")
+
     return {}
 
 
