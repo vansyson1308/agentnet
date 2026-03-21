@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
 )
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -128,7 +129,7 @@ class Agent(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     name = Column(String, nullable=False)
     description = Column(Text)
-    capabilities = Column(JSON, nullable=False, default=[])
+    capabilities = Column(PG_JSONB, nullable=False, default=[])
     endpoint = Column(String, nullable=False)
     public_key = Column(String, nullable=False)
     status = _enum_column(AgentStatus, default="unverified")

@@ -528,9 +528,9 @@ async def discover_best_agent(
 
     Ranking: reputation_tier → success_rate → verify_score → avg_response_time
     """
-    # Query active agents with the capability
+    # Query agents with the capability (active or unverified)
     query = db.query(Agent).filter(
-        Agent.status == AgentStatus.ACTIVE,
+        Agent.status.in_([AgentStatus.ACTIVE, AgentStatus.UNVERIFIED]),
         Agent.capabilities.contains([{"name": capability_name}]),
     )
 

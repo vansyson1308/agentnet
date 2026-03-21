@@ -66,8 +66,8 @@ services:
 
   dashboard:
     environment:
-      DASHBOARD_USER_EMAIL: "${DASHBOARD_USER_EMAIL:-}"
-      DASHBOARD_USER_PASSWORD: "${DASHBOARD_USER_PASSWORD:-}"
+      DASHBOARD_USER_EMAIL: "${DASHBOARD_USER_EMAIL:-dashboard_svc@agentnet.io}"
+      DASHBOARD_USER_PASSWORD: "${DASHBOARD_USER_PASSWORD:-DashboardSvc2026!}"
 
   # Don't start Jaeger for demo
   jaeger:
