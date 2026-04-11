@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="max-width: 900px; margin: 0 auto;">
+    <a href="{{ url_for('offers_page') }}" style="display: inline-block; margin-bottom: 1.5rem; color: #64748b; text-decoration: none;">&larr; Back to Offers</a>
+    
+    <div class="card" style="margin-bottom: 2rem;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 1.5rem;">
+            <h1 style="margin: 0; font-size: 1.5rem; color: #0f172a;">{{ offer.title }}</h1>
+            <span class="badge badge-{% if offer.status == 'pending' %}warning{% elif offer.status == 'accepted' %}success{% else %}danger{% endif %}" style="align-self: flex-start; font-size: 1rem;">
+                {{ offer.status | capitalize }}
+            </span>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-bottom: 1.5rem;">
+            <div>
+                <p style="margin: 0 0 0.5rem 0; color: #64748b;">From Agent</p>
+                <p style="margin: 0; font-family: monospace; background: #f8fafc; padding: 0.5rem; border-radius: 4px; border: 1px solid #e2e8f0;">{{ offer.from_agent_id }}</p>
+            </div>
+            <div>
+                <p style="margin: 0 0 0.5rem 0; color: #64748b;">To Agent</p>
+                <p style="margin: 0; font-family: monospace; background: #f8fafc; padding: 0.5rem; border-radius: 4px; border: 1px solid #e2e8f0;">{{ offer.to_agent_id }}</p>
+            </div>
+        </div>
+
+        {% if offer.description %}
+            <div style="margin-bottom: 1.5rem;">
+                <p style="margin: 0 0 0.5rem 0; color: #64748b;">Description</p>
+                <div style="padding: 1rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px;">
+                    {{ offer.description }}
+                </div>
+            </div>
+        {% endif %}
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-bottom: 2rem;">
+            <div>
+                <p style="margin: 0 0 0.5rem 0; color: #64748b;">Current Price</p>
+                <p style="margin: 0; font-size: 1.25rem; font-weight: bold; color: #1e293b;">{{ offer.price }} {{ offer.currency | upper }}</p>
+            </div>
+            <div>
+                <p style="margin: 0 0 0.5rem 0; color: #64748b;">Created At</p>
+                <p style="margin: 0;">{{ offer.created_at[:19] | replace('T', ' ') }}</p>
+            </div>
+        </div>
+
+        {% if offer.core_task_id %}
+            <div style="margin-bottom: 1.5rem;">
+                <p style="margin: 0 0 0.5rem 0; color: #64748b;">Source Task Lineage</p>
+                <div style="padding: 0.75rem; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 4px;">
+                    <a href="{{ url_for('task_status_page', task_id=offer.core_task_id) }}" style="color: #166534; font-weight: 500; font-family: monospace;">task://{{ offer.core_task_id[:13] }}...</a>
+                    <span style="font-size: 0.8rem; color: #38a169; margin-left: 0.5rem;">(Triggered by this execution)</span>
+                </div>
+            </div>
+        {% endif %}
+
+        {% if offer.status == 'pending' %}
+            <div style="border-top: 1px solid #e2e8f0; padding-top: 1.5rem; display: flex; gap: 1rem;">
+                <form method="POST" style="margin: 0;" onsubmit="return confirm('Are you sure you want to ACCEPT this offer? This will commit you to the price of {{ offer.price }} {{ offer.currency | upper }}.')">
+                    <input type="hidden" name="action" value="accept">
+                    <button type="submit" class="btn btn-success">Accept Offer</button>
+                </form>
+                <form method="POST" style="margin: 0;" onsubmit="return confirm('Are you sure you want to REJECT this offer?')">
+                    <input type="hidden" name="action" value="reject">
+                    <button type="submit" class="btn btn-danger" style="background: white; color: #dc2626; border-color: #dc2626;">Reject Offer</button>
+                </form>
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Negotiation History -->
+    <h2 style="font-size: 1.25rem; font-weight: 500; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.5rem; margin-bottom: 1.5rem;">Negotiation History</h2>
+    
+    {% if offer.negotiation_rounds %}
+        <div style="display: grid; gap: 1rem; margin-bottom: 2rem;">
+            {% for round in offer.negotiation_rounds %}
+                <div class="card" style="padding: 1rem; border-left: 4px solid {% if round.proposed_by_agent_id in my_agents %}#3b82f6{% else %}#10b981{% endif %}; box-shadow: none; border-radius: 0 6px 6px 0;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                        <strong style="color: #0f172a;">Round {{ round.round_number }} - {% if round.proposed_by_agent_id in my_agents %}You proposed{% else %}They proposed{% endif %}</strong>
+                        <span style="color: #64748b; font-size: 0.85rem;">{{ round.created_at[:19] | replace('T', ' ') }}</span>
+                    </div>
+                    <p style="margin: 0; display: flex; justify-content: space-between; align-items: center;">
+                        <span>Proposed Price: <strong>{{ round.proposed_price }} {{ offer.currency | upper }}</strong></span>
+                        <span class="badge badge-{% if round.status == 'pending' %}warning{% elif round.status == 'accepted' %}success{% else %}danger{% endif %}">{{ round.status | capitalize }}</span>
+                    </p>
+                    {% if round.proposed_terms %}
+                        <div style="margin-top: 0.5rem; padding: 0.5rem; background: #f8fafc; border-radius: 4px; font-size: 0.9rem; color: #475569;">
+                            <em>{{ round.proposed_terms }}</em>
+                        </div>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p style="color: #64748b; margin-bottom: 2rem;">No counter-offers yet.</p>
+    {% endif %}
+
+    <!-- Counter Offer Form -->
+    {% if offer.status == 'pending' %}
+        <div class="card" style="background: #f8fafc; border: 1px solid #cbd5e1; box-shadow: none;">
+            <h3 style="margin: 0 0 1rem 0; font-size: 1.1rem; color: #0f172a;">Submit Counter-Offer</h3>
+            <form method="POST">
+                <input type="hidden" name="action" value="counter">
+                
+                <!-- Use actual DB columns or schema fields required by CounterOfferCreate -->
+                <div class="form-group">
+                    <label>Proposed Price ({{ offer.currency | upper }})</label>
+                    <input type="number" name="proposed_price" value="{{ offer.price }}" min="0" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Proposed Terms (Optional)</label>
+                    <textarea name="proposed_terms" rows="3" placeholder="Explain your counter-offer..."></textarea>
+                </div>
+                
+                <button type="submit" class="btn" style="background: #3b82f6; color: white; width: 100%;">Submit Counter</button>
+            </form>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

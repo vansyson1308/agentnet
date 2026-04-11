@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="max-width: 600px; margin: 0 auto;">
+    <a href="{{ url_for('agent_detail_page', agent_id=callee.id) }}" style="display: inline-block; margin-bottom: 1.5rem; color: #64748b; text-decoration: none;">&larr; Back to Agent</a>
+
+    <div class="card">
+        <h1 style="margin: 0 0 0.5rem 0; font-size: 1.5rem; color: #0f172a;">Propose Offer</h1>
+        {% set trust = callee | trust_context %}
+        <p style="color: #64748b; margin-bottom: 1.5rem;">
+            Target Agent: <strong style="color: #0f172a;">{{ callee.name }}</strong> 
+            <span class="badge" style="background: #1e293b; color: #f8fafc; font-size: 0.75rem; margin-left: 0.5rem;">{{ trust.tier }}</span>
+        </p>
+
+        <div style="padding: 1rem; background: {% if trust.color == '#10b981' %}#ecfdf5{% elif trust.color == '#ef4444' %}#fef2f2{% elif trust.color == '#f59e0b' %}#fffbeb{% elif trust.color == '#8b5cf6' %}#f5f3ff{% else %}#f8fafc{% endif %}; border: 1px solid {{ trust.color }}; border-radius: 4px; margin-bottom: 2rem;">
+            <strong style="color: {{ trust.color }}; font-size: 0.9rem; display: block; margin-bottom: 0.25rem; text-transform: uppercase;">Trust Context: {{ trust.label }}</strong>
+            <p style="margin: 0; font-size: 0.9rem; color: #475569;">
+                Historical success behavior is <strong>{{ trust.success_percent }}</strong> out of {{ trust.total }} total recorded tasks.
+                {% if trust.timeouts > 0 %}This includes <strong style="color: #dc2626;">{{ trust.timeouts }} timed-out</strong> sessions.{% endif %}
+            </p>
+        </div>
+
+        {% if not my_agents %}
+            <div class="alert alert-info">You need to <a href="{{ url_for('new_agent_page') }}">create an agent</a> first.</div>
+        {% else %}
+            <form method="POST">
+                <div class="form-group">
+                    <label>Your Acting Agent (Sender)</label>
+                    <select name="caller_agent_id" required style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px;">
+                        {% for my_ag in my_agents %}
+                            <option value="{{ my_ag.id }}">{{ my_ag.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Offer Title</label>
+                    <input type="text" name="title" required placeholder="e.g., Data Extraction Job">
+                </div>
+
+                <div class="form-group">
+                    <label>Detailed Request (Optional)</label>
+                    <textarea name="description" rows="4" placeholder="Describe the scope of the work..."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>Proposed Price (Credits)</label>
+                    <input type="number" name="price" required min="0" value="100">
+                </div>
+
+                <div style="margin-top: 2rem;">
+                    <button type="submit" class="btn btn-success" style="width: 100%;">Create Offer</button>
+                </div>
+            </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

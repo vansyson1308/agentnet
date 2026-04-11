@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+
+{% macro render_span(node, depth) %}
+<div style="margin-left: {{ depth * 24 }}px; border-left: 2px solid #cbd5e1; padding-left: 1rem; margin-bottom: 0.75rem; position: relative;">
+    <div style="position: absolute; left: -2px; top: 1.5rem; width: 1rem; height: 2px; background: #cbd5e1;"></div>
+    
+    <div style="background: white; border: 1px solid {% if node.status == 'failed' %}#fecaca{% elif node.status == 'success' %}#bbf7d0{% else %}#fde68a{% endif %}; border-radius: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;">
+        
+        <div style="padding: 1rem; cursor: pointer; transition: background 0.2s;" onclick="toggleSpan('span-det-{{ node.id }}')" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='white'">
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
+                <div>
+                    <h4 style="margin: 0; font-size: 1.05rem; color: #0f172a; display: flex; align-items: center; gap: 0.5rem;">
+                        {{ node.event }}
+                        {% if node.status == 'success' %}
+                            <span class="badge badge-success" style="font-size: 0.7rem; padding: 0.15rem 0.4rem;">SUCCESS</span>
+                        {% elif node.status == 'failed' %}
+                            <span class="badge badge-danger" style="font-size: 0.7rem; padding: 0.15rem 0.4rem;">FAILED</span>
+                        {% else %}
+                            <span class="badge badge-warning" style="font-size: 0.7rem; padding: 0.15rem 0.4rem;">IN PROGRESS</span>
+                        {% endif %}
+                    </h4>
+                    <p style="font-size: 0.8rem; color: #64748b; margin-top: 0.25rem;">
+                        <span style="font-family: monospace;">{{ node.created_at[:19] | replace('T', ' ') if node.created_at else 'Unknown Time' }}</span>
+                    </p>
+                </div>
+                
+                <div style="text-align: right;">
+                    <strong style="color: #475569; font-size: 0.9rem;">{{ node.duration_ms ~ ' ms' if node.duration_ms is not none else '-' }}</strong>
+                    {% if node.credits_used %}
+                        <span style="display: block; font-size: 0.75rem; color: #15803d; margin-top: 0.25rem;">-{{ node.credits_used }} CR</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div style="font-size: 0.85rem; color: #475569; display: flex; justify-content: space-between; align-items: flex-end;">
+                <div>
+                    <p style="margin-bottom: 0.25rem;"><strong>Agent:</strong> <a href="{{ url_for('agent_detail_page', agent_id=node.agent_id) }}" style="color: #3b82f6; text-decoration: none;" onclick="event.stopPropagation()">{{ node.agent_id[:8] }}...</a></p>
+                    {% if node.capability %}
+                        <p style="margin-bottom: 0;"><strong>Capability:</strong> {{ node.capability }}</p>
+                    {% endif %}
+                </div>
+                <div style="color: #94a3b8; font-size: 0.75rem;">
+                    Click to inspect payload &darr;
+                </div>
+            </div>
+            
+            {% if node.extra_data and node.status == 'failed' and 'error_message' in node.extra_data %}
+                <div style="margin-top: 0.75rem; background: #fef2f2; padding: 0.5rem 0.75rem; border-radius: 4px; border-left: 3px solid #ef4444; color: #991b1b;">
+                    <span style="font-family: monospace; word-break: break-all; font-size: 0.85rem;">{{ node.extra_data.error_message }}</span>
+                </div>
+            {% endif %}
+        </div>
+
+        <div id="span-det-{{ node.id }}" style="display: none; padding: 1rem; border-top: 1px solid #e2e8f0; background: #f8fafc; font-size: 0.85rem;">
+            {% if node.parent_span_id %}
+                <p style="margin: 0 0 1rem 0; color: #64748b;"><strong>Parent Trace Node:</strong> <span style="font-family: monospace;">{{ node.parent_span_id }}</span></p>
+            {% else %}
+                <p style="margin: 0 0 1rem 0; color: #64748b;"><strong>Parent Trace Node:</strong> <span style="font-style: italic;">Root Entry point</span></p>
+            {% endif %}
+            
+            {% if not node.extra_data %}
+                <div style="color: #94a3b8; font-style: italic; text-align: center; border: 1px dashed #cbd5e1; padding: 1rem; border-radius: 4px;">
+                    No payload or extra data recorded for this span.
+                </div>
+            {% else %}
+                {% if 'input' in node.extra_data %}
+                    <div style="margin-bottom: 1rem;">
+                        <strong style="color: #334155; display: block; margin-bottom: 0.25rem;">Input Payload:</strong>
+                        <div style="background: #1e293b; color: #f8fafc; padding: 0.75rem; border-radius: 4px; overflow-x: auto; font-family: monospace;">
+                            <pre style="margin: 0;">{{ node.extra_data.input | tojson(indent=2) }}</pre>
+                        </div>
+                    </div>
+                {% endif %}
+                
+                {% if 'output' in node.extra_data %}
+                    <div style="margin-bottom: 1rem;">
+                        <strong style="color: #334155; display: block; margin-bottom: 0.25rem;">Output Result:</strong>
+                        <div style="background: #1e293b; color: #f8fafc; padding: 0.75rem; border-radius: 4px; overflow-x: auto; font-family: monospace;">
+                            <pre style="margin: 0;">{{ node.extra_data.output | tojson(indent=2) }}</pre>
+                        </div>
+                    </div>
+                {% endif %}
+
+                {% if 'error_message' in node.extra_data %}
+                    <div style="margin-bottom: 1rem;">
+                        <strong style="color: #991b1b; display: block; margin-bottom: 0.25rem;">Internal Error Dump:</strong>
+                        <div style="background: #fef2f2; border: 1px solid #fecaca; color: #7f1d1d; padding: 0.75rem; border-radius: 4px; overflow-x: auto; font-family: monospace;">
+                            <pre style="margin: 0;">{{ node.extra_data.error_message }}</pre>
+                        </div>
+                    </div>
+                {% endif %}
+
+                {% set ns = namespace(found=false) %}
+                {% for key, val in node.extra_data.items() %}
+                    {% if key not in ['input', 'output', 'error_message'] %}
+                        {% set ns.found = true %}
+                    {% endif %}
+                {% endfor %}
+                
+                {% if ns.found %}
+                    <div>
+                        <strong style="color: #334155; display: block; margin-bottom: 0.25rem;">Additional Context:</strong>
+                        <div style="background: white; border: 1px solid #e2e8f0; color: #334155; padding: 0.75rem; border-radius: 4px; overflow-x: auto; font-family: monospace;">
+                            <pre style="margin: 0;">{% for key, val in node.extra_data.items() %}{% if key not in ['input', 'output', 'error_message'] %}"{{ key }}": {{ val | tojson(indent=2) }}
+{% endif %}{% endfor %}</pre>
+                        </div>
+                    </div>
+                {% endif %}
+            {% endif %}
+        </div>
+    </div>
+    
+    {% if node.children %}
+        <div style="margin-top: 0.75rem;">
+            {% for child in node.children %}
+                {{ render_span(child, depth + 1) }}
+            {% endfor %}
+        </div>
+    {% endif %}
+</div>
+{% endmacro %}
+
+{% block content %}
+<div class="card" style="max-width: 900px; margin: 0 auto;">
+    <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #eee; padding-bottom: 1rem; margin-bottom: 2rem;">
+        <div>
+            <h2 style="margin: 0; border: none; margin-bottom: 0.25rem;">Execution Trace</h2>
+            <p style="color: #64748b; font-size: 0.9rem; font-family: monospace;">Trace ID: {{ trace_id }}</p>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+            <a href="{{ url_for('task_status_page', task_id=task.id) }}" class="btn" style="background: transparent; border: 1px solid #cbd5e1; color: #334155;">Task Query</a>
+            <a href="{{ url_for('tasks_page') }}" class="btn" style="background: #1e293b;">Task Center</a>
+        </div>
+    </div>
+
+    {% if not root_spans %}
+        <div style="text-align: center; padding: 3rem 1rem; background: #f8fafc; border-radius: 6px; border: 1px dashed #cbd5e1;">
+            <p style="color: #64748b; margin-bottom: 0.5rem;">No span telemetry data available for this trace yet.</p>
+            <p style="font-size: 0.85rem; color: #94a3b8;">Execution may have failed instantaneously or the backend hasn't synced the trace payloads.</p>
+        </div>
+    {% else %}
+        <div style="padding-top: 0.5rem;">
+            {% for root_node in root_spans %}
+                {{ render_span(root_node, 0) }}
+            {% endfor %}
+        </div>
+    {% endif %}
+</div>
+
+<script>
+    function toggleSpan(elementId) {
+        const el = document.getElementById(elementId);
+        if (el.style.display === 'none') {
+            el.style.display = 'block';
+        } else {
+            el.style.display = 'none';
+        }
+    }
+</script>
+{% endblock %}

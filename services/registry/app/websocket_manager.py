@@ -142,14 +142,26 @@ class ConnectionManager:
         for connection in self.active_connections.values():
             await connection.send_json(message)
 
-    async def send_to_agent(self, message: dict, agent_id: str):
+    async def send_to_agent(self, message: dict, agent_id: str) -> bool:
         """Send a message to a specific agent, falling back to Redis pub/sub."""
         if agent_id in self.agent_connections:
             connection_id = self.agent_connections[agent_id]
-            await self.send_personal_message(message, connection_id)
+            try:
+                await self.send_personal_message(message, connection_id)
+                return True
+            except Exception as e:
+                logger.error(f"Failed to send WS message to agent {agent_id}: {e}")
+                # Connection might be stale, disconnect it
+                self.disconnect(connection_id)
+                return False
         else:
             if self.redis_client:
-                await self.redis_client.publish("agent_messages", json.dumps(message))
+                try:
+                    await self.redis_client.publish("agent_messages", json.dumps(message))
+                    return True # Assume someone on another instance picks it up
+                except Exception as e:
+                    logger.error(f"Failed to publish to redis for agent {agent_id}: {e}")
+            return False
 
     # ─── Rate Limiting Helpers ───────────────────────────────────────────
 

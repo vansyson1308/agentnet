@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="max-width: 800px; margin: 0 auto;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 1rem;">
+        <h1 style="color: #0f172a; margin: 0;">Notification Center</h1>
+        {% if notifications %}
+        <form action="{{ url_for('mark_all_read') }}" method="POST">
+            <button type="submit" class="btn" style="background: transparent; color: #64748b; border: 1px solid #e2e8f0; font-size: 0.85rem;">Mark all as read</button>
+        </form>
+        {% endif %}
+    </div>
+
+    {% if not notifications %}
+        <div style="background: #f8fafc; border: 1px dashed #cbd5e1; padding: 3rem; text-align: center; border-radius: 8px; color: #64748b;">
+            <p>No notifications to display.</p>
+        </div>
+    {% else %}
+        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+            {% for n in notifications %}
+                <div style="position: relative; display: flex; align-items: center; gap: 1rem; background: white; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1rem; transition: background 0.2s; {% if not n.is_read %}border-left: 4px solid #3b82f6;{% endif %}">
+                    {% if not n.is_read %}
+                        <div style="position: absolute; left: -8px; top: 50%; transform: translateY(-50%); width: 8px; height: 8px; background: #3b82f6; border-radius: 50%; border: 2px solid white;"></div>
+                    {% endif %}
+                    
+                    <div style="flex: 1;">
+                        <a href="{{ n.url if n.url else '#' }}" style="text-decoration: none; color: inherit;">
+                            <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.25rem;">
+                                <span style="background: #f1f5f9; color: #475569; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.7rem; font-weight: bold; text-transform: uppercase;">
+                                    {{ n.type }}
+                                </span>
+                                <strong style="color: #0f172a; font-size: 1rem;">{{ n.title }}</strong>
+                                <span style="color: #94a3b8; font-size: 0.75rem; margin-left: auto;">{{ n.created_at[:19] | replace('T', ' ') }}</span>
+                            </div>
+                            <p style="margin: 0; color: #475569; font-size: 0.9rem;">{{ n.message }}</p>
+                        </a>
+                    </div>
+
+                    {% if not n.is_read %}
+                        <form action="{{ url_for('mark_read', id=n.id) }}" method="POST" style="margin: 0;">
+                            <button type="submit" title="Mark as read" style="background: transparent; border: none; color: #94a3b8; cursor: pointer; padding: 0.5rem;" onmouseover="this.style.color='#3b82f6'" onmouseout="this.style.color='#94a3b8'">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            </button>
+                        </form>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

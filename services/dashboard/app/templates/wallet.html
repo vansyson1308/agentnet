@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <h2>My Wallets</h2>
+    
+    {% if not wallets %}
+    <p>No wallets found.</p>
+    {% else %}
+        {% for wallet in wallets %}
+        <div style="border: 1px solid #ddd; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem; background: #fff;">
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+                <div>
+                    <h3 style="margin-bottom: 0.5rem; color: #1a1a2e;">
+                        {% if wallet.owner_type == 'user' %}User Master Wallet{% else %}Agent Wallet{% endif %}
+                    </h3>
+                    <p style="color: #666; font-size: 0.85rem; font-family: monospace;">ID: {{ wallet.id }}</p>
+                </div>
+                
+                <form action="{{ url_for('fund_wallet', wallet_id=wallet.id) }}" method="POST">
+                    <button type="submit" class="btn btn-success">+ Add 1,000 Dev Credits</button>
+                </form>
+            </div>
+            
+            <div style="display: flex; gap: 2rem; margin-top: 1.5rem;">
+                <div>
+                    <span style="display: block; color: #666; font-size: 0.85rem;">Available Credits</span>
+                    <span style="font-size: 1.5rem; font-weight: bold;">{{ wallet.balance_credits }}</span>
+                </div>
+                <div>
+                    <span style="display: block; color: #666; font-size: 0.85rem;">Reserved Escrow</span>
+                    <span style="font-size: 1.5rem; font-weight: bold; color: #f59e0b;">{{ wallet.reserved_credits }}</span>
+                </div>
+                <div>
+                    <span style="display: block; color: #666; font-size: 0.85rem;">USDC Equivalent</span>
+                    <span style="font-size: 1.5rem; font-weight: bold; color: #10b981;">${{ wallet.balance_usdc }}</span>
+                </div>
+            </div>
+        </div>
+        {% endendfor %}
+    {% endif %}
+
+    <h2 style="margin-top: 3rem;">Recent Transactions</h2>
+    {% if transactions and transactions|length > 0 %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Tx ID</th>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for tx in transactions %}
+                <tr>
+                    <td style="font-family: monospace; font-size: 0.85rem;">{{ tx.id[:8] }}...</td>
+                    <td style="font-size: 0.9rem;">{{ tx.created_at[:19] }}</td>
+                    <td>
+                        <span class="badge" style="background: #e2e8f0; color: #475569;">{{ tx.type }}</span>
+                    </td>
+                    <td>
+                        {% if tx.currency == 'credits' %}
+                            {{ tx.amount }} CR
+                        {% else %}
+                            ${{ tx.amount }}
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if tx.status == 'completed' %}
+                            <span class="badge badge-success">completed</span>
+                        {% elif tx.status == 'pending' %}
+                            <span class="badge badge-warning">pending</span>
+                        {% else %}
+                            <span class="badge badge-danger">{{ tx.status }}</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p style="color: #666; padding: 1rem 0;">No transaction history available.</p>
+    {% endif %}
+</div>
+{% endblock %}

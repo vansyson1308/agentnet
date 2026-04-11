@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% set is_active = task.status in ['initiated', 'in_progress'] %}
+<div class="card" style="max-width: 800px; margin: 0 auto;">
+    <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #eee; padding-bottom: 1rem; margin-bottom: 1.5rem; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <h2 style="margin: 0; border: none;">Task Session Report</h2>
+            {% if is_active %}
+                <span id="refresh-indicator" class="badge" style="background: #bae6fd; color: #0284c7; font-size: 0.75rem; border: 1px solid #7dd3fc;">Live Monitoring (3s)</span>
+            {% else %}
+                <span class="badge" style="background: #f1f5f9; color: #64748b; font-size: 0.75rem; border: 1px solid #e2e8f0;">Execution Concluded</span>
+            {% endif %}
+        </div>
+        <div>
+            {% if task.status == 'completed' %}
+                <span class="badge badge-success" style="font-size: 1rem;">COMPLETED</span>
+            {% elif task.status in ('initiated', 'in_progress') %}
+                <span class="badge badge-warning" style="font-size: 1rem;">{{ task.status | upper }}</span>
+            {% else %}
+                <span class="badge badge-danger" style="font-size: 1rem;">{{ task.status | upper }}</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div style="background: #f8fafc; padding: 1rem; border-radius: 6px; font-family: monospace; font-size: 0.85rem; color: #475569; margin-bottom: 2rem;">
+        <p style="margin-bottom: 0.5rem;"><strong>Task ID:</strong> {{ task.id }}</p>
+        <p style="margin-bottom: 0.5rem;"><strong>Trace ID:</strong> {{ task.trace_id }}</p>
+        <p style="margin-bottom: 0.5rem;"><strong>Span ID:</strong> {{ task.span_id }}</p>
+        <p style="margin-bottom: 0.5rem;"><strong>Capability:</strong> {{ task.capability }}</p>
+        {% if task.fulfillment_channel %}
+            <p style="margin-bottom: 0.5rem;"><strong>Fulfillment:</strong> {{ task.fulfillment_channel | capitalize }}</p>
+        {% endif %}
+        <p style="margin-bottom: 0.5rem;"><strong>Created At:</strong> {{ task.created_at[:19] | replace('T', ' ') }} UTC</p>
+        {% if task.completed_at %}
+            <p style="margin-bottom: 0;"><strong>Concluded At:</strong> {{ task.completed_at[:19] | replace('T', ' ') }} UTC</p>
+        {% endif %}
+    </div>
+
+    <!-- Lineage Section -->
+    {% if task.retry_of_id or task.retries %}
+    <div style="margin-bottom: 2rem; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
+        <div style="background: #f8fafc; padding: 0.5rem 1rem; border-bottom: 1px solid #e2e8f0; font-size: 0.8rem; font-weight: bold; color: #64748b;">
+            TASK LINEAGE
+        </div>
+        <div style="padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem;">
+            {% if task.retry_of_id %}
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="font-size: 0.85rem; color: #64748b;">Retry of:</span>
+                    <a href="{{ url_for('task_status_page', task_id=task.retry_of_id) }}" style="font-family: monospace; font-size: 0.9rem; color: #3b82f6;">{{ task.retry_of_id }}</a>
+                </div>
+            {% endif %}
+            {% if task.retries %}
+                <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                    <span style="font-size: 0.85rem; color: #64748b;">Retried as:</span>
+                    {% for child in task.retries %}
+                        <div style="margin-left: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="color: #94a3b8;">&rarr;</span>
+                            <a href="{{ url_for('task_status_page', task_id=child.id) }}" style="font-family: monospace; font-size: 0.9rem; color: #3b82f6;">{{ child.id }}</a>
+                            <span class="badge" style="font-size: 0.7rem; padding: 0.1rem 0.4rem;">{{ child.status | upper }}</span>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem;">
+        <div style="border: 1px solid #e2e8f0; padding: 1rem; border-radius: 6px;">
+            <p style="font-size: 0.85rem; color: #64748b; margin-bottom: 0.25rem;">Caller Agent</p>
+            <p style="font-family: monospace; word-break: break-all;"><a href="{{ url_for('agent_detail_page', agent_id=task.caller_agent_id) }}">{{ task.caller_agent_id }}</a></p>
+        </div>
+        <div style="border: 1px solid #e2e8f0; padding: 1rem; border-radius: 6px;">
+            <p style="font-size: 0.85rem; color: #64748b; margin-bottom: 0.25rem;">Callee Agent</p>
+            <p style="font-family: monospace; word-break: break-all;"><a href="{{ url_for('agent_detail_page', agent_id=task.callee_agent_id) }}">{{ task.callee_agent_id }}</a></p>
+        </div>
+    </div>
+
+    <div style="margin-bottom: 2rem;">
+        <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem;">Financial Escrow</h3>
+        <p style="background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; padding: 1rem; border-radius: 4px;">
+            <strong>{{ task.escrow_amount }} {{ task.currency | upper }}</strong> has been allocated for this transaction.
+        </p>
+    </div>
+
+    <div style="margin-bottom: 2rem;">
+        <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem;">Input Payload</h3>
+        {% if task.input %}
+            <div style="background: #e2e8f0; color: #334155; padding: 1rem; border-radius: 6px; font-family: monospace; overflow-x: auto; border: 1px solid #cbd5e1;">
+                <pre style="margin: 0;">{{ task.input | tojson(indent=2) }}</pre>
+            </div>
+        {% else %}
+            <div style="background: #f8fafc; color: #64748b; padding: 1rem; border-radius: 6px; font-style: italic; border: 1px dashed #cbd5e1;">
+                Input payload not logged. (Legacy execution)
+            </div>
+        {% endif %}
+    </div>
+
+    <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem;">Output / Result</h3>
+    {% if task.status == 'completed' %}
+        <div style="background: #1e293b; color: #f8fafc; padding: 1rem; border-radius: 6px; font-family: monospace; overflow-x: auto;">
+            <pre style="margin: 0;">{{ task.output | tojson(indent=2) }}</pre>
+        </div>
+    {% elif task.status in ('failed', 'timed_out') %}
+        <div style="background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 1.5rem; border-radius: 6px; margin-bottom: 1rem;">
+            <h3 style="margin-top: 0; color: #7f1d1d; font-size: 1.1rem; display: flex; align-items: center; gap: 0.5rem;">
+                ⚠️ Task Execution Failed
+            </h3>
+            
+            <p style="margin-bottom: 0.75rem;"><strong>Error Message:</strong> <span style="font-family: monospace;">{{ task.error_message }}</span></p>
+            
+            <div style="background: #ffffff; padding: 1rem; border-radius: 4px; border: 1px dashed #fca5a5; font-size: 0.9rem;">
+                <p style="margin-bottom: 0.5rem; color: #7f1d1d;"><strong>Diagnostic Interpretation:</strong></p>
+                {% if task.error_message and 'timeout' in (task.error_message | lower) %}
+                    <p style="margin: 0;">The target agent (<strong>{{ task.callee_agent_id[:8] }}</strong>) did not complete the task within the allocated timeout period. This is likely an issue with the callee's availability or downstream LLM processing latency.</p>
+                {% elif task.error_message and ('validation' in (task.error_message | lower) or 'invalid' in (task.error_message | lower)) %}
+                    <p style="margin: 0;">The target agent rejected the input payload due to schema validation failure. Please verify your JSON payload matches the capability's required input schema.</p>
+                {% elif task.error_message and ('budget' in (task.error_message | lower) or 'funds' in (task.error_message | lower)) %}
+                    <p style="margin: 0;">Insufficient escrow budget allocated. The target agent requires more credits to process this capability.</p>
+                {% else %}
+                    <p style="margin: 0;">The target agent (<strong>{{ task.callee_agent_id[:8] }}</strong>) encountered an internal execution failure. Review the <a href="{{ url_for('task_trace_page', task_id=task.id) }}" style="color: #991b1b; text-decoration: underline;">Execution Trace</a> to see exactly which span aborted.</p>
+                {% endif %}
+            </div>
+        </div>
+    {% else %}
+        <div style="background: #fffbeb; border: 1px solid #fde68a; color: #92400e; padding: 1rem; border-radius: 6px;">
+            Task is currently executing. Results will populate here once the callee Agent confirms WebSocket completion.
+        </div>
+    {% endif %}
+
+    <div style="margin-top: 2rem; display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+        <button onclick="window.location.reload()" class="btn">Refresh Now</button>
+        {% if is_active %}
+            <button id="pause-btn" onclick="toggleRefresh()" class="btn" style="background: #e2e8f0; color: #334155; border: 1px solid #cbd5e1;">Pause Auto-Refresh</button>
+        {% endif %}
+        {% if task.status in ('failed', 'timed_out') %}
+            <a href="{{ url_for('task_retry_page', task_id=task.id) }}" class="btn btn-warning" style="font-weight: bold; color: #78350f;" onclick="return confirm('You are about to initiate a new execution based on this failed task. A new escrow budget will be locked. Proceed?')">Retry Task</a>
+        {% endif %}
+        <a href="{{ url_for('task_trace_page', task_id=task.id) }}" class="btn" style="background: #475569; color: white; border: none;">View Execution Trace</a>
+        <a href="{{ url_for('tasks_page') }}" class="btn" style="background: transparent; color: #333; border: 1px solid #ccc;">Back to Task Center</a>
+    </div>
+</div>
+
+{% if is_active %}
+<script>
+    let refreshTimer;
+    let isPaused = false;
+    
+    function toggleRefresh() {
+        isPaused = !isPaused;
+        const btn = document.getElementById('pause-btn');
+        const indicator = document.getElementById('refresh-indicator');
+        
+        if (isPaused) {
+            clearTimeout(refreshTimer);
+            btn.innerText = "Resume Auto-Refresh";
+            indicator.style.background = "#e2e8f0";
+            indicator.style.color = "#64748b";
+            indicator.style.borderColor = "#cbd5e1";
+            indicator.innerText = "Monitoring Paused";
+        } else {
+            btn.innerText = "Pause Auto-Refresh";
+            indicator.style.background = "#bae6fd";
+            indicator.style.color = "#0284c7";
+            indicator.style.borderColor = "#7dd3fc";
+            indicator.innerText = "Live Monitoring (3s)";
+            startRefresh();
+        }
+    }
+
+    function startRefresh() {
+        refreshTimer = setTimeout(() => {
+            if (!isPaused) window.location.reload();
+        }, 3000);
+    }
+    
+    // Start tracking
+    startRefresh();
+</script>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card" style="max-width: 800px; margin: 0 auto; background: #f8fafc; border: 1px solid #cbd5e1; box-shadow: none;">
+    <h3 style="margin-bottom: 1.5rem; font-size: 1.2rem; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem;">
+        Retry Task (Original: {{ old_task.id[:8] }})
+    </h3>
+    
+    <div class="alert alert-info" style="margin-bottom: 1.5rem; border-left: 4px solid #3b82f6;">
+        <strong>Audit Replay Mode:</strong> The original JSON payload has been successfully retrieved from the execution history. You may adjust the parameters before initiating a new instance.
+        <br><br>Warning: Escrow balances will be drawn independently for this new session.
+    </div>
+
+    <form method="POST" action="{{ url_for('simulate_task', agent_id=old_task.callee_agent_id) }}">
+        <div class="form-group" style="display: none;">
+            <input type="hidden" name="caller_agent_id" value="{{ old_task.caller_agent_id }}">
+            <input type="hidden" name="capability" value="{{ old_task.capability }}">
+            <input type="hidden" name="retry_of_id" value="{{ old_task.id }}">
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+            <div style="background: white; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 4px;">
+                <span style="font-size: 0.8rem; color: #64748b; display: block;">Caller Agent (Locked)</span>
+                <span class="badge" style="background: #334155; margin-top: 0.25rem;">{{ old_task.caller_agent_id[:8] }}...</span>
+                <p style="font-size: 0.75rem; color: #94a3b8; font-family: monospace; word-break: break-all; margin-top: 0.25rem;">{{ old_task.caller_agent_id }}</p>
+            </div>
+            <div style="background: white; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 4px;">
+                <span style="font-size: 0.8rem; color: #64748b; display: block;">Callee Agent (Locked)</span>
+                <span class="badge" style="background: #334155; margin-top: 0.25rem;">{{ old_task.callee_agent_id[:8] }}...</span>
+                <p style="font-size: 0.75rem; color: #94a3b8; font-family: monospace; word-break: break-all; margin-top: 0.25rem;">{{ old_task.callee_agent_id }}</p>
+            </div>
+        </div>
+        
+        <div style="background: white; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 4px; margin-bottom: 1.5rem;">
+            <span style="font-size: 0.8rem; color: #64748b; display: block; margin-bottom: 0.25rem;">Targeted Capability</span>
+            <strong>{{ old_task.capability }}</strong>
+        </div>
+
+        <div class="form-group">
+            <label>Max Budget Allocation Escrow</label>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <input type="number" name="max_budget" value="{{ old_task.escrow_amount }}" min="0" required style="width: 150px; padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 4px;">
+                <span style="color: #64748b; font-weight: bold;">{{ old_task.currency | upper }}</span>
+            </div>
+        </div>
+        <div class="form-group" style="display: none;">
+            <input type="hidden" name="currency" value="{{ old_task.currency }}">
+        </div>
+
+        <div class="form-group">
+            <label>Input Data (JSON)</label>
+            {% if old_task.input %}
+                <textarea name="input_data" rows="6" required style="width: 100%; font-family: monospace; padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 4px;">{{ old_task.input | tojson(indent=2) }}</textarea>
+            {% else %}
+                <textarea name="input_data" rows="6" required style="width: 100%; font-family: monospace; padding: 0.5rem; border: 1px solid #f87171; border-radius: 4px;"></textarea>
+                <small style="color: #dc2626; display: block; margin-top: 0.25rem;">Legacy task payload missing. Please supply valid JSON manually.</small>
+            {% endif %}
+        </div>
+
+        <div style="display: flex; gap: 1rem;">
+            <a href="{{ url_for('task_status_page', task_id=old_task.id) }}" class="btn" style="background: transparent; color: #333; border: 1px solid #ccc; flex: 1; text-align: center;">Cancel</a>
+            <button type="submit" class="btn btn-warning" style="flex: 2; font-weight: bold; color: #78350f;">Confirm Resubmit &rarr;</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

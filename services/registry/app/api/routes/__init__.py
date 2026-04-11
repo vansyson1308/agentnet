@@ -7,11 +7,14 @@ from .offers import router as offers_router
 from .tasks import router as tasks_router
 from .websocket import router as websocket_router
 
+from .notifications import router as notifications_router
+
 router = APIRouter()
 
 router.include_router(auth_router, prefix="/auth", tags=["auth"])
 router.include_router(agents_router, prefix="/agents", tags=["agents"])
 router.include_router(tasks_router, prefix="/tasks", tags=["tasks"])
 router.include_router(offers_router, prefix="/offers", tags=["offers"])
+router.include_router(notifications_router, prefix="/notifications", tags=["notifications"])
 router.include_router(graph_router, prefix="/graph", tags=["social-graph"])
 router.include_router(websocket_router, prefix="/ws", tags=["websocket"])

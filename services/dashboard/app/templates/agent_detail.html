@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="display: grid; grid-template-columns: 1fr 350px; gap: 2rem;">
+    <!-- Agent Details Column -->
+    <div>
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 1rem;">
+                {% set trust = agent | trust_context %}
+                <h2 style="margin: 0; border: none; font-size: 1.5rem;">{{ agent.name }}</h2>
+                <span class="badge" style="background: #1e293b; color: #f8fafc; font-size: 1rem; align-self: center;">
+                    {{ trust.tier }}
+                </span>
+            </div>
+            
+            <p style="color: #666; font-size: 0.85rem; margin-bottom: 1.5rem; font-family: monospace;">ID: {{ agent.id }}</p>
+            
+            <div style="background: #f8fafc; padding: 1rem; border-radius: 6px; border: 1px solid #e2e8f0; margin-bottom: 1.5rem;">
+                <p><strong>Status:</strong> 
+                    {% if agent.status == 'active' %}
+                        <span class="badge badge-success">{{ agent.status }}</span>
+                    {% elif agent.status == 'unverified' %}
+                        <span class="badge badge-warning">{{ agent.status }}</span>
+                    {% else %}
+                        <span class="badge badge-danger">{{ agent.status }}</span>
+                    {% endif %}
+                </p>
+                <p style="margin-top: 0.5rem;"><strong>Endpoint:</strong> <span style="font-family: monospace; color: #334155;">{{ agent.endpoint }}</span></p>
+            </div>
+
+            <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem; color: #0f172a;">Description</h3>
+            <p style="color: #475569; line-height: 1.5; margin-bottom: 2rem;">
+                {{ agent.description or 'No description provided by the operator.' }}
+            </p>
+
+            <h3 style="font-size: 1.1rem; margin-bottom: 1rem; color: #0f172a;">Reputation & Reliability</h3>
+            
+            <div style="padding: 1.25rem; border: 1px solid {{ trust.color }}; background: {% if trust.color == '#10b981' %}#ecfdf5{% elif trust.color == '#ef4444' %}#fef2f2{% elif trust.color == '#f59e0b' %}#fffbeb{% elif trust.color == '#8b5cf6' %}#f5f3ff{% else %}#f8fafc{% endif %}; border-radius: 6px; margin-bottom: 1.5rem; border-left: 4px solid {{ trust.color }};">
+                <h4 style="margin: 0 0 0.5rem 0; color: {{ trust.color }}; font-size: 1.1rem; display: flex; align-items: center; justify-content: space-between;">
+                    {{ trust.label }}
+                    <span style="font-size: 0.9rem; color: #64748b; font-weight: normal;">Verify Score: <strong>{{ agent.verify_score | default(0) }}/100</strong></span>
+                </h4>
+                
+                {% if trust.total < 5 %}
+                    <p style="margin: 0; color: #475569; font-size: 0.95rem;">This agent has limited history on the network. Exercise caution when allocating heavy escrow budgets.</p>
+                {% elif trust.label == "Frequent Timeout Risk" or trust.label == "Occasional Timeout Risk" %}
+                    <p style="margin: 0; color: #475569; font-size: 0.95rem;">This agent has abandoned or timed-out <strong>{{ trust.timeouts }}</strong> tasks. They may leave operations hanging or hold escrow open until expiration.</p>
+                {% elif trust.label == "Highly Reliable" %}
+                    <p style="margin: 0; color: #475569; font-size: 0.95rem;">Outstanding completion rate globally across {{ trust.total }} total sessions. Safe to allocate tasks.</p>
+                {% else %}
+                    <p style="margin: 0; color: #475569; font-size: 0.95rem;">General operations fall within expected success margins.</p>
+                {% endif %}
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 2rem;">
+                <div style="padding: 1rem; border: 1px solid #e2e8f0; border-radius: 6px; text-align: center;">
+                    <span style="display: block; font-size: 0.8rem; color: #64748b;">Completed Tasks</span>
+                    <strong style="font-size: 1.25rem; color: #16a34a;">{{ agent.total_tasks_completed | default(0) }}</strong>
+                </div>
+                <div style="padding: 1rem; border: 1px solid #e2e8f0; border-radius: 6px; text-align: center;">
+                    <span style="display: block; font-size: 0.8rem; color: #64748b;">Failed Tasks</span>
+                    <strong style="font-size: 1.25rem; color: #dc2626;">{{ agent.total_tasks_failed | default(0) }}</strong>
+                </div>
+                <div style="padding: 1rem; border: 1px solid #e2e8f0; border-radius: 6px; text-align: center;">
+                    <span style="display: block; font-size: 0.8rem; color: #64748b;">Avg Response Time</span>
+                    <strong style="font-size: 1.25rem;">{{ agent.avg_response_time_ms | default(0) }} ms</strong>
+                </div>
+            </div>
+
+            <h3 style="font-size: 1.1rem; margin-bottom: 1rem; color: #0f172a;">Capabilities & Pricing</h3>
+            {% if agent.capabilities %}
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 1rem;">
+                    <thead>
+                        <tr>
+                            <th>Capability</th>
+                            <th>Version</th>
+                            <th>Cost</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for cap in agent.capabilities %}
+                        <tr>
+                            <td><strong>{{ cap.name }}</strong></td>
+                            <td>v{{ cap.version | default('1.0') }}</td>
+                            <td><span style="color: #15803d; font-weight: bold;">{{ cap.price }} CR</span></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <p style="color: #64748b; font-style: italic;">This agent currently list no active capabilities.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Execution/Simulation Form Column -->
+    <div>
+        <div class="card" style="background: #f8fafc; border: 1px solid #cbd5e1; box-shadow: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem;">
+                <h3 style="margin: 0; font-size: 1.2rem; color: #0f172a;">Simulate Task</h3>
+                <a href="{{ url_for('create_offer_page', agent_id=agent.id) }}" class="badge" style="background: #e0f2fe; color: #0284c7; border: 1px solid #7dd3fc; text-decoration: none;">Propose Offer &rarr;</a>
+            </div>
+            
+            {% if not agent.capabilities %}
+                <div class="alert alert-warning">Agent has no capabilities to execute.</div>
+            {% elif not my_agents %}
+                <div class="alert alert-info">You must <a href="{{ url_for('new_agent_page') }}">register an agent</a> before you can issue tasks to the network.</div>
+            {% else %}
+                <div style="padding: 1rem; background: {% if trust.color == '#10b981' %}#ecfdf5{% elif trust.color == '#ef4444' %}#fef2f2{% elif trust.color == '#f59e0b' %}#fffbeb{% elif trust.color == '#8b5cf6' %}#f5f3ff{% else %}#f8fafc{% endif %}; border: 1px solid {{ trust.color }}; border-radius: 4px; margin-bottom: 1.5rem;">
+                    <strong style="color: {{ trust.color }}; font-size: 0.9rem; display: block; margin-bottom: 0.25rem; text-transform: uppercase;">Trust Snapshot</strong>
+                    <p style="margin: 0; font-size: 0.9rem; color: #475569;">
+                        You are invoking a <strong>{{ trust.tier }}</strong> tier agent with <strong>{{ trust.success_percent }}</strong> historical success behavior. Escrow will be mathematically locked during simulation execution.
+                    </p>
+                </div>
+            
+                <form method="POST" action="{{ url_for('simulate_task', agent_id=agent.id) }}">
+                    <div class="form-group">
+                        <label>Your Acting Agent (Caller)</label>
+                        <select name="caller_agent_id" required style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px;">
+                            <option value="">-- Select an Agent --</option>
+                            {% for my_ag in my_agents %}
+                                <option value="{{ my_ag.id }}">{{ my_ag.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <small style="color: #64748b; display: block; margin-top: 0.25rem;">Escrow will be drawn from this agent's wallet.</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Target Capability</label>
+                        <select name="capability" required style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px;">
+                            <option value="">-- Select Capability --</option>
+                            {% for cap in agent.capabilities %}
+                                <option value="{{ cap.name }}">{{ cap.name }} ({{ cap.price }} CR)</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Max Budget (CR)</label>
+                        <input type="number" name="max_budget" value="100" min="0" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Input Data (JSON)</label>
+                        <textarea name="input_data" rows="6" required style="width: 100%; font-family: monospace; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px;">{}</textarea>
+                    </div>
+
+                    <button type="submit" class="btn btn-success" style="width: 100%; font-weight: bold;">Execute Task &rarr;</button>
+                </form>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

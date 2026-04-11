@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="max-width: 1000px; margin: 0 auto;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+        <h1 style="color: #0f172a; margin: 0;">Offer Center</h1>
+    </div>
+
+    <!-- Actions / Filters row -->
+    <div style="display: flex; gap: 1rem; margin-bottom: 2rem;">
+        <a href="#incoming" class="btn active" style="background: #1e293b; color: white;">Incoming Offers ({{ incoming|length }})</a>
+        <a href="#outgoing" class="btn" style="background: white; border: 1px solid #cbd5e1; color: #334155;">Outgoing Offers ({{ outgoing|length }})</a>
+    </div>
+
+    <h2 id="incoming" style="font-size: 1.25rem; font-weight: 500; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.5rem; margin-bottom: 1.5rem;">Incoming Offers</h2>
+    {% if not incoming %}
+        <div class="card" style="text-align: center; color: #64748b; padding: 3rem 1rem;">
+            No incoming offers at this time.
+        </div>
+    {% else %}
+        <div style="display: grid; gap: 1rem; margin-bottom: 3rem;">
+        {% for offer in incoming %}
+            <div class="card" style="display: flex; justify-content: space-between; align-items: center; padding: 1.5rem;">
+                <div>
+                    <h3 style="margin: 0 0 0.25rem 0; font-size: 1.1rem; color: #0f172a;">{{ offer.title }}</h3>
+                    <p style="margin: 0 0 0.5rem 0; color: #64748b; font-size: 0.9rem;">From Agent: {{ offer.from_agent_id[:8] }}</p>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        <span class="badge" style="background: #e2e8f0; color: #334155;">{{ offer.price }} {{ offer.currency | upper }}</span>
+                        {% if offer.status == 'pending' %}
+                            <span class="badge badge-warning">Pending</span>
+                        {% elif offer.status == 'accepted' %}
+                            <span class="badge badge-success">Accepted</span>
+                        {% elif offer.status == 'rejected' %}
+                            <span class="badge badge-danger">Rejected</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div style="text-align: right;">
+                    <p style="margin: 0 0 0.5rem 0; font-size: 0.8rem; color: #94a3b8;">Created: {{ offer.created_at[:10] }}</p>
+                    <a href="{{ url_for('offer_detail_page', offer_id=offer.id) }}" class="btn">View &rarr;</a>
+                </div>
+            </div>
+        {% endfor %}
+        </div>
+    {% endif %}
+
+    <h2 id="outgoing" style="font-size: 1.25rem; font-weight: 500; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.5rem; margin-bottom: 1.5rem;">Outgoing Offers</h2>
+    {% if not outgoing %}
+        <div class="card" style="text-align: center; color: #64748b; padding: 3rem 1rem;">
+            No outgoing offers.
+        </div>
+    {% else %}
+        <div style="display: grid; gap: 1rem;">
+        {% for offer in outgoing %}
+            <div class="card" style="display: flex; justify-content: space-between; align-items: center; padding: 1.5rem;">
+                <div>
+                    <h3 style="margin: 0 0 0.25rem 0; font-size: 1.1rem; color: #0f172a;">{{ offer.title }}</h3>
+                    <p style="margin: 0 0 0.5rem 0; color: #64748b; font-size: 0.9rem;">To Agent: {{ offer.to_agent_id[:8] }}</p>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        <span class="badge" style="background: #e2e8f0; color: #334155;">{{ offer.price }} {{ offer.currency | upper }}</span>
+                        {% if offer.status == 'pending' %}
+                            <span class="badge badge-warning">Pending</span>
+                        {% elif offer.status == 'accepted' %}
+                            <span class="badge badge-success">Accepted</span>
+                        {% elif offer.status == 'rejected' %}
+                            <span class="badge badge-danger">Rejected</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div style="text-align: right;">
+                    <p style="margin: 0 0 0.5rem 0; font-size: 0.8rem; color: #94a3b8;">Created: {{ offer.created_at[:10] }}</p>
+                    <a href="{{ url_for('offer_detail_page', offer_id=offer.id) }}" class="btn">View &rarr;</a>
+                </div>
+            </div>
+        {% endfor %}
+        </div>
+    {% endif %}
+    
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2rem; padding: 1rem; background: white; border-radius: 6px; border: 1px solid #e2e8f0;">
+        <div style="color: #64748b; font-size: 0.9rem;">
+            Page {{ page }}
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+            {% if page > 1 %}
+                <a href="{{ url_for('offers_page', page=page-1) }}" class="btn" style="background: white; border: 1px solid #cbd5e1; color: #334155; padding: 0.4rem 1rem;">&larr; Previous</a>
+            {% else %}
+                <button class="btn" style="background: #f8fafc; border: 1px solid #e2e8f0; color: #94a3b8; cursor: not-allowed; padding: 0.4rem 1rem;" disabled>&larr; Previous</button>
+            {% endif %}
+            
+            {% if has_next %}
+                <a href="{{ url_for('offers_page', page=page+1) }}" class="btn" style="background: white; border: 1px solid #cbd5e1; color: #334155; padding: 0.4rem 1rem;">Next &rarr;</a>
+            {% else %}
+                <button class="btn" style="background: #f8fafc; border: 1px solid #e2e8f0; color: #94a3b8; cursor: not-allowed; padding: 0.4rem 1rem;" disabled>Next &rarr;</button>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

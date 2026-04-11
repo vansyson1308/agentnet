@@ -12,23 +12,105 @@ Escrow only locks when an offer is accepted and a task session is created.
 """
 
 import uuid
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from ...auth import get_current_agent
+from ...auth import get_current_user_or_agent
 from ...database import get_db
 from ...models import Agent, NegotiationRound, Offer, OfferStatus
+from ...governance import create_notification
 from ...schemas import (
     CounterOfferCreate,
     NegotiationRoundResponse,
     OfferWithNegotiation,
+    OfferCreate,
 )
+from .tasks import _resolve_agent
 
 router = APIRouter()
 
 MAX_NEGOTIATION_ROUNDS = 5
+
+def _resolve_offer_agent(current_user_or_agent, offer, db: Session, caller_agent_id=None):
+    from ...models import User, Agent
+    if isinstance(current_user_or_agent, Agent):
+        return current_user_or_agent
+    if caller_agent_id:
+        return db.query(Agent).filter(Agent.id == caller_agent_id, Agent.user_id == current_user_or_agent.id).first()
+    
+    owned_agents = [a.id for a in db.query(Agent).filter(Agent.user_id == current_user_or_agent.id).all()]
+    if offer and offer.from_agent_id in owned_agents:
+        return db.query(Agent).filter(Agent.id == offer.from_agent_id).first()
+    if offer and offer.to_agent_id in owned_agents:
+        return db.query(Agent).filter(Agent.id == offer.to_agent_id).first()
+    
+    return db.query(Agent).filter(Agent.user_id == current_user_or_agent.id).first()
+
+def _get_owned_agent_ids(current_user_or_agent, db: Session):
+    from ...models import User, Agent
+    if isinstance(current_user_or_agent, Agent):
+        return [current_user_or_agent.id]
+    return [a.id for a in db.query(Agent).filter(Agent.user_id == current_user_or_agent.id).all()]
+
+@router.get("/", response_model=List[OfferWithNegotiation])
+async def list_offers(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user_or_agent = Depends(get_current_user_or_agent),
+):
+    """List all offers where current agent is sender or recipient."""
+    my_ids = _get_owned_agent_ids(current_user_or_agent, db)
+    return db.query(Offer).filter(
+        Offer.from_agent_id.in_(my_ids) | Offer.to_agent_id.in_(my_ids)
+    ).order_by(Offer.created_at.desc()).offset(skip).limit(limit).all()
+
+@router.post("/", response_model=OfferWithNegotiation, status_code=status.HTTP_201_CREATED)
+async def create_offer(
+    offer: OfferCreate,
+    background_tasks: BackgroundTasks,
+    caller_agent_id: Optional[uuid.UUID] = Query(None),
+    db: Session = Depends(get_db),
+    current_user_or_agent = Depends(get_current_user_or_agent),
+):
+    """Create a new structured offer to another agent."""
+    current_agent = _resolve_offer_agent(current_user_or_agent, None, db, caller_agent_id)
+    if offer.to_agent_id == current_agent.id:
+        raise HTTPException(status_code=400, detail="Cannot send offer to yourself")
+    
+    from ...models import CurrencyType
+    new_offer = Offer(
+        id=uuid.uuid4(),
+        from_agent_id=current_agent.id,
+        to_agent_id=offer.to_agent_id,
+        core_task_id=offer.core_task_id,
+        title=offer.title,
+        description=offer.description,
+        price=offer.price,
+        currency=CurrencyType[offer.currency.upper()],
+        expires_at=offer.expires_at,
+        status=OfferStatus.PENDING
+    )
+    db.add(new_offer)
+    db.commit()
+    db.refresh(new_offer)
+
+    # Notify recipient owner
+    recipient_agent = db.query(Agent).filter(Agent.id == offer.to_agent_id).first()
+    if recipient_agent and recipient_agent.user_id:
+        background_tasks.add_task(
+            create_notification,
+            db,
+            recipient_agent.user_id,
+            "offer",
+            "New Offer Received",
+            f"Agent {current_agent.name} sent a '{offer.title}' offer for {offer.price} {offer.currency}.",
+            f"/offers/{new_offer.id}"
+        )
+
+    return new_offer
 
 
 @router.get("/{offer_id}", response_model=OfferWithNegotiation)
@@ -49,7 +131,7 @@ async def counter_offer(
     offer_id: uuid.UUID,
     counter: CounterOfferCreate,
     db: Session = Depends(get_db),
-    current_agent: Agent = Depends(get_current_agent),
+    current_user_or_agent = Depends(get_current_user_or_agent),
 ):
     """
     Submit a counter-offer for an existing offer.
@@ -60,6 +142,8 @@ async def counter_offer(
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Offer not found")
+        
+    current_agent = _resolve_offer_agent(current_user_or_agent, offer, db)
 
     # Only pending offers can be negotiated
     if offer.status != OfferStatus.PENDING:
@@ -133,7 +217,7 @@ async def counter_offer(
 async def accept_offer(
     offer_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_agent: Agent = Depends(get_current_agent),
+    current_user_or_agent = Depends(get_current_user_or_agent),
 ):
     """
     Accept the current offer/counter-offer.
@@ -145,6 +229,8 @@ async def accept_offer(
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Offer not found")
+        
+    current_agent = _resolve_offer_agent(current_user_or_agent, offer, db)
 
     if offer.status != OfferStatus.PENDING:
         raise HTTPException(
@@ -200,12 +286,14 @@ async def accept_offer(
 async def reject_offer(
     offer_id: uuid.UUID,
     db: Session = Depends(get_db),
-    current_agent: Agent = Depends(get_current_agent),
+    current_user_or_agent = Depends(get_current_user_or_agent),
 ):
     """Reject the offer. Either party can reject at any time."""
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Offer not found")
+        
+    current_agent = _resolve_offer_agent(current_user_or_agent, offer, db)
 
     if offer.status != OfferStatus.PENDING:
         raise HTTPException(

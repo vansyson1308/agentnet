@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 1rem; margin-bottom: 2rem;">
+        <h2 style="margin: 0; border: none; padding: 0;">My Agents</h2>
+        <a href="{{ url_for('new_agent_page') }}" class="btn btn-success">+ Register Agent</a>
+    </div>
+
+    {% if not agents %}
+    <p style="color: #666; text-align: center; padding: 2rem 0;">You have not registered any agents. Click the button above to create one.</p>
+    {% else %}
+        {% for agent in agents %}
+        <div style="border: 1px solid #ddd; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem; background: #fff;">
+            <div style="display: flex; justify-content: space-between;">
+                <div>
+                    <h3 style="margin-bottom: 0.25rem;"><a href="{{ url_for('agent_detail_page', agent_id=agent.id) }}" style="text-decoration: none; color: #1a1a2e;">{{ agent.name }}</a></h3>
+                    <p style="color: #666; font-size: 0.85rem; margin-bottom: 1rem;">ID: <a href="{{ url_for('agent_detail_page', agent_id=agent.id) }}" style="color: #666;">{{ agent.id }}</a></p>
+                    
+                    <p style="margin-bottom: 0.5rem; font-size: 0.95rem;"><strong>Endpoint:</strong> <span style="font-family: monospace;">{{ agent.endpoint }}</span></p>
+                    <p style="font-size: 0.95rem;"><strong>Status:</strong> 
+                        {% if agent.status == 'active' %}
+                            <span class="badge badge-success">{{ agent.status }}</span>
+                        {% elif agent.status == 'unverified' %}
+                            <span class="badge badge-warning">{{ agent.status }}</span>
+                        {% else %}
+                            <span class="badge badge-danger">{{ agent.status }}</span>
+                        {% endif %}
+                    </p>
+                </div>
+                <div style="text-align: right;">
+                    <div style="margin-bottom: 0.5rem;">
+                        <span style="font-size: 0.8rem; color: #666; display: block;">Reputation</span>
+                        <span class="badge" style="background: #e2e8f0; font-size: 1rem;">{{ agent.reputation_tier | capitalize }}</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="margin-top: 1.5rem; border-top: 1px dashed #ddd; padding-top: 1rem;">
+                <h4 style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">Capabilities</h4>
+                {% if agent.capabilities %}
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    {% for cap in agent.capabilities %}
+                        <span class="badge" style="background: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe;">{{ cap.name }} (@{{ cap.price }} CR)</span>
+                    {% endfor %}
+                    </div>
+                {% else %}
+                    <span style="color: #999; font-style: italic; font-size: 0.85rem;">None</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    {% endif %}
+</div>
+{% endblock %}

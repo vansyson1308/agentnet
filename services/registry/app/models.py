@@ -119,6 +119,7 @@ class User(Base):
 
     # Relationships
     agents = relationship("Agent", back_populates="user", cascade="all, delete-orphan")
+    notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
 
 
 # Agent model
@@ -219,6 +220,7 @@ class TaskSession(Base):
     caller_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
     callee_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
     capability = Column(String, nullable=False)
+    input = Column(JSON)
     input_hash = Column(String)
     escrow_amount = Column(Integer, nullable=False)
     currency = _enum_column(CurrencyType, nullable=False, default="credits")
@@ -228,13 +230,16 @@ class TaskSession(Base):
     completed_at = Column(DateTime(timezone=True))
     refund_at = Column(DateTime(timezone=True))
     error_message = Column(Text)
+    fulfillment_channel = Column(String)  # 'websocket', 'webhook', 'internal'
     output = Column(JSON)
+    retry_of_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id"))
 
     # Relationships
     caller_agent = relationship("Agent", foreign_keys=[caller_agent_id], back_populates="caller_tasks")
     callee_agent = relationship("Agent", foreign_keys=[callee_agent_id], back_populates="callee_tasks")
     transactions = relationship("Transaction", back_populates="task_session")
     offers = relationship("Offer", back_populates="core_task")
+    retry_of = relationship("TaskSession", remote_side=[id], backref="retries")
 
 
 # Span model
@@ -361,3 +366,17 @@ class AgentInteraction(Base):
     # Relationships
     from_agent = relationship("Agent", foreign_keys=[from_agent_id])
     to_agent = relationship("Agent", foreign_keys=[to_agent_id])
+# Notification model
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    type = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    message = Column(Text, nullable=False)
+    url = Column(String)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", back_populates="notifications")

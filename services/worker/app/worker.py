@@ -88,11 +88,30 @@ async def process_timed_out_tasks(db: Session, redis_client):
         for task in timed_out_tasks:
             with tracer.start_as_current_span("process_task", attributes={"task_id": str(task.id)}):
                 try:
-                    # Update task status to timeout
-                    task.status = TaskStatus.TIMEOUT
-                    task.refund_at = now
-                    task.error_message = "Task timed out"
+                    # Atomic Update to prevent race conditions with API confirm/fail
+                    # We only transition if it's still in a non-terminal state
+                    affected = (
+                        db.query(TaskSession)
+                        .filter(
+                            TaskSession.id == task.id,
+                            TaskSession.status.in_([TaskStatus.INITIATED, TaskStatus.IN_PROGRESS]),
+                        )
+                        .update(
+                            {
+                                "status": TaskStatus.TIMEOUT,
+                                "refund_at": now,
+                                "error_message": "Task timed out",
+                            },
+                            synchronize_session=False,
+                        )
+                    )
+
+                    if affected == 0:
+                        logger.info(f"Task {task.id} was processed by API while worker was running, skipping timeout.")
+                        continue
+
                     db.commit()
+                    logger.info(f"Task {task.id} marked as TIMEOUT by worker")
 
                     # Get the pending transaction for this task
                     transaction = (
@@ -110,12 +129,10 @@ async def process_timed_out_tasks(db: Session, redis_client):
                         # Cancel the pending transaction
                         transaction.status = TransactionStatus.CANCELLED
                         transaction.completed_at = now
-                        db.commit()
 
                         # Get the caller's wallet
                         caller_wallet = (
                             db.query(Wallet)
-                            .join(Agent, Agent.id == task.caller_agent_id)
                             .filter(
                                 Wallet.owner_type == "agent",
                                 Wallet.owner_id == task.caller_agent_id,
@@ -126,11 +143,16 @@ async def process_timed_out_tasks(db: Session, redis_client):
                         if caller_wallet:
                             # Release the reserved funds back to the caller
                             if task.currency == CurrencyType.CREDITS:
-                                caller_wallet.reserved_credits -= task.escrow_amount
+                                caller_wallet.reserved_credits = max(
+                                    0, caller_wallet.reserved_credits - task.escrow_amount
+                                )
                             else:
-                                caller_wallet.reserved_usdc -= task.escrow_amount
+                                caller_wallet.reserved_usdc = max(
+                                    0, caller_wallet.reserved_usdc - task.escrow_amount
+                                )
 
-                            db.commit()
+                        db.commit()
+                        logger.warning(f"Escrow {task.escrow_amount} refunded for timed out task {task.id}")
 
                     # Increment callee's timeout count
                     callee_agent = db.query(Agent).filter(Agent.id == task.callee_agent_id).first()
@@ -141,8 +163,8 @@ async def process_timed_out_tasks(db: Session, redis_client):
                         # If timeout_count is too high, suspend the agent
                         if callee_agent.timeout_count >= 5:
                             callee_agent.status = AgentStatus.SUSPENDED
-                            logger.warning(
-                                f"Agent {callee_agent.id} ({callee_agent.name}) suspended due to too many timeouts"
+                            logger.error(
+                                f"Agent {callee_agent.id} ({callee_agent.name}) SUSPENDED due to too many timeouts"
                             )
 
                         db.commit()

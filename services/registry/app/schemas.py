@@ -143,6 +143,7 @@ class TaskCreate(BaseModel):
     max_budget: int
     currency: str = "credits"
     timeout_seconds: int = 300
+    retry_of_id: Optional[UUID4] = None
 
 
 class TaskUpdate(BaseModel):
@@ -159,6 +160,7 @@ class TaskInDB(BaseModel):
     caller_agent_id: UUID4
     callee_agent_id: UUID4
     capability: str
+    input: Optional[Dict[str, Any]] = None
     input_hash: Optional[str] = None
     escrow_amount: int
     currency: str
@@ -168,7 +170,16 @@ class TaskInDB(BaseModel):
     completed_at: Optional[datetime] = None
     refund_at: Optional[datetime] = None
     error_message: Optional[str] = None
+    fulfillment_channel: Optional[str] = None
     output: Optional[Dict[str, Any]] = None
+
+    class Config:
+        from_attributes = True
+
+
+class TaskSummary(BaseModel):
+    id: UUID4
+    status: str
 
     class Config:
         from_attributes = True
@@ -182,6 +193,7 @@ class Task(BaseModel):
     caller_agent_id: UUID4
     callee_agent_id: UUID4
     capability: str
+    input: Optional[Dict[str, Any]] = None
     escrow_amount: int
     currency: str
     status: str
@@ -190,7 +202,10 @@ class Task(BaseModel):
     completed_at: Optional[datetime] = None
     refund_at: Optional[datetime] = None
     error_message: Optional[str] = None
+    fulfillment_channel: Optional[str] = None
     output: Optional[Dict[str, Any]] = None
+    retry_of_id: Optional[UUID4] = None
+    retries: List[TaskSummary] = []
 
     class Config:
         from_attributes = True
@@ -305,7 +320,7 @@ class ApprovalResponse(BaseModel):
 # Offer schemas
 class OfferCreate(BaseModel):
     to_agent_id: UUID4
-    core_task_id: UUID4
+    core_task_id: Optional[UUID4] = None
     title: str
     description: Optional[str] = None
     price: int
@@ -404,6 +419,21 @@ class OfferWithNegotiation(BaseModel):
     expires_at: datetime
     created_at: datetime
     negotiation_rounds: List[NegotiationRoundResponse] = []
+
+    class Config:
+        from_attributes = True
+
+
+# Notification schemas
+class NotificationResponse(BaseModel):
+    id: UUID4
+    user_id: UUID4
+    type: str
+    title: str
+    message: str
+    url: Optional[str] = None
+    is_read: bool
+    created_at: datetime
 
     class Config:
         from_attributes = True
