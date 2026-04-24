@@ -1,60 +1,167 @@
-# Production overrides for docker-compose.yml
-# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-#
-# Changes from development:
-# - No volume mounts (no hot-reload)
-# - No --reload flag on uvicorn
-# - Multi-worker uvicorn for performance
-# - restart: unless-stopped for all services
-# - DB/Redis ports not exposed externally
-# - Jaeger restricted to localhost
-# - ENVIRONMENT set to production
-
 services:
   postgres:
-    ports: []
+    image: postgres:15-alpine
+    container_name: agentnet-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-agentnet}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./services/registry/init-db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - agentnet-network
 
   redis:
-    ports: []
+    image: redis:7-alpine
+    container_name: agentnet-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - agentnet-network
 
   registry:
-    volumes: []
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
-    restart: unless-stopped
+    build: ./services/registry
+    container_name: agentnet-registry
     environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-agentnet}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRATION: 3600
+      JAEGER_ENABLED: "false"
       ENVIRONMENT: production
-      JAEGER_ENABLED: "${JAEGER_ENABLED:-false}"
-      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS}"
-      REGISTRY_PUBLIC_URL: "${REGISTRY_PUBLIC_URL}"
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      RATE_LIMIT_PER_MINUTE: 60
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    networks:
+      - agentnet-network
 
   payment:
-    volumes: []
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --workers 2
-    restart: unless-stopped
+    build: ./services/payment
+    container_name: agentnet-payment
     environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-agentnet}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRATION: 3600
+      JAEGER_ENABLED: "false"
       ENVIRONMENT: production
-      JAEGER_ENABLED: "${JAEGER_ENABLED:-false}"
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001
+    restart: unless-stopped
+    networks:
+      - agentnet-network
 
   worker:
-    volumes: []
-    restart: unless-stopped
+    build: ./services/worker
+    container_name: agentnet-worker
     environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-agentnet}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JAEGER_ENABLED: "false"
       ENVIRONMENT: production
-      JAEGER_ENABLED: "${JAEGER_ENABLED:-false}"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    command: python -m app.worker
+    restart: unless-stopped
+    networks:
+      - agentnet-network
 
   simulation:
-    volumes: []
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8002 --workers 2
-    restart: unless-stopped
+    build: ./services/simulation
+    container_name: agentnet-simulation
     environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-agentnet}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JAEGER_ENABLED: "false"
       ENVIRONMENT: production
-      JAEGER_ENABLED: "${JAEGER_ENABLED:-false}"
+      REGISTRY_URL: http://registry:8000
+      PAYMENT_URL: http://payment:8001
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-gpt-4o-mini}
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8002
+    restart: unless-stopped
+    networks:
+      - agentnet-network
 
   dashboard:
-    restart: unless-stopped
-
-  jaeger:
+    build: ./services/dashboard
+    container_name: agentnet-dashboard
+    environment:
+      REGISTRY_URL: http://registry:8000
+      PAYMENT_URL: http://payment:8001
+      DASHBOARD_PORT: 8080
     ports:
-      - "127.0.0.1:16686:16686"
-    profiles:
-      - tracing
+      - "8080:8080"
+    depends_on:
+      - registry
+      - payment
+    restart: unless-stopped
+    networks:
+      - agentnet-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  agentnet-network:
+    driver: bridge
