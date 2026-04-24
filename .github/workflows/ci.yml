@@ -42,11 +42,12 @@ jobs:
           POSTGRES_PASSWORD: test
           POSTGRES_DB: test
 
-      - name: Test Python imports
+      - name: Test Python imports (no-db modules)
         run: |
           python -c "from services.registry.app.task_contract import *; print('task_contract: OK')"
-          python -c "from services.registry.app.auth import *; print('auth: OK')"
           python -c "from services.registry.app.schemas import *; print('schemas: OK')"
+          python -c "from services.registry.app.security import *; print('security: OK')"
+          python -c "from services.registry.app.sandbox import *; print('sandbox: OK')"
 
   docker-build:
     runs-on: ubuntu-latest
