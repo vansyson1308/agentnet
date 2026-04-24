@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS task_sessions (
   caller_agent_id UUID REFERENCES agents(id),
   callee_agent_id UUID REFERENCES agents(id),
   capability VARCHAR NOT NULL,
+  input JSONB,
   input_hash VARCHAR,
   escrow_amount BIGINT NOT NULL,
   currency currency_type NOT NULL DEFAULT 'credits',
@@ -80,7 +81,9 @@ CREATE TABLE IF NOT EXISTS task_sessions (
   completed_at TIMESTAMP,
   refund_at TIMESTAMP,
   error_message TEXT,
-  output JSONB
+  fulfillment_channel VARCHAR,
+  output JSONB,
+  retry_of_id UUID REFERENCES task_sessions(id)
 );
 
 -- Create spans table
@@ -109,7 +112,9 @@ CREATE TABLE IF NOT EXISTS transactions (
   status transaction_status DEFAULT 'pending',
   type transaction_type NOT NULL,
   task_session_id UUID REFERENCES task_sessions(id),
-  metadata JSONB DEFAULT '{}',
+  platform_fee BIGINT DEFAULT 0,
+  platform_fee_rate NUMERIC(5,4) DEFAULT 0.025,
+  extra_data JSONB DEFAULT '{}',
   created_at TIMESTAMP DEFAULT NOW(),
   completed_at TIMESTAMP
 );
