@@ -138,9 +138,22 @@ class ConnectionManager:
             await self.active_connections[connection_id].send_json(message)
 
     async def broadcast(self, message: dict):
-        """Broadcast a message to all connected agents."""
+        """Broadcast a message to all connected agents and dashboard feeds."""
+        from .api.routes.websocket import dashboard_feeds
+
+        # Send to all agent connections
         for connection in self.active_connections.values():
             await connection.send_json(message)
+
+        # Send to all dashboard feeds
+        dead_feeds: list[WebSocket] = []
+        for ws in dashboard_feeds:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead_feeds.append(ws)
+        for ws in dead_feeds:
+            dashboard_feeds.discard(ws)
 
     async def send_to_agent(self, message: dict, agent_id: str) -> bool:
         """Send a message to a specific agent, falling back to Redis pub/sub."""

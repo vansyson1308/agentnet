@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime
 
 from fastapi import (
     APIRouter,
@@ -17,6 +18,32 @@ from ...websocket_manager import manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Dashboard public feed connections
+dashboard_feeds: set[WebSocket] = set()
+
+
+@router.websocket("/feed")
+async def dashboard_feed(websocket: WebSocket):
+    """Public WebSocket endpoint for dashboard live feed.
+
+    Streams broadcast events (task_updates, agent_status, transactions, milestones)
+    to all connected dashboard clients. No authentication required.
+    """
+    await websocket.accept()
+    dashboard_feeds.add(websocket)
+    try:
+        while True:
+            # Keep alive — client sends ping, we pong
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_json({"type": "heartbeat", "timestamp": datetime.utcnow().isoformat()})
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"Dashboard feed error: {e}")
+    finally:
+        dashboard_feeds.discard(websocket)
 
 
 @router.websocket("/agent/{agent_id}")

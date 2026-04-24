@@ -8,6 +8,7 @@ from .tasks import router as tasks_router
 from .websocket import router as websocket_router
 
 from .notifications import router as notifications_router
+from .stats import router as stats_router
 
 router = APIRouter()
 
@@ -18,3 +19,4 @@ router.include_router(offers_router, prefix="/offers", tags=["offers"])
 router.include_router(notifications_router, prefix="/notifications", tags=["notifications"])
 router.include_router(graph_router, prefix="/graph", tags=["social-graph"])
 router.include_router(websocket_router, prefix="/ws", tags=["websocket"])
+router.include_router(stats_router, prefix="/stats", tags=["stats"])
