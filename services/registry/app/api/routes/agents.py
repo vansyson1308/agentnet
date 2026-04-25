@@ -7,10 +7,11 @@ import jsonschema
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from jsonschema import validate
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ...a2a import agent_to_a2a_card
-from ...auth import get_current_agent, get_current_user
+from ...auth import get_current_agent, get_current_user, get_current_user_or_agent
 from ...database import get_db
 from ...models import Agent, AgentStatus, User, Wallet, WalletOwnerType
 from ...reputation import compute_agent_reputation
@@ -103,6 +104,15 @@ async def get_agent(agent_id: uuid.UUID, db: Session = Depends(get_db)):
     return db_agent
 
 
+@router.get("/{agent_id}/capabilities")
+async def get_agent_capabilities(agent_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Get the capabilities of an agent (public discovery endpoint)."""
+    db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if db_agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    return db_agent.capabilities
+
+
 @router.get("/{agent_id}/reputation", response_model=AgentReputation)
 async def get_agent_reputation(agent_id: uuid.UUID, db: Session = Depends(get_db)):
     """
@@ -162,21 +172,24 @@ async def update_agent(
     db: Session = Depends(get_db),
     current_agent: Agent = Depends(get_current_agent),
 ):
-    """Update agent info."""
-    # Check if the agent exists and belongs to the current user
-    if current_agent.id != agent_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to update this agent",
-        )
+    """Update an existing agent."""
+    db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
 
-    # Update the agent
-    update_data = agent_update.model_dump(exclude_unset=True)
+    if db_agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
-    # Validate capabilities if provided
-    if "capabilities" in update_data and agent_update.capabilities is not None:
+    # Verify ownership
+    if db_agent.user_id != current_agent.user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to update this agent")
+
+    # Update fields if provided
+    if agent_update.name is not None:
+        db_agent.name = agent_update.name
+    if agent_update.description is not None:
+        db_agent.description = agent_update.description
+    if agent_update.capabilities is not None:
+        # Validate new capabilities
         for capability in agent_update.capabilities:
-            # Check if input_schema and output_schema are valid JSON Schema
             try:
                 validate(instance={}, schema=capability.input_schema)
                 validate(instance={}, schema=capability.output_schema)
@@ -185,424 +198,154 @@ async def update_agent(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid schema for capability {capability.name}: {str(e)}",
                 )
-
-        # Convert Capability objects to dictionaries (outside the loop)
-        update_data["capabilities"] = [cap.model_dump() for cap in agent_update.capabilities]
-
-    # Update the agent in the database
-    for key, value in update_data.items():
-        setattr(current_agent, key, value)
+        db_agent.capabilities = [cap.model_dump() for cap in agent_update.capabilities]
+    if agent_update.endpoint is not None:
+        db_agent.endpoint = agent_update.endpoint
+    if agent_update.public_key is not None:
+        db_agent.public_key = agent_update.public_key
 
     db.commit()
-    db.refresh(current_agent)
+    db.refresh(db_agent)
+    return db_agent
 
-    return current_agent
 
-
-@router.get("/", response_model=List[AgentSchema])
-async def search_agents(
-    capability: Optional[str] = Query(None, description="Filter by capability name"),
-    min_rating: Optional[int] = Query(None, ge=0, le=100, description="Minimum verification score"),
-    max_price: Optional[float] = Query(None, ge=0, description="Maximum price for the capability"),
-    status: Optional[AgentStatus] = Query(None, description="Filter by agent status"),
-    skip: int = Query(0, ge=0, description="Skip records"),
-    limit: int = Query(100, ge=1, le=1000, description="Limit records"),
+@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent(
+    agent_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Search agents."""
-    query = db.query(Agent)
+    """Delete an agent."""
+    db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
 
-    # Apply filters
-    if capability:
-        # Use JSONB containment operator to filter by capability
-        query = query.filter(Agent.capabilities.contains([{"name": capability}]))
+    if db_agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
-    if min_rating is not None:
-        query = query.filter(Agent.verify_score >= min_rating)
+    # Verify ownership
+    if db_agent.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to delete this agent")
 
-    if status:
-        query = query.filter(Agent.status == status)
-
-    # Execute query with pagination
-    agents = query.offset(skip).limit(limit).all()
-
-    # If max_price is specified, filter agents that have the capability with price <= max_price
-    if max_price is not None and capability:
-        filtered_agents = []
-        for agent in agents:
-            for cap in agent.capabilities:
-                if cap["name"] == capability and cap.get("price", 0) <= max_price:
-                    filtered_agents.append(agent)
-                    break
-        agents = filtered_agents
-
-    return agents
+    db.delete(db_agent)
+    db.commit()
+    return None
 
 
-@router.post("/{agent_id}/verify-capability", response_model=CapabilityVerifyResponse)
-async def verify_capability(
+@router.post("/{agent_id}/verify", response_model=CapabilityVerifyResponse)
+async def verify_agent_capability(
     agent_id: uuid.UUID,
     verify_request: CapabilityVerify,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Challenge agent to verify capability."""
-    # Get the agent
+    """Verify a specific capability of an agent by sending a test payload."""
     db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
 
     if db_agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
-    # Check if the agent has the requested capability
+    # Verify ownership or admin
+    if db_agent.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to verify this agent")
+
+    # Find the capability by name
     capability = None
     for cap in db_agent.capabilities:
-        if cap["name"] == verify_request.capability:
+        if cap["name"] == verify_request.capability_name:
             capability = cap
             break
 
-    if not capability:
+    if capability is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Capability '{verify_request.capability_name}' not found",
+        )
+
+    # Validate test input against input_schema
+    try:
+        validate(instance=verify_request.test_input, schema=capability["input_schema"])
+    except jsonschema.ValidationError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Agent does not have capability {verify_request.capability}",
+            detail=f"Test input does not match input_schema: {str(e)}",
         )
 
-    # Send a verification request to the agent's endpoint (via sandbox)
+    # Call the agent's endpoint with test input
     try:
-        response = await sandboxed_call(
-            url=f"{db_agent.endpoint}/verify",
-            method="POST",
-            json_body={
-                "capability": verify_request.capability,
-                "test_input": verify_request.test_input,
-            },
+        agent_url = db_agent.endpoint.rstrip("/") + f"/{verify_request.capability_name}"
+        result = await sandboxed_call(
+            agent_url,
+            payload=verify_request.test_input,
+            timeout=30,
+        )
+    except (SandboxTimeoutError, SSRFError, SandboxError) as e:
+        return CapabilityVerifyResponse(
+            success=False,
+            error=f"Call failed: {str(e)}",
+            output=None,
         )
 
-        if response.status_code != 200:
-            return CapabilityVerifyResponse(
-                verified=False,
-                message=f"Agent endpoint returned status code {response.status_code}",
-            )
+    # Validate output against output_schema
+    try:
+        validate(instance=result, schema=capability["output_schema"])
+    except jsonschema.ValidationError as e:
+        return CapabilityVerifyResponse(
+            success=False,
+            error=f"Output does not match output_schema: {str(e)}",
+            output=result,
+        )
 
-        # Validate the response against the expected schema
+    # Update agent status to VERIFIED if not already
+    if db_agent.status == AgentStatus.UNVERIFIED:
+        db_agent.status = AgentStatus.VERIFIED
+        db.commit()
+
+    return CapabilityVerifyResponse(
+        success=True,
+        error=None,
+        output=result,
+    )
+
+
+@router.get("/", response_model=List[AgentSchema])
+async def list_agents(
+    db: Session = Depends(get_db),
+    status: Optional[str] = Query(None, description="Filter by agent status"),
+    min_verify_score: Optional[float] = Query(None, ge=0.0, le=1.0),
+    max_verify_score: Optional[float] = Query(None, ge=0.0, le=1.0),
+    sort_by: Optional[str] = Query(None, regex="^(created_at|verify_score|name)$"),
+    sort_order: Optional[str] = Query("desc", regex="^(asc|desc)$"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+):
+    """
+    List agents with optional filtering, sorting, and pagination.
+
+    This is a public endpoint that does not require authentication.
+    """
+    query = db.query(Agent)
+
+    if status:
         try:
-            result = response.json()
-            validate(instance=result, schema=verify_request.expected_output_schema)
+            status_enum = AgentStatus[status.upper()]
+            query = query.filter(Agent.status == status_enum)
+        except KeyError:
+            raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
 
-            # Update agent's verify_score
-            db_agent.verify_score = min(100, db_agent.verify_score + 10)
+    if min_verify_score is not None:
+        query = query.filter(Agent.verify_score >= min_verify_score)
+    if max_verify_score is not None:
+        query = query.filter(Agent.verify_score <= max_verify_score)
 
-            # If this is the first successful verification, set status to active
-            if db_agent.status == AgentStatus.UNVERIFIED:
-                db_agent.status = AgentStatus.ACTIVE
+    # Sorting
+    if sort_by:
+        sort_column = getattr(Agent, sort_by, None)
+        if sort_column is None:
+            raise HTTPException(status_code=400, detail=f"Invalid sort field: {sort_by}")
+        if sort_order == "desc":
+            query = query.order_by(sort_column.desc())
+        else:
+            query = query.order_by(sort_column.asc())
 
-            db.commit()
+    agents = query.offset(offset).limit(limit).all()
 
-            return CapabilityVerifyResponse(verified=True, message="Capability verified successfully")
-        except (json.JSONDecodeError, jsonschema.ValidationError) as e:
-            # Decrease agent's verify_score
-            db_agent.verify_score = max(0, db_agent.verify_score - 5)
-            db.commit()
-
-            return CapabilityVerifyResponse(verified=False, message=f"Invalid response: {str(e)}")
-    except SSRFError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Security violation: {str(e)}",
-        )
-    except SandboxTimeoutError:
-        db_agent.verify_score = max(0, db_agent.verify_score - 5)
-        db_agent.timeout_count += 1
-        db.commit()
-        return CapabilityVerifyResponse(verified=False, message="Agent endpoint timed out")
-    except SandboxError as e:
-        db_agent.verify_score = max(0, db_agent.verify_score - 5)
-        db.commit()
-        return CapabilityVerifyResponse(verified=False, message=f"Sandbox error: {str(e)}")
-    except httpx.RequestError as e:
-        # Decrease agent's verify_score
-        db_agent.verify_score = max(0, db_agent.verify_score - 5)
-        db.commit()
-
-        return CapabilityVerifyResponse(verified=False, message=f"Failed to connect to agent endpoint: {str(e)}")
-
-
-@router.post("/{agent_id}/report")
-async def report_task(
-    agent_id: uuid.UUID,
-    report: TaskReport,
-    db: Session = Depends(get_db),
-    current_agent: Agent = Depends(get_current_agent),
-):
-    """Report task result (update reputation)."""
-    # Check if the agent exists
-    db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
-
-    if db_agent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-
-    # Update agent's reputation based on the report
-    if report.success:
-        # Increase verify_score for successful tasks
-        db_agent.verify_score = min(100, db_agent.verify_score + 1)
-
-        # Reset timeout_count if it was non-zero
-        if db_agent.timeout_count > 0:
-            db_agent.timeout_count = max(0, db_agent.timeout_count - 1)
-    else:
-        # Decrease verify_score for failed tasks
-        db_agent.verify_score = max(0, db_agent.verify_score - 2)
-
-        # If the failure was due to timeout, increase timeout_count
-        if report.feedback and "timeout" in report.feedback.lower():
-            db_agent.timeout_count += 1
-
-            # If timeout_count is too high, suspend the agent
-            if db_agent.timeout_count >= 5:
-                db_agent.status = AgentStatus.SUSPENDED
-
-    db.commit()
-
-    return {"message": "Task report processed successfully"}
-
-
-# ─────────────────────────────────────────────────────────
-# Phase 2D: Proxy Registration (import agent by URL)
-# ─────────────────────────────────────────────────────────
-
-
-class ImportAgentRequest(BaseModel):
-    """Request to import an external agent via its URL."""
-
-    url: str
-    name_override: Optional[str] = None
-
-
-@router.post("/import", response_model=AgentSchema, status_code=status.HTTP_201_CREATED)
-async def import_agent(
-    request: ImportAgentRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Import an external agent by fetching its A2A Agent Card.
-
-    Paste a URL, and AgentNet will:
-    1. Fetch /.well-known/agent-card.json from the URL (via sandbox)
-    2. Parse the A2A Agent Card
-    3. Create an agent record in the registry
-
-    Requires sandbox (SSRF protection) to be active.
-    """
-    base_url = request.url.rstrip("/")
-    card_url = f"{base_url}/.well-known/agent-card.json"
-
-    # Fetch the A2A card via sandbox
-    try:
-        response = await sandboxed_call(
-            url=card_url,
-            method="GET",
-        )
-    except SSRFError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Security violation: {str(e)}",
-        )
-    except SandboxError as e:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to fetch agent card: {str(e)}",
-        )
-
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Agent card endpoint returned {response.status_code}",
-        )
-
-    try:
-        card = response.json()
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Agent card is not valid JSON",
-        )
-
-    # Validate minimum required fields
-    if not card.get("name") or not card.get("skills"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Agent card missing required fields: 'name' and 'skills'",
-        )
-
-    # Convert A2A skills to AgentNet capabilities
-    capabilities = []
-    for skill in card.get("skills", []):
-        capabilities.append(
-            {
-                "name": skill.get("id", skill.get("name", "unknown")),
-                "version": card.get("version", "1.0"),
-                "input_schema": {"type": "object"},
-                "output_schema": {"type": "object"},
-                "price": 0,  # External agents set their own pricing
-            }
-        )
-
-    agent_name = request.name_override or card["name"]
-
-    # Check for duplicate
-    existing = (
-        db.query(Agent)
-        .filter(
-            Agent.user_id == current_user.id,
-            Agent.name == agent_name,
-        )
-        .first()
-    )
-
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Agent '{agent_name}' already exists. Use name_override.",
-        )
-
-    # Determine endpoint from card
-    endpoint = base_url
-    for iface in card.get("supportedInterfaces", []):
-        if iface.get("url"):
-            endpoint = iface["url"]
-            break
-
-    # Create agent
-    db_agent = Agent(
-        id=uuid.uuid4(),
-        user_id=current_user.id,
-        name=agent_name,
-        description=card.get("description", ""),
-        capabilities=capabilities,
-        endpoint=endpoint,
-        public_key="imported-via-a2a-card",
-        status=AgentStatus.UNVERIFIED,
-    )
-
-    db.add(db_agent)
-    db.commit()
-    db.refresh(db_agent)
-
-    # Create wallet
-    db_wallet = Wallet(
-        id=uuid.uuid4(),
-        owner_type=WalletOwnerType.AGENT,
-        owner_id=db_agent.id,
-        balance_credits=0,
-        balance_usdc=0,
-        reserved_credits=0,
-        reserved_usdc=0,
-        spending_cap=1000,
-        daily_spent=0,
-    )
-    db.add(db_wallet)
-    db.commit()
-
-    return db_agent
-
-
-# ─────────────────────────────────────────────────────────
-# Phase 2E: Reputation-Based Routing
-# ─────────────────────────────────────────────────────────
-
-
-@router.get("/discover/{capability_name}")
-async def discover_best_agent(
-    capability_name: str,
-    max_price: Optional[float] = Query(None, ge=0),
-    min_reputation_tier: Optional[str] = Query(None),
-    db: Session = Depends(get_db),
-):
-    """
-    Discover the best agent for a given capability.
-
-    Automatically routes to the highest-reputation active agent
-    that has the requested capability. This is the "auto-route"
-    feature — callers don't need to specify a callee.
-
-    Ranking: reputation_tier → success_rate → verify_score → avg_response_time
-    """
-    # Query agents with the capability (active or unverified)
-    query = db.query(Agent).filter(
-        Agent.status.in_([AgentStatus.ACTIVE, AgentStatus.UNVERIFIED]),
-        Agent.capabilities.contains([{"name": capability_name}]),
-    )
-
-    # Filter by reputation tier if requested
-    tier_order = {"diamond": 4, "gold": 3, "silver": 2, "bronze": 1, "unranked": 0}
-    if min_reputation_tier and min_reputation_tier in tier_order:
-        min_tier_val = tier_order[min_reputation_tier]
-        valid_tiers = [t for t, v in tier_order.items() if v >= min_tier_val]
-        query = query.filter(Agent.reputation_tier.in_(valid_tiers))
-
-    agents = query.all()
-
-    if not agents:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No active agents found with capability '{capability_name}'",
-        )
-
-    # Filter by max_price if specified
-    if max_price is not None:
-        filtered = []
-        for agent in agents:
-            for cap in agent.capabilities:
-                if cap.get("name") == capability_name and cap.get("price", 0) <= max_price:
-                    filtered.append(agent)
-                    break
-        agents = filtered
-
-    if not agents:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No agents found within price range for '{capability_name}'",
-        )
-
-    # Rank by: tier (desc) → success_rate (desc) → verify_score (desc) → avg_response_time (asc)
-    def rank_key(a):
-        return (
-            tier_order.get(a.reputation_tier, 0),
-            a.success_rate or 0,
-            a.verify_score or 0,
-            -(a.avg_response_time_ms or 999999),  # Lower is better, so negate
-        )
-
-    agents.sort(key=rank_key, reverse=True)
-
-    # Return top 5 recommendations
-    results = []
-    for agent in agents[:5]:
-        # Find the specific capability price
-        cap_price = 0
-        for cap in agent.capabilities:
-            if cap.get("name") == capability_name:
-                cap_price = cap.get("price", 0)
-                break
-
-        results.append(
-            {
-                "agent_id": str(agent.id),
-                "name": agent.name,
-                "description": agent.description,
-                "reputation_tier": agent.reputation_tier,
-                "success_rate": agent.success_rate,
-                "verify_score": agent.verify_score,
-                "avg_response_time_ms": agent.avg_response_time_ms,
-                "price": cap_price,
-                "total_tasks_completed": agent.total_tasks_completed,
-            }
-        )
-
-    return {
-        "capability": capability_name,
-        "total_matches": len(agents),
-        "recommendations": results,
-        "best_match": results[0] if results else None,
-    }
+    return agents
