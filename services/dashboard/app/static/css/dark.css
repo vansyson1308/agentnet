@@ -1,30 +1,353 @@
-/* Dark mode overrides */
-body.theme-dark {
-    background: #121212;
-    color: #e0e0e0;
+/* ===== CSS Variables for Theming ===== */
+:root {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f8f9fa;
+    --text-primary: #333333;
+    --text-secondary: #475569;
+    --border-color: #e2e8f0;
+    --card-bg: #ffffff;
+    --card-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    --navbar-bg: #ffffff;
+    --navbar-border: #e2e8f0;
+    --link-color: #1a1a2e;
+    --link-hover: #16213e;
+    --btn-primary-bg: #1a1a2e;
+    --btn-primary-text: #ffffff;
+    --btn-secondary-bg: #e2e8f0;
+    --btn-secondary-text: #333333;
+    --success-color: #10b981;
+    --warning-color: #f59e0b;
+    --danger-color: #ef4444;
+    --info-color: #3b82f6;
 }
-.theme-dark .card {
-    background: #1e1e1e;
-    color: #e0e0e0;
-    border-color: #333;
+
+.theme-dark {
+    --bg-primary: #121212;
+    --bg-secondary: #1e1e1e;
+    --text-primary: #e0e0e0;
+    --text-secondary: #a0a0a0;
+    --border-color: #333333;
+    --card-bg: #1e1e1e;
+    --card-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    --navbar-bg: #1a1a2e;
+    --navbar-border: #333333;
+    --link-color: #aaa;
+    --link-hover: #16213e;
+    --btn-primary-bg: #333;
+    --btn-primary-text: #ffffff;
+    --btn-secondary-bg: #444;
+    --btn-secondary-text: #ccc;
+    --success-color: #059669;
+    --warning-color: #d97706;
+    --danger-color: #dc2626;
+    --info-color: #2563eb;
 }
-.theme-dark .header {
-    background: #1a1a2e;
+
+/* ===== Reset & Base ===== */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
 }
-.theme-dark .nav a {
-    color: #aaa;
+html {
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
 }
-.theme-dark .nav a:hover,
-.theme-dark .nav a.active {
-    background: #16213e;
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.6;
+    padding-top: 70px; /* offset for fixed navbar */
 }
-.theme-dark .btn {
-    background: #333;
+
+/* ===== Navbar ===== */
+.navbar {
+    background: var(--navbar-bg);
+    border-bottom: 1px solid var(--navbar-border);
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1030;
+    padding: 0.5rem 1rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+.navbar-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+}
+.navbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    text-decoration: none;
+}
+.navbar-logo {
+    font-size: 1.5rem;
+}
+.navbar-nav {
+    display: flex;
+    list-style: none;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+}
+.nav-item {
+    margin: 0;
+}
+.nav-link {
+    display: block;
+    padding: 0.5rem 1rem;
+    color: var(--link-color);
+    text-decoration: none;
+    border-radius: 6px;
+    transition: background 0.2s, color 0.2s;
+}
+.nav-link:hover,
+.nav-link.active {
+    background: var(--link-hover);
+    color: var(--text-primary);
+}
+.navbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* ===== Container ===== */
+.container {
+    max-width: 1200px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+}
+
+/* ===== Cards ===== */
+.card {
+    background: var(--card-bg);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    box-shadow: var(--card-shadow);
+    transition: box-shadow 0.2s, transform 0.2s;
+}
+.card:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+}
+.card h2 {
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+.card p {
+    color: var(--text-secondary);
+}
+
+/* ===== Grid Container (for directory) ===== */
+.grid-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+    padding: 0.5rem 0;
+}
+
+/* ===== Buttons ===== */
+.btn {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: background 0.2s, opacity 0.2s;
+}
+.btn-primary {
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-text);
+}
+.btn-primary:hover {
+    opacity: 0.9;
+}
+.btn-secondary {
+    background: var(--btn-secondary-bg);
+    color: var(--btn-secondary-text);
+}
+.btn-secondary:hover {
+    background: #cbd5e1;
+}
+.btn-outline {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+.btn-outline:hover {
+    background: var(--border-color);
+}
+.btn-success {
+    background: var(--success-color);
     color: white;
 }
-.theme-dark .btn-success {
-    background: #059669;
-}
-.theme-dark .alert {
+.btn-success:hover {
     filter: brightness(0.9);
+}
+.btn-danger {
+    background: var(--danger-color);
+    color: white;
+}
+
+/* ===== Alerts ===== */
+.alert {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: 6px;
+    border: 1px solid transparent;
+}
+.alert-danger {
+    background: #fee2e2;
+    color: #991b1b;
+    border-color: #ef4444;
+}
+.alert-success {
+    background: #d1fae5;
+    color: #065f46;
+    border-color: #10b981;
+}
+.alert-warning {
+    background: #fef3c7;
+    color: #92400e;
+    border-color: #f59e0b;
+}
+.alert-info {
+    background: #dbeafe;
+    color: #1e40af;
+    border-color: #3b82f6;
+}
+
+/* ===== Tables ===== */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+}
+th, td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+th {
+    background: var(--bg-secondary);
+    font-weight: 600;
+}
+
+/* ===== Badges ===== */
+.badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+.badge-success {
+    background: #d4edda;
+    color: #155724;
+}
+.badge-warning {
+    background: #fff3cd;
+    color: #856404;
+}
+.badge-danger {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+/* ===== Form Groups ===== */
+.form-group {
+    margin-bottom: 1rem;
+}
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: var(--info-color);
+    box-shadow: 0 0 0 2px rgba(59,130,246,0.2);
+}
+
+/* ===== Dark Mode Overrides for elements that need explicit light/dark ===== */
+.theme-dark .alert-danger {
+    background: #7f1d1d;
+    color: #fca5a5;
+    border-color: #ef4444;
+}
+.theme-dark .alert-success {
+    background: #064e3b;
+    color: #a7f3d0;
+    border-color: #059669;
+}
+.theme-dark .alert-warning {
+    background: #78350f;
+    color: #fcd34d;
+    border-color: #f59e0b;
+}
+.theme-dark .alert-info {
+    background: #1e3a5f;
+    color: #93c5fd;
+    border-color: #3b82f6;
+}
+.theme-dark .badge-success {
+    background: #064e3b;
+    color: #a7f3d0;
+}
+.theme-dark .badge-warning {
+    background: #78350f;
+    color: #fcd34d;
+}
+.theme-dark .badge-danger {
+    background: #7f1d1d;
+    color: #fca5a5;
+}
+
+/* ===== Responsive tweaks ===== */
+@media (max-width: 768px) {
+    .navbar-container {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .navbar-nav {
+        flex-direction: column;
+        gap: 0;
+    }
+    .navbar-actions {
+        justify-content: flex-end;
+        margin-top: 0.5rem;
+    }
+    .grid-container {
+        grid-template-columns: 1fr;
+    }
 }
