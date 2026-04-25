@@ -14,7 +14,7 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import INET, JSONB as PG_JSONB
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -146,10 +146,6 @@ class Agent(Base):
     total_volume_credits = Column(Integer, default=0)
     reputation_tier = Column(String, default="unranked")  # unranked/bronze/silver/gold/diamond
     reputation_updated_at = Column(DateTime(timezone=True))
-    # Heartbeat / online tracking (Phase 1+2)
-    last_seen_at = Column(DateTime(timezone=True), nullable=True)
-    current_capability = Column(String, nullable=True)  # which capability agent is currently running
-    is_online = Column(Boolean, default=False)  # True if WebSocket connected or heartbeat < 60s
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -177,15 +173,225 @@ class Agent(Base):
         back_populates="invitee_agent",
     )
     sent_offers = relationship("Offer", foreign_keys="Offer.from_agent_id", back_populates="from_agent")
+<<<<<<< HEAD
+=======
+    received_offers = relationship("Offer", foreign_keys="Offer.to_agent_id", back_populates="to_agent")
+>>>>>>> parent of 95d4aa3 (feat(AB-302): Add audit_log table migration)
 
 
-# AuditLog model
+# Wallet model
+class Wallet(Base):
+    __tablename__ = "wallets"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_type = _enum_column(WalletOwnerType, nullable=False)
+    owner_id = Column(UUID(as_uuid=True), nullable=False)
+    balance_credits = Column(Integer, nullable=False, default=0)
+    balance_usdc = Column(Numeric(20, 6), nullable=False, default=0)
+    reserved_credits = Column(Integer, nullable=False, default=0)
+    reserved_usdc = Column(Numeric(20, 6), nullable=False, default=0)
+    spending_cap = Column(Integer, nullable=False, default=1000)
+    daily_spent = Column(Integer, nullable=False, default=0)
+    daily_reset_at = Column(DateTime(timezone=True), server_default=func.now())
+    allowance_parent_id = Column(UUID(as_uuid=True), ForeignKey("wallets.id"))
+    auto_approve_threshold = Column(Integer, default=10)
+    whitelist = Column(JSON, default=[])
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    outgoing_transactions = relationship(
+        "Transaction",
+        foreign_keys="Transaction.from_wallet",
+        back_populates="from_wallet_rel",
+    )
+    incoming_transactions = relationship(
+        "Transaction",
+        foreign_keys="Transaction.to_wallet",
+        back_populates="to_wallet_rel",
+    )
+
+
+# TaskSession model
+class TaskSession(Base):
+    __tablename__ = "task_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    trace_id = Column(UUID(as_uuid=True), nullable=False)
+    span_id = Column(UUID(as_uuid=True), nullable=False)
+    parent_span_id = Column(UUID(as_uuid=True))
+    caller_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
+    callee_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
+    capability = Column(String, nullable=False)
+    input = Column(JSON)
+    input_hash = Column(String)
+    escrow_amount = Column(Integer, nullable=False)
+    currency = _enum_column(CurrencyType, nullable=False, default="credits")
+    status = _enum_column(TaskStatus, default="initiated")
+    timeout_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True))
+    refund_at = Column(DateTime(timezone=True))
+    error_message = Column(Text)
+    fulfillment_channel = Column(String)  # 'websocket', 'webhook', 'internal'
+    output = Column(JSON)
+    retry_of_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id"))
+
+    # Relationships
+    caller_agent = relationship("Agent", foreign_keys=[caller_agent_id], back_populates="caller_tasks")
+    callee_agent = relationship("Agent", foreign_keys=[callee_agent_id], back_populates="callee_tasks")
+    transactions = relationship("Transaction", back_populates="task_session")
+    offers = relationship("Offer", back_populates="core_task")
+    retry_of = relationship("TaskSession", remote_side=[id], backref="retries")
+
+
+# Span model
+class Span(Base):
+    __tablename__ = "spans"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    trace_id = Column(UUID(as_uuid=True), nullable=False)
+    span_id = Column(UUID(as_uuid=True), nullable=False)
+    parent_span_id = Column(UUID(as_uuid=True))
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
+    event = Column(String, nullable=False)
+    capability = Column(String)
+    duration_ms = Column(Integer)
+    status = _enum_column(SpanStatus)
+    credits_used = Column(Integer)
+    extra_data = Column(JSON, default={})
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    agent = relationship("Agent", back_populates="spans")
+
+
+# Transaction model
+class Transaction(Base):
+    __tablename__ = "transactions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    from_wallet = Column(UUID(as_uuid=True), ForeignKey("wallets.id"))
+    to_wallet = Column(UUID(as_uuid=True), ForeignKey("wallets.id"))
+    amount = Column(Integer, nullable=False)
+    currency = _enum_column(CurrencyType, nullable=False, default="credits")
+    status = _enum_column(TransactionStatus, default="pending")
+    type = _enum_column(TransactionType, nullable=False)
+    task_session_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id"))
+    platform_fee = Column(Integer, default=0)
+    platform_fee_rate = Column(Numeric(5, 4), default=0.025)
+    extra_data = Column(JSON, default={})
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True))
+
+    # Relationships
+    from_wallet_rel = relationship("Wallet", foreign_keys=[from_wallet], back_populates="outgoing_transactions")
+    to_wallet_rel = relationship("Wallet", foreign_keys=[to_wallet], back_populates="incoming_transactions")
+    task_session = relationship("TaskSession", back_populates="transactions")
+
+
+# Referral model
+class Referral(Base):
+    __tablename__ = "referrals"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    inviter_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
+    invitee_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
+    status = _enum_column(ReferralStatus, default="pending")
+    reward_amount = Column(Integer)
+    device_fingerprint = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True))
+
+    # Relationships
+    inviter_agent = relationship("Agent", foreign_keys=[inviter_agent_id], back_populates="inviter_referrals")
+    invitee_agent = relationship("Agent", foreign_keys=[invitee_agent_id], back_populates="invitee_referrals")
+
+
+# Offer model
+class Offer(Base):
+    __tablename__ = "offers"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    from_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
+    to_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
+    core_task_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id"))
+    title = Column(String, nullable=False)
+    description = Column(Text)
+    price = Column(Integer, nullable=False)
+    currency = _enum_column(CurrencyType, nullable=False, default="credits")
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    status = _enum_column(OfferStatus, default="pending")
+    baseline_quality_score = Column(Float)
+    blocked = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    from_agent = relationship("Agent", foreign_keys=[from_agent_id], back_populates="sent_offers")
+    to_agent = relationship("Agent", foreign_keys=[to_agent_id], back_populates="received_offers")
+    core_task = relationship("TaskSession", back_populates="offers")
+    negotiation_rounds = relationship(
+        "NegotiationRound", back_populates="offer", order_by="NegotiationRound.round_number"
+    )
+
+
+# NegotiationRound model (Phase 2C — multi-round price negotiation)
+class NegotiationRound(Base):
+    __tablename__ = "negotiation_rounds"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    offer_id = Column(UUID(as_uuid=True), ForeignKey("offers.id"), nullable=False)
+    round_number = Column(Integer, nullable=False)
+    proposed_by_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=False)
+    proposed_price = Column(Integer, nullable=False)
+    proposed_terms = Column(Text)
+    status = _enum_column(OfferStatus, default="pending")  # pending/accepted/rejected
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    offer = relationship("Offer", back_populates="negotiation_rounds")
+    proposed_by = relationship("Agent", foreign_keys=[proposed_by_agent_id])
+
+
+# AgentInteraction model (Phase 3A — Social Graph)
+class AgentInteraction(Base):
+    __tablename__ = "agent_interactions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    from_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    to_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    interaction_type = _enum_column(InteractionType, nullable=False)
+    count = Column(Integer, nullable=False, default=1)
+    total_volume = Column(Integer, nullable=False, default=0)
+    last_interaction_at = Column(DateTime(timezone=True), server_default=func.now())
+    first_interaction_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    from_agent = relationship("Agent", foreign_keys=[from_agent_id])
+    to_agent = relationship("Agent", foreign_keys=[to_agent_id])
+# Notification model
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    type = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    message = Column(Text, nullable=False)
+    url = Column(String)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", back_populates="notifications")
+
+
+# AuditLog model -- security event tracking (Phase S1)
 class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     actor_user_id = Column(UUID(as_uuid=True), nullable=True)
-    actor_ip = Column(INET, nullable=True)
+    actor_ip = Column(String, nullable=True)  # store as text for compatibility
     action = Column(String, nullable=False)
     target_id = Column(String, nullable=True)
     payload_summary = Column(Text, nullable=True)
