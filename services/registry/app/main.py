@@ -4,7 +4,9 @@ import os
 import time
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware import Middleware
 
 from .a2a import build_registry_card
 from .api import router as api_router
@@ -12,6 +14,7 @@ from .database import Base, engine
 from .security import setup_cors, setup_security_headers
 from .tracing import configure_tracing
 from .websocket_manager import manager
+from .api.rate_limiter import add_rate_limiter, RateLimitMiddleware
 
 # Configure logging
 logging.basicConfig(
@@ -29,6 +32,13 @@ app = FastAPI(
 
 # Configure security (CORS and headers)
 setup_cors(app)
+# Add allow_origin_regex for Cloudflare tunnels
+for i, mw in enumerate(app.user_middleware):
+    if mw.cls == CORSMiddleware:
+        options = dict(mw.options)
+        options["allow_origin_regex"] = r"https://.*\.trycloudflare\.com$"
+        app.user_middleware[i] = Middleware(CORSMiddleware, **options)
+        break
 setup_security_headers(app)
 
 # Configure tracing
@@ -36,7 +46,6 @@ tracer_provider = configure_tracing(app, engine)
 
 # Include API router
 app.include_router(api_router)
-
 
 # Startup event
 @app.on_event("startup")
