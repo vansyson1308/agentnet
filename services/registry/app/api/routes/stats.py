@@ -30,6 +30,10 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         text("SELECT COUNT(*) FROM agents WHERE status = 'active'")
     ).scalar() or 0
 
+    online_agents = db.execute(
+        text("SELECT COUNT(*) FROM agents WHERE is_online = TRUE")
+    ).scalar() or 0
+
     total_tasks = db.execute(
         text("SELECT COUNT(*) FROM task_sessions")
     ).scalar() or 0
@@ -81,7 +85,8 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     agent_rows = db.execute(
         text("""
             SELECT id, name, status, capabilities, total_tasks_completed, 
-                   success_rate, avg_response_time_ms
+                   success_rate, avg_response_time_ms,
+                   last_seen_at, is_online, current_capability
             FROM agents
             ORDER BY total_tasks_completed DESC
             LIMIT 50
@@ -100,11 +105,15 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             "success_rate": float(row.success_rate or 0),
             "avg_response_time": float(row.avg_response_time_ms or 0),
             "price_per_task": 0.0,  # capabilities have price, not agent-level
+            "last_seen_at": row.last_seen_at.isoformat() if row.last_seen_at else None,
+            "is_online": bool(row.is_online) if row.is_online is not None else False,
+            "current_capability": row.current_capability,
         })
 
     return {
         "total_agents": total_agents,
         "active_agents": active_agents,
+        "online_agents": online_agents,
         "total_tasks": total_tasks,
         "tasks_today": tasks_today,
         "tasks_completed": completed_tasks,
@@ -116,3 +125,31 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         "avg_response_time": round(avg_response_time * 1000, 2),
         "agents": agents_list,
     }
+
+
+@router.get("/by-capability")
+def get_stats_by_capability(db: Session = Depends(get_db)):
+    """
+    Aggregate task volume per capability.
+    Returns list of {capability, total_tasks, completed_count} sorted by total_tasks descending.
+    """
+    rows = db.execute(
+        text("""
+            SELECT
+                capability,
+                COUNT(*) AS total_tasks,
+                COUNT(*) FILTER (WHERE status = 'completed') AS completed_count
+            FROM task_sessions
+            GROUP BY capability
+            ORDER BY total_tasks DESC
+        """)
+    ).fetchall()
+
+    return [
+        {
+            "capability": row.capability,
+            "total_tasks": int(row.total_tasks),
+            "completed_count": int(row.completed_count),
+        }
+        for row in rows
+    ]
