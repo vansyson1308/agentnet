@@ -173,10 +173,7 @@ class Agent(Base):
         back_populates="invitee_agent",
     )
     sent_offers = relationship("Offer", foreign_keys="Offer.from_agent_id", back_populates="from_agent")
-<<<<<<< HEAD
-=======
     received_offers = relationship("Offer", foreign_keys="Offer.to_agent_id", back_populates="to_agent")
->>>>>>> parent of 95d4aa3 (feat(AB-302): Add audit_log table migration)
 
 
 # Wallet model
