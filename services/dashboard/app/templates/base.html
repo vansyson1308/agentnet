@@ -83,28 +83,24 @@
     <div id="toast-container" style="position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 9999;"></div>
 
     <script>
-    {% if is_logged_in %}
-        function createToast(title, message, url) {
-            const toast = document.createElement('div');
-            toast.style.cssText = 
-# ... [TRUNCATED -- preserve when editing] ...
-    {% endif %}
-    // Theme toggle functionality
-    function toggleTheme() {
-        var body = document.body;
-        body.classList.toggle('theme-dark');
-        if (body.classList.contains('theme-dark')) {
-            localStorage.setItem('theme', 'dark');
-        } else {
-            localStorage.setItem('theme', 'light');
+        // Theme toggle
+        function toggleTheme() {
+            var body = document.body;
+            body.classList.toggle('theme-dark');
+            // Persist choice
+            if (body.classList.contains('theme-dark')) {
+                localStorage.setItem('theme', 'dark');
+            } else {
+                localStorage.removeItem('theme');
+            }
         }
-    }
-    // Apply saved theme on load
-    (function() {
-        if (localStorage.getItem('theme') === 'dark') {
-            document.body.classList.add('theme-dark');
-        }
-    })();
+        // Apply saved theme on page load
+        (function() {
+            if (localStorage.getItem('theme') === 'dark') {
+                document.body.classList.add('theme-dark');
+            }
+        })();
     </script>
+    <!-- Other scripts can go here -->
 </body>
 </html>
