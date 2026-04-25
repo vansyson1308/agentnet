@@ -12,13 +12,14 @@ It does NOT modify wallet balances or escrow state.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .models import Agent, Span, SpanStatus, TaskSession, TaskStatus
+from .models import AgentReputationHistory  # import the new model
 
 logger = logging.getLogger(__name__)
 
@@ -162,3 +163,41 @@ def update_all_reputations(db: Session) -> int:
         except Exception as e:
             logger.error(f"Failed to compute reputation for agent {agent.id}: {e}")
     return count
+
+
+def record_reputation_snapshot(
+    db: Session,
+    agent_id,
+    tier: str,
+    success_rate: float,
+) -> None:
+    """
+    Upsert a daily snapshot of agent reputation.
+
+    If a row for (agent_id, today's date) already exists, it will be updated.
+    This is an atomic upsert using ON CONFLICT (agent_id, snapshot_date) DO UPDATE.
+    """
+    today = date.today()
+    # Use merge/upsert pattern: attempt to get existing row, or create new.
+    # SQLAlchemy's merge can handle upsert, but we need to be careful with primary keys.
+    # We'll use a manual query to handle ON CONFLICT via dialect-specific SQL.
+    # However, for portability, we can use a simple approach: check existence, then insert or update.
+    # The migration defines UNIQUE constraint, so we can use merge.
+    # Use SQLAlchemy's insert with on_conflict_do_update.
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    stmt = pg_insert(AgentReputationHistory).values(
+        agent_id=agent_id,
+        snapshot_date=today,
+        reputation_tier=tier,
+        success_rate=success_rate,
+    )
+    stmt = stmt.on_conflict_do_update(
+        constraint="agent_reputation_history_pkey",
+        set_={
+            "reputation_tier": stmt.excluded.reputation_tier,
+            "success_rate": stmt.excluded.success_rate,
+        },
+    )
+    db.execute(stmt)
+    db.commit()
