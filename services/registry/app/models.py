@@ -5,6 +5,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     Column,
+    Date,
     DateTime,
     Enum,
     Float,
@@ -103,7 +104,13 @@ class CurrencyType(str, enum.Enum):
     USDC = "usdc"
 
 
-# User model
+class AgentMessageType(str, enum.Enum):
+    NOTE = "note"
+    OFFER = "offer"
+    ALERT = "alert"
+    SYSTEM = "system"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -366,6 +373,23 @@ class AgentInteraction(Base):
     # Relationships
     from_agent = relationship("Agent", foreign_keys=[from_agent_id])
     to_agent = relationship("Agent", foreign_keys=[to_agent_id])
+
+
+# AgentReputationHistory model — daily snapshots of agent reputation metrics
+class AgentReputationHistory(Base):
+    __tablename__ = "agent_reputation_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    snapshot_date = Column(Date, nullable=False)
+    reputation_tier = Column(String, nullable=False)
+    success_rate = Column(Float, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationship
+    agent = relationship("Agent")
+
+
 # Notification model
 class Notification(Base):
     __tablename__ = "notifications"
@@ -394,3 +418,27 @@ class AuditLog(Base):
     payload_summary = Column(Text, nullable=True)
     success = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# EmailVerificationToken model -- Phase S2
+class EmailVerificationToken(Base):
+    __tablename__ = "email_verification_tokens"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token = Column(String, unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# AgentReputationHistory model -- Phase S1 (placeholder, kept for import compatibility)
+class AgentReputationHistory(Base):
+    __tablename__ = "agent_reputation_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    reputation_tier = Column(String)
+    success_rate = Column(Numeric(5, 4))
+    total_tasks = Column(Integer)
+    snapshot_at = Column(DateTime(timezone=True), server_default=func.now())
