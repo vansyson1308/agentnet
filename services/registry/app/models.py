@@ -388,7 +388,7 @@ class AuditLog(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     actor_user_id = Column(UUID(as_uuid=True), nullable=True)
-    actor_ip = Column(String, nullable=True)  # store as text for compatibility
+    actor_ip = Column(String, nullable=True)
     action = Column(String, nullable=False)
     target_id = Column(String, nullable=True)
     payload_summary = Column(Text, nullable=True)
