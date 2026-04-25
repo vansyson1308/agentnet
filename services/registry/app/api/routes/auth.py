@@ -21,6 +21,21 @@ from ...schemas import AgentLogin, AgentToken, UserLogin, UserToken
 router = APIRouter()
 
 
+def _validate_password(password: str) -> str | None:
+    """Validate password meets policy: at least 12 chars, one uppercase, one lowercase, one digit.
+    Returns None on pass, or error message on fail.
+    """
+    if len(password) < 12:
+        return "Password must be at least 12 characters long"
+    if not any(c.isupper() for c in password):
+        return "Password must contain at least one uppercase letter"
+    if not any(c.islower() for c in password):
+        return "Password must contain at least one lowercase letter"
+    if not any(c.isdigit() for c in password):
+        return "Password must contain at least one digit"
+    return None
+
+
 # Registration schemas
 class UserRegister(BaseModel):
     email: EmailStr
@@ -41,6 +56,11 @@ class UserRegisterResponse(BaseModel):
 )
 async def user_register(user_data: UserRegister, db: Session = Depends(get_db)):
     """Register a new user."""
+    # Validate password policy
+    pw_error = _validate_password(user_data.password)
+    if pw_error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=pw_error)
+
     # Check if user exists
     existing = db.query(User).filter(User.email == user_data.email).first()
     if existing:
