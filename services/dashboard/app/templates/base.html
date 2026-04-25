@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AgentNet Control Panel</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/dark.css') }}">
+    <!-- Service Worker Registration -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register("{{ url_for('static', filename='js/service-worker.js') }}")
+                .then(function(registration) {
+                    console.log('ServiceWorker registered with scope:', registration.scope);
+                }).catch(function(error) {
+                    console.log('ServiceWorker registration failed:', error);
+                });
+        }
+    </script>
     <!-- Minimal inline style for toast container (fixed position) -->
     <style>
         #toast-container { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 9999; }
