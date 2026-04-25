@@ -1,0 +1,30 @@
+/* Dark mode overrides */
+body.theme-dark {
+    background: #121212;
+    color: #e0e0e0;
+}
+.theme-dark .card {
+    background: #1e1e1e;
+    color: #e0e0e0;
+    border-color: #333;
+}
+.theme-dark .header {
+    background: #1a1a2e;
+}
+.theme-dark .nav a {
+    color: #aaa;
+}
+.theme-dark .nav a:hover,
+.theme-dark .nav a.active {
+    background: #16213e;
+}
+.theme-dark .btn {
+    background: #333;
+    color: white;
+}
+.theme-dark .btn-success {
+    background: #059669;
+}
+.theme-dark .alert {
+    filter: brightness(0.9);
+}
