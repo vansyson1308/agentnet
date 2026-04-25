@@ -161,8 +161,7 @@ async def get_agent_card(agent_id: uuid.UUID, db: Session = Depends(get_db)):
     if db_agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
-    card = agent_to_a2a_card(db_agent)
-    return card.model_dump(by_alias=True, exclude_none=True)
+    return agent_to_a2a_card(db_agent)
 
 
 @router.put("/{agent_id}", response_model=AgentSchema)
@@ -170,39 +169,16 @@ async def update_agent(
     agent_id: uuid.UUID,
     agent_update: AgentUpdate,
     db: Session = Depends(get_db),
-    current_agent: Agent = Depends(get_current_agent),
+    current_user: User = Depends(get_current_user),
 ):
-    """Update an existing agent."""
-    db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    """Update an agent's details."""
+    db_agent = db.query(Agent).filter(Agent.id == agent_id, Agent.user_id == current_user.id).first()
 
     if db_agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
-    # Verify ownership
-    if db_agent.user_id != current_agent.user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to update this agent")
-
-    # Update fields if provided
-    if agent_update.name is not None:
-        db_agent.name = agent_update.name
-    if agent_update.description is not None:
-        db_agent.description = agent_update.description
-    if agent_update.capabilities is not None:
-        # Validate new capabilities
-        for capability in agent_update.capabilities:
-            try:
-                validate(instance={}, schema=capability.input_schema)
-                validate(instance={}, schema=capability.output_schema)
-            except jsonschema.ValidationError as e:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid schema for capability {capability.name}: {str(e)}",
-                )
-        db_agent.capabilities = [cap.model_dump() for cap in agent_update.capabilities]
-    if agent_update.endpoint is not None:
-        db_agent.endpoint = agent_update.endpoint
-    if agent_update.public_key is not None:
-        db_agent.public_key = agent_update.public_key
+    for field, value in agent_update.dict(exclude_unset=True).items():
+        setattr(db_agent, field, value)
 
     db.commit()
     db.refresh(db_agent)
@@ -216,24 +192,20 @@ async def delete_agent(
     current_user: User = Depends(get_current_user),
 ):
     """Delete an agent."""
-    db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    db_agent = db.query(Agent).filter(Agent.id == agent_id, Agent.user_id == current_user.id).first()
 
     if db_agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-
-    # Verify ownership
-    if db_agent.user_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to delete this agent")
 
     db.delete(db_agent)
     db.commit()
     return None
 
 
-@router.post("/{agent_id}/verify", response_model=CapabilityVerifyResponse)
-async def verify_agent_capability(
+@router.post("/{agent_id}/verify-capabilities", response_model=CapabilityVerifyResponse)
+async def verify_agent_capabilities(
     agent_id: uuid.UUID,
-    verify_request: CapabilityVerify,
+    capability_verify: CapabilityVerify,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -243,109 +215,73 @@ async def verify_agent_capability(
     if db_agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
-    # Verify ownership or admin
-    if db_agent.user_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to verify this agent")
-
-    # Find the capability by name
-    capability = None
+    # Find the capability
+    target_cap = None
     for cap in db_agent.capabilities:
-        if cap["name"] == verify_request.capability_name:
-            capability = cap
+        if cap.get("name") == capability_verify.capability_name:
+            target_cap = cap
             break
 
-    if capability is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Capability '{verify_request.capability_name}' not found",
+    if target_cap is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Capability not found")
+
+    # Prepare the A2A request
+    a2a_request = {
+        "jsonrpc": "2.0",
+        "method": "tasks/send",
+        "params": {
+            "id": str(uuid.uuid4()),
+            "sessionId": str(uuid.uuid4()),
+            "input": capability_verify.test_input,
+        },
+        "id": 1,
+    }
+
+    try:
+        response = await sandboxed_call(
+            url=db_agent.endpoint,
+            payload=a2a_request,
+            timeout=10,
+            max_response_size=1024 * 1024,
         )
 
-    # Validate test input against input_schema
-    try:
-        validate(instance=verify_request.test_input, schema=capability["input_schema"])
-    except jsonschema.ValidationError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Test input does not match input_schema: {str(e)}",
-        )
+        # Parse response
+        response_data = response.json()
 
-    # Call the agent's endpoint with test input
-    try:
-        agent_url = db_agent.endpoint.rstrip("/") + f"/{verify_request.capability_name}"
-        result = await sandboxed_call(
-            agent_url,
-            payload=verify_request.test_input,
-            timeout=30,
-        )
+        # Check if response indicates success/failure
+        is_valid = "result" in response_data and "status" in response_data["result"]
+        error_message = None
+        if not is_valid:
+            error_message = response_data.get("error", {}).get("message", "Unknown error")
+
+        return CapabilityVerifyResponse(is_valid=is_valid, error_message=error_message, response_body=response_data)
+
     except (SandboxTimeoutError, SSRFError, SandboxError) as e:
-        return CapabilityVerifyResponse(
-            success=False,
-            error=f"Call failed: {str(e)}",
-            output=None,
-        )
-
-    # Validate output against output_schema
-    try:
-        validate(instance=result, schema=capability["output_schema"])
-    except jsonschema.ValidationError as e:
-        return CapabilityVerifyResponse(
-            success=False,
-            error=f"Output does not match output_schema: {str(e)}",
-            output=result,
-        )
-
-    # Update agent status to VERIFIED if not already
-    if db_agent.status == AgentStatus.UNVERIFIED:
-        db_agent.status = AgentStatus.VERIFIED
-        db.commit()
-
-    return CapabilityVerifyResponse(
-        success=True,
-        error=None,
-        output=result,
-    )
+        return CapabilityVerifyResponse(is_valid=False, error_message=str(e), response_body={})
+    except Exception as e:
+        return CapabilityVerifyResponse(is_valid=False, error_message=f"Unexpected error: {str(e)}", response_body={})
 
 
 @router.get("/", response_model=List[AgentSchema])
 async def list_agents(
     db: Session = Depends(get_db),
-    status: Optional[str] = Query(None, description="Filter by agent status"),
-    min_verify_score: Optional[float] = Query(None, ge=0.0, le=1.0),
-    max_verify_score: Optional[float] = Query(None, ge=0.0, le=1.0),
-    sort_by: Optional[str] = Query(None, regex="^(created_at|verify_score|name)$"),
-    sort_order: Optional[str] = Query("desc", regex="^(asc|desc)$"),
-    offset: int = Query(0, ge=0),
-    limit: int = Query(10, ge=1, le=100),
+    status: Optional[AgentStatus] = Query(None, alias="status"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user_or_agent),
 ):
-    """
-    List agents with optional filtering, sorting, and pagination.
-
-    This is a public endpoint that does not require authentication.
-    """
+    """List agents with optional filtering by status."""
     query = db.query(Agent)
 
     if status:
-        try:
-            status_enum = AgentStatus[status.upper()]
-            query = query.filter(Agent.status == status_enum)
-        except KeyError:
-            raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+        query = query.filter(Agent.status == status)
 
-    if min_verify_score is not None:
-        query = query.filter(Agent.verify_score >= min_verify_score)
-    if max_verify_score is not None:
-        query = query.filter(Agent.verify_score <= max_verify_score)
+    # If user is authenticated, show their own agents even if unverified,
+    # but only show verified/active agents to others
+    if current_user is None:
+        query = query.filter(Agent.status == AgentStatus.ACTIVE)
+    elif not getattr(current_user, "is_admin", False):
+        query = query.filter((Agent.user_id == current_user.id) | (Agent.status == AgentStatus.ACTIVE))
 
-    # Sorting
-    if sort_by:
-        sort_column = getattr(Agent, sort_by, None)
-        if sort_column is None:
-            raise HTTPException(status_code=400, detail=f"Invalid sort field: {sort_by}")
-        if sort_order == "desc":
-            query = query.order_by(sort_column.desc())
-        else:
-            query = query.order_by(sort_column.asc())
-
-    agents = query.offset(offset).limit(limit).all()
-
+    agents = query.offset(skip).limit(limit).all()
     return agents
