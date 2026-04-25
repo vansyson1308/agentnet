@@ -16,6 +16,7 @@ from datetime import datetime, timezone, date
 from typing import Optional
 
 from sqlalchemy import func
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from .models import Agent, Span, SpanStatus, TaskSession, TaskStatus
@@ -172,31 +173,22 @@ def record_reputation_snapshot(
     success_rate: float,
 ) -> None:
     """
-    Upsert a daily snapshot of agent reputation.
+    Upsert a daily snapshot of agent reputation metrics.
 
-    If a row for (agent_id, today's date) already exists, it will be updated.
-    This is an atomic upsert using ON CONFLICT (agent_id, snapshot_date) DO UPDATE.
+    Inserts a row for today's date, or updates the existing row on conflict
+    of (agent_id, snapshot_date) with the new tier and success_rate.
     """
     today = date.today()
-    # Use merge/upsert pattern: attempt to get existing row, or create new.
-    # SQLAlchemy's merge can handle upsert, but we need to be careful with primary keys.
-    # We'll use a manual query to handle ON CONFLICT via dialect-specific SQL.
-    # However, for portability, we can use a simple approach: check existence, then insert or update.
-    # The migration defines UNIQUE constraint, so we can use merge.
-    # Use SQLAlchemy's insert with on_conflict_do_update.
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
-
-    stmt = pg_insert(AgentReputationHistory).values(
+    stmt = insert(AgentReputationHistory).values(
         agent_id=agent_id,
         snapshot_date=today,
         reputation_tier=tier,
         success_rate=success_rate,
-    )
-    stmt = stmt.on_conflict_do_update(
-        constraint="agent_reputation_history_pkey",
+    ).on_conflict_do_update(
+        index_elements=["agent_id", "snapshot_date"],
         set_={
-            "reputation_tier": stmt.excluded.reputation_tier,
-            "success_rate": stmt.excluded.success_rate,
+            "reputation_tier": tier,
+            "success_rate": success_rate,
         },
     )
     db.execute(stmt)
