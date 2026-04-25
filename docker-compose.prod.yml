@@ -49,7 +49,7 @@ services:
       JWT_ALGORITHM: HS256
       JWT_EXPIRATION: 3600
       JAEGER_ENABLED: "false"
-      ENVIRONMENT: production
+      ENVIRONMENT: ${ENVIRONMENT:-production}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
       RATE_LIMIT_PER_MINUTE: 60
     ports:
@@ -78,7 +78,7 @@ services:
       JWT_ALGORITHM: HS256
       JWT_EXPIRATION: 3600
       JAEGER_ENABLED: "false"
-      ENVIRONMENT: production
+      ENVIRONMENT: ${ENVIRONMENT:-production}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
     ports:
       - "8001:8001"
@@ -103,7 +103,7 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JAEGER_ENABLED: "false"
-      ENVIRONMENT: production
+      ENVIRONMENT: ${ENVIRONMENT:-production}
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -126,7 +126,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JAEGER_ENABLED: "false"
-      ENVIRONMENT: production
+      ENVIRONMENT: ${ENVIRONMENT:-production}
       REGISTRY_URL: http://registry:8000
       PAYMENT_URL: http://payment:8001
       LLM_API_KEY: ${LLM_API_KEY:-}

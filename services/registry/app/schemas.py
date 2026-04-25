@@ -111,6 +111,10 @@ class Agent(AgentBase):
     avg_response_time_ms: int = 0
     total_volume_credits: int = 0
     reputation_tier: str = "unranked"
+    # Heartbeat / online tracking
+    is_online: bool = False
+    last_seen_at: Optional[datetime] = None
+    current_capability: Optional[str] = None
 
     class Config:
         from_attributes = True

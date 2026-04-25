@@ -402,6 +402,36 @@ async def crawl_agent_cards(db: Session):
             logger.info(f"Crawler updated {updated} agent capabilities")
 
 
+async def process_offline_agents(db: Session):
+    """Mark agents as offline if they haven't sent a heartbeat in 60s
+    and have no active WebSocket connection.
+
+    This covers the case where an agent's heartbeat HTTP endpoint
+    is called but the agent crashed without disconnecting.
+    """
+    with tracer.start_as_current_span("process_offline_agents"):
+        try:
+            cutoff = datetime.utcnow() - timedelta(seconds=60)
+            affected = (
+                db.query(Agent)
+                .filter(
+                    Agent.is_online == True,
+                    Agent.last_seen_at.isnot(None),
+                    Agent.last_seen_at < cutoff,
+                )
+                .update(
+                    {"is_online": False},
+                    synchronize_session=False,
+                )
+            )
+            if affected > 0:
+                db.commit()
+                logger.info(f"Auto-offline: marked {affected} agent(s) as offline (no heartbeat > 60s)")
+        except Exception as e:
+            logger.error(f"Error processing offline agents: {e}")
+            db.rollback()
+
+
 async def main():
     """Main worker loop."""
     logger.info("Auto-Refund Worker started")
@@ -448,6 +478,9 @@ async def main():
                 if (now - last_sim_timeout_time).total_seconds() >= 60:
                     await process_timed_out_simulations(db, redis_client)
                     last_sim_timeout_time = now
+
+                # Auto-offline: mark agents offline if no heartbeat > 60s (runs every loop ~30s)
+                await process_offline_agents(db)
 
                 # Crawl agent cards every hour
                 if (now - last_crawl_time).total_seconds() >= 3600:

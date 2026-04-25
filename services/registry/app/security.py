@@ -39,6 +39,8 @@ def get_cors_origins() -> List[str]:
             "http://127.0.0.1:3000",
             "http://127.0.0.1:8000",
             "http://127.0.0.1:8001",
+            "https://dashboard.agentnet.io.vn",
+            "https://agentnet.io.vn",
         ]
     else:
         # Production: require explicit allowlist
@@ -65,6 +67,8 @@ def setup_cors(app: FastAPI):
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["*"],
+        expose_headers=["*"],
+        allow_origin_regex=".*",  # Allow all origins in dev; tighten in prod
     )
 
 

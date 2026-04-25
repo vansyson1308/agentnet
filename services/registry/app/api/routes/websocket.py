@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime
+from typing import Optional
 
 from fastapi import (
     APIRouter,
@@ -10,9 +11,10 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ...auth import verify_token
+from ...auth import get_current_user_or_agent, verify_token
 from ...database import get_db
 from ...websocket_manager import manager
 
@@ -109,7 +111,8 @@ async def websocket_endpoint(
                 )
     except WebSocketDisconnect:
         # Disconnect the agent
-        manager.disconnect(connection_id)
+        manager.disconnect(connection_id, db)
     except Exception as e:
         logger.error(f"WebSocket error for agent {agent_id}: {e}")
-        manager.disconnect(connection_id)
+        manager.disconnect(connection_id, db)
+        manager.disconnect(connection_id, db)

@@ -420,25 +420,55 @@ class AuditLog(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
-# EmailVerificationToken model -- Phase S2
+# Story model
+class Story(Base):
+    __tablename__ = "stories"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    content = Column(Text, nullable=False)
+    mood = Column(String, nullable=False, default="neutral")
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=True)
+    is_published = Column(Boolean, default=True)
+    displayed_count = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationship
+    agent = relationship("Agent")
+
+
+# EmailVerificationToken model
 class EmailVerificationToken(Base):
     __tablename__ = "email_verification_tokens"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    token = Column(String, unique=True, nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    token = Column(String, nullable=False, unique=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     consumed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # Relationship
+    user = relationship("User")
 
-# AgentReputationHistory model -- Phase S1 (placeholder, kept for import compatibility)
-class AgentReputationHistory(Base):
-    __tablename__ = "agent_reputation_history"
+
+# AgentChat model
+class AgentChat(Base):
+    __tablename__ = "agent_chat"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
-    reputation_tier = Column(String)
-    success_rate = Column(Numeric(5, 4))
-    total_tasks = Column(Integer)
-    snapshot_at = Column(DateTime(timezone=True), server_default=func.now())
+    from_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=False)
+    to_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=True)
+    message_type = _enum_column(AgentMessageType, nullable=False)
+    title = Column(String, nullable=False)
+    content = Column(Text, nullable=False)
+    msg_metadata = Column(JSON, default={})
+    thread_id = Column(UUID(as_uuid=True), nullable=False)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    from_agent = relationship("Agent", foreign_keys=[from_agent_id])
+    to_agent = relationship("Agent", foreign_keys=[to_agent_id])
+
+
+# AgentReputationHistory removed — defined above in file

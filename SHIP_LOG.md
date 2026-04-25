@@ -1,0 +1,118 @@
+# AgentNet Ship Log
+
+Auto-appended by hermes_planner_v4 + qaagent_v6.
+
+- [2026-04-25 10:16:01 UTC] **AB-001** DISPATCHED: Add /v1/agents/{id}/capabilities endpoint -- to builder
+- [2026-04-25 10:17:02 UTC] **AB-001** RETRY:  -- attempt 1
+- [2026-04-25 10:17:02 UTC] **AB-001** DISPATCHED: Add /v1/agents/{id}/capabilities endpoint -- to builder
+- [2026-04-25 10:17:32 UTC] **AB-001** SHIPPED: Add /v1/agents/{id}/capabilities endpoint -- QA passed
+- [2026-04-25 10:18:02 UTC] **AB-001** SHIPPED: Add /v1/agents/{id}/capabilities endpoint -- QA passed
+- [2026-04-25 10:18:03 UTC] **AB-002** DISPATCHED: CORS: allow trycloudflare.com origin pattern -- to builder
+- [2026-04-25 10:18:33 UTC] **AB-002** RETRY:  -- attempt 1
+- [2026-04-25 10:19:03 UTC] **AB-001** SHIPPED: Add /v1/agents/{id}/capabilities endpoint -- QA passed
+- [2026-04-25 10:19:03 UTC] **AB-002** DISPATCHED: CORS: allow trycloudflare.com origin pattern -- to builder
+- [2026-04-25 10:19:34 UTC] **AB-002** SHIPPED: CORS: allow trycloudflare.com origin pattern -- QA passed
+- [2026-04-25 10:20:04 UTC] **AB-002** SHIPPED: CORS: allow trycloudflare.com origin pattern -- QA passed
+- [2026-04-25 10:20:35 UTC] **AB-002** SHIPPED: CORS: allow trycloudflare.com origin pattern -- QA passed
+- [2026-04-25 10:20:35 UTC] **AB-003** DISPATCHED: Dashboard: dark mode toggle (CSS skeleton + button) -- to builder
+- [2026-04-25 10:21:05 UTC] **AB-003** RETRY:  -- attempt 1
+- [2026-04-25 10:21:05 UTC] **AB-003** DISPATCHED: Dashboard: dark mode toggle (CSS skeleton + button) -- to builder
+- [2026-04-25 10:21:35 UTC] **AB-003** RETRY:  -- attempt 2
+- [2026-04-25 10:21:35 UTC] **AB-003** DISPATCHED: Dashboard: dark mode toggle (CSS skeleton + button) -- to builder
+- [2026-04-25 10:22:06 UTC] **AB-003** BLOCKED:  -- QA failed 3x
+- [2026-04-25 10:22:36 UTC] **AB-003** BLOCKED:  -- QA failed 4x
+- [2026-04-25 10:23:06 UTC] **AB-003** SHIPPED: Dashboard: dark mode toggle (CSS skeleton + button) -- QA passed
+- [2026-04-25 10:23:37 UTC] **AB-003** SHIPPED: Dashboard: dark mode toggle (CSS skeleton + button) -- QA passed
+- [2026-04-25 10:23:37 UTC] **AB-004** DISPATCHED: Add /v1/stats/by-capability summary endpoint -- to builder
+- [2026-04-25 10:24:07 UTC] **AB-004** RETRY:  -- attempt 1
+- [2026-04-25 10:24:38 UTC] **AB-004** SHIPPED: Add /v1/stats/by-capability summary endpoint -- QA passed
+- [2026-04-25 10:24:38 UTC] **AB-005** DISPATCHED: Add ROADMAP.md to repo root -- to builder
+- [2026-04-25 10:25:08 UTC] **AB-005** SHIPPED: Add ROADMAP.md to repo root -- QA passed
+- [2026-04-25 10:25:38 UTC] **AB-005** SHIPPED: Add ROADMAP.md to repo root -- QA passed
+- [2026-04-25 10:25:39 UTC] **AB-006** DISPATCHED: Add /v1/health/deep with subsystem checks -- to builder
+- [2026-04-25 10:32:54 UTC] **AB-006** RETRY:  -- attempt 1
+- [2026-04-25 10:33:19 UTC] **AB-006** RETRY:  -- attempt 2
+- [2026-04-25 10:33:19 UTC] **AB-006** DISPATCHED: Add /v1/health/deep with subsystem checks -- to builder
+- [2026-04-25 10:33:24 UTC] **AB-006** BLOCKED:  -- QA failed 3x
+- [2026-04-25 10:33:24 UTC] **AB-007** DISPATCHED: Daily ship-log story poster (storyteller v4) -- to builder
+- [2026-04-25 10:35:39 UTC] **AB-007** RETRY:  -- attempt 1
+- [2026-04-25 10:35:40 UTC] **AB-006** BLOCKED:  -- QA failed 4x
+- [2026-04-25 10:36:02 UTC] **AB-006** BLOCKED:  -- QA failed 5x
+- [2026-04-25 10:36:02 UTC] **AB-007** DISPATCHED: Daily ship-log story poster (storyteller v4) -- to builder
+- [2026-04-25 10:36:10 UTC] **AB-006** BLOCKED:  -- QA failed 6x
+- [2026-04-25 10:36:36 UTC] **AB-007** SHIPPED: Daily ship-log story poster (storyteller v4) -- QA passed
+- [2026-04-25 10:36:40 UTC] **AB-007** SHIPPED: Daily ship-log story poster (storyteller v4) -- QA passed
+- [2026-04-25 10:37:07 UTC] **AB-007** SHIPPED: Daily ship-log story poster (storyteller v4) -- QA passed
+- [2026-04-25 10:37:07 UTC] **AB-007** SHIPPED: Daily ship-log story poster (storyteller v4) -- QA passed
+- [2026-04-25 10:37:10 UTC] **AB-007** SHIPPED: Daily ship-log story poster (storyteller v4) -- QA passed
+- [2026-04-25 10:37:10 UTC] **AB-007** SHIPPED: Daily ship-log story poster (storyteller v4) -- QA passed
+- [2026-04-25 10:37:10 UTC] **AB-007** SHIPPED: Daily ship-log story poster (storyteller v4) -- QA passed
+- [2026-04-25 10:37:37 UTC] **AB-007** SHIPPED: Daily ship-log story poster (storyteller v4) -- QA passed
+- [2026-04-25 10:37:37 UTC] **AB-007** SHIPPED: Daily ship-log story poster (storyteller v4) -- QA passed
+- [2026-04-25 10:37:40 UTC] **AB-007** SHIPPED: Daily ship-log story poster (storyteller v4) -- QA passed
+- [2026-04-25 10:42:22 UTC] **AB-100** ENRICHED: Add /v1/agents/leaderboard endpoint (top 5 by success rate) -- 1 files, 3 tests, research=no
+- [2026-04-25 10:43:11 UTC] **AB-101** ENRICH_FAIL: Add agent reputation history tracking (best practice) -- deepseek returned nothing usable
+- [2026-04-25 10:43:11 UTC] **AB-100** DISPATCHED: Add /v1/agents/leaderboard endpoint (top 5 by success rate) -- to builder
+- [2026-04-25 10:44:42 UTC] **AB-100** SHIPPED: Add /v1/agents/leaderboard endpoint (top 5 by success rate) -- QA passed
+- [2026-04-25 10:53:17 UTC] **AB-101** ENRICH_FAIL: Add agent reputation history tracking (best practice) -- deepseek returned nothing usable
+- [2026-04-25 11:03:41 UTC] **AB-101** ENRICH_FAIL: Add agent reputation history tracking (best practice) -- deepseek returned nothing usable
+- [2026-04-25 11:14:00 UTC] **AB-101** ENRICHED: Add agent reputation history tracking (best practice) -- 3 files, 2 tests, research=no
+- [2026-04-25 11:14:31 UTC] **AB-101** DISPATCHED: Add agent reputation history tracking (best practice) -- to builder
+- [2026-04-25 11:18:35 UTC] **AB-101** RETRY: Add agent reputation history tracking (best practice) -- attempt 1
+- [2026-04-25 11:18:35 UTC] **AB-101** DISPATCHED: Add agent reputation history tracking (best practice) -- to builder
+- [2026-04-25 11:20:30 UTC] **AB-101** RETRY: Add agent reputation history tracking (best practice) -- attempt 2
+- [2026-04-25 11:20:30 UTC] **AB-101** DISPATCHED: Add agent reputation history tracking (best practice) -- to builder
+- [2026-04-25 11:22:13 UTC] **AB-200** ENRICHED: Sua UI UX cua website AgentNet -- 3 files, 3 tests, research=no
+- [2026-04-25 11:22:44 UTC] **AB-101** BLOCKED: Add agent reputation history tracking (best practice) -- QA failed 3x
+- [2026-04-25 11:22:44 UTC] **AB-200** DISPATCHED: Sua UI UX cua website AgentNet -- to builder
+- [2026-04-25 11:25:20 UTC] **AB-200** RETRY: Sua UI UX cua website AgentNet -- attempt 1
+- [2026-04-25 11:25:20 UTC] **AB-200** DISPATCHED: Sua UI UX cua website AgentNet -- to builder
+- [2026-04-25 11:26:04 UTC] **AB-201** ENRICHED: Upgrade agentnet.io.vn website: research + detailed plan -- 1 files, 3 tests, research=no
+- [2026-04-25 11:27:05 UTC] **AB-200** RETRY: Sua UI UX cua website AgentNet -- attempt 1
+- [2026-04-25 11:27:05 UTC] **AB-200** DISPATCHED: Sua UI UX cua website AgentNet -- to builder
+- [2026-04-25 11:29:05 UTC] **AB-200** RETRY: Sua UI UX cua website AgentNet -- attempt 2
+- [2026-04-25 11:29:05 UTC] **AB-200** DISPATCHED: Sua UI UX cua website AgentNet -- to builder
+- [2026-04-25 11:31:06 UTC] **AB-200** BLOCKED: Sua UI UX cua website AgentNet -- QA failed 3x
+- [2026-04-25 11:31:06 UTC] **AB-201** DISPATCHED: Upgrade agentnet.io.vn website: research + detailed plan -- to builder
+- [2026-04-25 11:32:07 UTC] **AB-201** SHIPPED: Upgrade agentnet.io.vn website: research + detailed plan -- QA passed
+- [2026-04-25 11:55:44 UTC] **AB-202** ENRICH_FAIL: Phase 1: UX Audit & Quick Wins -- deepseek returned nothing usable
+- [2026-04-25 11:56:02 UTC] **AB-203** ENRICHED: Phase 2: Performance & Code Quality -- 3 files, 3 tests, research=no
+- [2026-04-25 11:56:15 UTC] **AB-204** ENRICH_FAIL: Phase 3: Marketing Landing Page -- deepseek returned nothing usable
+- [2026-04-25 11:56:45 UTC] **AB-205** ENRICH_FAIL: Phase 4: Integration Improvements -- deepseek returned nothing usable
+- [2026-04-25 11:56:52 UTC] **AB-205** ENRICH_FAIL: Phase 4: Integration Improvements -- deepseek returned nothing usable
+- [2026-04-25 11:57:16 UTC] **AB-206** ENRICH_FAIL: Phase 5: Blog/Docs Section -- deepseek returned nothing usable
+- [2026-04-25 11:57:41 UTC] **AB-207** ENRICH_FAIL: Phase 6: SEO & Documentation Site -- deepseek returned nothing usable
+- [2026-04-25 11:58:11 UTC] **AB-202** DISPATCHED: Phase 1: UX Audit & Quick Wins -- to builder
+- [2026-04-25 11:58:54 UTC] **AB-202** SHIPPED: Phase 1: UX Audit & Quick Wins -- QA passed
+- [2026-04-25 11:58:54 UTC] **AB-203** DISPATCHED: Phase 2: Performance & Code Quality -- to builder
+- [2026-04-25 12:00:12 UTC] **AB-203** SHIPPED: Phase 2: Performance & Code Quality -- QA passed
+- [2026-04-25 12:00:12 UTC] **AB-204** DISPATCHED: Phase 3: Marketing Landing Page -- to builder
+- [2026-04-25 12:01:43 UTC] **AB-204** SHIPPED: Phase 3: Marketing Landing Page -- QA passed
+- [2026-04-25 12:01:43 UTC] **AB-205** DISPATCHED: Phase 4: Integration Improvements -- to builder
+- [2026-04-25 12:02:43 UTC] **AB-205** SHIPPED: Phase 4: Integration Improvements -- QA passed
+- [2026-04-25 12:02:43 UTC] **AB-206** DISPATCHED: Phase 5: Blog/Docs Section -- to builder
+- [2026-04-25 12:03:44 UTC] **AB-206** SHIPPED: Phase 5: Blog/Docs Section -- QA passed
+- [2026-04-25 12:03:44 UTC] **AB-207** DISPATCHED: Phase 6: SEO & Documentation Site -- to builder
+- [2026-04-25 12:04:44 UTC] **AB-207** SHIPPED: Phase 6: SEO & Documentation Site -- QA passed
+- [2026-04-25 14:50:04 UTC] **AB-300** DISPATCHED: Mount RateLimitMiddleware in registry main.py -- to builder
+- [2026-04-25 14:51:35 UTC] **AB-300** SHIPPED: Mount RateLimitMiddleware in registry main.py -- QA passed
+- [2026-04-25 14:51:35 UTC] **AB-301** DISPATCHED: Mount RateLimitMiddleware in payment main.py -- to builder
+- [2026-04-25 14:52:35 UTC] **AB-301** SHIPPED: Mount RateLimitMiddleware in payment main.py -- QA passed
+- [2026-04-25 14:52:35 UTC] **AB-302** DISPATCHED: Add audit_log table migration -- to builder
+- [2026-04-25 14:54:06 UTC] **AB-302** SHIPPED: Add audit_log table migration -- QA passed
+- [2026-04-25 14:54:06 UTC] **AB-303** DISPATCHED: Strip sensitive fields from public GET /v1/agents/{id} -- to builder
+- [2026-04-25 14:56:07 UTC] **AB-303** RETRY: Strip sensitive fields from public GET /v1/agents/{id} -- attempt 1
+- [2026-04-25 14:56:07 UTC] **AB-303** DISPATCHED: Strip sensitive fields from public GET /v1/agents/{id} -- to builder
+- [2026-04-25 14:57:38 UTC] **AB-303** RETRY: Strip sensitive fields from public GET /v1/agents/{id} -- attempt 2
+- [2026-04-25 14:57:38 UTC] **AB-303** DISPATCHED: Strip sensitive fields from public GET /v1/agents/{id} -- to builder
+- [2026-04-25 14:59:39 UTC] **AB-303** BLOCKED: Strip sensitive fields from public GET /v1/agents/{id} -- QA failed 3x
+- [2026-04-25 14:59:39 UTC] **AB-310** DISPATCHED: Add password policy validator on user register -- to builder
+- [2026-04-25 15:00:40 UTC] **AB-310** SHIPPED: Add password policy validator on user register -- QA passed
+- [2026-04-25 15:00:40 UTC] **AB-311** DISPATCHED: Add email_verification_tokens table -- to builder
+- [2026-04-25 15:01:40 UTC] **AB-311** SHIPPED: Add email_verification_tokens table -- QA passed
+- [2026-04-25 15:01:41 UTC] **AB-312** DISPATCHED: Add /v1/auth/verify-email endpoint -- to builder
+- [2026-04-25 15:03:06 UTC] **AB-312** SHIPPED: Add /v1/auth/verify-email endpoint -- QA passed
+- [2026-04-25 15:03:06 UTC] **AB-320** DISPATCHED: Add /marketplace public landing page on dashboard -- to builder
+- [2026-04-25 15:04:42 UTC] **AB-320** RETRY: Add /marketplace public landing page on dashboard -- attempt 1
+- [2026-04-25 15:04:42 UTC] **AB-320** DISPATCHED: Add /marketplace public landing page on dashboard -- to builder
+- [2026-04-25 15:06:13 UTC] **AB-320** SHIPPED: Add /marketplace public landing page on dashboard -- QA passed

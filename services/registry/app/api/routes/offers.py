@@ -11,7 +11,9 @@ Invariant: No escrow is locked during negotiation.
 Escrow only locks when an offer is accepted and a task session is created.
 """
 
+import asyncio
 import uuid
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -21,6 +23,7 @@ from ...auth import get_current_user_or_agent
 from ...database import get_db
 from ...models import Agent, NegotiationRound, Offer, OfferStatus
 from ...governance import create_notification
+from ...websocket_manager import manager
 from ...schemas import (
     CounterOfferCreate,
     NegotiationRoundResponse,
@@ -274,6 +277,20 @@ async def accept_offer(
     offer.status = OfferStatus.ACCEPTED
     db.commit()
 
+    # Broadcast to dashboard feeds
+    from_agent = db.query(Agent).filter(Agent.id == offer.from_agent_id).first()
+    to_agent = db.query(Agent).filter(Agent.id == offer.to_agent_id).first()
+    asyncio.create_task(
+        manager.broadcast({
+            "type": "offer_accepted",
+            "offer_id": str(offer.id),
+            "from_agent": from_agent.name if from_agent else str(offer.from_agent_id),
+            "to_agent": to_agent.name if to_agent else str(offer.to_agent_id),
+            "price": offer.price,
+            "timestamp": datetime.utcnow().isoformat(),
+        })
+    )
+
     return {
         "message": "Offer accepted",
         "offer_id": str(offer.id),
@@ -316,5 +333,18 @@ async def reject_offer(
     ).update({"status": OfferStatus.REJECTED})
 
     db.commit()
+
+    # Broadcast to dashboard feeds
+    from_agent = db.query(Agent).filter(Agent.id == offer.from_agent_id).first()
+    to_agent = db.query(Agent).filter(Agent.id == offer.to_agent_id).first()
+    asyncio.create_task(
+        manager.broadcast({
+            "type": "offer_rejected",
+            "offer_id": str(offer.id),
+            "from_agent": from_agent.name if from_agent else str(offer.from_agent_id),
+            "to_agent": to_agent.name if to_agent else str(offer.to_agent_id),
+            "timestamp": datetime.utcnow().isoformat(),
+        })
+    )
 
     return {"message": "Offer rejected", "offer_id": str(offer.id)}

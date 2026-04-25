@@ -109,7 +109,24 @@ class ConnectionManager:
             self.active_connections[connection_id] = websocket
             self.agent_connections[str(agent.id)] = connection_id
 
+            # Mark agent as online on WebSocket connect
+            agent.is_online = True
+            agent.last_seen_at = datetime.utcnow()
+            db.commit()
+
             logger.info(f"Agent {agent.id} connected with connection ID {connection_id}")
+
+            # Broadcast online status to dashboard
+            asyncio.create_task(
+                self.broadcast({
+                    "type": "agent_status",
+                    "agent_id": str(agent.id),
+                    "name": agent.name,
+                    "status": "online",
+                    "capability": agent.current_capability,
+                })
+            )
+
             return connection_id
 
         except Exception as e:
@@ -117,7 +134,7 @@ class ConnectionManager:
             await websocket.close(code=1008, reason="Authentication error")
             return None
 
-    def disconnect(self, connection_id: str):
+    def disconnect(self, connection_id: str, db: Optional[Session] = None):
         """Disconnect a WebSocket connection."""
         if connection_id in self.active_connections:
             agent_id = None
@@ -130,12 +147,48 @@ class ConnectionManager:
 
             if agent_id:
                 del self.agent_connections[agent_id]
+
+                # Mark agent as offline if db session provided
+                if db is not None:
+                    try:
+                        agent = db.query(Agent).filter(Agent.id == agent_id).first()
+                        if agent:
+                            agent.is_online = False
+                            db.commit()
+                            logger.info(f"Agent {agent_id} marked offline on disconnect")
+                            # Broadcast offline status
+                            import asyncio
+                            asyncio.create_task(
+                                self.broadcast({
+                                    "type": "agent_status",
+                                    "agent_id": agent_id,
+                                    "name": agent.name,
+                                    "status": "offline",
+                                })
+                            )
+                    except Exception as e:
+                        logger.error(f"Error marking agent offline on disconnect: {e}")
+
                 logger.info(f"Agent {agent_id} disconnected")
 
     async def send_personal_message(self, message: dict, connection_id: str):
         """Send a message to a specific connection."""
         if connection_id in self.active_connections:
             await self.active_connections[connection_id].send_json(message)
+
+    async def heartbeat(self, agent_id: str, db: Session):
+        """Process a heartbeat ping from an agent — marks it online and updates last_seen_at."""
+        try:
+            agent = db.query(Agent).filter(Agent.id == agent_id).first()
+            if not agent:
+                logger.warning(f"Heartbeat for unknown agent {agent_id}")
+                return
+            agent.is_online = True
+            agent.last_seen_at = datetime.utcnow()
+            db.commit()
+            logger.debug(f"Heartbeat received for agent {agent_id}")
+        except Exception as e:
+            logger.error(f"Error processing heartbeat for agent {agent_id}: {e}")
 
     async def broadcast(self, message: dict):
         """Broadcast a message to all connected agents and dashboard feeds."""
@@ -629,6 +682,36 @@ class ConnectionManager:
             },
         }
         await self.send_to_agent(notification, str(params["to_agent_id"]))
+        
+        # Broadcast to dashboard feed
+        try:
+            await self.broadcast({
+                "type": "offer_received",
+                "offer_id": str(offer.id),
+                "from_agent_id": sender_agent_id,
+                "from_agent_name": sender_agent.name,
+                "to_agent_id": str(params["to_agent_id"]),
+                "to_agent_name": to_agent.name,
+                "title": offer.title,
+                "price": offer.price,
+            })
+        except Exception:
+            pass
+
+        # Broadcast to dashboard feeds
+        asyncio.create_task(
+            self.broadcast({
+                "type": "offer_received",
+                "offer_id": str(offer.id),
+                "from_agent": sender_agent.name if sender_agent else sender_agent_id,
+                "from_agent_id": sender_agent_id,
+                "to_agent": to_agent.name if to_agent else params["to_agent_id"],
+                "to_agent_id": str(params["to_agent_id"]),
+                "title": offer.title,
+                "price": offer.price,
+                "timestamp": datetime.utcnow().isoformat(),
+            })
+        )
 
         # Publish to Redis for Telegram bot
         if self.redis_client:

@@ -227,4 +227,30 @@ class APIClient:
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
 
+    # Chat / Agent Collaboration
+    def get_chat_threads(self, limit=20, skip=0):
+        try:
+            resp = httpx.get(
+                f"{REGISTRY_URL}/v1/chat/threads?limit={limit}&skip={skip}",
+                headers=self._get_headers(), timeout=5.0
+            )
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def get_chat_messages(self, from_agent_id=None, to_agent_id=None, limit=20, skip=0):
+        params = f"limit={limit}&skip={skip}"
+        if from_agent_id:
+            params += f"&from_agent_id={from_agent_id}"
+        if to_agent_id:
+            params += f"&to_agent_id={to_agent_id}"
+        try:
+            resp = httpx.get(
+                f"{REGISTRY_URL}/v1/chat/?{params}",
+                headers=self._get_headers(), timeout=5.0
+            )
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
 api_client = APIClient()

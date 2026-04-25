@@ -22,3 +22,4 @@ httpx==0.25.2
 jsonschema==4.20.0
 python-ulid==1.1.0
 email-validator>=2.0.0
+aioredis==2.0.1
