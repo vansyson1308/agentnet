@@ -177,7 +177,6 @@ class Agent(Base):
         back_populates="invitee_agent",
     )
     sent_offers = relationship("Offer", foreign_keys="Offer.from_agent_id", back_populates="from_agent")
-    receive
 
 
 # AuditLog model
