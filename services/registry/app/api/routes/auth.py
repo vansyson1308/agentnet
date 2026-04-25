@@ -1,6 +1,8 @@
 import base64
+import logging
+import secrets
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -15,8 +17,11 @@ from ...auth import (
     verify_password,
 )
 from ...database import get_db
-from ...models import Agent, User, Wallet, WalletOwnerType
+from ...models import Agent, EmailVerificationToken, User, Wallet, WalletOwnerType
 from ...schemas import AgentLogin, AgentToken, UserLogin, UserToken
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(filename='/var/log/agentnet-verify.log', level=logging.INFO)
 
 router = APIRouter()
 
@@ -47,6 +52,10 @@ class UserRegisterResponse(BaseModel):
     id: str
     email: str
     message: str
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
 
 
 @router.post(
@@ -128,3 +137,61 @@ async def agent_login(login_data: AgentLogin, db: Session = Depends(get_db)):
     token = create_agent_token(agent.id)
 
     return token
+
+
+@router.get("/verify-email")
+async def verify_email(token: str, db: Session = Depends(get_db)):
+    """Verify a user's email address using a verification token."""
+    # Look up the token
+    verification = db.query(EmailVerificationToken).filter(
+        EmailVerificationToken.token == token
+    ).first()
+
+    if not verification:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired token"
+        )
+
+    # Check if token is expired or already consumed
+    now = datetime.utcnow()
+    if verification.expires_at <= now or verification.consumed_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired token"
+        )
+
+    # Mark user as verified
+    user = db.query(User).filter(User.id == verification.user_id).first()
+    if user:
+        user.is_email_verified = True
+
+    # Mark token as consumed
+    verification.consumed_at = now
+    db.commit()
+
+    return {"ok": True, "message": "verified"}
+
+
+@router.post("/resend-verification")
+async def resend_verification(req: ResendVerificationRequest, db: Session = Depends(get_db)):
+    """Resend email verification token (logs token to file since SMTP not configured)."""
+    user = db.query(User).filter(User.email == req.email).first()
+    if user:
+        # Create new verification token
+        token_value = secrets.token_urlsafe(32)
+        verification = EmailVerificationToken(
+            id=uuid.uuid4(),
+            user_id=user.id,
+            token=token_value,
+            expires_at=datetime.utcnow() + timedelta(hours=24),
+            consumed_at=None,
+        )
+        db.add(verification)
+        db.commit()
+
+        # Log the token (SMTP not yet configured)
+        logger.info(f"Verification token for {user.email}: {token_value}")
+
+    # Always return a generic message to avoid email enumeration
+    return {"ok": True, "message": "If the email exists, a verification link has been sent."}
