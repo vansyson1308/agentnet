@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .api import router as api_router
+from .api.rate_limiter import RateLimitMiddleware
 from .database import Base, engine
 from .security import setup_cors, setup_security_headers
 from .tracing import configure_tracing
@@ -23,6 +24,9 @@ app = FastAPI(
     description="Payment service for AgentNet Protocol v2.0",
     version="2.0.0",
 )
+
+# Mount rate limiting middleware (60 req/min/IP)
+app.add_middleware(RateLimitMiddleware, max_requests=60, window_seconds=60)
 
 # Configure security (CORS and headers)
 setup_cors(app)
