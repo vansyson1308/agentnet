@@ -36,6 +36,7 @@
         .badge-warning { background: #fff3cd; color: #856404; }
         .badge-danger { background: #f8d7da; color: #721c24; }
     </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dark.css') }}">
 </head>
 <body>
     <div class="header">
@@ -49,6 +50,7 @@
                 <a href="{{ url_for('directory_page') }}" class="{% if request.endpoint == 'directory_page' or request.endpoint == 'agent_detail_page' %}active{% endif %}">Directory</a>
                 <a href="{{ url_for('tasks_page') }}" class="{% if request.endpoint == 'tasks_page' or request.endpoint == 'task_status_page' %}active{% endif %}">Tasks</a>
                 <a href="{{ url_for('offers_page') }}" class="{% if request.endpoint == 'offers_page' %}active{% endif %}">Offers</a>
+                <a href="{{ url_for('collaboration_page') }}" class="{% if request.endpoint == 'collaboration_page' or request.endpoint == 'collaboration_thread_page' %}active{% endif %}">🤝 Collaborate</a>
                 <a href="{{ url_for('notifications_page') }}" class="{% if request.endpoint == 'notifications_page' %}active{% endif %}" style="position: relative;">
                     Alerts
                     <span id="notif-badge" style="display:none; position: absolute; top: 10px; right: 4px; background: #ef4444; color: transparent; border-radius: 50%; width: 8px; height: 8px;"></span>
@@ -63,6 +65,7 @@
                 <a href="{{ url_for('login_page') }}" class="btn">Login</a>
                 <a href="{{ url_for('register_page') }}" class="btn">Register</a>
             {% endif %}
+            <button class="btn theme-toggle" onclick="toggleTheme()">🌙</button>
         </div>
     </div>
 
@@ -83,57 +86,25 @@
     {% if is_logged_in %}
         function createToast(title, message, url) {
             const toast = document.createElement('div');
-            toast.style.cssText = "background: white; border-left: 4px solid #3b82f6; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); padding: 1rem; border-radius: 4px; width: 300px; cursor: pointer; transition: opacity 0.3s; opacity: 1;";
-            toast.innerHTML = `<strong style="display:block; color:#0f172a; margin-bottom: 0.25rem;">${title}</strong><span style="color:#64748b; font-size:0.9rem;">${message}</span>`;
-            toast.onclick = () => window.location.href = url;
-            
-            document.getElementById('toast-container').appendChild(toast);
-            
-            setTimeout(() => {
-                toast.style.opacity = '0';
-                setTimeout(() => toast.remove(), 300);
-            }, 5000);
-        }
-
-        function checkEvents() {
-            fetch('{{ url_for("api_events_current") }}')
-                .then(r => r.json())
-                .then(data => {
-                    const badge = document.getElementById('notif-badge');
-                    if (data.unread_count > 0) {
-                        badge.style.display = 'block';
-                        badge.innerText = data.unread_count > 9 ? '9+' : data.unread_count;
-                        badge.style.width = 'auto';
-                        badge.style.height = 'auto';
-                        badge.style.padding = '0 0.3rem';
-                        badge.style.borderRadius = '10px';
-                        badge.style.color = 'white';
-                        badge.style.fontSize = '0.7rem';
-                        badge.style.fontWeight = 'bold';
-                        badge.style.top = '2px';
-                        badge.style.right = '-2px';
-                    } else {
-                        badge.style.display = 'none';
-                    }
-
-                    // Toasts for completely new ones (still using a session-based approach for toasts is fine)
-                    const sessionNotifs = JSON.parse(sessionStorage.getItem('agentnet_toasted_notifs') || '[]');
-                    if (data.events) {
-                        data.events.forEach(ev => {
-                            if (!sessionNotifs.includes(ev.id)) {
-                                createToast(ev.title, ev.message, ev.url);
-                                sessionNotifs.push(ev.id);
-                            }
-                        });
-                        sessionStorage.setItem('agentnet_toasted_notifs', JSON.stringify(sessionNotifs));
-                    }
-                })
-                .catch(e => console.error("Event poll error:", e));
-        }
-
-        checkEvents();
-        setInterval(checkEvents, 10000); // Poll every 10s
+            toast.style.cssText = 
+# ... [TRUNCATED -- preserve when editing] ...
     {% endif %}
+    // Theme toggle functionality
+    function toggleTheme() {
+        var body = document.body;
+        body.classList.toggle('theme-dark');
+        if (body.classList.contains('theme-dark')) {
+            localStorage.setItem('theme', 'dark');
+        } else {
+            localStorage.setItem('theme', 'light');
+        }
+    }
+    // Apply saved theme on load
+    (function() {
+        if (localStorage.getItem('theme') === 'dark') {
+            document.body.classList.add('theme-dark');
+        }
+    })();
     </script>
 </body>
 </html>
