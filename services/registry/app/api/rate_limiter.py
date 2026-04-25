@@ -5,9 +5,11 @@ Config: rate_limiter.py
 """
 import time
 import hashlib
-from typing import Optional, Callable
+from typing import Optional, Callable, Any
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
 import aioredis
 
 class TokenBucket:
@@ -29,7 +31,7 @@ class TokenBucket:
         return False
 
 
-class RateLimitMiddleware:
+class RateLimitMiddleware(BaseHTTPMiddleware):
     """
     Rate limiting middleware cho FastAPI.
     Dùng token bucket per-client, support Redis nếu có.
@@ -37,14 +39,14 @@ class RateLimitMiddleware:
     
     def __init__(
         self,
-        app: FastAPI,
+        app: ASGIApp,
         default_rate: int = 100,       # requests per minute
         default_burst: int = 150,      # burst limit
         agent_rate: int = 300,         # requests per minute for agents
         agent_burst: int = 450,        # burst limit for agents
         redis_url: Optional[str] = None,
     ):
-        self.app = app
+        super().__init__(app)
         self.default_rate = default_rate
         self.default_burst = default_burst
         self.agent_rate = agent_rate
@@ -80,7 +82,7 @@ class RateLimitMiddleware:
         # For now, heuristic: tokens > 40 chars are likely user JWTs
         return len(auth) < 50
 
-    async def __call__(self, request: Request, call_next: Callable):
+    async def dispatch(self, request: Request, call_next: Callable):
         # Skip rate limiting for health checks and docs
         skip_paths = ["/v1/health", "/docs", "/openapi.json", "/v1/stats"]
         if any(request.url.path.startswith(p) for p in skip_paths):
@@ -131,6 +133,5 @@ class RateLimitMiddleware:
 
 def add_rate_limiter(app: FastAPI):
     """Helper function to add rate limiter from main.py"""
-    middleware = RateLimitMiddleware(app)
-    app.add_middleware(RateLimitMiddleware)
-    return middleware
+    app.add_middleware(RateLimitMiddleware, default_rate=60, default_burst=120)
+    return None

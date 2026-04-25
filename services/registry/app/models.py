@@ -109,6 +109,9 @@ class AgentMessageType(str, enum.Enum):
     OFFER = "offer"
     ALERT = "alert"
     SYSTEM = "system"
+    PROPOSAL = "proposal"
+    REVIEW_RESULT = "review_result"
+    COMPLETED = "completed"
 
 
 class User(Base):
