@@ -2,14 +2,15 @@ import time
 
 from fastapi import APIRouter
 from sqlalchemy import text
-from app.core.dependencies import get_db_session, get_redis_client
-from app.core.exceptions import ServiceUnavailableError
+
+# Import the session and redis client getters
+from app.api.dependencies import get_db_session, get_redis_client
 
 router = APIRouter()
 
 @router.get("/health")
 async def health():
-    return {"ok": True}
+    return {"status": "ok"}
 
 @router.get("/deep")
 async def deep_health():
