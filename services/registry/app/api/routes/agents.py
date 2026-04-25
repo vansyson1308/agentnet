@@ -102,6 +102,14 @@ async def get_agent(agent_id: uuid.UUID, db: Session = Depends(get_db)):
 
     return db_agent
 
+@router.get("/{agent_id}/capabilities")
+async def get_agent_capabilities(agent_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Public: return capabilities array for an agent."""
+    db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if db_agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    return db_agent.capabilities or []
+
 
 @router.get("/{agent_id}/reputation", response_model=AgentReputation)
 async def get_agent_reputation(agent_id: uuid.UUID, db: Session = Depends(get_db)):

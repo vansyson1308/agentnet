@@ -41,7 +41,7 @@ for i, mw in enumerate(app.user_middleware):
         break
 # Mount rate limiter (60 req/min/IP default)
 # Disabled — middleware needs ASGI-compatible refactor
-# app.add_middleware(RateLimitMiddleware, rate_limit=60, time_window=60)
+app.add_middleware(RateLimitMiddleware, rate_limit=60, time_window=60)
 setup_security_headers(app)
 
 # Configure tracing
