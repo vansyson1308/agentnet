@@ -39,6 +39,8 @@ for i, mw in enumerate(app.user_middleware):
         options["allow_origin_regex"] = r"https://.*\.trycloudflare\.com$"
         app.user_middleware[i] = Middleware(CORSMiddleware, **options)
         break
+# Mount rate limiter (60 req/min/IP default)
+app.add_middleware(RateLimitMiddleware, rate_limit=60, time_window=60)
 setup_security_headers(app)
 
 # Configure tracing
