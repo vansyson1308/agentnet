@@ -358,3 +358,109 @@ def run_self_review(db: Session) -> int:
             logger.exception("self_review: commit failed; rolled back batch")
             return 0
     return created
+
+
+BACKLOG_PATH = os.getenv("AGENT_BACKLOG_PATH", "/opt/agentnet/AGENT_BACKLOG.md")
+
+
+def _next_backlog_id() -> str:
+    """Read the current backlog and return the next AB-NNN identifier."""
+    try:
+        import re
+        with open(BACKLOG_PATH, encoding="utf-8") as f:
+            content = f.read()
+        ids = re.findall(r"AB-(\d+)", content)
+        if not ids:
+            return "AB-001"
+        max_num = max(int(n) for n in ids)
+        return f"AB-{max_num + 1:03d}"
+    except FileNotFoundError:
+        return "AB-001"
+
+
+def proposal_to_backlog_entry(proposal: ImprovementProposal) -> str:
+    """Format an ImprovementProposal as a YAML backlog item."""
+    ab_id = _next_backlog_id()
+    # Map importance to priority
+    if proposal.importance >= 80:
+        priority = "high"
+    elif proposal.importance >= 50:
+        priority = "medium"
+    else:
+        priority = "low"
+
+    description_lines = [
+        f"**Source:** {proposal.source.value}",
+        f"**Problem:** {proposal.problem or 'N/A'}",
+        f"**Root cause:** {proposal.root_cause or 'N/A'}",
+        f"**Proposed change:** {proposal.proposed_change or 'N/A'}",
+        f"**Expected benefit:** {proposal.expected_benefit or 'N/A'}",
+        f"**Risk:** {proposal.risk or 'N/A'}",
+        f"**Agent:** {proposal.proposed_by_agent_id}",
+    ]
+    if proposal.source_task_id:
+        description_lines.append(f"**Source task:** {proposal.source_task_id}")
+
+    return f"""  - id: {ab_id}
+    title: "{proposal.title}"
+    priority: {priority}
+    description: |
+      {"  ".join(description_lines)}
+    acceptance:
+      - test is true  # auto-generated — QA will refine
+    status: open
+"""
+
+
+def convert_proposals_to_backlog(db: Session) -> int:
+    """Read PROPOSED proposals and write them to AGENT_BACKLOG.md.
+
+    Skips proposals that were already converted (status != PROPOSED) and
+    proposals whose title already appears in the backlog (dedup).
+    Returns the number of proposals converted.
+    """
+    import re
+
+    proposals = (
+        db.query(ImprovementProposal)
+        .filter(ImprovementProposal.status == ProposalStatus.PROPOSED)
+        .order_by(ImprovementProposal.importance.desc(), ImprovementProposal.created_at.asc())
+        .limit(3)  # max 3 per tick to avoid flood
+        .all()
+    )
+    if not proposals:
+        return 0
+
+    # Read current backlog
+    try:
+        with open(BACKLOG_PATH, encoding="utf-8") as f:
+            backlog_content = f.read()
+    except FileNotFoundError:
+        backlog_content = ""
+
+    converted = 0
+    for proposal in proposals:
+        # Dedup: check if title already exists in backlog
+        title_match = re.search(rf'title:\s*"{re.escape(proposal.title)}"', backlog_content)
+        if title_match:
+            logger.info("proposal->backlog: skip '%s' (already in backlog)", proposal.title)
+            # Mark as CONVERTED even if already there — avoid reprocessing
+            proposal.status = ProposalStatus.CONVERTED_TO_TASK
+            continue
+
+        entry = proposal_to_backlog_entry(proposal)
+        # Append to backlog
+        separator = "\n" if backlog_content.endswith("\n") else "\n\n"
+        with open(BACKLOG_PATH, "a", encoding="utf-8") as f:
+            f.write(separator + entry)
+
+        # Mark proposal as converted
+        proposal.status = ProposalStatus.CONVERTED_TO_TASK
+        logger.info("proposal->backlog: appended %s ('%s')", _next_backlog_id(), proposal.title)
+        converted += 1
+
+    if converted:
+        db.commit()
+        logger.info("proposal->backlog: converted %d proposals to backlog items", converted)
+
+    return converted

@@ -25,7 +25,7 @@ from .models import (
     TransactionType,
     Wallet,
 )
-from .reflection_loop import run_reflection_loop
+from .reflection_loop import convert_proposals_to_backlog, run_reflection_loop
 from .tracing import configure_tracing, get_tracer
 
 # Configure logging
@@ -501,6 +501,11 @@ async def main():
                             created = run_reflection_loop(db)
                         if created:
                             logger.info(f"reflection_loop: generated {created} proposals")
+                        # Convert PROPOSED proposals into backlog items
+                        # so the planner picks them up on the next tick
+                        backlogged = convert_proposals_to_backlog(db)
+                        if backlogged:
+                            logger.info(f"reflection_loop: converted {backlogged} proposals to backlog items")
                     except Exception as e:
                         logger.error(f"reflection_loop error: {e}")
                         db.rollback()
