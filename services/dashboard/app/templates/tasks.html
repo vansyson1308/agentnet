@@ -69,75 +69,53 @@
                             <span class="badge badge-danger" style="font-size: 0.7rem;">{{ t.status | upper }}</span>
                         {% endif %}
                     </td>
-                    <td style="padding: 0.75rem; text-align: right; white-space: nowrap;">
-                        <a href="{{ url_for('task_status_page', task_id=t.id) }}" class="btn" style="padding: 0.25rem 0.75rem; font-size: 0.8rem;">Status</a>
-                        <a href="{{ url_for('task_trace_page', task_id=t.id) }}" class="btn" style="padding: 0.25rem 0.75rem; font-size: 0.8rem; background: #475569;">Trace</a>
-                        {% if t.status in ('failed', 'timed_out') %}
-                            <a href="{{ url_for('task_retry_page', task_id=t.id) }}" class="btn btn-warning" style="padding: 0.25rem 0.75rem; font-size: 0.8rem; font-weight: bold; color: #78350f; margin-left: 0.25rem;">Retry</a>
-                        {% endif %}
+
+                    <td style="padding: 0.75rem; text-align: right;">
+                        <a href="{{ url_for('task_detail_page', task_id=t.id) }}" class="btn" style="padding: 0.25rem 0.75rem; font-size: 0.75rem;">View</a>
                     </td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
-        
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1.5rem; padding: 1rem; background: #fff; border-radius: 6px; border: 1px solid #e2e8f0;">
-            <div style="color: #64748b; font-size: 0.9rem;">
-                Page {{ page }}
-            </div>
-            <div style="display: flex; gap: 0.5rem;">
-                {% if page > 1 %}
-                    <a href="{{ url_for('tasks_page', page=page-1, status=current_status) }}" class="btn" style="background: white; border: 1px solid #cbd5e1; color: #334155; padding: 0.4rem 1rem;">&larr; Previous</a>
-                {% else %}
-                    <button class="btn" style="background: #f8fafc; border: 1px solid #e2e8f0; color: #94a3b8; cursor: not-allowed; padding: 0.4rem 1rem;" disabled>&larr; Previous</button>
-                {% endif %}
-                
-                {% if has_next %}
-                    <a href="{{ url_for('tasks_page', page=page+1, status=current_status) }}" class="btn" style="background: white; border: 1px solid #cbd5e1; color: #334155; padding: 0.4rem 1rem;">Next &rarr;</a>
-                {% else %}
-                    <button class="btn" style="background: #f8fafc; border: 1px solid #e2e8f0; color: #94a3b8; cursor: not-allowed; padding: 0.4rem 1rem;" disabled>Next &rarr;</button>
-                {% endif %}
-            </div>
+
+        <!-- Pagination -->
+        <div class="pagination" style="margin-top: 1.5rem; display: flex; justify-content: center; align-items: center; gap: 0.5rem;">
+            {% if page > 1 %}
+                <a href="{{ url_for('tasks_page', page=page-1, status=current_status) }}" class="btn" style="padding: 0.3rem 0.75rem;">&laquo; Prev</a>
+            {% endif %}
+            <span style="color: #475569; font-size: 0.85rem;">Page {{ page }} of {{ total_pages }}</span>
+            {% if page < total_pages %}
+                <a href="{{ url_for('tasks_page', page=page+1, status=current_status) }}" class="btn" style="padding: 0.3rem 0.75rem;">Next &raquo;</a>
+            {% endif %}
         </div>
     {% endif %}
 </div>
 
-<script>
-    let refreshTimer;
-    let isPaused = false;
-    const hasActive = {{ 'true' if has_active else 'false' }};
-    const refreshInterval = hasActive ? 5000 : 60000;
-    
-    function toggleRefresh() {
-        if (!hasActive) return;
-        isPaused = !isPaused;
-        const btn = document.getElementById('pause-btn');
-        const indicator = document.getElementById('refresh-indicator');
-        
-        if (isPaused) {
-            clearTimeout(refreshTimer);
-            btn.innerText = "Resume";
-            indicator.style.background = "#e2e8f0";
-            indicator.style.color = "#64748b";
-            indicator.style.borderColor = "#cbd5e1";
-            indicator.innerText = "Monitoring Paused";
-        } else {
-            btn.innerText = "Pause";
-            indicator.style.background = "#bae6fd";
-            indicator.style.color = "#0284c7";
-            indicator.style.borderColor = "#7dd3fc";
-            indicator.innerText = "Live Auto-Refresh (5s)";
-            startRefresh();
-        }
-    }
+<!-- Live Task Execution Timeline -->
+<div id="task-timeline" style="margin-top: 2rem;">
+    <h2 style="margin-bottom: 1rem; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.5rem;">Live Task Timeline</h2>
+    <div style="max-height: 400px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+            <thead style="position: sticky; top: 0; background: #f8fafc; z-index: 1;">
+                <tr>
+                    <th style="padding: 0.5rem; border-bottom: 1px solid #e2e8f0; text-align: left; color: #475569;">Agent</th>
+                    <th style="padding: 0.5rem; border-bottom: 1px solid #e2e8f0; text-align: left; color: #475569;">State</th>
+                    <th style="padding: 0.5rem; border-bottom: 1px solid #e2e8f0; text-align: center; color: #475569;">Duration</th>
+                    <th style="padding: 0.5rem; border-bottom: 1px solid #e2e8f0; text-align: center; color: #475569;">Escrow</th>
+                    <th style="padding: 0.5rem; border-bottom: 1px solid #e2e8f0; text-align: right; color: #475569;">Timestamp</th>
+                </tr>
+            </thead>
+            <tbody id="timeline-body">
+                <!-- Dynamic rows will be inserted here -->
+            </tbody>
+        </table>
+    </div>
+    <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0.5rem;">Showing last 50 events – updates in real time.</p>
+</div>
 
-    function startRefresh() {
-        refreshTimer = setTimeout(() => {
-            if (!isPaused) window.location.reload();
-        }, refreshInterval);
-    }
-    
-    startRefresh();
-</script>
+{% endblock %}
 
+{% block scripts %}
+{{ super() }}
+<script src="{{ url_for('static', path='/js/werewolf.js') }}"></script>
 {% endblock %}

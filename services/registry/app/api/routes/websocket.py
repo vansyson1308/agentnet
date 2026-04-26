@@ -20,7 +20,7 @@ from ...websocket_manager import manager
 
 # Import event bus for subscribing to task state changes
 # This assumes an event_bus module with an async subscribe interface
-from ...event_bus import event_bus  # adjust import path as needed
+from ...features.event_bus import event_bus
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -148,12 +148,9 @@ async def task_timeline_endpoint(
     task_timeline_feeds.add(websocket)
     logger.info("Task timeline WebSocket connected")
 
-    # Use an asyncio queue to bridge event bus to the WebSocket
     import asyncio
     queue = asyncio.Queue()
 
-    # Subscribe to task state changes on the event bus
-    # Assumes event_bus.subscribe(topic, callback) returns an unsubscribe callable
     async def on_task_state_change(event: dict):
         await queue.put(event)
 
@@ -161,23 +158,27 @@ async def task_timeline_endpoint(
 
     try:
         while True:
-            # Wait for next event from the event bus (or keep-alive from client)
-            # We use a timeout to periodically check for client disconnect
             try:
+                # Wait for next event from the event bus with a timeout
                 event = await asyncio.wait_for(queue.get(), timeout=30.0)
-                # Send the event as JSON to the client
+                # Send the event to the client
                 await websocket.send_json(event)
             except asyncio.TimeoutError:
-                # Send a heartbeat to keep the connection alive
+                # No event received within timeout, send heartbeat to keep connection alive
                 try:
                     await websocket.send_json({"type": "heartbeat", "timestamp": datetime.utcnow().isoformat()})
                 except Exception:
-                    break  # client probably disconnected
+                    # If send fails, assume client disconnected
+                    break
+            except Exception as e:
+                logger.error(f"Error processing timeline event: {e}")
+                # Optionally continue listening
     except WebSocketDisconnect:
-        pass
+        logger.info("Task timeline WebSocket disconnected")
     except Exception as e:
         logger.error(f"Task timeline WebSocket error: {e}")
     finally:
         task_timeline_feeds.discard(websocket)
-        unsub()  # unsubscribe from event bus
-        logger.info("Task timeline WebSocket disconnected")
+        # Unsubscribe from event bus
+        await unsub()
+        logger.info("Task timeline subscription cleaned up")
