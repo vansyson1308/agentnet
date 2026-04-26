@@ -193,19 +193,28 @@ async def _run_builtin_simulation(
 
     logger.info(
         f"Simulation completed: {num_steps} steps, "
-        f"{len(profiles)} agents, {len(all_results)} total actions"
+        f"{len(profiles)} agents, {len(all_results)} results"
     )
+
     return all_results
 
 
 def _select_action(actions: List[str], traits: Dict[str, Any]) -> str:
-    """Select an action based on agent traits (simple heuristic)."""
-    openness = traits.get("openness", 0.5)
-    # More open agents tend to create, less open tend to consume/react
-    if random.random() < openness:
-        return random.choice([a for a in actions if "CREATE" in a or "POST" in a])
-    else:
-        return random.choice([a for a in actions if "CREATE" not in a and "POST" not in a])
+    """Select an action based on agent personality traits."""
+    # Simple weighted random selection based on traits
+    weights = []
+    for action in actions:
+        weight = 1.0
+        if action == "CREATE_POST" and traits.get("creativity", 0.5) > 0.7:
+            weight = 2.0
+        elif action == "LIKE_POST" and traits.get("agreeableness", 0.5) > 0.7:
+            weight = 2.0
+        elif action == "DO_NOTHING" and traits.get("laziness", 0.5) > 0.7:
+            weight = 2.0
+        elif action == "DISLIKE_POST" and traits.get("negativity", 0.5) > 0.7:
+            weight = 2.0
+        weights.append(weight)
+    return random.choices(actions, weights=weights, k=1)[0]
 
 
 def _generate_content(
@@ -214,28 +223,67 @@ def _generate_content(
     step: int,
     scenario: Optional[str] = None,
 ) -> str:
-    """Generate realistic content for the given action."""
-    name = profile.get("name", "anonymous")
+    """Generate content for a given action."""
+    name = profile.get("name", f"Agent_{step}")
+    interests = profile.get("interests", [])
+    if not interests:
+        interests = ["technology", "art", "music"]
+
     if action == "CREATE_POST":
-        topics = scenario.split(",") if scenario else ["technology", "culture"]
-        topic = random.choice(topics).strip()
-        return f"{name} posted about {topic} at step {step}"
-    elif action == "CREATE_COMMENT":
-        return f"{name} commented: 'Interesting perspective!'"
-    elif action in ("LIKE_POST", "LIKE_COMMENT"):
-        return f"{name} liked a post."
-    elif action in ("DISLIKE_POST", "DISLIKE_COMMENT"):
-        return f"{name} disliked a post."
+        topic = random.choice(interests)
+        return (
+            f"{name} posted about {topic}: "
+            f"\"I just discovered something amazing about {topic} today!\""
+        )
+    elif action == "LIKE_POST" or action == "LIKE_COMMENT":
+        return f"{name} liked a post about {random.choice(interests)}"
+    elif action == "DISLIKE_POST" or action == "DISLIKE_COMMENT":
+        return f"{name} disliked a post about {random.choice(interests)}"
     elif action == "REPOST":
-        return f"{name} reposted content."
+        return f"{name} reposted content from another user"
     elif action == "FOLLOW":
-        return f"{name} followed another user."
+        return f"{name} followed a user interested in {random.choice(interests)}"
     elif action == "QUOTE_POST":
-        return f"{name} quoted a post with new commentary."
+        return (
+            f"{name} quoted a post: \"Interesting perspective. "
+            f"I have a different view on {random.choice(interests)}.\""
+        )
+    elif action == "CREATE_COMMENT":
+        return f"{name} commented on a post: \"Great point about {random.choice(interests)}!\""
     elif action == "SEARCH_POSTS":
-        return f"{name} searched for posts."
-    else:  # DO_NOTHING
-        return f"{name} did nothing."
+        return f"{name} searched for posts about {random.choice(interests)}"
+    elif action == "DO_NOTHING":
+        return f"{name} spent time browsing without engaging"
+    else:
+        return f"{name} performed {action}"
+
+
+def _generate_mission_text(profile: Dict[str, Any], platform: str, scenario: Optional[str]) -> str:
+    """Generate a realistic mission statement for a simulated agent."""
+    name = profile.get("name", "Agent")
+    interests = profile.get("interests", [])
+    interest_str = ", ".join(interests[:2]) if interests else "various topics"
+    if scenario:
+        return f"{name}'s mission: Engage meaningfully on {platform} to {scenario} while focusing on {interest_str}."
+    else:
+        return f"{name}'s mission: Build a positive presence on {platform} by sharing insights about {interest_str}."
+
+
+def _generate_goal_descriptions(profile: Dict[str, Any], platform: str) -> List[str]:
+    """Generate 1-2 realistic goal descriptions for a simulated agent."""
+    interests = profile.get("interests", [])
+    goals = []
+    # Goal 1: often about posting or engaging
+    if random.random() < 0.8:
+        topic = random.choice(interests) if interests else "general"
+        goals.append(f"Increase engagement on posts about {topic}")
+    # Goal 2: sometimes about growth or quality
+    if random.random() < 0.5:
+        goals.append(f"Improve average response sentiment by 10%")
+    # Ensure at least one goal
+    if not goals:
+        goals.append(f"Share at least 5 high-quality posts about {random.choice(interests) if interests else 'interesting topics'}")
+    return goals
 
 
 def _seed_simulated_agents(
@@ -245,45 +293,45 @@ def _seed_simulated_agents(
     scenario: Optional[str] = None,
 ) -> None:
     """
-    Seed each simulated agent with a mission text and 1-2 active goals.
-    Creates Goal entries with owner_type='AGENT' and a synthetic owner_id.
+    Seed each simulated agent with a mission text and active goals.
+
+    Only called when SIMULATION_PRODUCE_GOALS=1.
     """
+    now = datetime.now(timezone.utc)
     for profile in profiles:
-        agent_index = profile.get("user_id", 0)
-        agent_name = profile.get("name", f"agent_{agent_index}")
-
-        # Generate a unique owner_id for this simulated agent
-        owner_id = f"sim_{agent_index}_{uuid.uuid4().hex[:8]}"
-
-        # Mission text: derive from scenario or use generic
-        mission_text = f"Analyze trends in {scenario or 'market behavior'} on {platform}."
-        if scenario:
-            mission_text = f"Investigate {scenario} through social media interactions."
-
-        # Create 1-2 active goals
-        num_goals = random.randint(1, 2)
-        goal_descriptions = [
-            f"Publish {random.randint(1,3)} post(s) about {scenario or 'relevant topics'}",
-            f"Engage with at least {random.choice(['3','5','10'])} content pieces",
-            f"Build a network of {random.randint(5,20)} followers",
-            f"Gather intelligence on competitor sentiment",
-            f"Promote the product through organic posts",
-        ]
-        selected_goals = random.sample(goal_descriptions, min(num_goals, len(goal_descriptions)))
-
-        for goal_text in selected_goals:
+        agent_id = profile.get("user_id", 0)
+        # Mission is stored as part of the goal? The requirement says seed with mission text + goals.
+        # We can store mission as a special Goal or as a separate field? For simplicity, store as first goal's description.
+        # But goals should be separate. We'll create Goal records; the mission text can be a goal description.
+        # Alternatively, we could store mission in a separate model, but requirements likely just want goals.
+        # We'll create 1-2 goals, and the mission text can be one of them.
+        goal_descriptions = _generate_goal_descriptions(profile, platform)
+        for desc in goal_descriptions:
             goal = Goal(
                 id=uuid.uuid4(),
-                owner_id=owner_id,
                 owner_type="AGENT",
-                title=goal_text,
-                description=f"Goal for simulated agent {agent_name}",
+                owner_id=str(agent_id),
+                description=desc,
                 status="ACTIVE",
-                created_at=datetime.now(timezone.utc),
+                created_at=now,
+                updated_at=now,
             )
             db.add(goal)
+        # Also add the mission as a distinct Goal with a special prefix? We'll add one extra goal with mission text.
+        mission_text = _generate_mission_text(profile, platform, scenario)
+        mission_goal = Goal(
+            id=uuid.uuid4(),
+            owner_type="AGENT",
+            owner_id=str(agent_id),
+            description=f"MISSION: {mission_text}",
+            status="ACTIVE",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(mission_goal)
 
-        logger.debug(f"Seeded agent {agent_name} (owner={owner_id}) with {num_goals} goal(s)")
+    # Commit the seeds
+    db.commit()
 
 
 def _record_simulated_action(
@@ -295,37 +343,44 @@ def _record_simulated_action(
     traits: Dict[str, Any],
 ) -> None:
     """
-    Record a MemoryItem (AGENT-scope) for the simulated callee after each action.
-    If the action is a failure (e.g., dislike, do_nothing), also create an ImprovementProposal.
-    """
-    agent_index = profile.get("user_id", 0)
-    owner_id = f"sim_{agent_index}_{uuid.uuid4().hex[:8]}"  # Should ideally reuse the same owner_id from seeding, but for simplicity we generate a new one per step.
+    Write a MemoryItem for the simulated callee and, if action is a failure,
+    create an ImprovementProposal.
 
-    # Write MemoryItem
-    memory_content = f"Simulated agent performed action '{action}' on {platform} at step {step}."
+    Only called when SIMULATION_PRODUCE_GOALS=1.
+    """
+    agent_id = profile.get("user_id", 0)
+    now = datetime.now(timezone.utc)
+    name = profile.get("name", f"Agent_{agent_id}")
+
+    # Create MemoryItem (AGENT-scope)
+    memory_content = f"At step {step}, {name} performed {action} on {platform}."
     memory = MemoryItem(
         id=uuid.uuid4(),
-        owner_id=owner_id,
         owner_type="AGENT",
+        owner_id=str(agent_id),
         content=memory_content,
-        source="simulation",
-        created_at=datetime.now(timezone.utc),
+        created_at=now,
     )
     db.add(memory)
 
-    # Determine failure based on action or random chance
-    is_failure = (action in FAILURE_ACTIONS) or (random.random() < 0.1)
-    if is_failure:
-        improvement_text = f"Improve {platform} strategy: {action} resulted in low engagement."
+    # On failure actions, create an ImprovementProposal
+    if action in FAILURE_ACTIONS:
+        proposal_text = f"Improve {action} engagement on {platform} by adjusting tone or timing."
+        # Generate a more specific proposal based on traits
+        if action == "DO_NOTHING":
+            proposal_text = f"Encourage {name} to participate more actively on {platform} instead of browsing."
+        elif action == "DISLIKE_POST":
+            proposal_text = f"Provide constructive feedback instead of disliking posts on {platform}."
+        elif action == "DISLIKE_COMMENT":
+            proposal_text = f"Suggest {name} to engage diplomatically with dissenting comments on {platform}."
+
         proposal = ImprovementProposal(
             id=uuid.uuid4(),
-            owner_id=owner_id,
-            owner_type="AGENT",
-            title="Refine interaction approach",
-            description=improvement_text,
-            proposed_by="SimulationEngine",
-            status="PENDING",
-            created_at=datetime.now(timezone.utc),
+            agent_id=str(agent_id),
+            description=f"Simulation step {step}: {action} detected as failure.",
+            proposal=proposal_text,
+            status="OPEN",
+            created_at=now,
+            updated_at=now,
         )
         db.add(proposal)
-        logger.debug(f"Recorded ImprovementProposal for agent {owner_id} due to action {action}")
