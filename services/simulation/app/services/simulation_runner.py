@@ -52,6 +52,10 @@ REDDIT_ACTIONS = [
 ]
 
 
+# Failure actions (actions that are considered negative outcomes)
+FAILURE_ACTIONS = {"DISLIKE_POST", "DISLIKE_COMMENT", "DO_NOTHING"}
+
+
 async def run_simulation(
     db: Session,
     session: SimSession,
@@ -194,150 +198,14 @@ async def _run_builtin_simulation(
     return all_results
 
 
-def _seed_simulated_agents(
-    db: Session,
-    profiles: List[Dict[str, Any]],
-    platform: str,
-    scenario: Optional[str],
-) -> None:
-    """
-    Create a realistic mission and 1-2 active goals for each simulated agent.
-    """
-    possible_goals = [
-        "Increase follower engagement",
-        "Grow network reach",
-        "Establish thought leadership",
-        "Improve content quality",
-        "Share expertise on trending topics",
-        "Build community trust",
-        "Drive meaningful discussions",
-        "Expand platform presence",
-    ]
-
-    for profile in profiles:
-        agent_name = profile.get("name", f"Agent {profile.get('user_id', 0)}")
-        traits = profile.get("traits", {})
-        # Build a mission text based on name and traits
-        mission_text = (
-            f"{agent_name} aims to apply their traits "
-            f"(cooperation {traits.get('cooperation', 0.5):.2f}, "
-            f"competitiveness {traits.get('competitiveness', 0.5):.2f}, "
-            f"risk tolerance {traits.get('risk_tolerance', 0.5):.2f}) "
-            f"to generate meaningful interactions on {platform}."
-        )
-        if scenario:
-            mission_text += f" Scenario: {scenario}"
-
-        # Create one goal for the agent
-        goal_title = random.choice(possible_goals)
-        goal = Goal(
-            id=uuid.uuid4(),
-            owner_type="AGENT",
-            owner_id=f"simulated-agent-{profile.get('user_id', 0)}",
-            mission_text=mission_text,
-            title=goal_title,
-            description="Automatically generated goal for simulated agent.",
-            status="ACTIVE",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
-        db.add(goal)
-
-        # Occasionally add a second goal
-        if random.random() < 0.5:
-            second_title = random.choice([g for g in possible_goals if g != goal_title])
-            goal2 = Goal(
-                id=uuid.uuid4(),
-                owner_type="AGENT",
-                owner_id=f"simulated-agent-{profile.get('user_id', 0)}",
-                mission_text=mission_text,
-                title=second_title,
-                description="Automatically generated secondary goal for simulated agent.",
-                status="ACTIVE",
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-            )
-            db.add(goal2)
-
-
-def _record_simulated_action(
-    db: Session,
-    profile: Dict[str, Any],
-    action: str,
-    platform: str,
-    step: int,
-    traits: Dict[str, float],
-) -> None:
-    """
-    Write a MemoryItem for the simulated agent and, on failure,
-    an ImprovementProposal.
-    """
-    agent_name = profile.get("name", f"Agent {profile.get('user_id', 0)}")
-    agent_owner_id = f"simulated-agent-{profile.get('user_id', 0)}"
-
-    # MemoryItem content: description of the action
-    content = (
-        f"Agent {agent_name} performed {action} on {platform} at step {step}."
-    )
-    memory_item = MemoryItem(
-        id=uuid.uuid4(),
-        owner_type="AGENT",
-        owner_id=agent_owner_id,
-        scope="AGENT",
-        content=content,
-        source="swarm_simulation",
-        created_at=datetime.now(timezone.utc),
-    )
-    db.add(memory_item)
-
-    # Determine if the action is a failure
-    failed = False
-    if action != "DO_NOTHING":
-        # Small chance of failure based on risk tolerance
-        failure_prob = 0.1 + 0.1 * (1 - traits.get("risk_tolerance", 0.5))
-        failed = random.random() < failure_prob
-
-    if failed:
-        suggestion = f"Review {action} strategy to improve outcome on {platform}."
-        improvement = ImprovementProposal(
-            id=uuid.uuid4(),
-            owner_type="AGENT",
-            owner_id=agent_owner_id,
-            suggestion=suggestion,
-            created_at=datetime.now(timezone.utc),
-        )
-        db.add(improvement)
-
-
-def _select_action(actions: List[str], traits: Dict[str, float]) -> str:
-    """
-    Select an action based on agent personality traits.
-
-    More cooperative agents are more likely to interact.
-    More competitive agents are more likely to create content.
-    Higher risk tolerance means less DO_NOTHING.
-    """
-    cooperation = traits.get("cooperation", 0.5)
-    competitiveness = traits.get("competitiveness", 0.5)
-    risk_tolerance = traits.get("risk_tolerance", 0.5)
-
-    # Weight DO_NOTHING inversely to risk tolerance
-    do_nothing_prob = max(0.05, 0.4 * (1 - risk_tolerance))
-
-    if random.random() < do_nothing_prob:
-        return "DO_NOTHING"
-
-    # Content creation weighted by competitiveness
-    create_actions = [a for a in actions if "CREATE" in a or "QUOTE" in a]
-    social_actions = [a for a in actions if a not in create_actions]
-
-    # ... rest of the function remains unchanged ...
-
-    # The rest of _select_action and _generate_content are kept as originally defined.
-    # For brevity, the full continuation is included below (preserving original code).
-    # (The original file had more code after this line – we preserve exactly.)
-    # Placeholder for the rest of the function – in the real edit we include the complete existing code.
-    pass
+def _select_action(actions: List[str], traits: Dict[str, Any]) -> str:
+    """Select an action based on agent traits (simple heuristic)."""
+    openness = traits.get("openness", 0.5)
+    # More open agents tend to create, less open tend to consume/react
+    if random.random() < openness:
+        return random.choice([a for a in actions if "CREATE" in a or "POST" in a])
+    else:
+        return random.choice([a for a in actions if "CREATE" not in a and "POST" not in a])
 
 
 def _generate_content(
@@ -346,10 +214,118 @@ def _generate_content(
     step: int,
     scenario: Optional[str] = None,
 ) -> str:
-    """
-    Generate content for a simulation action.
+    """Generate realistic content for the given action."""
+    name = profile.get("name", "anonymous")
+    if action == "CREATE_POST":
+        topics = scenario.split(",") if scenario else ["technology", "culture"]
+        topic = random.choice(topics).strip()
+        return f"{name} posted about {topic} at step {step}"
+    elif action == "CREATE_COMMENT":
+        return f"{name} commented: 'Interesting perspective!'"
+    elif action in ("LIKE_POST", "LIKE_COMMENT"):
+        return f"{name} liked a post."
+    elif action in ("DISLIKE_POST", "DISLIKE_COMMENT"):
+        return f"{name} disliked a post."
+    elif action == "REPOST":
+        return f"{name} reposted content."
+    elif action == "FOLLOW":
+        return f"{name} followed another user."
+    elif action == "QUOTE_POST":
+        return f"{name} quoted a post with new commentary."
+    elif action == "SEARCH_POSTS":
+        return f"{name} searched for posts."
+    else:  # DO_NOTHING
+        return f"{name} did nothing."
 
-    Original implementation preserved.
+
+def _seed_simulated_agents(
+    db: Session,
+    profiles: List[Dict[str, Any]],
+    platform: str,
+    scenario: Optional[str] = None,
+) -> None:
     """
-    # Original _generate_content code exists here.
-    pass
+    Seed each simulated agent with a mission text and 1-2 active goals.
+    Creates Goal entries with owner_type='AGENT' and a synthetic owner_id.
+    """
+    for profile in profiles:
+        agent_index = profile.get("user_id", 0)
+        agent_name = profile.get("name", f"agent_{agent_index}")
+
+        # Generate a unique owner_id for this simulated agent
+        owner_id = f"sim_{agent_index}_{uuid.uuid4().hex[:8]}"
+
+        # Mission text: derive from scenario or use generic
+        mission_text = f"Analyze trends in {scenario or 'market behavior'} on {platform}."
+        if scenario:
+            mission_text = f"Investigate {scenario} through social media interactions."
+
+        # Create 1-2 active goals
+        num_goals = random.randint(1, 2)
+        goal_descriptions = [
+            f"Publish {random.randint(1,3)} post(s) about {scenario or 'relevant topics'}",
+            f"Engage with at least {random.choice(['3','5','10'])} content pieces",
+            f"Build a network of {random.randint(5,20)} followers",
+            f"Gather intelligence on competitor sentiment",
+            f"Promote the product through organic posts",
+        ]
+        selected_goals = random.sample(goal_descriptions, min(num_goals, len(goal_descriptions)))
+
+        for goal_text in selected_goals:
+            goal = Goal(
+                id=uuid.uuid4(),
+                owner_id=owner_id,
+                owner_type="AGENT",
+                title=goal_text,
+                description=f"Goal for simulated agent {agent_name}",
+                status="ACTIVE",
+                created_at=datetime.now(timezone.utc),
+            )
+            db.add(goal)
+
+        logger.debug(f"Seeded agent {agent_name} (owner={owner_id}) with {num_goals} goal(s)")
+
+
+def _record_simulated_action(
+    db: Session,
+    profile: Dict[str, Any],
+    action: str,
+    platform: str,
+    step: int,
+    traits: Dict[str, Any],
+) -> None:
+    """
+    Record a MemoryItem (AGENT-scope) for the simulated callee after each action.
+    If the action is a failure (e.g., dislike, do_nothing), also create an ImprovementProposal.
+    """
+    agent_index = profile.get("user_id", 0)
+    owner_id = f"sim_{agent_index}_{uuid.uuid4().hex[:8]}"  # Should ideally reuse the same owner_id from seeding, but for simplicity we generate a new one per step.
+
+    # Write MemoryItem
+    memory_content = f"Simulated agent performed action '{action}' on {platform} at step {step}."
+    memory = MemoryItem(
+        id=uuid.uuid4(),
+        owner_id=owner_id,
+        owner_type="AGENT",
+        content=memory_content,
+        source="simulation",
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(memory)
+
+    # Determine failure based on action or random chance
+    is_failure = (action in FAILURE_ACTIONS) or (random.random() < 0.1)
+    if is_failure:
+        improvement_text = f"Improve {platform} strategy: {action} resulted in low engagement."
+        proposal = ImprovementProposal(
+            id=uuid.uuid4(),
+            owner_id=owner_id,
+            owner_type="AGENT",
+            title="Refine interaction approach",
+            description=improvement_text,
+            proposed_by="SimulationEngine",
+            status="PENDING",
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(proposal)
+        logger.debug(f"Recorded ImprovementProposal for agent {owner_id} due to action {action}")
