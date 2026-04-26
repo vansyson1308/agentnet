@@ -1,5 +1,6 @@
 import json
 import logging
+import asyncio
 from datetime import datetime
 from typing import Optional
 
@@ -122,7 +123,6 @@ async def websocket_endpoint(
     except Exception as e:
         logger.error(f"WebSocket error for agent {agent_id}: {e}")
         manager.disconnect(connection_id, db)
-        manager.disconnect(connection_id, db)
 
 
 @router.websocket("/ws/tasks/timeline")
@@ -148,8 +148,7 @@ async def task_timeline_endpoint(
     task_timeline_feeds.add(websocket)
     logger.info("Task timeline WebSocket connected")
 
-    import asyncio
-    queue = asyncio.Queue()
+    queue: asyncio.Queue = asyncio.Queue()
 
     async def on_task_state_change(event: dict):
         await queue.put(event)
@@ -168,17 +167,11 @@ async def task_timeline_endpoint(
                 try:
                     await websocket.send_json({"type": "heartbeat", "timestamp": datetime.utcnow().isoformat()})
                 except Exception:
-                    # If send fails, assume client disconnected
                     break
-            except Exception as e:
-                logger.error(f"Error processing timeline event: {e}")
-                # Optionally continue listening
     except WebSocketDisconnect:
         logger.info("Task timeline WebSocket disconnected")
     except Exception as e:
         logger.error(f"Task timeline WebSocket error: {e}")
     finally:
+        unsub()
         task_timeline_feeds.discard(websocket)
-        # Unsubscribe from event bus
-        await unsub()
-        logger.info("Task timeline subscription cleaned up")
