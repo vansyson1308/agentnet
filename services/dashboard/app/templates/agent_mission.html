@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+    <h1>{{ mission.name }}'s Mission</h1>
+    <p class="muted">Agent <code>{{ mission.agent_id }}</code></p>
+</section>
+
+<section class="card">
+    <h3>Current mission</h3>
+    <p class="prewrap">{{ mission.mission or '— no mission set —' }}</p>
+    {% if mission.current_goal %}
+        <h3>Active goal</h3>
+        <p>
+            <a href="{{ url_for('goal_detail_page', goal_id=mission.current_goal.id) }}">
+                {{ mission.current_goal.title }}
+            </a>
+            <span class="status-pill status-{{ mission.current_goal.status }}">{{ mission.current_goal.status }}</span>
+            <span class="muted">priority {{ mission.current_goal.priority }}</span>
+        </p>
+    {% else %}
+        <p class="muted">No active goal.</p>
+    {% endif %}
+</section>
+
+{% if is_logged_in %}
+<section class="form-section">
+    <h2>Edit mission</h2>
+    <form method="post" action="{{ url_for('agent_mission_page', agent_id=agent_id) }}" class="stack-form">
+        <label>Mission text
+            <textarea name="mission" rows="3">{{ mission.mission or '' }}</textarea>
+        </label>
+        <label>Active goal
+            <select name="current_goal_id">
+                <option value="">— keep unchanged —</option>
+                {% for g in agent_goals %}
+                    <option value="{{ g.id }}" {% if g.is_current %}selected{% endif %}>{{ g.title }} ({{ g.status }})</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label class="inline-checkbox">
+            <input type="checkbox" name="clear_goal" value="1"> Clear active goal
+        </label>
+        <button type="submit" class="btn btn-primary">Save</button>
+    </form>
+</section>
+{% endif %}
+
+<section>
+    <h2>Recent lessons relevant to this agent</h2>
+    {% if not lessons %}
+        <p class="muted">No lessons yet. The reflection loop populates this from failed tasks; you can also <a href="{{ url_for('memory_page') }}">write one manually</a>.</p>
+    {% endif %}
+    <ul class="lesson-list">
+        {% for l in lessons %}
+            <li>
+                <strong>{{ l.title }}</strong>
+                <span class="status-pill status-{{ l.scope }}">{{ l.scope }}</span>
+                <span class="muted">importance {{ l.importance }}</span>
+                <p class="prewrap">{{ l.content }}</p>
+            </li>
+        {% endfor %}
+    </ul>
+</section>
+
+<p><a href="{{ url_for('my_agents_page') }}">← Back to my agents</a></p>
+{% endblock %}
