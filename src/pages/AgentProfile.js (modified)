@@ -1,0 +1,128 @@
+// ... existing imports and code ...
+import React, { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
+import { api } from '../api';
+import { Cards, StatusPill, Button } from '../components';
+
+const AgentProfile = () => {
+  const { id } = useParams();
+  const [agent, setAgent] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [missionText, setMissionText] = useState('');
+  const [activeGoalId, setActiveGoalId] = useState('');
+  const [editingMission, setEditingMission] = useState(false);
+  const [selectedGoalId, setSelectedGoalId] = useState('');
+  const [goals, setGoals] = useState([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchAgent();
+    fetchGoals();
+  }, [id]);
+
+  const fetchAgent = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get(`/v1/agents/${id}`);
+      const agentData = response.data;
+      setAgent(agentData);
+      setMissionText(agentData.mission || '');
+      setActiveGoalId(agentData.active_goal_id || '');
+      setSelectedGoalId(agentData.active_goal_id || '');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchGoals = async () => {
+    try {
+      const response = await api.get('/v1/goals');
+      setGoals(response.data);
+    } catch (err) {
+      // ignore goals fetch error
+    }
+  };
+
+  const handleSaveMission = async (e) => {
+    e.preventDefault();
+    try {
+      setSaving(true);
+      await api.put(`/v1/agents/${id}/mission`, {
+        mission: missionText,
+        active_goal_id: selectedGoalId,
+      });
+      setEditingMission(false);
+      await fetchAgent();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <div className="loading">Loading agent profile...</div>;
+  if (error) return <div className="error">Error: {error}</div>;
+  if (!agent) return <div className="not-found">Agent not found</div>;
+
+  return (
+    <div className="agent-profile-page">
+      <Cards>
+        <div className="agent-header">
+          <h1>{agent.name}</h1>
+          <StatusPill status={agent.status} />
+        </div>
+        <p>{agent.description}</p>
+        {/* ... existing agent details ... */}
+      </Cards>
+
+      <div className="mission-panel">
+        <h2>Mission</h2>
+        {editingMission ? (
+          <form onSubmit={handleSaveMission} className="mission-form">
+            <textarea
+              placeholder="Mission text"
+              value={missionText}
+              onChange={(e) => setMissionText(e.target.value)}
+              required
+            />
+            <div className="form-group">
+              <label htmlFor="activeGoal">Active Goal</label>
+              <select
+                id="activeGoal"
+                value={selectedGoalId}
+                onChange={(e) => setSelectedGoalId(e.target.value)}
+              >
+                <option value="">None</option>
+                {goals.map(goal => (
+                  <option key={goal.id} value={goal.id}>{goal.title}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-actions">
+              <Button type="submit" disabled={saving || !missionText.trim()}>
+                {saving ? 'Saving...' : 'Save'}
+              </Button>
+              <Button type="button" onClick={() => setEditingMission(false)} variant="secondary">
+                Cancel
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <div className="mission-display">
+            <p>{agent.mission || 'No mission set.'}</p>
+            <p>Active Goal: {agent.active_goal_id ? 
+              (goals.find(g => g.id === agent.active_goal_id)?.title || agent.active_goal_id) 
+              : 'None'}</p>
+            <Button onClick={() => setEditingMission(true)}>Edit Mission</Button>
+          </div>
+        )}
+      </div>
+      {/* ... rest of profile ... */}
+    </div>
+  );
+};
+
+export default AgentProfile;

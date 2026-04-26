@@ -1,0 +1,38 @@
+// ... existing imports ...
+import { BrowserRouter as Router, Route, Switch, NavLink } from 'react-router-dom';
+import Dashboard from './pages/Dashboard';
+import Agents from './pages/Agents';
+import AgentProfile from './pages/AgentProfile';
+import Offers from './pages/Offers';
+import Goals from './pages/Goals';
+import Lab from './pages/Lab';
+import Memory from './pages/Memory';
+// ... other imports ...
+
+function App() {
+  return (
+    <Router>
+      <div className="app">
+        <nav className="top-nav">
+          <NavLink exact to="/" activeClassName="active">Dashboard</NavLink>
+          <NavLink to="/agents" activeClassName="active">Agents</NavLink>
+          <NavLink to="/offers" activeClassName="active">Offers</NavLink>
+          <NavLink to="/goals" activeClassName="active">Goals</NavLink>
+          <NavLink to="/lab" activeClassName="active">Lab</NavLink>
+          <NavLink to="/memory" activeClassName="active">Memory</NavLink>
+        </nav>
+        <Switch>
+          <Route exact path="/" component={Dashboard} />
+          <Route exact path="/agents" component={Agents} />
+          <Route path="/agents/:id" component={AgentProfile} />
+          <Route path="/offers" component={Offers} />
+          <Route path="/goals" component={Goals} />
+          <Route path="/lab" component={Lab} />
+          <Route path="/memory" component={Memory} />
+        </Switch>
+      </div>
+    </Router>
+  );
+}
+
+export default App;
