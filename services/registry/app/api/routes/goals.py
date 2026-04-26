@@ -258,6 +258,32 @@ def update_goal(
     if "parent_goal_id" in update_fields and update_fields["parent_goal_id"]:
         if update_fields["parent_goal_id"] == goal.id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="goal cannot be its own parent")
+        # Cycle defence: at most a one-hop check (A->B; reject if B's
+        # parent is A). Deeper cycles are caught by tree traversal at
+        # query time but not here — acceptable for v1.
+        candidate_parent = (
+            db.query(Goal).filter(Goal.id == update_fields["parent_goal_id"]).first()
+        )
+        if candidate_parent is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="parent goal not found",
+            )
+        if candidate_parent.parent_goal_id == goal.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="parent goal would create a cycle",
+            )
+
+    if "target_date" in update_fields and update_fields["target_date"] is not None:
+        # Same rule as create: target_date must not be in the past.
+        # If a caller wants to reschedule a missed deadline, they should
+        # transition the goal to FAILED + cancel + create a fresh one.
+        if update_fields["target_date"] < datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="target_date cannot be in the past",
+            )
 
     for key, value in update_fields.items():
         setattr(goal, key, value)
