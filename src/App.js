@@ -1,29 +1,37 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import NavBar from './components/NavBar';
-import DashboardPage from './pages/DashboardPage';
-import AgentsPage from './pages/AgentsPage';
-import OffersPage from './pages/OffersPage';
-import GoalsPage from './pages/GoalsPage';
-import LabPage from './pages/LabPage';
-import MemoryPage from './pages/MemoryPage';
-import AgentProfilePage from './pages/AgentProfilePage';
+import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
+import Dashboard from './pages/Dashboard';
+import Agents from './pages/Agents';
+import AgentProfile from './pages/AgentProfile';
+import Offers from './pages/Offers';
+import Goals from './components/Goals';
+import Lab from './components/Lab';
+import Memory from './components/Memory';
 import './App.css';
 
 function App() {
   return (
     <Router>
       <div className="App">
-        <NavBar />
-        <main className="content">
+        <nav className="top-nav">
+          <ul>
+            <li><Link to="/">Dashboard</Link></li>
+            <li><Link to="/agents">Agents</Link></li>
+            <li><Link to="/offers">Offers</Link></li>
+            <li><Link to="/goals">Goals</Link></li>
+            <li><Link to="/lab">Lab</Link></li>
+            <li><Link to="/memory">Memory</Link></li>
+          </ul>
+        </nav>
+        <main>
           <Routes>
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="/agents" element={<AgentsPage />} />
-            <Route path="/agents/:id" element={<AgentProfilePage />} />
-            <Route path="/offers" element={<OffersPage />} />
-            <Route path="/goals" element={<GoalsPage />} />
-            <Route path="/lab" element={<LabPage />} />
-            <Route path="/memory" element={<MemoryPage />} />
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/agents" element={<Agents />} />
+            <Route path="/agents/:id" element={<AgentProfile />} />
+            <Route path="/offers" element={<Offers />} />
+            <Route path="/goals" element={<Goals />} />
+            <Route path="/lab" element={<Lab />} />
+            <Route path="/memory" element={<Memory />} />
           </Routes>
         </main>
       </div>
