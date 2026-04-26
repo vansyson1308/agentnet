@@ -18,11 +18,18 @@ from ...auth import get_current_user_or_agent, verify_token
 from ...database import get_db
 from ...websocket_manager import manager
 
+# Import event bus for subscribing to task state changes
+# This assumes an event_bus module with an async subscribe interface
+from ...event_bus import event_bus  # adjust import path as needed
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Dashboard public feed connections
 dashboard_feeds: set[WebSocket] = set()
+
+# Task timeline connections (authenticated)
+task_timeline_feeds: set[WebSocket] = set()
 
 
 @router.websocket("/feed")
@@ -116,3 +123,61 @@ async def websocket_endpoint(
         logger.error(f"WebSocket error for agent {agent_id}: {e}")
         manager.disconnect(connection_id, db)
         manager.disconnect(connection_id, db)
+
+
+@router.websocket("/ws/tasks/timeline")
+async def task_timeline_endpoint(
+    websocket: WebSocket,
+    token: str = Query(...),
+):
+    """WebSocket endpoint for live task execution timeline.
+
+    Pushes task state change events to authenticated dashboard clients.
+    Events include: task_id, agent_name, escrow_amount, current_state,
+    previous_state, duration, timestamp.
+    """
+    # Authenticate via token
+    try:
+        verify_token(token)  # raises exception on invalid token
+    except Exception as e:
+        logger.error(f"Timeline WebSocket authentication error: {e}")
+        await websocket.close(code=1008, reason="Authentication error")
+        return
+
+    await websocket.accept()
+    task_timeline_feeds.add(websocket)
+    logger.info("Task timeline WebSocket connected")
+
+    # Use an asyncio queue to bridge event bus to the WebSocket
+    import asyncio
+    queue = asyncio.Queue()
+
+    # Subscribe to task state changes on the event bus
+    # Assumes event_bus.subscribe(topic, callback) returns an unsubscribe callable
+    async def on_task_state_change(event: dict):
+        await queue.put(event)
+
+    unsub = await event_bus.subscribe("task_state_changes", on_task_state_change)
+
+    try:
+        while True:
+            # Wait for next event from the event bus (or keep-alive from client)
+            # We use a timeout to periodically check for client disconnect
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                # Send the event as JSON to the client
+                await websocket.send_json(event)
+            except asyncio.TimeoutError:
+                # Send a heartbeat to keep the connection alive
+                try:
+                    await websocket.send_json({"type": "heartbeat", "timestamp": datetime.utcnow().isoformat()})
+                except Exception:
+                    break  # client probably disconnected
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"Task timeline WebSocket error: {e}")
+    finally:
+        task_timeline_feeds.discard(websocket)
+        unsub()  # unsubscribe from event bus
+        logger.info("Task timeline WebSocket disconnected")
