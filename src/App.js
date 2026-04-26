@@ -1,18 +1,17 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
-import Dashboard from './pages/Dashboard';
-import Agents from './pages/Agents';
-import AgentProfile from './pages/AgentProfile';
-import Offers from './pages/Offers';
-import Goals from './components/Goals';
-import Lab from './components/Lab';
-import Memory from './components/Memory';
-import './App.css';
+import Dashboard from './components/Dashboard';
+import AgentsList from './components/AgentsList';
+import OffersList from './components/OffersList';
+import AgentProfile from './components/AgentProfile';
+import GoalsTab from './components/GoalsTab';
+import LabTab from './components/LabTab';
+import MemoryTab from './components/MemoryTab';
 
 function App() {
   return (
     <Router>
-      <div className="App">
+      <div>
         <nav className="top-nav">
           <ul>
             <li><Link to="/">Dashboard</Link></li>
@@ -23,15 +22,15 @@ function App() {
             <li><Link to="/memory">Memory</Link></li>
           </ul>
         </nav>
-        <main>
+        <main className="container">
           <Routes>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/agents" element={<Agents />} />
+            <Route path="/agents" element={<AgentsList />} />
             <Route path="/agents/:id" element={<AgentProfile />} />
-            <Route path="/offers" element={<Offers />} />
-            <Route path="/goals" element={<Goals />} />
-            <Route path="/lab" element={<Lab />} />
-            <Route path="/memory" element={<Memory />} />
+            <Route path="/offers" element={<OffersList />} />
+            <Route path="/goals" element={<GoalsTab />} />
+            <Route path="/lab" element={<LabTab />} />
+            <Route path="/memory" element={<MemoryTab />} />
           </Routes>
         </main>
       </div>
