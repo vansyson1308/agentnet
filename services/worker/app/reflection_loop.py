@@ -24,6 +24,7 @@ from sqlalchemy import and_, exists, or_
 from sqlalchemy.orm import Session
 
 from .models import (
+    Agent,
     ImprovementProposal,
     ProposalScope,
     ProposalSource,
@@ -240,5 +241,120 @@ def run_reflection_loop(db: Session) -> int:
         except Exception:  # noqa: BLE001
             db.rollback()
             logger.exception("reflection_loop: commit failed; rolled back batch")
+            return 0
+
+    # --- Proactive self-review of agent metrics ---
+    try:
+        review_created = run_self_review(db)
+        if review_created:
+            logger.info("self_review: created %d proposals", review_created)
+    except Exception:  # noqa: BLE001
+        logger.exception("self_review: error in self-review pass")
+
+    return created
+
+
+_LLM_SELF_REVIEW = None  # lazy-imported on first call
+
+
+def _get_llm_reviewer():
+    """Lazy import of DeepSeek client to avoid startup cost."""
+    global _LLM_SELF_REVIEW
+    if _LLM_SELF_REVIEW is None:
+        import importlib
+        _LLM_SELF_REVIEW = importlib.import_module("app.llm_client")
+    return _LLM_SELF_REVIEW
+
+
+def run_self_review(db: Session) -> int:
+    """Proactively review agent metrics and create improvement proposals.
+
+    Scans agents whose performance metrics suggest improvement opportunity
+    and (no proposal already exists with source=self_reflection for them).
+    Avoids agents that have never completed a task.
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = _lookback_window(now)
+
+    has_review = exists().where(
+        and_(
+            ImprovementProposal.proposed_by_agent_id == Agent.id,
+            ImprovementProposal.source == ProposalSource.SELF_REFLECTION.value,
+            ImprovementProposal.created_at >= cutoff,
+        )
+    )
+
+    candidates = (
+        db.query(Agent)
+        .filter(
+            and_(
+                Agent.total_tasks_completed > 0,  # has history
+                ~has_review,
+                or_(
+                    Agent.success_rate < 0.8,
+                    Agent.avg_response_time_ms > 5000,
+                    Agent.verify_score < 50,
+                ),
+            )
+        )
+        .all()
+    )
+
+    if not candidates:
+        return 0
+
+    created = 0
+    for agent in candidates:
+        try:
+            logger.info(
+                "self_review: reviewing agent %s (rate=%.2f, rt=%dms, verify=%d, tier=%s)",
+                agent.name, agent.success_rate, agent.avg_response_time_ms,
+                agent.verify_score, agent.reputation_tier,
+            )
+
+            # Build lightweight improvement text without LLM cost per review
+            title = f"Improve: {agent.name}"
+            problems = []
+            changes = []
+            if agent.success_rate < 0.8:
+                problems.append(f"Success rate is {agent.success_rate:.0%} (target: ≥80%)")
+                changes.append("Investigate failure patterns and address top error causes")
+            if agent.avg_response_time_ms > 5000:
+                problems.append(f"Average response time is {agent.avg_response_time_ms}ms (target: ≤5000ms)")
+                changes.append("Optimize execution path or increase timeout window")
+            if agent.verify_score < 50:
+                problems.append(f"Verification score is {agent.verify_score} (target: ≥50)")
+                changes.append("Complete missing verification steps")
+
+            proposal = ImprovementProposal(
+                id=uuid.uuid4(),
+                proposed_by_agent_id=agent.id,
+                proposed_by_user_id=None,
+                source=ProposalSource.SELF_REFLECTION,
+                title=title,
+                problem="; ".join(problems),
+                root_cause="Proactive self-review identified performance degradation.",
+                proposed_change="; ".join(changes),
+                expected_benefit=f"Improves {agent.name}'s reliability and reputation tier.",
+                risk="Low — informational proposal for review.",
+                target_scope=ProposalScope.AGENT,
+                importance=60 if agent.success_rate < 0.5 else 50,
+                status=ProposalStatus.PROPOSED,
+            )
+            db.add(proposal)
+            db.flush()
+            created += 1
+        except Exception:  # noqa: BLE001
+            db.rollback()
+            logger.exception("self_review: failed for agent %s; continuing", agent.id)
+            continue
+
+    if created:
+        try:
+            db.commit()
+            logger.info("self_review: created %d proposals", created)
+        except Exception:  # noqa: BLE001
+            db.rollback()
+            logger.exception("self_review: commit failed; rolled back batch")
             return 0
     return created
