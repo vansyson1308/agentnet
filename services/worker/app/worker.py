@@ -25,6 +25,7 @@ from .models import (
     TransactionType,
     Wallet,
 )
+from .reflection_loop import run_reflection_loop
 from .tracing import configure_tracing, get_tracer
 
 # Configure logging
@@ -452,6 +453,10 @@ async def main():
     last_crawl_time = datetime.utcnow()
     # Last time simulation timeouts were checked (every 60s)
     last_sim_timeout_time = datetime.utcnow()
+    # Last time reflection loop generated improvement proposals
+    # (Phase: agent-goals-and-self-improvement; default 5 min cadence)
+    reflection_interval_sec = max(30, int(os.getenv("REFLECTION_LOOP_INTERVAL_SEC", "300")))
+    last_reflection_time = datetime.utcnow() - timedelta(seconds=reflection_interval_sec)
 
     while True:
         try:
@@ -486,6 +491,20 @@ async def main():
                 if (now - last_crawl_time).total_seconds() >= 3600:
                     await crawl_agent_cards(db)
                     last_crawl_time = now
+
+                # Reflection loop: turn fresh failed/timeout/refunded
+                # tasks into ImprovementProposal rows for the lab.
+                # Idempotent — never duplicates a proposal for a task.
+                if (now - last_reflection_time).total_seconds() >= reflection_interval_sec:
+                    try:
+                        with tracer.start_as_current_span("reflection_loop"):
+                            created = run_reflection_loop(db)
+                        if created:
+                            logger.info(f"reflection_loop: generated {created} proposals")
+                    except Exception as e:
+                        logger.error(f"reflection_loop error: {e}")
+                        db.rollback()
+                    last_reflection_time = now
 
             finally:
                 # Close the database session
