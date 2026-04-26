@@ -253,4 +253,237 @@ class APIClient:
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
 
+    # ─────────────────────────────────────────────────────
+    # Goals (Phase: agent-goals-and-self-improvement)
+    # ─────────────────────────────────────────────────────
+
+    def _maybe_headers(self):
+        """Auth headers if logged in, else empty dict (for public reads)."""
+        try:
+            return self._get_headers()
+        except AuthRequiredError:
+            return {}
+
+    def get_goals(self, status=None, owner_type=None, owner_id=None, limit=100):
+        params = [f"limit={limit}"]
+        if status:
+            params.append(f"status={status}")
+        if owner_type:
+            params.append(f"owner_type={owner_type}")
+        if owner_id:
+            params.append(f"owner_id={owner_id}")
+        url = f"{REGISTRY_URL}/v1/goals/?" + "&".join(params)
+        try:
+            resp = httpx.get(url, headers=self._maybe_headers(), timeout=5.0)
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def get_goal(self, goal_id):
+        try:
+            resp = httpx.get(f"{REGISTRY_URL}/v1/goals/{goal_id}", timeout=5.0)
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def create_goal(self, payload):
+        try:
+            resp = httpx.post(
+                f"{REGISTRY_URL}/v1/goals/", json=payload,
+                headers=self._get_headers(), timeout=5.0,
+            )
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def complete_goal(self, goal_id):
+        try:
+            resp = httpx.post(
+                f"{REGISTRY_URL}/v1/goals/{goal_id}/complete",
+                headers=self._get_headers(), timeout=5.0,
+            )
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def fail_goal(self, goal_id):
+        try:
+            resp = httpx.post(
+                f"{REGISTRY_URL}/v1/goals/{goal_id}/fail",
+                headers=self._get_headers(), timeout=5.0,
+            )
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def cancel_goal(self, goal_id):
+        try:
+            resp = httpx.delete(
+                f"{REGISTRY_URL}/v1/goals/{goal_id}",
+                headers=self._get_headers(), timeout=5.0,
+            )
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    # Agent mission + lessons + agent-scoped goals
+
+    def get_agent_mission(self, agent_id):
+        try:
+            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/{agent_id}/mission", timeout=5.0)
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def update_agent_mission(self, agent_id, mission=None, current_goal_id=None,
+                             clear_goal=False):
+        payload = {}
+        if mission is not None:
+            payload["mission"] = mission
+        if clear_goal:
+            payload["current_goal_id"] = None
+        elif current_goal_id is not None:
+            payload["current_goal_id"] = current_goal_id
+        try:
+            resp = httpx.patch(
+                f"{REGISTRY_URL}/v1/agents/{agent_id}/mission",
+                json=payload, headers=self._get_headers(), timeout=5.0,
+            )
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def get_agent_goals(self, agent_id):
+        try:
+            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/{agent_id}/goals", timeout=5.0)
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def get_agent_lessons(self, agent_id, tag=None, include_society=True, limit=50):
+        params = [f"limit={limit}",
+                  f"include_society={'true' if include_society else 'false'}"]
+        if tag:
+            params.append(f"tag={tag}")
+        url = f"{REGISTRY_URL}/v1/agents/{agent_id}/lessons?" + "&".join(params)
+        try:
+            resp = httpx.get(url, timeout=5.0)
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    # Improvements
+
+    def get_improvements(self, status=None, source=None, agent_id=None, limit=100):
+        params = [f"limit={limit}"]
+        if status:
+            params.append(f"status={status}")
+        if source:
+            params.append(f"source={source}")
+        if agent_id:
+            params.append(f"agent_id={agent_id}")
+        url = f"{REGISTRY_URL}/v1/improvements/?" + "&".join(params)
+        try:
+            resp = httpx.get(url, timeout=5.0)
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def get_improvement(self, proposal_id):
+        try:
+            resp = httpx.get(f"{REGISTRY_URL}/v1/improvements/{proposal_id}", timeout=5.0)
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def create_improvement(self, payload):
+        try:
+            resp = httpx.post(
+                f"{REGISTRY_URL}/v1/improvements/", json=payload,
+                headers=self._get_headers(), timeout=5.0,
+            )
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def approve_improvement(self, proposal_id):
+        try:
+            resp = httpx.post(
+                f"{REGISTRY_URL}/v1/improvements/{proposal_id}/approve",
+                headers=self._get_headers(), timeout=5.0,
+            )
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def reject_improvement(self, proposal_id, reason=None):
+        body = {"reason": reason} if reason else {}
+        try:
+            resp = httpx.post(
+                f"{REGISTRY_URL}/v1/improvements/{proposal_id}/reject",
+                json=body, headers=self._get_headers(), timeout=5.0,
+            )
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def convert_improvement(self, proposal_id, payload):
+        try:
+            resp = httpx.post(
+                f"{REGISTRY_URL}/v1/improvements/{proposal_id}/convert-to-task",
+                json=payload, headers=self._get_headers(), timeout=5.0,
+            )
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def mark_improvement_implemented(self, proposal_id):
+        try:
+            resp = httpx.post(
+                f"{REGISTRY_URL}/v1/improvements/{proposal_id}/mark-implemented",
+                headers=self._get_headers(), timeout=5.0,
+            )
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    # Memory items
+
+    def get_memory(self, scope=None, agent_id=None, tag=None, min_importance=0, limit=100):
+        params = [f"limit={limit}", f"min_importance={min_importance}"]
+        if scope:
+            params.append(f"scope={scope}")
+        if agent_id:
+            params.append(f"agent_id={agent_id}")
+        if tag:
+            params.append(f"tag={tag}")
+        url = f"{REGISTRY_URL}/v1/memory/?" + "&".join(params)
+        try:
+            resp = httpx.get(url, timeout=5.0)
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def create_memory(self, payload):
+        try:
+            resp = httpx.post(
+                f"{REGISTRY_URL}/v1/memory/", json=payload,
+                headers=self._get_headers(), timeout=5.0,
+            )
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def delete_memory(self, memory_id):
+        try:
+            resp = httpx.delete(
+                f"{REGISTRY_URL}/v1/memory/{memory_id}",
+                headers=self._get_headers(), timeout=5.0,
+            )
+            if resp.status_code == 204:
+                return {"deleted": True}
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
 api_client = APIClient()

@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Agent goals and self-improvement loop
+
+The biggest gap surfaced in `CURRENT_STATE.md` was: agents had capabilities,
+tasks and reputation, but no overarching mission and no feedback path
+when work failed. This wave closes that gap.
+
+- **Goals** (`/v1/goals/*`, table `goals`): every agent can hold a primary
+  mission text plus 0..N active goals with priority, success criteria, and
+  a parent/child tree. Status state machine: `active <-> paused`,
+  terminal `completed | failed | cancelled`.
+- **Improvement Proposals** (`/v1/improvements/*`, table `improvement_proposals`):
+  the spine of the self-improvement loop. Lifecycle
+  `PROPOSED → UNDER_REVIEW → APPROVED → CONVERTED_TO_TASK → IMPLEMENTED`
+  with a self-approval guard (proposer cannot approve own proposal).
+- **Memory Items** (`/v1/memory/*`, table `memory_items`): durable
+  society-/agent-scope lessons with importance scoring and JSONB tags
+  (GIN-indexed for fast tag containment search).
+- **Agent mission endpoints**: `GET/PATCH /v1/agents/{id}/mission`,
+  `GET /v1/agents/{id}/goals`, `GET /v1/agents/{id}/lessons`.
+- **Worker reflection loop**: `services/worker` now scans fresh
+  failed/timeout/refunded `task_sessions` every
+  `REFLECTION_LOOP_INTERVAL_SEC` (default 300s) and auto-generates one
+  `ImprovementProposal` per task that doesn't already have one.
+  Idempotent — never duplicates.
+- **Flask dashboard pages** under `/goals`, `/improvements`, `/memory`,
+  and `/agents/{id}/mission` for human-observable views.
+
+#### Migrations
+
+Three new sequential SQL files (`10-goals.sql`, `11-improvements.sql`,
+`12-memory.sql`). All use `CREATE TABLE IF NOT EXISTS` /
+`ADD COLUMN IF NOT EXISTS`, safe to re-apply on existing prod via the
+new helper `services/registry/init-db/apply-pending.sh`.
+
+#### Invariants preserved
+
+CLAUDE.md's prime directive — never touch wallet/escrow correctness — is
+preserved. The new tables are fully decoupled from the money path; the
+`convert-to-task` action creates a `TaskSession` row but defers actual
+escrow locking to the standard `/v1/tasks` pipeline. No new escrow code.
+
 ## [0.1.0] - 2024-01-01
 
 ### Added

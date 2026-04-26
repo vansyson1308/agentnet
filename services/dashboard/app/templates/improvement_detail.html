@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+    <h1>{{ proposal.title }}</h1>
+    <p class="muted">
+        <span class="status-pill status-{{ proposal.status }}">{{ proposal.status }}</span>
+        · source {{ proposal.source }} · importance {{ proposal.importance }} · scope {{ proposal.target_scope }}
+    </p>
+</section>
+
+<section class="card">
+    <h3>Problem</h3>
+    <p>{{ proposal.problem or '—' }}</p>
+    <h3>Root cause</h3>
+    <pre class="prewrap">{{ proposal.root_cause or '—' }}</pre>
+    <h3>Proposed change</h3>
+    <p>{{ proposal.proposed_change or '—' }}</p>
+    <h3>Expected benefit</h3>
+    <p>{{ proposal.expected_benefit or '—' }}</p>
+    <h3>Risk</h3>
+    <p class="prewrap">{{ proposal.risk or '—' }}</p>
+
+    {% if proposal.source_task_id %}
+        <p class="muted">Source task: <code>{{ proposal.source_task_id }}</code></p>
+    {% endif %}
+    {% if proposal.converted_task_id %}
+        <p class="muted">Converted task: <code>{{ proposal.converted_task_id }}</code></p>
+    {% endif %}
+</section>
+
+{% if is_logged_in %}
+<section class="actions">
+    <h2>Lifecycle controls</h2>
+
+    {% if proposal.status in ['PROPOSED', 'UNDER_REVIEW'] %}
+        <form method="post" action="{{ url_for('improvement_action', proposal_id=proposal.id, action='approve') }}" style="display:inline">
+            <button type="submit" class="btn btn-primary">Approve</button>
+        </form>
+        <form method="post" action="{{ url_for('improvement_action', proposal_id=proposal.id, action='reject') }}" style="display:inline">
+            <input type="text" name="reason" placeholder="Reject reason (optional)">
+            <button type="submit" class="btn btn-secondary">Reject</button>
+        </form>
+    {% endif %}
+
+    {% if proposal.status == 'APPROVED' %}
+        <h3>Convert to task</h3>
+        <form method="post" action="{{ url_for('improvement_action', proposal_id=proposal.id, action='convert') }}" class="stack-form">
+            <label>Callee agent
+                <select name="callee_agent_id" required>
+                    <option value="">— pick —</option>
+                    {% for a in my_agents %}
+                        <option value="{{ a.id }}">{{ a.name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>Capability <input type="text" name="capability" required></label>
+            <label>Escrow (credits) <input type="number" name="escrow_amount" min="0" value="0"></label>
+            <label>Timeout (minutes) <input type="number" name="timeout_minutes" min="1" max="1440" value="60"></label>
+            <button type="submit" class="btn btn-primary">Convert to task</button>
+        </form>
+    {% endif %}
+
+    {% if proposal.status == 'CONVERTED_TO_TASK' %}
+        <p class="muted">Once the linked task reaches <code>completed</code>, you can mark this proposal implemented.</p>
+        <form method="post" action="{{ url_for('improvement_action', proposal_id=proposal.id, action='mark-implemented') }}">
+            <button type="submit" class="btn btn-primary">Mark IMPLEMENTED</button>
+        </form>
+    {% endif %}
+</section>
+{% else %}
+    <p class="muted"><a href="{{ url_for('login_page') }}">Log in</a> to review this proposal.</p>
+{% endif %}
+{% endblock %}

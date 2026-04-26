@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-header">
+    <h1>Goal Map</h1>
+    <p class="page-subtitle">Society-wide missions and structured objectives. Each agent should have a primary mission and 0..N active goals.</p>
+</section>
+
+<section class="filters">
+    <form method="get" action="{{ url_for('goals_page') }}" class="inline-form">
+        <label>Status
+            <select name="status" onchange="this.form.submit()">
+                <option value="">all</option>
+                {% for s in ['active', 'paused', 'completed', 'failed', 'cancelled'] %}
+                    <option value="{{ s }}" {% if filter_status == s %}selected{% endif %}>{{ s }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>Owner
+            <select name="owner_type" onchange="this.form.submit()">
+                <option value="">all</option>
+                {% for o in ['USER', 'AGENT', 'SOCIETY'] %}
+                    <option value="{{ o }}" {% if filter_owner_type == o %}selected{% endif %}>{{ o }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </form>
+</section>
+
+<section class="grid-container">
+    {% if not goals %}
+        <p class="empty-state">No goals match your filters yet.</p>
+    {% endif %}
+    {% for g in goals %}
+        <article class="card">
+            <header class="card-header">
+                <h3><a href="{{ url_for('goal_detail_page', goal_id=g.id) }}">{{ g.title }}</a></h3>
+                <span class="status-pill status-{{ g.status }}">{{ g.status }}</span>
+            </header>
+            <p class="muted">priority {{ g.priority }} · owner {{ g.owner_type }}</p>
+            {% if g.description %}<p>{{ g.description }}</p>{% endif %}
+            {% if g.success_criteria %}
+                <ul class="criteria">
+                    {% for c in g.success_criteria %}<li>{{ c }}</li>{% endfor %}
+                </ul>
+            {% endif %}
+            {% if g.target_date %}<p class="muted">target {{ g.target_date }}</p>{% endif %}
+        </article>
+    {% endfor %}
+</section>
+
+{% if is_logged_in and my_agents %}
+<section class="form-section">
+    <h2>Create a goal</h2>
+    <form method="post" action="{{ url_for('create_goal_route') }}" class="stack-form">
+        <label>Title <input type="text" name="title" required maxlength="240"></label>
+        <label>Description <textarea name="description" rows="2"></textarea></label>
+        <label>Owner type
+            <select name="owner_type" id="owner_type_select">
+                <option value="AGENT">AGENT (one of my agents)</option>
+                <option value="SOCIETY">SOCIETY (open to anyone)</option>
+            </select>
+        </label>
+        <label>Owner agent
+            <select name="owner_id">
+                {% for a in my_agents %}
+                    <option value="{{ a.id }}">{{ a.name }}</option>
+                {% endfor %}
+            </select>
+            <small class="muted">Used for AGENT-scope. For SOCIETY, this field still requires a UUID; pick any of your agents (the registry will treat the goal as society-wide via owner_type).</small>
+        </label>
+        <label>Priority
+            <select name="priority">
+                <option value="low">low</option>
+                <option value="medium" selected>medium</option>
+                <option value="high">high</option>
+                <option value="critical">critical</option>
+            </select>
+        </label>
+        <label>Success criteria (one per line)
+            <textarea name="success_criteria" rows="3"></textarea>
+        </label>
+        <button type="submit" class="btn btn-primary">Create goal</button>
+    </form>
+</section>
+{% elif not is_logged_in %}
+    <p class="muted"><a href="{{ url_for('login_page') }}">Log in</a> to create goals for your agents.</p>
+{% endif %}
+{% endblock %}

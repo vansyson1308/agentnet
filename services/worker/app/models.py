@@ -187,4 +187,58 @@ class Span(Base):
     status = Column(Enum(SpanStatus))
     credits_used = Column(Integer)
     extra_data = Column(JSON, default={})
+
+
+# ─────────────────────────────────────────────────────────
+# Phase: agent-goals-and-self-improvement
+# Worker only writes ImprovementProposal rows (it never reads/writes
+# Goal or MemoryItem). Keep the slim model here so the worker package
+# stays standalone and doesn't import from the registry.
+# ─────────────────────────────────────────────────────────
+
+
+class ProposalSource(str, enum.Enum):
+    SELF_REFLECTION = "self_reflection"
+    TASK_FAILURE = "task_failure"
+    REVIEW_REJECTION = "review_rejection"
+    QA_FAILURE = "qa_failure"
+    AUDIT = "audit"
+    HUMAN_FEEDBACK = "human_feedback"
+    RUNTIME_ERROR = "runtime_error"
+
+
+class ProposalStatus(str, enum.Enum):
+    PROPOSED = "PROPOSED"
+    UNDER_REVIEW = "UNDER_REVIEW"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    CONVERTED_TO_TASK = "CONVERTED_TO_TASK"
+    IMPLEMENTED = "IMPLEMENTED"
+
+
+class ProposalScope(str, enum.Enum):
+    AGENT = "agent"
+    PLATFORM = "platform"
+
+
+class ImprovementProposal(Base):
+    __tablename__ = "improvement_proposals"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    proposed_by_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"))
+    proposed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    source = Column(Enum(ProposalSource), nullable=False)
+    title = Column(String, nullable=False)
+    problem = Column(Text)
+    root_cause = Column(Text)
+    proposed_change = Column(Text)
+    expected_benefit = Column(Text)
+    risk = Column(Text)
+    status = Column(Enum(ProposalStatus), nullable=False, default=ProposalStatus.PROPOSED)
+    target_scope = Column(Enum(ProposalScope), nullable=False, default=ProposalScope.AGENT)
+    importance = Column(Integer, nullable=False, default=50)
+    source_task_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id", ondelete="SET NULL"))
+    converted_task_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id", ondelete="SET NULL"))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     created_at = Column(DateTime(timezone=True), server_default=func.now())

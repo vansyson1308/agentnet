@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% set g = detail.goal %}
+<section class="page-header">
+    <h1>{{ g.title }}</h1>
+    <p class="muted">
+        <span class="status-pill status-{{ g.status }}">{{ g.status }}</span>
+        · priority {{ g.priority }} · owner {{ g.owner_type }}
+    </p>
+</section>
+
+<section class="card">
+    {% if g.description %}<p>{{ g.description }}</p>{% endif %}
+    {% if g.success_criteria %}
+        <h3>Success criteria</h3>
+        <ul>
+            {% for c in g.success_criteria %}<li>{{ c }}</li>{% endfor %}
+        </ul>
+    {% endif %}
+    {% if g.target_date %}<p class="muted">Target date: {{ g.target_date }}</p>{% endif %}
+    {% if g.completed_at %}<p class="muted">Completed: {{ g.completed_at }}</p>{% endif %}
+    <p class="muted">Created {{ g.created_at }} · updated {{ g.updated_at }}</p>
+</section>
+
+{% if is_logged_in and g.status in ['active', 'paused'] %}
+<section class="actions">
+    <h3>Lifecycle</h3>
+    <form method="post" action="{{ url_for('goal_action', goal_id=g.id, action='complete') }}" style="display:inline">
+        <button type="submit" class="btn btn-primary">Mark completed</button>
+    </form>
+    <form method="post" action="{{ url_for('goal_action', goal_id=g.id, action='fail') }}" style="display:inline">
+        <button type="submit" class="btn btn-secondary">Mark failed</button>
+    </form>
+    <form method="post" action="{{ url_for('goal_action', goal_id=g.id, action='cancel') }}" style="display:inline" onsubmit="return confirm('Cancel this goal?')">
+        <button type="submit" class="btn btn-outline">Cancel</button>
+    </form>
+</section>
+{% endif %}
+
+<section>
+    <h2>Children ({{ detail.children | length }})</h2>
+    {% if not detail.children %}<p class="muted">No sub-goals.</p>{% endif %}
+    <ul>
+        {% for c in detail.children %}
+            <li>
+                <a href="{{ url_for('goal_detail_page', goal_id=c.id) }}">{{ c.title }}</a>
+                <span class="status-pill status-{{ c.status }}">{{ c.status }}</span>
+            </li>
+        {% endfor %}
+    </ul>
+</section>
+
+<p class="muted">Related tasks: {{ detail.related_tasks }}</p>
+<p><a href="{{ url_for('goals_page') }}">← Back to goals</a></p>
+{% endblock %}

@@ -39,6 +39,15 @@
                     <a href="{{ url_for('offers_page') }}" class="nav-link {% if request.endpoint == 'offers_page' %}active{% endif %}">Offers</a>
                 </li>
                 <li class="nav-item">
+                    <a href="{{ url_for('goals_page') }}" class="nav-link {% if request.endpoint in ('goals_page', 'goal_detail_page') %}active{% endif %}">🎯 Goals</a>
+                </li>
+                <li class="nav-item">
+                    <a href="{{ url_for('improvements_page') }}" class="nav-link {% if request.endpoint in ('improvements_page', 'improvement_detail_page') %}active{% endif %}">🧪 Lab</a>
+                </li>
+                <li class="nav-item">
+                    <a href="{{ url_for('memory_page') }}" class="nav-link {% if request.endpoint == 'memory_page' %}active{% endif %}">📚 Memory</a>
+                </li>
+                <li class="nav-item">
                     <a href="{{ url_for('werewolf_arena') }}" class="nav-link {% if request.endpoint == 'werewolf_arena' or request.endpoint == 'werewolf_data' %}active{% endif %}">🐺 Werewolf</a>
                 </li>
                 <!-- Additional links can be added here -->
