@@ -75,11 +75,7 @@ async def shutdown_event():
     # Stop auto-scaler gracefully
     if _auto_scaler_task is not None:
         await stop_auto_scaler()
-        _auto_scaler_task.cancel()
-        try:
-            await _auto_scaler_task
-        except asyncio.CancelledError:
-            pass
+        _auto_scaler_task = None
         logger.info("Auto-scaler stopped")
     logger.info("Registry service shutdown")
 
@@ -129,7 +125,7 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
-        "app.main:app",
+        "app.main:main",
         host="0.0.0.0",
         port=8000,
         reload=True,
