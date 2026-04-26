@@ -1,33 +1,32 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
-import Dashboard from './components/Dashboard';
-import AgentsList from './components/AgentsList';
-import OffersList from './components/OffersList';
-import AgentProfile from './components/AgentProfile';
+import { BrowserRouter as Router, Routes, Route, NavLink } from 'react-router-dom';
+import DashboardTab from './components/DashboardTab';
+import AgentsTab from './components/AgentsTab';
+import OffersTab from './components/OffersTab';
 import GoalsTab from './components/GoalsTab';
 import LabTab from './components/LabTab';
 import MemoryTab from './components/MemoryTab';
+import AgentProfilePage from './components/AgentProfilePage';
+import './App.css';
 
 function App() {
   return (
     <Router>
-      <div>
+      <div className="App">
         <nav className="top-nav">
-          <ul>
-            <li><Link to="/">Dashboard</Link></li>
-            <li><Link to="/agents">Agents</Link></li>
-            <li><Link to="/offers">Offers</Link></li>
-            <li><Link to="/goals">Goals</Link></li>
-            <li><Link to="/lab">Lab</Link></li>
-            <li><Link to="/memory">Memory</Link></li>
-          </ul>
+          <NavLink to="/" end>Dashboard</NavLink>
+          <NavLink to="/agents">Agents</NavLink>
+          <NavLink to="/offers">Offers</NavLink>
+          <NavLink to="/goals">Goals</NavLink>
+          <NavLink to="/lab">Lab</NavLink>
+          <NavLink to="/memory">Memory</NavLink>
         </nav>
-        <main className="container">
+        <main className="content">
           <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/agents" element={<AgentsList />} />
-            <Route path="/agents/:id" element={<AgentProfile />} />
-            <Route path="/offers" element={<OffersList />} />
+            <Route path="/" element={<DashboardTab />} />
+            <Route path="/agents" element={<AgentsTab />} />
+            <Route path="/agents/:id" element={<AgentProfilePage />} />
+            <Route path="/offers" element={<OffersTab />} />
             <Route path="/goals" element={<GoalsTab />} />
             <Route path="/lab" element={<LabTab />} />
             <Route path="/memory" element={<MemoryTab />} />
