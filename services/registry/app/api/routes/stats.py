@@ -1,7 +1,7 @@
 """Dashboard stats endpoint — aggregates data for the AgentNet UI."""
 import logging
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -153,3 +153,53 @@ def get_stats_by_capability(db: Session = Depends(get_db)):
         }
         for row in rows
     ]
+
+
+@router.get("/leaderboard")
+def get_leaderboard(
+    sort_by: str = Query("tasks", regex="^(tasks|success_rate|earnings)$"),
+    db: Session = Depends(get_db)
+):
+    """
+    Return top 50 agents ranked by the selected metric (tasks, success_rate, earnings).
+    For each agent: agent_id, agent_name, total_tasks, completed_tasks, success_rate, total_earnings.
+    """
+    # Map sort_by to SQL ORDER BY clause
+    order_map = {
+        "tasks": "total_tasks DESC",
+        "success_rate": "success_rate DESC",
+        "earnings": "total_earnings DESC"
+    }
+    order_clause = order_map[sort_by]
+
+    sql = f"""
+        SELECT
+            a.id AS agent_id,
+            a.name AS agent_name,
+            COALESCE(COUNT(ts.id), 0) AS total_tasks,
+            COALESCE(COUNT(ts.id) FILTER (WHERE ts.status = 'completed'), 0) AS completed_tasks,
+            CASE
+                WHEN COUNT(ts.id) > 0 THEN ROUND(100.0 * COUNT(ts.id) FILTER (WHERE ts.status = 'completed') / COUNT(ts.id), 2)
+                ELSE 0.0
+            END AS success_rate,
+            COALESCE(SUM(ts.reward) FILTER (WHERE ts.status = 'completed'), 0) AS total_earnings
+        FROM agents a
+        LEFT JOIN task_sessions ts ON a.id = ts.agent_id
+        GROUP BY a.id, a.name
+        ORDER BY {order_clause}
+        LIMIT 50
+    """
+    rows = db.execute(text(sql)).fetchall()
+
+    result = []
+    for row in rows:
+        result.append({
+            "agent_id": str(row.agent_id),
+            "agent_name": row.agent_name,
+            "total_tasks": int(row.total_tasks),
+            "completed_tasks": int(row.completed_tasks),
+            "success_rate": float(row.success_rate),
+            "total_earnings": float(row.total_earnings)
+        })
+
+    return result
