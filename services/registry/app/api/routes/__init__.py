@@ -13,6 +13,7 @@ from .notifications import router as notifications_router
 from .stats import router as stats_router
 from .stories import router as stories_router
 from .chat import router as chat_router
+from .goals import router as goals_router
 
 router = APIRouter()
 
@@ -28,3 +29,5 @@ router.include_router(stats_router, prefix="/stats", tags=["stats"])
 router.include_router(stories_router, prefix="/stories", tags=["stories"])
 router.include_router(chat_router, prefix="/chat", tags=["chat"])
 router.include_router(health_router, prefix="/v1/health", tags=["health"])
+# Phase: agent-goals-and-self-improvement
+router.include_router(goals_router, prefix="/goals", tags=["goals"])

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from ...a2a import agent_to_a2a_card
 from ...auth import get_current_agent, get_current_user
 from ...database import get_db
-from ...models import Agent, AgentStatus, User, Wallet, WalletOwnerType
+from ...models import Agent, AgentStatus, Goal, User, Wallet, WalletOwnerType
 from ...reputation import compute_agent_reputation
 from ...sandbox import SandboxError, SandboxTimeoutError, SSRFError, sandboxed_call
 from ...schemas import Agent as AgentSchema
@@ -109,6 +109,118 @@ async def get_agent_capabilities(agent_id: uuid.UUID, db: Session = Depends(get_
     if db_agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
     return db_agent.capabilities or []
+
+
+# ─────────────────────────────────────────────────────────
+# Mission + current goal (Phase: agent-goals-and-self-improvement)
+# ─────────────────────────────────────────────────────────
+
+
+class MissionUpdate(BaseModel):
+    """Body for ``PATCH /v1/agents/{id}/mission``.
+
+    Either field may be omitted. ``current_goal_id`` may be set to ``null``
+    explicitly to clear the agent's active goal.
+    """
+
+    mission: Optional[str] = None
+    current_goal_id: Optional[uuid.UUID] = None
+
+
+@router.get("/{agent_id}/mission")
+async def get_agent_mission(agent_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Public: return the agent's mission text and currently-pursued goal."""
+    db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if db_agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    current_goal_payload = None
+    if db_agent.current_goal_id:
+        goal = db.query(Goal).filter(Goal.id == db_agent.current_goal_id).first()
+        if goal is not None:
+            current_goal_payload = {
+                "id": str(goal.id),
+                "title": goal.title,
+                "priority": goal.priority.value if hasattr(goal.priority, "value") else goal.priority,
+                "status": goal.status.value if hasattr(goal.status, "value") else goal.status,
+            }
+
+    return {
+        "agent_id": str(db_agent.id),
+        "name": db_agent.name,
+        "mission": db_agent.mission or "",
+        "current_goal": current_goal_payload,
+    }
+
+
+@router.patch("/{agent_id}/mission")
+async def update_agent_mission(
+    agent_id: uuid.UUID,
+    payload: MissionUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update an agent's mission text and/or active goal. Owner-gated."""
+    db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if db_agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    if db_agent.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to edit this agent's mission",
+        )
+
+    update_fields = payload.model_dump(exclude_unset=True)
+
+    if "current_goal_id" in update_fields:
+        new_goal_id = update_fields["current_goal_id"]
+        if new_goal_id is not None:
+            goal = db.query(Goal).filter(Goal.id == new_goal_id).first()
+            if goal is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="current_goal_id does not reference an existing goal",
+                )
+        db_agent.current_goal_id = new_goal_id
+
+    if "mission" in update_fields:
+        db_agent.mission = update_fields["mission"]
+
+    db.commit()
+    db.refresh(db_agent)
+    return await get_agent_mission(agent_id, db)
+
+
+@router.get("/{agent_id}/goals")
+async def list_agent_goals(agent_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Public: return all goals owned by this agent (any status)."""
+    db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if db_agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    goals = (
+        db.query(Goal)
+        .filter(Goal.owner_type == "AGENT", Goal.owner_id == agent_id)
+        .order_by(Goal.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": str(g.id),
+            "title": g.title,
+            "description": g.description,
+            "priority": g.priority.value if hasattr(g.priority, "value") else g.priority,
+            "status": g.status.value if hasattr(g.status, "value") else g.status,
+            "success_criteria": g.success_criteria or [],
+            "parent_goal_id": str(g.parent_goal_id) if g.parent_goal_id else None,
+            "target_date": g.target_date.isoformat() if g.target_date else None,
+            "completed_at": g.completed_at.isoformat() if g.completed_at else None,
+            "created_at": g.created_at.isoformat() if g.created_at else None,
+            "updated_at": g.updated_at.isoformat() if g.updated_at else None,
+            "is_current": db_agent.current_goal_id == g.id,
+        }
+        for g in goals
+    ]
 
 
 @router.get("/{agent_id}/reputation", response_model=AgentReputation)
