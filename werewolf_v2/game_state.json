@@ -1,0 +1,216 @@
+{
+  "game_id": "wwv2-demo",
+  "phase": "setup",
+  "day": 0,
+  "night": 0,
+  "game_over": false,
+  "winner": null,
+  "players": [
+    {
+      "id": "hermes-planner",
+      "name": "Planner",
+      "role": "hunter",
+      "team": "village",
+      "alive": true
+    },
+    {
+      "id": "hermes-builder",
+      "name": "Builder",
+      "role": "seer",
+      "team": "village",
+      "alive": true
+    },
+    {
+      "id": "hermes-qaagent",
+      "name": "QAAgent",
+      "role": "villager",
+      "team": "village",
+      "alive": true
+    },
+    {
+      "id": "hermes-storyteller",
+      "name": "Storyteller",
+      "role": "guard",
+      "team": "village",
+      "alive": true
+    },
+    {
+      "id": "echo",
+      "name": "Echo",
+      "role": "werewolf",
+      "team": "werewolf",
+      "alive": true
+    },
+    {
+      "id": "poll",
+      "name": "Poll",
+      "role": "werewolf",
+      "team": "werewolf",
+      "alive": true
+    },
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "role": "villager",
+      "team": "village",
+      "alive": true
+    },
+    {
+      "id": "hermes-builder-v6",
+      "name": "BuilderV6",
+      "role": "villager",
+      "team": "village",
+      "alive": true
+    },
+    {
+      "id": "shadow",
+      "name": "Shadow",
+      "role": "villager",
+      "team": "village",
+      "alive": true
+    },
+    {
+      "id": "ember",
+      "name": "Ember",
+      "role": "villager",
+      "team": "village",
+      "alive": true
+    },
+    {
+      "id": "frost",
+      "name": "Frost",
+      "role": "werewolf",
+      "team": "werewolf",
+      "alive": true
+    },
+    {
+      "id": "blitz",
+      "name": "Blitz",
+      "role": "werewolf",
+      "team": "werewolf",
+      "alive": true
+    },
+    {
+      "id": "nova",
+      "name": "Nova",
+      "role": "villager",
+      "team": "village",
+      "alive": true
+    },
+    {
+      "id": "vex",
+      "name": "Vex",
+      "role": "villager",
+      "team": "village",
+      "alive": true
+    },
+    {
+      "id": "drift",
+      "name": "Drift",
+      "role": "witch",
+      "team": "village",
+      "alive": true
+    }
+  ],
+  "config": {
+    "reveal_role_on_death": false,
+    "allow_skip_vote": true,
+    "tie_vote_policy": "no_execution"
+  },
+  "night_state": {
+    "guard_target": null,
+    "guard_previous_target": null,
+    "wolf_targets": [],
+    "wolf_attack_target": null,
+    "witch_heal_used": false,
+    "witch_poison_target": null,
+    "seer_check_target": null
+  },
+  "private_memories": {
+    "hermes-planner": {},
+    "hermes-builder": {
+      "seer": {
+        "checks": []
+      }
+    },
+    "hermes-qaagent": {},
+    "hermes-storyteller": {
+      "guard": {
+        "protected_history": []
+      }
+    },
+    "echo": {
+      "wolf": {
+        "known_wolves": [
+          "echo",
+          "poll",
+          "frost",
+          "blitz"
+        ],
+        "attack_history": []
+      }
+    },
+    "poll": {
+      "wolf": {
+        "known_wolves": [
+          "echo",
+          "poll",
+          "frost",
+          "blitz"
+        ],
+        "attack_history": []
+      }
+    },
+    "openclaw": {},
+    "hermes-builder-v6": {},
+    "shadow": {},
+    "ember": {},
+    "frost": {
+      "wolf": {
+        "known_wolves": [
+          "echo",
+          "poll",
+          "frost",
+          "blitz"
+        ],
+        "attack_history": []
+      }
+    },
+    "blitz": {
+      "wolf": {
+        "known_wolves": [
+          "echo",
+          "poll",
+          "frost",
+          "blitz"
+        ],
+        "attack_history": []
+      }
+    },
+    "nova": {},
+    "vex": {},
+    "drift": {
+      "witch": {
+        "heal_available": true,
+        "poison_available": true,
+        "nights_seen_attacks": []
+      }
+    }
+  },
+  "public_history": [
+    {
+      "type": "day_announcement",
+      "day": 0,
+      "speaker": null,
+      "content": "Game started! 15 players. 4 werewolves among us.",
+      "votes": null,
+      "executed": null,
+      "deaths": [],
+      "winner": null
+    }
+  ],
+  "debug_transcript": [],
+  "day_speeches": [],
+  "day_votes": {},
+  "discussion_round": 0
+}

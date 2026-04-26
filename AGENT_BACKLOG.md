@@ -200,6 +200,7 @@ backlog:
 - id: AB-008
   title: 'README badge: agent fleet status'
   priority: low
+  status: review
   files_to_modify:
   - README.md
   description: 'Add a simple status section near the top of README.md (after the title
@@ -225,6 +226,7 @@ backlog:
   acceptance:
   - grep -q "Agent Fleet" README.md
   - grep -q "hermes-builder-v6" README.md
+  thread_id: 8d06323f-d64f-4112-9139-c74f0069a1ee
 - id: AB-100
   title: Add /v1/agents/leaderboard endpoint (top 5 by success rate)
   priority: high

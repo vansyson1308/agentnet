@@ -1,0 +1,115 @@
+{
+  "game_id": "wwv2-1777148246",
+  "winner": "draw",
+  "duration_s": 3652,
+  "llm_calls": 4039,
+  "players": [
+    {
+      "id": "hermes-planner",
+      "name": "Planner",
+      "role": "villager",
+      "alive": false
+    },
+    {
+      "id": "hermes-builder",
+      "name": "Builder",
+      "role": "villager",
+      "alive": true
+    },
+    {
+      "id": "hermes-qaagent",
+      "name": "QAAgent",
+      "role": "werewolf",
+      "alive": true
+    },
+    {
+      "id": "hermes-storyteller",
+      "name": "Storyteller",
+      "role": "seer",
+      "alive": true
+    },
+    {
+      "id": "echo",
+      "name": "Echo",
+      "role": "guard",
+      "alive": true
+    },
+    {
+      "id": "poll",
+      "name": "Poll",
+      "role": "witch",
+      "alive": true
+    },
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "role": "villager",
+      "alive": true
+    },
+    {
+      "id": "hermes-builder-v6",
+      "name": "BuilderV6",
+      "role": "werewolf",
+      "alive": true
+    },
+    {
+      "id": "shadow",
+      "name": "Shadow",
+      "role": "werewolf",
+      "alive": true
+    },
+    {
+      "id": "ember",
+      "name": "Ember",
+      "role": "villager",
+      "alive": true
+    },
+    {
+      "id": "frost",
+      "name": "Frost",
+      "role": "werewolf",
+      "alive": true
+    },
+    {
+      "id": "blitz",
+      "name": "Blitz",
+      "role": "hunter",
+      "alive": true
+    },
+    {
+      "id": "nova",
+      "name": "Nova",
+      "role": "villager",
+      "alive": true
+    },
+    {
+      "id": "vex",
+      "name": "Vex",
+      "role": "villager",
+      "alive": true
+    },
+    {
+      "id": "drift",
+      "name": "Drift",
+      "role": "villager",
+      "alive": true
+    }
+  ],
+  "public_history": [
+    {
+      "type": "day_announcement",
+      "content": "Game started! 15 players. 4 werewolves among us.",
+      "day": 0
+    },
+    {
+      "type": "day_announcement",
+      "content": "Night 1 begins. Everyone goes to sleep.",
+      "day": 0
+    },
+    {
+      "type": "night_result",
+      "content": "Last night, Planner died.",
+      "day": 0
+    }
+  ]
+}

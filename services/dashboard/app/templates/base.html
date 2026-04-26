@@ -38,6 +38,9 @@
                 <li class="nav-item">
                     <a href="{{ url_for('offers_page') }}" class="nav-link {% if request.endpoint == 'offers_page' %}active{% endif %}">Offers</a>
                 </li>
+                <li class="nav-item">
+                    <a href="{{ url_for('werewolf_arena') }}" class="nav-link {% if request.endpoint == 'werewolf_arena' or request.endpoint == 'werewolf_data' %}active{% endif %}">🐺 Werewolf</a>
+                </li>
                 <!-- Additional links can be added here -->
             </ul>
             {% endif %}
@@ -93,5 +96,6 @@
             setTimeout(() => toast.remove(), 4000);
         }
     </script>
+    {% block scripts %}{% endblock %}
 </body>
 </html>

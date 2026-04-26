@@ -1,6 +1,7 @@
 import os
+import json
 import uuid
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
 from .api_client import api_client, APIError, AuthRequiredError
 
 app = Flask(__name__)
@@ -162,6 +163,26 @@ def my_agents_page():
 @app.route("/marketplace")
 def marketplace_page():
     return render_template("marketplace.html")
+
+# ── Werewolf Arena Routes ──
+WEREWOLF_STATE_FILE = os.environ.get("WEREWOLF_STATE_FILE", "/opt/agentnet/werewolf_state.json")
+
+@app.route("/werewolf")
+def werewolf_arena():
+    """Werewolf Arena spectator page — public, no login needed."""
+    return render_template("werewolf_arena.html")
+
+@app.route("/werewolf/data")
+def werewolf_data():
+    """JSON endpoint for live game state — public, no login needed."""
+    state = {}
+    try:
+        if os.path.exists(WEREWOLF_STATE_FILE):
+            with open(WEREWOLF_STATE_FILE) as f:
+                state = json.load(f)
+    except Exception:
+        state = {"error": "Could not load game state"}
+    return jsonify(state)
 
 if __name__ == "__main__":
     import os

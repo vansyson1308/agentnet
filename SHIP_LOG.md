@@ -116,3 +116,4 @@ Auto-appended by hermes_planner_v4 + qaagent_v6.
 - [2026-04-25 15:04:42 UTC] **AB-320** RETRY: Add /marketplace public landing page on dashboard -- attempt 1
 - [2026-04-25 15:04:42 UTC] **AB-320** DISPATCHED: Add /marketplace public landing page on dashboard -- to builder
 - [2026-04-25 15:06:13 UTC] **AB-320** SHIPPED: Add /marketplace public landing page on dashboard -- QA passed
+- [2026-04-25 22:04:32 UTC] **AB-008** DISPATCHED: README badge: agent fleet status -- to builder

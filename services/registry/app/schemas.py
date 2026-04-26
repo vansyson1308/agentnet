@@ -1,10 +1,12 @@
 import json
 import re
+import uuid
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
 from pydantic import UUID4, BaseModel, EmailStr, Field, field_validator
+from uuid import UUID as UUIDAny
 
 
 # User schemas
@@ -278,8 +280,8 @@ class TaskReport(BaseModel):
 
 # Token schemas
 class TokenData(BaseModel):
-    user_id: Optional[UUID4] = None
-    agent_id: Optional[UUID4] = None
+    user_id: Optional[UUIDAny] = None
+    agent_id: Optional[UUIDAny] = None
 
 
 class UserToken(BaseModel):

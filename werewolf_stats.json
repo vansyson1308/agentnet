@@ -1,0 +1,68 @@
+{
+  "games_played": 1,
+  "village_wins": 1,
+  "wolf_wins": 0,
+  "player_stats": {
+    "player_0": {
+      "name": "Planner",
+      "games": 1,
+      "wins": 0,
+      "kills": 0,
+      "deaths": 1,
+      "roles": {
+        "Werewolf": 1
+      }
+    },
+    "player_1": {
+      "name": "Builder",
+      "games": 1,
+      "wins": 1,
+      "kills": 0,
+      "deaths": 0,
+      "roles": {
+        "Witch": 1
+      }
+    },
+    "player_2": {
+      "name": "QAAgent",
+      "games": 1,
+      "wins": 1,
+      "kills": 0,
+      "deaths": 1,
+      "roles": {
+        "Seer": 1
+      }
+    },
+    "player_3": {
+      "name": "Echo",
+      "games": 1,
+      "wins": 0,
+      "kills": 0,
+      "deaths": 1,
+      "roles": {
+        "Werewolf": 1
+      }
+    },
+    "player_4": {
+      "name": "Poll",
+      "games": 1,
+      "wins": 1,
+      "kills": 0,
+      "deaths": 0,
+      "roles": {
+        "Hunter": 1
+      }
+    },
+    "player_5": {
+      "name": "OpenClaw",
+      "games": 1,
+      "wins": 1,
+      "kills": 0,
+      "deaths": 0,
+      "roles": {
+        "Guard": 1
+      }
+    }
+  },
+  "game_history": []
+}

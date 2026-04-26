@@ -209,6 +209,10 @@ services:
       REGISTRY_URL: http://registry:8000
       PAYMENT_URL: http://payment:8001
       DASHBOARD_PORT: 8080
+      WEREWOLF_STATE_FILE: /app/werewolf_data/werewolf_state.json
+      WEREWOLF_STATS_FILE: /app/werewolf_data/werewolf_stats.json
+    volumes:
+      - /opt/agentnet/werewolf_data:/app/werewolf_data
     ports:
       - "8080:8080"
     depends_on:

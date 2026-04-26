@@ -1,0 +1,66 @@
+{
+  "game_id": "werewolf-7-4122",
+  "phase": "day_announce",
+  "round": 0,
+  "players": [
+    {
+      "name": "Planner",
+      "role": "Werewolf",
+      "player_id": "player_0",
+      "alive": true,
+      "avatar_index": 0
+    },
+    {
+      "name": "Builder",
+      "role": "Werewolf",
+      "player_id": "player_1",
+      "alive": true,
+      "avatar_index": 0
+    },
+    {
+      "name": "QAAgent",
+      "role": "Guard",
+      "player_id": "player_2",
+      "alive": true,
+      "avatar_index": 0
+    },
+    {
+      "name": "Echo",
+      "role": "Hunter",
+      "player_id": "player_3",
+      "alive": true,
+      "avatar_index": 0
+    },
+    {
+      "name": "Poll",
+      "role": "Witch",
+      "player_id": "player_4",
+      "alive": true,
+      "avatar_index": 0
+    },
+    {
+      "name": "OpenClaw",
+      "role": "Seer",
+      "player_id": "player_5",
+      "alive": true,
+      "avatar_index": 0
+    }
+  ],
+  "alive_count": 6,
+  "wolf_count": 2,
+  "night_death": null,
+  "night_message": "Someone was attacked but saved! Echo survives.",
+  "lynched": null,
+  "hunter_target": null,
+  "public_thread_id": "werewolf-6",
+  "game_log": [
+    "[R0] Game werewolf-7-4122 started! 6 players, 2 wolves.",
+    "[R0] 🌙 Night 1",
+    "[R0] Seer investigated Builder",
+    "[R0] Echo was attacked by wolves but saved!",
+    "[R0] Someone was attacked but saved! Echo survives."
+  ],
+  "revealed_roles": {},
+  "winner": "",
+  "game_count": 6
+}
