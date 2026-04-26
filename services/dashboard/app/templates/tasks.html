@@ -70,7 +70,7 @@
                         {% endif %}
                     </td>
                     <td style="padding: 0.75rem; text-align: right;">
-                        <button onclick="window.location.href='{{ url_for('task_detail_page', task_id=t.id) }}'" style="background: #3b82f6; color: white; border: none; padding: 0.3rem 0.7rem; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">View</button>
+                        <a href="{{ url_for('task_detail_page', task_id=t.id) }}" class="btn" style="padding: 0.25rem 0.75rem; font-size: 0.75rem;">View</a>
                     </td>
                 </tr>
                 {% endfor %}
@@ -80,89 +80,22 @@
 </div>
 
 <!-- Live Task Execution Timeline -->
-<div class="card" style="margin-top: 2rem;">
-    <h3 style="margin-top: 0;">Live Execution Timeline</h3>
-    <div id="task-timeline" style="max-height: 400px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.5rem; background: #f8fafc;">
-        <div style="text-align: center; color: #94a3b8; padding: 1rem;">Connecting to live task feed...</div>
+<div class="card" style="margin-top: 1.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 1rem; margin-bottom: 1rem;">
+        <h3 style="margin: 0;">Live Task Execution Timeline</h3>
+        <span id="timeline-status" style="font-size: 0.8rem; color: #94a3b8;">Disconnected</span>
+    </div>
+    <div id="task-timeline" style="max-height: 400px; overflow-y: auto; font-size: 0.85rem;">
+        <p style="color: #94a3b8; text-align: center; padding: 2rem 0;">Connecting to live timeline...</p>
     </div>
 </div>
-{% endblock %}
 
-{% block scripts %}
 <script>
-    const WS_TIMELINE_URL = 'ws://127.0.0.1:8000/ws/tasks/timeline';
-    let ws = null;
-    let reconnectTimeout = null;
-
-    function connectTimeline() {
-        const container = document.getElementById('task-timeline');
-        if (!container) return;
-
-        const token = document.cookie.replace(/(?:(?:^|.*;\s*)token\s*=\s*([^;]*).*$)|^.*$/, "$1");
-        if (!token) {
-            container.innerHTML = '<div style="text-align:center;color:#ef4444;padding:1rem;">Authentication token missing. Please log in.</div>';
-            return;
-        }
-
-        ws = new WebSocket(WS_TIMELINE_URL + '?token=' + encodeURIComponent(token));
-
-        ws.onopen = function() {
-            container.innerHTML = '<div style="text-align:center;color:#64748b;padding:0.5rem;">Connected – awaiting task events...</div>';
-        };
-
-        ws.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            if (data.type === 'heartbeat') return; // ignore heartbeats
-
-            const row = document.createElement('div');
-            row.className = 'timeline-row';
-            row.style.display = 'flex';
-            row.style.justifyContent = 'space-between';
-            row.style.padding = '0.4rem 0.3rem';
-            row.style.borderBottom = '1px solid #e2e8f0';
-            row.style.fontSize = '0.85rem';
-
-            // Color code for state
-            let stateColor = '#64748b';
-            const state = data.current_state || '';
-            if (state === 'created' || state === 'enriched') stateColor = '#3b82f6';
-            else if (state === 'dispatched' || state === 'in_progress') stateColor = '#f59e0b';
-            else if (state === 'review') stateColor = '#8b5cf6';
-            else if (state === 'done') stateColor = '#10b981';
-            else if (state === 'failed') stateColor = '#ef4444';
-
-            row.innerHTML = `
-                <span style="font-weight:600;flex:2;">${data.agent_name || 'Unknown'}</span>
-                <span style="flex:1;text-align:center;">
-                    <span style="color:${stateColor};font-weight:bold;">${state.toUpperCase()}</span>
-                </span>
-                <span style="flex:1;text-align:center;color:#64748b;">${data.duration ? Math.round(data.duration) + 's' : '-'}</span>
-                <span style="flex:1;text-align:right;color:#15803d;font-weight:500;">${data.escrow_amount || '0'} ⧫</span>
-            `;
-
-            container.appendChild(row);
-            // Keep only last 50 tasks
-            while (container.children.length > 50) {
-                container.removeChild(container.firstChild);
-            }
-            // Auto-scroll to latest
-            container.scrollTop = container.scrollHeight;
-        };
-
-        ws.onclose = function() {
-            container.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:0.5rem;">Disconnected. Reconnecting in 5s...</div>';
-            reconnectTimeout = setTimeout(connectTimeline, 5000);
-        };
-
-        ws.onerror = function(err) {
-            console.error('Timeline WebSocket error:', err);
-            ws.close();
-        };
+// Initialize timeline when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    if (typeof initTaskTimeline === 'function') {
+        initTaskTimeline();
     }
-
-    // Start connection when page loads
-    document.addEventListener('DOMContentLoaded', function() {
-        connectTimeline();
-    });
+});
 </script>
 {% endblock %}
