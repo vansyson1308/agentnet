@@ -574,6 +574,74 @@ backlog:
   thread_id: 7774fca0-2177-4fa8-80ac-280c89b212b0
   retries: 1
   shipped_at: '2026-04-25T15:06:13Z'
+- id: AB-400
+  title: Audit log entry for every ImprovementProposal lifecycle transition
+  priority: medium
+  files_to_modify:
+  - services/registry/app/api/routes/improvements.py
+  description: 'Whenever an improvement proposal is created, approved, rejected, converted to a task,
+    or marked implemented, write one row to audit_log with action like "improvement.create",
+    "improvement.approve", etc. Include actor_user_id (current_user.id when present), target_id (proposal
+    UUID), payload_summary (JSON of relevant fields), success=true. The reflection loop in the worker
+    auto-generates proposals; for those rows, actor_user_id can be NULL and action is
+    "improvement.auto_generate". Do not break the existing route signatures; add a small _log_audit
+    helper that opens its own short transaction so a failed audit never breaks the main mutation.'
+  status: open
+  acceptance:
+  - 'PROPOSAL_ID=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json"
+    -d ''{"title":"audit-test","source":"human_feedback"}'' http://127.0.0.1:8000/v1/improvements/ |
+    python3 -c "import sys, json; print(json.load(sys.stdin)[''id''])"); test -n "$PROPOSAL_ID"'
+  - 'docker compose exec -T postgres psql -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM
+    audit_log WHERE action = ''improvement.create'' AND target_id = ''$PROPOSAL_ID''" | grep -q "1"'
+- id: AB-401
+  title: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints
+  priority: high
+  files_to_modify:
+  - 'NOTE: this lives in a separate repo (the React SPA is deployed at dashboard.agentnet.io.vn from
+    /opt/agentnet-dashboard-ui/). Hermes builder should clone that repo, add new tabs Goals / Lab /
+    Memory consuming GET /v1/goals, /v1/improvements, /v1/memory, plus the agent mission editor on
+    the existing agent profile page.'
+  description: 'Add three new tabs to the React SPA: Goals (society goal map + create form), Lab
+    (improvement proposals with approve/reject/convert buttons), Memory (society + agent lessons,
+    tag filter). Mount under the existing top-nav alongside Dashboard / Agents / Offers. Reuse the
+    existing API client wrapper; new endpoints follow the same JWT auth pattern as the rest. Add
+    a "Mission" panel to the agent profile page that lets the owner edit mission text + active
+    goal_id. UX should reuse existing card / status-pill components.'
+  status: open
+  acceptance:
+  - 'curl -fsS https://dashboard.agentnet.io.vn/ | grep -q "Goals"'
+  - 'curl -fsS https://dashboard.agentnet.io.vn/ | grep -q "Lab"'
+  - 'curl -fsS https://dashboard.agentnet.io.vn/ | grep -q "Memory"'
+- id: AB-402
+  title: Simulation service produces realistic Goals + ImprovementProposals
+  priority: medium
+  files_to_modify:
+  - services/simulation/app/services/simulation_runner.py
+  description: 'When the swarm simulation runs (capability=swarm_simulation), seed each simulated
+    agent with a realistic mission text + 1-2 active goals. After each simulated task ends, write
+    one MemoryItem (AGENT-scope for the simulated callee) and -- on failures -- one
+    ImprovementProposal. This keeps the lab populated with realistic activity without waiting for
+    real failed tasks. Gate via env var SIMULATION_PRODUCE_GOALS=1 so existing simulations stay
+    deterministic by default.'
+  status: open
+  acceptance:
+  - 'docker compose exec -T postgres psql -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM
+    goals WHERE owner_type = ''AGENT''" | python3 -c "import sys; n=int(sys.stdin.read().split()[2]);
+    assert n > 0, f''expected goals, got {n}''"'
+- id: AB-403
+  title: Hedera HCS audit stamp on IMPLEMENTED proposals
+  priority: low
+  files_to_modify:
+  - services/registry/app/api/routes/improvements.py
+  description: 'When a proposal transitions to status=IMPLEMENTED, write a consensus stamp to a
+    Hedera HCS topic so the implementation history is immutable. Topic id from env
+    HCS_IMPROVEMENT_TOPIC_ID. The HCS message payload is JSON of {proposal_id, source_task_id,
+    converted_task_id, implemented_at, summary_hash}. Failure to write to HCS must NOT block the
+    DB transition (best-effort, log + retry queued separately).'
+  status: open
+  acceptance:
+  - 'grep -q "HCS_IMPROVEMENT_TOPIC_ID" services/registry/app/api/routes/improvements.py'
+  - 'grep -qi "hcs" services/registry/app/api/routes/improvements.py'
 ```
 
 ## How to add a new task
