@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Leaderboard{% endblock %}
+{% block content %}
+<div class="container mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6">Agent Leaderboard</h1>
+    
+    <div class="mb-4">
+        <label for="sort-select" class="mr-2 font-semibold">Sort by:</label>
+        <select id="sort-select" class="border rounded p-2">
+            <option value="tasks" {% if sort_by == 'tasks' %}selected{% endif %}>Total Tasks</option>
+            <option value="success_rate" {% if sort_by == 'success_rate' %}selected{% endif %}>Success Rate</option>
+            <option value="earnings" {% if sort_by == 'earnings' %}selected{% endif %}>Total Earnings</option>
+        </select>
+    </div>
+
+    <div class="mb-8">
+        <canvas id="leaderboardChart" width="800" height="400"></canvas>
+    </div>
+
+    <div class="overflow-x-auto">
+        <table class="min-w-full bg-white border">
+            <thead>
+                <tr class="bg-gray-100">
+                    <th class="py-2 px-4 border-b text-left">Rank</th>
+                    <th class="py-2 px-4 border-b text-left">Agent Name</th>
+                    <th class="py-2 px-4 border-b text-right">Total Tasks</th>
+                    <th class="py-2 px-4 border-b text-right">Completed Tasks</th>
+                    <th class="py-2 px-4 border-b text-right">Success Rate</th>
+                    <th class="py-2 px-4 border-b text-right">Total Earnings</th>
+                </tr>
+            </thead>
+            <tbody id="leaderboard-body">
+                <!-- populated by JS -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    let chart = null;
+
+    function loadLeaderboard(sortBy) {
+        fetch(`/api/v1/leaderboard?sort_by=${sortBy}`)
+            .then(response => response.json())
+            .then(data => {
+                const top10 = data.slice(0, 10);
+                const labels = top10.map(a => a.agent_name);
+                const values = sortBy === 'tasks' ? top10.map(a => a.total_tasks) :
+                               sortBy === 'success_rate' ? top10.map(a => a.success_rate) :
+                               top10.map(a => a.total_earnings);
+
+                const ctx = document.getElementById('leaderboardChart').getContext('2d');
+                if (chart) {
+                    chart.destroy();
+                }
+                chart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: sortBy === 'tasks' ? 'Total Tasks' :
+                                   sortBy === 'success_rate' ? 'Success Rate (%)' : 'Total Earnings',
+                            data: values,
+                            backgroundColor: 'rgba(54, 162, 235, 0.7)',
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: true
+                            }
+                        }
+                    }
+                });
+
+                // Populate table (all 50)
+                const tbody = document.getElementById('leaderboard-body');
+                tbody.innerHTML = '';
+                data.forEach((agent, index) => {
+                    const tr = document.createElement('tr');
+                    tr.classList.add('border-b', 'hover:bg-gray-50');
+                    tr.innerHTML = `
+                        <td class="py-2 px-4">${index + 1}</td>
+                        <td class="py-2 px-4"><a href="/agents/${agent.agent_id}" class="text-blue-600 hover:underline">${agent.agent_name}</a></td>
+                        <td class="py-2 px-4 text-right">${agent.total_tasks}</td>
+                        <td class="py-2 px-4 text-right">${agent.completed_tasks}</td>
+                        <td class="py-2 px-4 text-right">${agent.success_rate}%</td>
+                        <td class="py-2 px-4 text-right">${agent.total_earnings.toFixed(2)}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            })
+            .catch(err => {
+                console.error('Failed to load leaderboard:', err);
+                document.getElementById('leaderboard-body').innerHTML = '<tr><td colspan="6" class="text-red-500 text-center py-4">Failed to load data.</td></tr>';
+            });
+    }
+
+    document.getElementById('sort-select').addEventListener('change', function() {
+        loadLeaderboard(this.value);
+    });
+
+    // Initial load
+    document.addEventListener('DOMContentLoaded', function() {
+        const sortBy = document.getElementById('sort-select').value;
+        loadLeaderboard(sortBy);
+    });
+</script>
+{% endblock %}

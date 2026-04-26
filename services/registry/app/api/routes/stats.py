@@ -164,42 +164,46 @@ def get_leaderboard(
     Return top 50 agents ranked by the selected metric (tasks, success_rate, earnings).
     For each agent: agent_id, agent_name, total_tasks, completed_tasks, success_rate, total_earnings.
     """
-    # Map sort_by to SQL ORDER BY clause
-    order_map = {
-        "tasks": "total_tasks DESC",
-        "success_rate": "success_rate DESC",
-        "earnings": "total_earnings DESC"
-    }
-    order_clause = order_map[sort_by]
-
-    sql = f"""
+    # Build aggregation query
+    query = text("""
         SELECT
             a.id AS agent_id,
             a.name AS agent_name,
-            COALESCE(COUNT(ts.id), 0) AS total_tasks,
-            COALESCE(COUNT(ts.id) FILTER (WHERE ts.status = 'completed'), 0) AS completed_tasks,
+            COUNT(ts.id) AS total_tasks,
+            COUNT(ts.id) FILTER (WHERE ts.status = 'completed') AS completed_tasks,
             CASE
-                WHEN COUNT(ts.id) > 0 THEN ROUND(100.0 * COUNT(ts.id) FILTER (WHERE ts.status = 'completed') / COUNT(ts.id), 2)
+                WHEN COUNT(ts.id) > 0 THEN
+                    ROUND(100.0 * COUNT(ts.id) FILTER (WHERE ts.status = 'completed') / COUNT(ts.id), 2)
                 ELSE 0.0
             END AS success_rate,
-            COALESCE(SUM(ts.reward) FILTER (WHERE ts.status = 'completed'), 0) AS total_earnings
+            COALESCE(SUM(ts.reward) FILTER (WHERE ts.status = 'completed'), 0.0) AS total_earnings
         FROM agents a
-        LEFT JOIN task_sessions ts ON a.id = ts.agent_id
+        LEFT JOIN task_sessions ts ON ts.agent_id = a.id
         GROUP BY a.id, a.name
+    """)
+
+    # Wrap as subquery for ORDER BY with alias
+    order_clause = {
+        "tasks": "total_tasks DESC",
+        "success_rate": "success_rate DESC",
+        "earnings": "total_earnings DESC"
+    }.get(sort_by, "total_tasks DESC")
+
+    full_sql = f"""
+        SELECT * FROM ({query.text}) AS sub
         ORDER BY {order_clause}
         LIMIT 50
     """
-    rows = db.execute(text(sql)).fetchall()
+    rows = db.execute(text(full_sql).bindparams(**query._bindparams)).fetchall()
 
-    result = []
-    for row in rows:
-        result.append({
+    return [
+        {
             "agent_id": str(row.agent_id),
             "agent_name": row.agent_name,
             "total_tasks": int(row.total_tasks),
             "completed_tasks": int(row.completed_tasks),
             "success_rate": float(row.success_rate),
-            "total_earnings": float(row.total_earnings)
-        })
-
-    return result
+            "total_earnings": float(row.total_earnings),
+        }
+        for row in rows
+    ]
