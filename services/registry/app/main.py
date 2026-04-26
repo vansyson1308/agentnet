@@ -15,6 +15,7 @@ from .security import setup_cors, setup_security_headers
 from .tracing import configure_tracing
 from .websocket_manager import manager
 from .api.rate_limiter import add_rate_limiter, RateLimitMiddleware
+from .auto_scaler import start_auto_scaler, stop_auto_scaler
 
 # Configure logging
 logging.basicConfig(
@@ -50,20 +51,36 @@ tracer_provider = configure_tracing(app, engine)
 # Include API router
 app.include_router(api_router)
 
+# Background task reference for auto-scaler
+_auto_scaler_task = None
+
 # Startup event
 @app.on_event("startup")
 async def startup_event():
+    global _auto_scaler_task
     # Initialize Redis connection for WebSocket manager
     await manager.init_redis()
+    # Start auto-scaler background task
+    _auto_scaler_task = await start_auto_scaler()
     logger.info("Registry service started")
 
 
 # Shutdown event
 @app.on_event("shutdown")
 async def shutdown_event():
+    global _auto_scaler_task
     # Clean up resources
     if tracer_provider:
         await tracer_provider.shutdown()
+    # Stop auto-scaler gracefully
+    if _auto_scaler_task is not None:
+        await stop_auto_scaler()
+        _auto_scaler_task.cancel()
+        try:
+            await _auto_scaler_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Auto-scaler stopped")
     logger.info("Registry service shutdown")
 
 
