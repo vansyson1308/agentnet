@@ -1,0 +1,69 @@
+/* ===== Agent Activity Timeline ===== */
+.timeline-container {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+    padding: 1rem 0;
+    position: relative;
+}
+
+/* Vertical line */
+.timeline-container::before {
+    content: '';
+    position: absolute;
+    left: 1.5rem;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border-color, #e2e8f0);
+}
+
+.timeline-item {
+    display: grid;
+    grid-template-columns: 3rem 1fr;
+    gap: 0.5rem;
+    align-items: start;
+    position: relative;
+}
+
+.timeline-indicator {
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    background: var(--accent, #7c3aed);
+    border: 2px solid var(--bg-primary, #ffffff);
+    margin-top: 0.25rem;
+    z-index: 1;
+    box-shadow: 0 0 0 3px var(--border-color, #e2e8f0);
+}
+
+.timeline-date {
+    font-size: 0.8rem;
+    color: var(--text-secondary, #475569);
+    white-space: nowrap;
+}
+
+.timeline-content {
+    background: var(--card-bg, #ffffff);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    box-shadow: var(--card-shadow, 0 1px 3px rgba(0,0,0,0.1));
+    border: 1px solid var(--border-color, #e2e8f0);
+}
+
+/* Responsive: wider screens show alternating sides if desired */
+@media (min-width: 768px) {
+    .timeline-container {
+        grid-template-columns: 1fr;
+    }
+    .timeline-item {
+        grid-template-columns: 3rem 1fr;
+    }
+}
+
+@media (min-width: 1024px) {
+    .timeline-container {
+        max-width: 800px;
+        margin: 0 auto;
+    }
+}

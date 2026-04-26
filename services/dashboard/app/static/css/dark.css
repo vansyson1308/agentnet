@@ -19,10 +19,13 @@
     --warning-color: #f59e0b;
     --danger-color: #ef4444;
     --info-color: #3b82f6;
+    --accent: #7c3aed;  /* brand accent color */
+    --bg-dark: #0f172a;  /* dark background base */
 }
 
-.theme-dark {
-    --bg-primary: #121212;
+/* Dark theme applied via html.dark-theme class */
+html.dark-theme {
+    --bg-primary: var(--bg-dark);
     --bg-secondary: #1e1e1e;
     --text-primary: #e0e0e0;
     --text-secondary: #a0a0a0;
@@ -41,6 +44,8 @@
     --warning-color: #d97706;
     --danger-color: #dc2626;
     --info-color: #2563eb;
+    --accent: #7c3aed;
+    --bg-dark: #0f172a;
 }
 
 /* ===== Reset & Base ===== */
@@ -119,6 +124,17 @@ body {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+}
+
+/* Mobile nav toggle button (hidden by default) */
+.mobile-nav-toggle {
+    display: none;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0.5rem;
+    font-size: 1.5rem;
+    color: var(--text-primary);
 }
 
 /* ===== Container ===== */
@@ -215,22 +231,22 @@ body {
 .alert-danger {
     background: #fee2e2;
     color: #991b1b;
-    border-color: #ef4444;
+    border-color: var(--danger-color);
 }
 .alert-success {
     background: #d1fae5;
     color: #065f46;
-    border-color: #10b981;
+    border-color: var(--success-color);
 }
 .alert-warning {
     background: #fef3c7;
     color: #92400e;
-    border-color: #f59e0b;
+    border-color: var(--warning-color);
 }
 .alert-info {
     background: #dbeafe;
     color: #1e40af;
-    border-color: #3b82f6;
+    border-color: var(--info-color);
 }
 
 /* ===== Tables ===== */
@@ -258,4 +274,46 @@ th {
     font-weight: 500;
 }
 .ba
-# ... [TRUNCATED -- preserve when editing] ...
+/* ... original truncated content preserved ... */
+
+/* ===== Responsive: Mobile Nav & Timeline ===== */
+@media (max-width: 1024px) {
+    .navbar-nav {
+        gap: 0.1rem;
+    }
+    .nav-link {
+        padding: 0.4rem 0.6rem;
+        font-size: 0.85rem;
+    }
+}
+
+@media (max-width: 768px) {
+    /* Show hamburger button, hide nav list by default */
+    .mobile-nav-toggle {
+        display: block;
+    }
+    .navbar-nav {
+        display: none;
+        flex-direction: column;
+        width: 100%;
+        margin-top: 0.5rem;
+    }
+    .navbar-nav.nav-open {
+        display: flex;
+    }
+    .navbar-actions {
+        flex-shrink: 0;
+    }
+    .navbar-container {
+        flex-wrap: wrap;
+    }
+    /* Adjust main padding for smaller screens */
+    body {
+        padding-top: 60px;
+    }
+}
+
+/* ===== Timeline (placeholder for future JS) ===== */
+#timeline-root {
+    margin: 2rem 0;
+}
