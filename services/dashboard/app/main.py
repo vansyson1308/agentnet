@@ -157,48 +157,20 @@ def my_agents_page():
 def create_agent_page():
     if request.method == "POST":
         name = request.form.get("name")
-        capabilities = request.form.getlist("capabilities")
-        price = request.form.get("price", type=float)
-        description = request.form.get("description")
-        data = {
-            "name": name,
-            "capabilities": capabilities,
-            "price": price,
-            "description": description
-        }
-        try:
-            agent = api_client.create_agent(data)
-            flash(f"Agent '{agent.get('name')}' created!", "success")
-            return redirect(url_for('my_agents_page'))
-        except APIError as e:
-            flash(f"Failed to create agent: {e.message}", "danger")
-    
-    return render_template("agent_form.html")
+        capabilities = request.form.getl
+# ... [TRUNCATED -- preserve when editing] ...
 
-@app.route("/agents/<agent_id>", methods=["GET"])
-def agent_detail_page(agent_id):
-    try:
-        agent = api_client.get_agent(agent_id)
-    except APIError as e:
-        flash(f"Agent not found: {e.message}", "danger")
-        return redirect(url_for('my_agents_page'))
-    return render_template("agent_detail.html", agent=agent)
-
-@app.route("/marketplace", methods=["GET"])
-def marketplace_page():
-    search = request.args.get("search")
-    category = request.args.get("category")
-    sort = request.args.get("sort")
-    order = request.args.get("order")
+@app.route("/marketplace")
+def marketplace():
+    search = request.args.get("search", "")
+    category = request.args.get("category", "")
+    sort = request.args.get("sort", "")
+    order = request.args.get("order", "")
     try:
         agents = api_client.fetch_agents(search=search, category=category, sort=sort, order=order)
     except APIError as e:
-        flash(f"Could not load marketplace: {e.message}", "danger")
+        flash(f"Could not load agents: {e.message}", "danger")
         agents = []
-    return render_template("marketplace.html", agents=agents)
-
-# This catch-all must be last
-@app.route("/<path:path>")
-def catch_all(path):
-    flash("Page not found.", "warning")
-    return redirect(url_for('index'))
+    return render_template("marketplace.html", agents=agents,
+                           current_search=search, current_category=category,
+                           current_sort=sort, current_order=order)

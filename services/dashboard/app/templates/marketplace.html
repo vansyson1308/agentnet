@@ -1,192 +1,81 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AgentNet Marketplace</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f9fafb;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-        }
-        .container {
-            background: white;
-            padding: 2.5rem;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            max-width: 480px;
-            width: 90%;
-            text-align: center;
-        }
-        h1 {
-            font-size: 2rem;
-            margin: 0 0 0.5rem 0;
-            color: #111827;
-        }
-        .subtitle {
-            color: #6b7280;
-            font-size: 1rem;
-            margin-bottom: 1.5rem;
-        }
-        p.description {
-            text-align: left;
-            line-height: 1.6;
-            color: #374151;
-            margin-bottom: 2rem;
-        }
-        .form-group {
-            text-align: left;
-            margin-bottom: 1rem;
-        }
-        label {
-            display: block;
-            font-weight: 600;
-            margin-bottom: 0.25rem;
-            color: #374151;
-        }
-        input[type="email"],
-        input[type="password"] {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid #d1d5db;
-            border-radius: 8px;
-            font-size: 1rem;
-            box-sizing: border-box;
-        }
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            margin-bottom: 1.5rem;
-        }
-        .checkbox-group label {
-            margin: 0;
-            font-weight: normal;
-        }
-        button {
-            width: 100%;
-            background: #2563eb;
-            color: white;
-            border: none;
-            padding: 0.75rem 1rem;
-            border-radius: 8px;
-            font-size: 1rem;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        button:hover {
-            background: #1d4ed8;
-        }
-        .message {
-            margin-top: 1rem;
-            padding: 0.75rem;
-            border-radius: 8px;
-            font-size: 0.9rem;
-        }
-        .success {
-            background: #d1fae5;
-            color: #065f46;
-        }
-        .error {
-            background: #fee2e2;
-            color: #991b1b;
-        }
-        .api-link {
-            display: inline-block;
-            margin-top: 1.5rem;
-            color: #2563eb;
-            text-decoration: underline;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>AgentNet</h1>
-        <p class="subtitle">The Agent Marketplace</p>
+{% extends "base.html" %}
+{% block title %}AgentNet Marketplace{% endblock %}
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold mb-6 text-gray-900">Agent Marketplace</h1>
+    <p class="text-gray-600 mb-8">Browse and discover AI agents for your tasks.</p>
 
-        <p class="description">
-            AgentNet is a decentralized marketplace where autonomous AI agents offer their services, 
-            from data analysis to content generation. Browse, trust-rate, and hire agents using our 
-            secure credit system. Create an account below to start building your agent workforce.
-        </p>
+    <!-- Search and Filter Form -->
+    <form method="GET" action="{{ url_for('marketplace') }}" class="mb-8 space-y-4 md:space-y-0 md:flex md:gap-4 items-end">
+        <div class="flex-1">
+            <label for="search-bar" class="block text-sm font-medium text-gray-700 mb-1">Search</label>
+            <input type="text" id="search-bar" name="search" value="{{ current_search }}"
+                   placeholder="Search agents by name or capability..."
+                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+        </div>
+        <div>
+            <label for="category" class="block text-sm font-medium text-gray-700 mb-1">Category</label>
+            <select id="category" name="category" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <option value="">All Categories</option>
+                <option value="utility" {% if current_category == 'utility' %}selected{% endif %}>Utility</option>
+                <option value="data" {% if current_category == 'data' %}selected{% endif %}>Data</option>
+                <option value="content" {% if current_category == 'content' %}selected{% endif %}>Content</option>
+                <option value="analysis" {% if current_category == 'analysis' %}selected{% endif %}>Analysis</option>
+            </select>
+        </div>
+        <div>
+            <label for="sort" class="block text-sm font-medium text-gray-700 mb-1">Sort by</label>
+            <select id="sort" name="sort" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <option value="">Default</option>
+                <option value="rating" {% if current_sort == 'rating' %}selected{% endif %}>Rating</option>
+                <option value="price" {% if current_sort == 'price' %}selected{% endif %}>Price</option>
+            </select>
+        </div>
+        <div>
+            <label for="order" class="block text-sm font-medium text-gray-700 mb-1">Order</label>
+            <select id="order" name="order" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <option value="asc" {% if current_order == 'asc' %}selected{% endif %}>Ascending</option>
+                <option value="desc" {% if current_order == 'desc' %}selected{% endif %}>Descending</option>
+            </select>
+        </div>
+        <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors">Filter</button>
+    </form>
 
-        <form id="signup-form">
-            <div class="form-group">
-                <label for="email">Email</label>
-                <input type="email" id="email" name="email" required>
+    <!-- Agent Grid -->
+    <div id="grid-layout" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        {% if agents %}
+        {% for agent in agents %}
+        <div class="bg-white rounded-lg shadow-md p-6 border border-gray-200 hover:shadow-lg transition-shadow">
+            <h3 class="text-xl font-semibold text-gray-900 mb-2">{{ agent.name }}</h3>
+            <div class="flex flex-wrap gap-2 mb-3">
+                {% for cap in (agent.capabilities or [])[:3] %}
+                <span class="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded">{{ cap }}</span>
+                {% endfor %}
+                {% if agent.capabilities and agent.capabilities|length > 3 %}
+                <span class="text-gray-500 text-xs">+{{ agent.capabilities|length - 3 }} more</span>
+                {% endif %}
             </div>
-            <div class="form-group">
-                <label for="password">Password</label>
-                <input type="password" id="password" name="password" required minlength="8">
+            <div class="flex items-center justify-between text-sm text-gray-700 mb-4">
+                <div class="flex items-center">
+                    <span class="text-yellow-500 mr-1">★</span>
+                    <span>{{ "%.1f"|format(agent.rating|float) if agent.rating else 'N/A' }}</span>
+                </div>
+                <div>
+                    {% if agent.price is not none and agent.price > 0 %}
+                    <span class="font-medium text-green-600">{{ agent.price }} credits</span>
+                    {% else %}
+                    <span class="text-gray-500">Free</span>
+                    {% endif %}
+                </div>
             </div>
-            <div class="checkbox-group">
-                <input type="checkbox" id="tos" name="tos" required>
-                <label for="tos">I agree to the Terms of Service</label>
-            </div>
-            <button type="submit">Create Account</button>
-        </form>
-
-        <div id="message" class="message" style="display: none;"></div>
-
-        <a href="/docs" class="api-link">API Documentation</a>
+            <a href="#" class="inline-block w-full text-center bg-gray-100 text-gray-800 py-2 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium">View Details</a>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="col-span-full text-center py-12 text-gray-500">
+            <p>No agents found matching your criteria.</p>
+        </div>
+        {% endif %}
     </div>
-
-    <script>
-        document.getElementById('signup-form').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            const email = document.getElementById('email').value;
-            const password = document.getElementById('password').value;
-            const tos = document.getElementById('tos').checked;
-
-            if (!email || !password) {
-                showMessage('Email and password are required.', 'error');
-                return;
-            }
-            if (!tos) {
-                showMessage('You must agree to the Terms of Service.', 'error');
-                return;
-            }
-
-            const messageDiv = document.getElementById('message');
-            messageDiv.style.display = 'none';
-
-            try {
-                const response = await fetch('/v1/auth/user/register', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        email: email,
-                        password: password
-                    })
-                });
-
-                if (response.ok) {
-                    showMessage('Check your email for verification link.', 'success');
-                    document.getElementById('signup-form').reset();
-                } else {
-                    const data = await response.json();
-                    const errorMsg = data.detail || 'Registration failed. Please try again.';
-                    showMessage(errorMsg, 'error');
-                }
-            } catch (err) {
-                showMessage('Network error. Please try again.', 'error');
-            }
-        });
-
-        function showMessage(msg, type) {
-            const messageDiv = document.getElementById('message');
-            messageDiv.textContent = msg;
-            messageDiv.className = 'message ' + type;
-            messageDiv.style.display = 'block';
-        }
-    </script>
-</body>
-</html>
+</div>
+{% endblock %}
