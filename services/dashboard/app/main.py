@@ -159,10 +159,10 @@ def my_agents_page():
         agents = []
     return render_template("my_agents.html", agents=agents)
 
-# ... (remaining routes) ...
-
+# New routes for notification system
 @app.route("/notifications", methods=["GET"])
 def notifications_page():
+    """Display all notifications for the current user."""
     try:
         notifications = api_client.get_notifications()
     except APIError as e:
@@ -172,20 +172,22 @@ def notifications_page():
 
 @app.route("/notifications/mark_read/<id>", methods=["POST"])
 def mark_read(id):
+    """Mark a single notification as read."""
     try:
         api_client.mark_notification_read(id)
-        flash("Marked as read.", "info")
+        flash("Notification marked as read.", "success")
     except APIError as e:
         flash(f"Failed to mark notification: {e.message}", "danger")
     return redirect(url_for('notifications_page'))
 
 @app.route("/notifications/mark_all_read", methods=["POST"])
 def mark_all_read():
+    """Mark all notifications as read."""
     try:
         api_client.mark_all_notifications_read()
-        flash("All notifications marked as read.", "info")
+        flash("All notifications marked as read.", "success")
     except APIError as e:
-        flash(f"Failed to mark all: {e.message}", "danger")
+        flash(f"Failed to mark notifications: {e.message}", "danger")
     return redirect(url_for('notifications_page'))
 
-# ... (the rest of the file unchanged) ...
+# ... [TRUNCATED -- preserve when editing] ...

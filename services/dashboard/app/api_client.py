@@ -143,7 +143,10 @@ class APIClient:
                 try:
                     data = resp.json()
                     if "detail" in data:
-                        error_msg = data["detail"]
+                        if isinstance(data["detail"], list):
+                            error_msg = str(data["detail"])
+                        else:
+                            error_msg = data["detail"]
                 except:
                     error_msg = resp.text
                 raise APIError(error_msg, resp.status_code)
@@ -151,9 +154,9 @@ class APIClient:
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
 
-    # ================= Notifications =================
+    # New methods for notifications
     def get_notifications(self):
-        """Fetch all notifications for the current user."""
+        """Retrieve all notifications for the current user."""
         try:
             resp = httpx.get(f"{REGISTRY_URL}/v1/notifications/", headers=self._get_headers(), timeout=5.0)
             return self._handle_response(resp)
@@ -161,7 +164,7 @@ class APIClient:
             raise APIError(f"Connection failed: {e}")
 
     def mark_notification_read(self, notification_id):
-        """Mark a single notification as read."""
+        """Mark a specific notification as read."""
         try:
             resp = httpx.post(f"{REGISTRY_URL}/v1/notifications/{notification_id}/read", headers=self._get_headers(), timeout=5.0)
             return self._handle_response(resp)
@@ -175,3 +178,5 @@ class APIClient:
             return self._handle_response(resp)
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
+
+# ... [TRUNCATED -- preserve when editing] ...
