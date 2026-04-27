@@ -137,6 +137,7 @@ class APIClient:
             params["order"] = order
         try:
             resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
+            # No auth headers - public endpoint
             if resp.status_code >= 400:
                 error_msg = "API Error"
                 try:
@@ -152,5 +153,3 @@ class APIClient:
             return resp.json()
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
-
-api_client = APIClient()

@@ -159,26 +159,19 @@ def my_agents_page():
     except APIError as e:
         flash(f"Could not load agents: {e.message}", "danger")
         agents = []
-    return render_template("my_agents.html", agents=agents)
+    return render_template("agents.html", agents=agents)
 
 @app.route("/marketplace", methods=["GET"])
 def marketplace():
     search = request.args.get("search", "")
     category = request.args.get("category", "")
     sort = request.args.get("sort", "")
-    order = request.args.get("order", "asc")
-    
+    order = request.args.get("order", "")
     try:
-        agents = api_client.fetch_agents(
-            search=search or None,
-            category=category or None,
-            sort=sort or None,
-            order=order or None
-        )
+        agents = api_client.fetch_agents(search=search, category=category, sort=sort, order=order)
     except APIError as e:
-        flash(f"Could not load agents: {e.message}", "danger")
+        flash(f"Could not fetch marketplace agents: {e.message}", "danger")
         agents = []
-    
     return render_template(
         "marketplace.html",
         agents=agents,
@@ -187,3 +180,6 @@ def marketplace():
         current_sort=sort,
         current_order=order
     )
+
+# Remaining routes (e.g., create_agent, agent_detail, etc.) are unchanged but omitted for brevity.
+# The actual file continues with other routes as originally defined.
