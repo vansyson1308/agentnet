@@ -161,14 +161,5 @@ def my_agents():
         agents = api_client.get_my_agents()
     except APIError as e:
         flash(f"Could not load agents: {e.message}", "danger")
-        agents = []
+        return redirect(url_for('index'))
     return render_template("my_agents.html", agents=agents)
-
-@app.route("/notifications", methods=["GET"])
-def notifications_page():
-    try:
-        notifications = api_client.get_notifications()
-    except APIError as e:
-        flash(f"Could not load notifications: {e.message}", "warning")
-        notifications = []
-    return render_template("notifications.html", notifications=notifications)
