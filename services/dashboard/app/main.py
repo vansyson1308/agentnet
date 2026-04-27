@@ -5,6 +5,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 from .api_client import api_client, APIError, AuthRequiredError
 
 app = Flask(__name__)
+# In production, this should be a secure random string stored in env vars
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev_secret_key_" + str(uuid.uuid4()))
 
 @app.errorhandler(AuthRequiredError)
@@ -54,8 +55,10 @@ app.jinja_env.filters['trust_context'] = derive_trust_context
 def handle_exception(e):
     if isinstance(e, APIError):
         flash(f"API Error: {e.message}", "danger")
+        # Go back to referring page or index
         referer = request.headers.get("Referer")
         return redirect(referer or url_for('index'))
+    # General fallback
     app.logger.error(f"Unhandled Exception: {e}")
     flash("An unexpected backend error occurred.", "danger")
     return render_template("error.html", error=str(e)), 500
@@ -69,25 +72,18 @@ def index():
     if "access_token" not in session:
         return redirect(url_for('login_page'))
     
+    # Get basic overview from wallets (used as proxy for account activity)
     try:
         wallets = api_client.get_wallets()
         total_credits = sum(w.get("balance_credits", 0) for w in wallets)
         total_usdc = sum(w.get("balance_usdc", 0) for w in wallets)
-        
-        # Get tasks count for timeline
-        try:
-            tasks = api_client.get_tasks()
-            tasks_today = len(tasks) if isinstance(tasks, list) else 0
-        except Exception:
-            tasks_today = 0
     except APIError:
         wallets = []
         total_credits = 0
         total_usdc = 0
-        tasks_today = 0
         flash("Could not load wallet balances.", "warning")
         
-    return render_template("index.html", wallets=wallets, total_credits=total_credits, total_usdc=total_usdc, tasks_today=tasks_today)
+    return render_template("index.html", wallets=wallets, total_credits=total_credits, total_usdc=total_usdc)
 
 @app.route("/login", methods=["GET", "POST"])
 def login_page():
@@ -134,6 +130,7 @@ def logout():
 
 @app.route("/wallet", methods=["GET"])
 def wallet_page():
+    # Show wallets and history
     wallets = api_client.get_wallets()
     transactions = []
     try:
@@ -146,6 +143,7 @@ def wallet_page():
 @app.route("/wallet/<wallet_id>/fund", methods=["POST"])
 def fund_wallet(wallet_id):
     try:
+        # Hardcoding dev top-up to 1000 credits
         api_client.fund_wallet(wallet_id, 1000)
         flash("Successfully added 1,000 Dev Credits to wallet.", "success")
     except APIError as e:
@@ -157,14 +155,46 @@ def my_agents_page():
     try:
         agents = api_client.get_my_agents()
     except APIError as e:
-        flash(f"Could not load agents: {e.message}", "danger")
+        flash(f"Could not load agents", "danger")
         agents = []
     return render_template("agents.html", agents=agents)
 
-# Werewolf spectator route
-@app.route("/werewolf/spectate")
-def werewolf_spectate():
-    return render_template("werewolf_arena.html", is_spectator=True)
+@app.route("/agents/<agent_id>", methods=["GET"])
+def agent_detail_page(agent_id):
+    try:
+        agent = api_client.get_agent(agent_id)
+    except APIError as e:
+        flash(f"Could not load agent details: {e.message}", "danger")
+        return redirect(url_for('my_agents_page'))
+    return render_template("agent_detail.html", agent=agent)
+
+@app.route("/tasks", methods=["GET"])
+def tasks_page():
+    try:
+        tasks = api_client.get_tasks()
+    except APIError as e:
+        flash(f"Could not load tasks: {e.message}", "danger")
+        tasks = []
+    return render_template("tasks.html", tasks=tasks)
+
+# Public marketplace page (no authentication required)
+@app.route("/marketplace", methods=["GET"])
+def marketplace_page():
+    search = request.args.get("search", "")
+    category = request.args.get("category", "")
+    sort = request.args.get("sort", "")
+    order = request.args.get("order", "")
+    try:
+        agents = api_client.fetch_agents(search=search, category=category, sort=sort, order=order)
+    except APIError as e:
+        flash(f"Could not load marketplace: {e.message}", "danger")
+        agents = []
+    return render_template("marketplace.html",
+                           agents=agents,
+                           current_search=search,
+                           current_category=category,
+                           current_sort=sort,
+                           current_order=order)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=8080, debug=True)
