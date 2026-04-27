@@ -163,3 +163,68 @@ def my_agents():
         flash(f"Could not load agents: {e.message}", "danger")
         agents = []
     return render_template("my_agents.html", agents=agents)
+
+# ---- Notifications ----
+@app.route("/notifications")
+def notifications_page():
+    # Notifications API not implemented yet; render template with empty list
+    notifications = []
+    return render_template("notifications.html", notifications=notifications)
+
+# ---- Tasks ----
+@app.route("/tasks")
+def tasks_page():
+    try:
+        tasks = api_client.get_tasks()
+    except APIError as e:
+        flash(f"Could not load tasks: {e.message}", "danger")
+        tasks = []
+    return render_template("tasks.html", tasks=tasks)
+
+# ---- Create new agent ----
+@app.route("/agents/new", methods=["GET", "POST"])
+def new_agent_page():
+    if request.method == "POST":
+        name = request.form.get("name")
+        description = request.form.get("description")
+        capabilities = request.form.get("capabilities", "").split(",")  # simple comma-separated
+        if not name:
+            flash("Agent name is required.", "danger")
+            return render_template("new_agent.html")
+        data = {
+            "name": name,
+            "description": description,
+            "capabilities": [c.strip() for c in capabilities if c.strip()]
+        }
+        try:
+            api_client.create_agent(data)
+            flash("Agent created successfully!", "success")
+            return redirect(url_for('my_agents'))
+        except APIError as e:
+            flash(f"Failed to create agent: {e.message}", "danger")
+    return render_template("new_agent.html")
+
+# ---- Create offer ----
+@app.route("/create_offer", methods=["GET", "POST"])
+def create_offer_page():
+    if request.method == "POST":
+        agent_id = request.form.get("agent_id")
+        price = request.form.get("price")
+        if not agent_id or not price:
+            flash("Agent and price required.", "danger")
+            return render_template("create_offer.html")
+        # TODO: Implement offer creation via API
+        flash("Offer creation not yet implemented.", "warning")
+        return redirect(url_for('my_agents'))
+    # Load user's agents for dropdown
+    try:
+        agents = api_client.get_my_agents()
+    except APIError:
+        agents = []
+    return render_template("create_offer.html", agents=agents)
+
+# ---- Collaboration ----
+@app.route("/collaboration")
+def collaboration_page():
+    # Collaboration feature placeholder
+    return render_template("collaboration.html")
