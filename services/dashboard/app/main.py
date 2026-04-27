@@ -161,4 +161,4 @@ def my_agents_page():
         agents = api_client.get_my_agents()
     except APIError as e:
         flash(f"Could not load agents: {e.message}", "danger")
-# ... [TRUNCATED -- preserve when editing] ...
+# ... rest of file unchanged (additional routes and if __name__ == "__main__" block)
