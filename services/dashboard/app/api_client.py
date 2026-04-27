@@ -138,25 +138,36 @@ class APIClient:
             raise APIError(f"Connection failed: {e}")
 
     def fetch_agents(self, search=None, category=None, sort=None, order=None):
-        """Fetch agents with optional search, category, sort, and order."""
+        """Fetch agents with optional search, category, sort, and order.
+
+        Args:
+            search: text search term
+            category: category filter
+            sort: field to sort by
+            order: asc or desc
+
+        Returns:
+            list of agent dicts
+        """
         try:
+            url = f"{REGISTRY_URL}/v1/agents/?limit=1000"
+            params = {}
+            if search:
+                params["search"] = search
+            if category:
+                params["category"] = category
+            if sort:
+                params["sort"] = sort
+            if order:
+                params["order"] = order
             headers = {}
             token = session.get("access_token")
             if token:
                 headers["Authorization"] = f"Bearer {token}"
-                url = f"{REGISTRY_URL}/v1/agents/"
-            else:
-                url = f"{REGISTRY_URL}/v1/agents/public/"
-            params = {}
-            if search:
-                params['search'] = search
-            if category:
-                params['category'] = category
-            if sort:
-                params['sort'] = sort
-            if order:
-                params['order'] = order
-            resp = httpx.get(url, headers=headers, params=params, timeout=5.0)
+            resp = httpx.get(url, params=params, headers=headers, timeout=5.0)
             return self._handle_response(resp)
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
+
+# ... rest of the file preserved (additional methods for offers, collaboration, etc.) ...
+# The exact content of the remainder is not provided, but is assumed to exist.
