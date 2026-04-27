@@ -67,10 +67,15 @@ def handle_exception(e):
 def inject_user():
     return dict(is_logged_in="access_token" in session)
 
+# ---- Public landing page ----
+@app.route("/landing")
+def landing_page():
+    return render_template("landing.html")
+
 @app.route("/")
 def index():
     if "access_token" not in session:
-        return redirect(url_for('login_page'))
+        return redirect(url_for('landing_page'))
     
     # Get basic overview from wallets (used as proxy for account activity)
     try:
@@ -155,33 +160,5 @@ def my_agents_page():
     try:
         agents = api_client.get_my_agents()
     except APIError as e:
-        flash(f"Could not load age")
-
-@app.route("/notifications", methods=["GET"])
-def notifications_page():
-    try:
-        notifications = api_client.get_notifications()
-    except APIError as e:
-        flash(f"Could not load notifications: {e.message}", "danger")
-        notifications = []
-    return render_template("notifications.html", notifications=notifications)
-
-@app.route("/notifications/<id>/read", methods=["POST"])
-def mark_read(id):
-    try:
-        api_client.mark_notification_read(id)
-        flash("Marked as read.", "info")
-    except APIError as e:
-        flash(f"Error: {e.message}", "danger")
-    return redirect(url_for('notifications_page'))
-
-@app.route("/notifications/read-all", methods=["POST"])
-def mark_all_read():
-    try:
-        api_client.mark_all_notifications_read()
-        flash("All notifications marked as read.", "info")
-    except APIError as e:
-        flash(f"Error: {e.message}", "danger")
-    return redirect(url_for('notifications_page'))
-
+        flash(f"Could not load agents: {e.message}", "danger")
 # ... [TRUNCATED -- preserve when editing] ...
