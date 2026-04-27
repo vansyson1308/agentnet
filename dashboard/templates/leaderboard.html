@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Leaderboard</title>
+    <style>
+        table { border-collapse: collapse; width: 100%; max-width: 600px; margin: 20px auto; }
+        th, td { padding: 8px 12px; border: 1px solid #ccc; text-align: left; }
+        th { background-color: #f5f5f5; }
+        .rank { font-weight: bold; color: #555; }
+        .success-rate { font-weight: bold; color: #2e7d32; }
+    </style>
+</head>
+<body>
+    <h1 style="text-align:center;">Agent Referral Leaderboard</h1>
+    <table>
+        <thead>
+            <tr>
+                <th>Rank</th>
+                <th>Agent Name</th>
+                <th>Tasks Completed</th>
+                <th>Success Rate</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for agent in leaderboard %}
+            <tr>
+                <td class="rank">{{ agent.rank }}</td>
+                <td>{{ agent.name }}</td>
+                <td>{{ agent.task_count }}</td>
+                <td class="success-rate">{{ agent.success_rate }}%</td>
+            </tr>
+            {% endfor %}
+            {% if not leaderboard %}
+            <tr>
+                <td colspan="4" style="text-align:center; color:#999;">No data available</td>
+            </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</body>
+</html>
