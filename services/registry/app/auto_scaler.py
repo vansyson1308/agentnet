@@ -161,105 +161,124 @@ def has_spawned_scaling_agent() -> bool:
         ).scalar()
         return result > 0
     except Exception as e:
-        logger.error(f"Failed to check for scaling agent: {e}")
+        logger.error(f"Failed to check for existing scaling agent: {e}")
         return False
     finally:
         db.close()
 
 
-async def scale_loop():
-    """Background loop that evaluates load and scales up/down as needed."""
+async def auto_scaler_loop():
+    """Main loop: every POLL_INTERVAL seconds, check backlog and scale."""
     global _spawned_container_name, _spawned_agent_id
-    logger.info("Auto-scaler loop started")
+
+    # Resolve original builder agent ID once
+    builder_id = await get_original_builder_agent_id()
+    if not builder_id:
+        logger.error("No builder agent found; auto-scaler disabled.")
+        return
+
+    logger.info(f"Auto-scaler monitoring builder agent '{builder_id}'")
+
     while not _stop_event.is_set():
         try:
-            # Get the original builder agent ID
-            builder_id = await get_original_builder_agent_id()
-            if not builder_id:
-                logger.warning("No builder agent found, skipping scale check")
-                await asyncio.sleep(POLL_INTERVAL)
-                continue
-
-            # Check builder status and task load
+            # Get builder status
             status = await get_agent_status(builder_id)
-            backlog = await get_open_task_count(builder_id)
-            logger.debug(f"Builder agent {builder_id}: status={status}, backlog={backlog}")
+            logger.debug(f"Builder agent status: {status}")
 
-            # Determine if we need to scale up
-            scale_up = (
-                backlog > 50
-                and status == "busy"
-                and _spawned_agent_id is None
-            )
+            # Get open task count (queue depth)
+            task_count = await get_open_task_count(builder_id)
+            logger.debug(f"Open tasks for builder: {task_count}")
 
-            # Determine if we need to scale down
-            scale_down = (
-                backlog < 20
-                and _spawned_agent_id is not None
-            )
-
-            if scale_up:
-                # Generate a unique container name
-                container_name = f"builder-scaling-{int(asyncio.get_event_loop().time())}"
-                try:
-                    container_name = start_scaled_container(container_name)
-                    agent_id = await register_scaled_agent(container_name)
-                    if agent_id:
-                        _spawned_container_name = container_name
-                        _spawned_agent_id = agent_id
-                        logger.info(f"Scaled up: container={container_name}, agent={agent_id}")
+            # Decide scaling action
+            if _spawned_container_name is None:
+                # No scaling agent currently running
+                # Check if we should scale up
+                if task_count > 50 and status == "busy":
+                    # Also verify no existing builder-scaling agent in DB (prevents duplicate spawns)
+                    already_exists = await asyncio.to_thread(has_spawned_scaling_agent)
+                    if already_exists:
+                        logger.warning("Found existing builder-scaling agent in DB, but no local state. Skipping spawn.")
                     else:
-                        # Registration failed, stop the container
-                        stop_scaled_container(container_name)
-                except Exception as e:
-                    logger.error(f"Failed to scale up: {e}")
-
-            elif scale_down:
-                try:
+                        # Spawn a new container and register it
+                        container_name = f"builder-scaling-{int(asyncio.get_event_loop().time())}"
+                        try:
+                            container_name = start_scaled_container(container_name)
+                            agent_id = await register_scaled_agent(container_name)
+                            if agent_id:
+                                _spawned_container_name = container_name
+                                _spawned_agent_id = agent_id
+                                logger.info(f"Scaled up: container={container_name}, agent={agent_id}")
+                            else:
+                                # Registration failed; stop the container we just started
+                                stop_scaled_container(container_name)
+                        except Exception as e:
+                            logger.error(f"Scaling up failed: {e}")
+                else:
+                    logger.debug("No scale-up needed")
+            else:
+                # Scaling agent is running
+                # Check if we should scale down
+                if task_count < 20:
+                    logger.info("Backlog low; scaling down")
+                    # Stop container and delete agent
                     if _spawned_container_name:
                         stop_scaled_container(_spawned_container_name)
                     if _spawned_agent_id:
                         await delete_scaled_agent(_spawned_agent_id)
                     _spawned_container_name = None
                     _spawned_agent_id = None
-                    logger.info("Scaled down and cleaned up")
-                except Exception as e:
-                    logger.error(f"Failed to scale down: {e}")
+                    logger.info("Scaled down")
+                else:
+                    logger.debug("Scale-down condition not met")
 
+        except asyncio.CancelledError:
+            break
         except Exception as e:
-            logger.error(f"Error in scale loop: {e}", exc_info=True)
+            logger.error(f"Auto-scaler error: {e}", exc_info=True)
 
-        # Wait for next poll interval or until stop event is set
+        # Wait for next poll interval or stop signal
         try:
             await asyncio.wait_for(
-                _stop_event.wait(), timeout=POLL_INTERVAL
+                asyncio.get_event_loop().create_future(),  # dummy future
+                timeout=POLL_INTERVAL,
             )
         except asyncio.TimeoutError:
-            pass  # Expected, continue loop
+            continue
+        except asyncio.CancelledError:
+            break
 
-    logger.info("Auto-scaler loop stopped")
+    # Cleanup on exit
+    if _spawned_container_name:
+        stop_scaled_container(_spawned_container_name)
+    if _spawned_agent_id:
+        await delete_scaled_agent(_spawned_agent_id)
+    _spawned_container_name = None
+    _spawned_agent_id = None
+    logger.info("Auto-scaler loop ended")
 
 
-async def start_auto_scaler() -> asyncio.Task:
-    """Start the background auto-scaler task. Returns the task object.
-    If already running, returns existing task.
+async def start_auto_scaler() -> Optional[asyncio.Task]:
+    """Start the auto-scaler background task.
+    Returns the asyncio.Task or None if failed.
     """
     global _scaler_task
-    if _scaler_task is not None and not _scaler_task.done():
+    if _scaler_task and not _scaler_task.done():
         logger.warning("Auto-scaler already running")
         return _scaler_task
     _stop_event.clear()
-    _scaler_task = asyncio.create_task(scale_loop())
+    loop = asyncio.get_event_loop()
+    _scaler_task = loop.create_task(auto_scaler_loop())
     logger.info("Auto-scaler started")
     return _scaler_task
 
 
 async def stop_auto_scaler():
-    """Signal the auto-scaler to stop and await its completion."""
+    """Signal the auto-scaler to stop and wait for it."""
     global _scaler_task
-    if _scaler_task is None:
+    if _scaler_task is None or _scaler_task.done():
         return
     _stop_event.set()
+    _scaler_task.cancel()
     try:
         await _scaler_task
     except asyncio.CancelledError:
