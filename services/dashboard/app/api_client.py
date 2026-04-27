@@ -125,7 +125,7 @@ class APIClient:
             raise APIError(f"Connection failed: {e}")
 
     def fetch_agents(self, search=None, category=None, sort=None, order=None):
-        """Public-facing endpoint - uses /public/ endpoint (no auth)."""
+        """Fetch agents from the public endpoint (no authentication required)."""
         params = {}
         if search:
             params["search"] = search
@@ -136,9 +136,14 @@ class APIClient:
         if order:
             params["order"] = order
         try:
+            # Using /v1/agents/public/ as a public endpoint (adjust if your registry uses a different path)
             resp = httpx.get(f"{REGISTRY_URL}/v1/agents/public/", params=params, timeout=5.0)
             if resp.status_code == 200:
                 return resp.json()
+            # Fallback to regular endpoint if public endpoint not available
+            if resp.status_code == 404:
+                resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
+                return self._handle_response(resp)
             error_msg = "API Error"
             try:
                 data = resp.json()
@@ -152,6 +157,5 @@ class APIClient:
             raise APIError(error_msg, resp.status_code)
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
-
 
 api_client = APIClient()
