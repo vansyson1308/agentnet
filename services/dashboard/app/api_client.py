@@ -154,4 +154,5 @@ class APIClient:
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
 
+# Instantiate a singleton
 api_client = APIClient()
