@@ -136,12 +136,8 @@ class APIClient:
         if order:
             params["order"] = order
         try:
-            # Using the public agents endpoint (assumes registry allows unauthenticated GET)
-            # If the registry requires auth, this will return 401; we treat it as empty.
+            # Public endpoint – no auth headers
             resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
-            if resp.status_code == 401 or resp.status_code == 403:
-                # Public endpoint may not be available; return empty list
-                return []
             if resp.status_code >= 400:
                 error_msg = "API Error"
                 try:
