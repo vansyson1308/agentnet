@@ -69,84 +69,34 @@
                             <span class="badge badge-danger" style="font-size: 0.7rem;">{{ t.status | upper }}</span>
                         {% endif %}
                     </td>
-                    <td style="padding: 0.75rem; text-align: right;">
-                        <a href="{{ url_for('task_detail_page', task_id=t.id) }}" class="btn" style="font-size: 0.75rem; padding: 0.25rem 0.5rem; background: #3b82f6; color: white; border: none; border-radius: 3px; text-decoration: none;">View</a>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    {% endif %}
+<!-- ... [TRUNCATED -- preserve when editing] ... -->
 
-    <!-- Live Task Execution Timeline -->
-    <div style="margin-top: 2rem; border-top: 2px solid #e2e8f0; padding-top: 1.5rem;">
-        <h3 style="margin: 0 0 1rem 0;">Live Task Timeline</h3>
-        <div id="task-timeline" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; padding: 0.5rem; background: #f9fafb;">
-            <div id="timeline-placeholder" style="text-align: center; padding: 1rem; color: #94a3b8; font-size: 0.9rem;">
-                Connecting to live timeline...
-            </div>
-            <table id="timeline-table" style="width: 100%; border-collapse: collapse; font-size: 0.85rem; display: none;">
-                <thead>
-                    <tr>
-                        <th style="padding: 0.5rem; border-bottom: 1px solid #cbd5e1; text-align: left;">Agent</th>
-                        <th style="padding: 0.5rem; border-bottom: 1px solid #cbd5e1; text-align: left;">State</th>
-                        <th style="padding: 0.5rem; border-bottom: 1px solid #cbd5e1; text-align: right;">Duration</th>
-                        <th style="padding: 0.5rem; border-bottom: 1px solid #cbd5e1; text-align: right;">Escrow</th>
-                    </tr>
-                </thead>
-                <tbody id="timeline-body"></tbody>
-            </table>
-        </div>
-    </div>
+        </tbody></table>
+    {% endif %}
 </div>
 
-<style>
-    @media (max-width: 640px) {
-        #task-timeline table, #task-timeline thead, #task-timeline tbody, #task-timeline th, #task-timeline td, #task-timeline tr {
-            display: block;
-        }
-        #task-timeline thead {
-            display: none;
-        }
-        #task-timeline tr {
-            margin-bottom: 0.5rem;
-            padding: 0.5rem;
-            border: 1px solid #e2e8f0;
-            border-radius: 4px;
-            background: white;
-        }
-        #task-timeline td {
-            display: flex;
-            justify-content: space-between;
-            padding: 0.25rem 0;
-            border: none;
-        }
-        #task-timeline td::before {
-            content: attr(data-label);
-            font-weight: bold;
-            color: #64748b;
-            margin-right: 1rem;
-        }
-    }
-    .timeline-state {
-        display: inline-block;
-        padding: 0.15rem 0.5rem;
-        border-radius: 3px;
-        font-size: 0.7rem;
-        font-weight: bold;
-    }
-    .state-created { background: #e0f2fe; color: #0284c7; }
-    .state-enriched { background: #fce7f3; color: #db2777; }
-    .state-dispatched { background: #fef3c7; color: #d97706; }
-    .state-in_progress { background: #dbeafe; color: #2563eb; }
-    .state-review { background: #c7d2fe; color: #4338ca; }
-    .state-done { background: #d1fae5; color: #059669; }
-    .state-failed { background: #fee2e2; color: #dc2626; }
-</style>
+<!-- Live Task Execution Timeline -->
+<div class="card" style="margin-top: 2rem;">
+    <div style="border-bottom: 1px solid #eee; padding-bottom: 1rem; margin-bottom: 1rem;">
+        <h3 style="margin: 0;">Live Execution Timeline</h3>
+        <p style="margin: 0.25rem 0 0; font-size: 0.85rem; color: #64748b;">Real-time task state transitions (last 50)</p>
+    </div>
+    <div id="task-timeline" data-token="{{ token }}" style="max-height: 400px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.5rem;">
+        <!-- rows will be inserted by werewolf.js -->
+        <p style="text-align: center; color: #94a3b8; padding: 2rem 0;">Connecting to timeline...</p>
+    </div>
+</div>
+{% endblock %}
 
+{% block scripts %}
+{{ super() }}
+<script src="{{ url_for('static', path='js/werewolf.js') }}"></script>
 <script>
+    // Initialize task timeline after page load
     document.addEventListener('DOMContentLoaded', function() {
-        initTaskTimeline();
+        if (typeof initTaskTimeline === 'function') {
+            initTaskTimeline();
+        }
     });
 </script>
 {% endblock %}
