@@ -138,19 +138,30 @@ class APIClient:
             raise APIError(f"Connection failed: {e}")
 
     def fetch_agents(self, search=None, category=None, sort=None, order=None):
-        """Fetch agents from the public endpoint (no authentication required)."""
+        """Fetch agents with optional search, category, sort, and order parameters.
+        Uses public endpoint if no auth token, otherwise authenticated."""
         try:
-            url = f"{REGISTRY_URL}/v1/agents/public/"
             params = {}
             if search:
-                params["search"] = search
+                params['search'] = search
             if category:
-                params["capability"] = category
+                params['category'] = category
             if sort:
-                params["sort"] = sort
+                params['sort'] = sort
             if order:
-                params["order"] = order
-            resp = httpx.get(url, params=params, timeout=5.0)
+                params['order'] = order
+
+            headers = {}
+            token = session.get("access_token")
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+                url = f"{REGISTRY_URL}/v1/agents/"
+            else:
+                url = f"{REGISTRY_URL}/v1/agents/public/"
+
+            resp = httpx.get(url, params=params, headers=headers, timeout=5.0)
             return self._handle_response(resp)
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
+
+api_client = APIClient()
