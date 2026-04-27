@@ -73,13 +73,21 @@ def index():
         wallets = api_client.get_wallets()
         total_credits = sum(w.get("balance_credits", 0) for w in wallets)
         total_usdc = sum(w.get("balance_usdc", 0) for w in wallets)
+        
+        # Get tasks count for timeline
+        try:
+            tasks = api_client.get_tasks()
+            tasks_today = len(tasks) if isinstance(tasks, list) else 0
+        except Exception:
+            tasks_today = 0
     except APIError:
         wallets = []
         total_credits = 0
         total_usdc = 0
+        tasks_today = 0
         flash("Could not load wallet balances.", "warning")
         
-    return render_template("index.html", wallets=wallets, total_credits=total_credits, total_usdc=total_usdc)
+    return render_template("index.html", wallets=wallets, total_credits=total_credits, total_usdc=total_usdc, tasks_today=tasks_today)
 
 @app.route("/login", methods=["GET", "POST"])
 def login_page():
@@ -151,26 +159,31 @@ def my_agents_page():
     except APIError as e:
         flash(f"Could not load agents: {e.message}", "danger")
         agents = []
-    return render_template("agents.html", agents=agents)
+    return render_template("my_agents.html", agents=agents)
 
-@app.route("/agents/new", methods=["GET", "POST"])
-def create_agent_page():
-    if request.method == "POST":
-        name = request.form.get("name")
-        capabilities = request.form.getl
-# ... [TRUNCATED -- preserve when editing] ...
-
-@app.route("/marketplace")
+@app.route("/marketplace", methods=["GET"])
 def marketplace():
     search = request.args.get("search", "")
     category = request.args.get("category", "")
     sort = request.args.get("sort", "")
-    order = request.args.get("order", "")
+    order = request.args.get("order", "asc")
+    
     try:
-        agents = api_client.fetch_agents(search=search, category=category, sort=sort, order=order)
+        agents = api_client.fetch_agents(
+            search=search or None,
+            category=category or None,
+            sort=sort or None,
+            order=order or None
+        )
     except APIError as e:
         flash(f"Could not load agents: {e.message}", "danger")
         agents = []
-    return render_template("marketplace.html", agents=agents,
-                           current_search=search, current_category=category,
-                           current_sort=sort, current_order=order)
+    
+    return render_template(
+        "marketplace.html",
+        agents=agents,
+        current_search=search,
+        current_category=category,
+        current_sort=sort,
+        current_order=order
+    )

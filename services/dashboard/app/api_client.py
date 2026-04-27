@@ -117,6 +117,13 @@ class APIClient:
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
 
+    def get_tasks(self):
+        try:
+            resp = httpx.get(f"{REGISTRY_URL}/v1/tasks/", headers=self._get_headers(), timeout=5.0)
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
     def fetch_agents(self, search=None, category=None, sort=None, order=None):
         """Public endpoint - no authentication required."""
         params = {}
@@ -130,7 +137,6 @@ class APIClient:
             params["order"] = order
         try:
             resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
-            # Use _handle_response but it expects auth headers; we'll handle public responses directly.
             if resp.status_code >= 400:
                 error_msg = "API Error"
                 try:
