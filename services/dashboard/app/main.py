@@ -157,45 +157,14 @@ def my_agents_page():
     try:
         agents = api_client.get_my_agents()
     except APIError as e:
-        flash(f"Could not load agents: {e.message}",
-              "danger")
-        return redirect(url_for('index'))
+        flash(f"Could not load agents: {e.message}", "danger")
+        agents = []
     return render_template("agents.html", agents=agents)
 
-@app.route("/agents/<agent_id>", methods=["GET"])
-def agent_detail_page(agent_id):
-    try:
-        agent = api_client.get_agent(agent_id)
-    except APIError as e:
-        flash(f"Could not load agent: {e.message}", "danger")
-        return redirect(url_for('my_agents_page'))
-    return render_template("agent_detail.html", agent=agent)
+# Werewolf spectator route
+@app.route("/werewolf/spectate")
+def werewolf_spectate():
+    return render_template("werewolf_arena.html", is_spectator=True)
 
-@app.route("/marketplace", methods=["GET"])
-def marketplace_page():
-    try:
-        # Assume api_client.get_agents_public() exists or we use get_agents()
-        agents = api_client.get_agents()
-    except APIError as e:
-        flash(f"Could not load marketplace: {e.message}", "danger")
-        agents = []
-    return render_template("marketplace.html", agents=agents)
-
-@app.route("/leaderboard", methods=["GET"])
-def leaderboard_page():
-    # Pass sort_by from query parameter (default tasks)
-    sort_by = request.args.get("sort_by", "tasks")
-    return render_template("leaderboard.html", sort_by=sort_by)
-
-@app.route("/api/v1/leaderboard", methods=["GET"])
-def api_leaderboard():
-    sort_by = request.args.get("sort_by", "tasks")
-    try:
-        data = api_client.get_leaderboard(sort_by=sort_by)
-        return jsonify(data)
-    except APIError as e:
-        return jsonify({"error": e.message}), 500
-
-# --- Additional routes truncated in original; kept as is for completeness ---
-# The file continues but we are not modifying those routes. 
-# Ensure the new routes are placed before any catch-all.
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
