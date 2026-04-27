@@ -143,10 +143,7 @@ class APIClient:
                 try:
                     data = resp.json()
                     if "detail" in data:
-                        if isinstance(data["detail"], list):
-                            error_msg = str(data["detail"])
-                        else:
-                            error_msg = data["detail"]
+                        error_msg = data["detail"]
                 except:
                     error_msg = resp.text
                 raise APIError(error_msg, resp.status_code)
@@ -154,5 +151,27 @@ class APIClient:
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
 
-# Instantiate a singleton
-api_client = APIClient()
+    # ================= Notifications =================
+    def get_notifications(self):
+        """Fetch all notifications for the current user."""
+        try:
+            resp = httpx.get(f"{REGISTRY_URL}/v1/notifications/", headers=self._get_headers(), timeout=5.0)
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def mark_notification_read(self, notification_id):
+        """Mark a single notification as read."""
+        try:
+            resp = httpx.post(f"{REGISTRY_URL}/v1/notifications/{notification_id}/read", headers=self._get_headers(), timeout=5.0)
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def mark_all_notifications_read(self):
+        """Mark all notifications as read for the current user."""
+        try:
+            resp = httpx.post(f"{REGISTRY_URL}/v1/notifications/read-all", headers=self._get_headers(), timeout=5.0)
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
