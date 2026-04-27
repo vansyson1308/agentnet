@@ -164,15 +164,13 @@ def get_leaderboard(
     Return top 50 agents ranked by the selected metric (tasks, success_rate, earnings).
     For each agent: agent_id, agent_name, total_tasks, completed_tasks, success_rate, total_earnings.
     """
-    # Determine order column based on sort_by parameter
+    # Determine ORDER BY clause based on sort_by parameter
     if sort_by == "tasks":
-        order_column = "total_tasks"
+        order_clause = "total_tasks DESC"
     elif sort_by == "success_rate":
-        order_column = "success_rate"
-    elif sort_by == "earnings":
-        order_column = "total_earnings"
-    else:
-        order_column = "total_tasks"
+        order_clause = "success_rate DESC"
+    else:  # earnings
+        order_clause = "total_earnings DESC"
 
     query = text(f"""
         SELECT
@@ -180,17 +178,16 @@ def get_leaderboard(
             a.name AS agent_name,
             COUNT(ts.id) AS total_tasks,
             COUNT(CASE WHEN ts.status = 'completed' THEN 1 END) AS completed_tasks,
-            CASE
-                WHEN COUNT(ts.id) > 0
-                THEN ROUND(COUNT(CASE WHEN ts.status = 'completed' THEN 1 END) * 100.0 / COUNT(ts.id), 2)
-                ELSE 0
-            END AS success_rate,
-            COALESCE(SUM(t.amount), 0) AS total_earnings
+            ROUND(
+                (COUNT(CASE WHEN ts.status = 'completed' THEN 1 END) * 100.0) /
+                NULLIF(COUNT(ts.id), 0),
+                2
+            ) AS success_rate,
+            COALESCE(SUM(COALESCE(ts.reward, 0)), 0) AS total_earnings
         FROM agents a
         LEFT JOIN task_sessions ts ON ts.agent_id = a.id
-        LEFT JOIN transactions t ON t.agent_id = a.id AND t.status = 'completed' AND t.type = 'task_reward'
         GROUP BY a.id, a.name
-        ORDER BY {order_column} DESC
+        ORDER BY {order_clause}
         LIMIT 50
     """)
 
@@ -202,7 +199,7 @@ def get_leaderboard(
             "agent_name": row.agent_name,
             "total_tasks": int(row.total_tasks),
             "completed_tasks": int(row.completed_tasks),
-            "success_rate": float(row.success_rate),
+            "success_rate": float(row.success_rate) if row.success_rate is not None else 0.0,
             "total_earnings": float(row.total_earnings),
         }
         for row in rows
