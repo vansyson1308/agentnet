@@ -159,10 +159,121 @@ def my_agents_page():
         agents = []
     return render_template("my_agents.html", agents=agents)
 
-# New routes for notification system
+@app.route("/agents/new", methods=["GET", "POST"])
+def new_agent_page():
+    if request.method == "POST":
+        name = request.form.get("name")
+        description = request.form.get("description")
+        endpoint = request.form.get("endpoint")
+        public_key = request.form.get("public_key")
+        capabilities_raw = request.form.get("capabilities")
+        try:
+            capabilities = json.loads(capabilities_raw)
+        except json.JSONDecodeError:
+            flash("Invalid JSON in capabilities.", "danger")
+            return render_template("new_agent.html", name=name, description=description, endpoint=endpoint, public_key=public_key, capabilities=capabilities_raw)
+        
+        data = {
+            "name": name,
+            "description": description,
+            "endpoint": endpoint,
+            "public_key": public_key,
+            "capabilities": capabilities
+        }
+        try:
+            api_client.create_agent(data)
+            flash("Agent registered successfully!", "success")
+            return redirect(url_for('my_agents_page'))
+        except APIError as e:
+            flash(f"Failed to register agent: {e.message}", "danger")
+            return render_template("new_agent.html", name=name, description=description, endpoint=endpoint, public_key=public_key, capabilities=capabilities_raw)
+    return render_template("new_agent.html")
+
+@app.route("/agents/<agent_id>", methods=["GET"])
+def agent_detail_page(agent_id):
+    try:
+        agent = api_client.get_agent(agent_id)
+        return render_template("agent_detail.html", agent=agent)
+    except APIError as e:
+        flash(f"Could not load agent: {e.message}", "danger")
+        return redirect(url_for('directory_page'))
+
+@app.route("/directory", methods=["GET"])
+def directory_page():
+    search = request.args.get("search")
+    category = request.args.get("category")
+    sort = request.args.get("sort")
+    order = request.args.get("order")
+    try:
+        agents = api_client.fetch_agents(search=search, category=category, sort=sort, order=order)
+    except APIError as e:
+        flash(f"Could not load directory: {e.message}", "danger")
+        agents = []
+    return render_template("directory.html", agents=agents)
+
+@app.route("/directory/<agent_id>/offer", methods=["GET", "POST"])
+def create_offer_page(agent_id):
+    try:
+        callee = api_client.get_agent(agent_id)
+    except APIError as e:
+        flash(f"Agent not found: {e.message}", "danger")
+        return redirect(url_for('directory_page'))
+    
+    my_agents = api_client.get_my_agents()
+    
+    if request.method == "POST":
+        caller_agent_id = request.form.get("caller_agent_id")
+        title = request.form.get("title")
+        description = request.form.get("description")
+        price = request.form.get("price")
+        # Validate that caller_agent_id belongs to user
+        valid_ids = [a['id'] for a in my_agents]
+        if caller_agent_id not in valid_ids:
+            flash("Invalid caller agent selected.", "danger")
+            return render_template("create_offer.html", callee=callee, my_agents=my_agents)
+        
+        offer_data = {
+            "caller_agent_id": caller_agent_id,
+            "callee_agent_id": callee['id'],
+            "title": title,
+            "description": description,
+            "price": int(price),
+            "currency": "CR"
+        }
+        try:
+            api_client.create_offer(offer_data)
+            flash("Offer created successfully!", "success")
+            return redirect(url_for('offers_page'))
+        except APIError as e:
+            flash(f"Failed to create offer: {e.message}", "danger")
+            return render_template("create_offer.html", callee=callee, my_agents=my_agents)
+    
+    return render_template("create_offer.html", callee=callee, my_agents=my_agents)
+
+@app.route("/offers", methods=["GET"])
+def offers_page():
+    try:
+        offers = api_client.get_offers()
+    except APIError as e:
+        flash(f"Could not load offers: {e.message}", "danger")
+        offers = []
+    return render_template("offers.html", offers=offers)
+
+@app.route("/tasks", methods=["GET"])
+def tasks_page():
+    status_filter = request.args.get("status", "")
+    try:
+        tasks = api_client.get_tasks()
+    except APIError as e:
+        flash(f"Could not load tasks: {e.message}", "danger")
+        tasks = []
+    if status_filter:
+        tasks = [t for t in tasks if t.get('status') == status_filter]
+    return render_template("tasks.html", tasks=tasks, current_status=status_filter)
+
+# --- Notifications ---
 @app.route("/notifications", methods=["GET"])
 def notifications_page():
-    """Display all notifications for the current user."""
     try:
         notifications = api_client.get_notifications()
     except APIError as e:
@@ -172,22 +283,37 @@ def notifications_page():
 
 @app.route("/notifications/mark_read/<id>", methods=["POST"])
 def mark_read(id):
-    """Mark a single notification as read."""
     try:
         api_client.mark_notification_read(id)
-        flash("Notification marked as read.", "success")
+        flash("Notification marked as read.", "info")
     except APIError as e:
         flash(f"Failed to mark notification: {e.message}", "danger")
     return redirect(url_for('notifications_page'))
 
 @app.route("/notifications/mark_all_read", methods=["POST"])
 def mark_all_read():
-    """Mark all notifications as read."""
     try:
         api_client.mark_all_notifications_read()
-        flash("All notifications marked as read.", "success")
+        flash("All notifications marked as read.", "info")
     except APIError as e:
-        flash(f"Failed to mark notifications: {e.message}", "danger")
+        flash(f"Failed to mark all notifications: {e.message}", "danger")
     return redirect(url_for('notifications_page'))
 
-# ... [TRUNCATED -- preserve when editing] ...
+# --- Collaboration ---
+@app.route("/collaboration", methods=["GET"])
+def collaboration_page():
+    try:
+        threads = api_client.get_collaboration_threads()
+    except APIError as e:
+        flash(f"Could not load collaboration threads: {e.message}", "danger")
+        threads = []
+    return render_template("collaboration.html", threads=threads)
+
+@app.route("/collaboration/<thread_id>", methods=["GET"])
+def collaboration_thread_page(thread_id):
+    try:
+        thread = api_client.get_collaboration_thread(thread_id)
+    except APIError as e:
+        flash(f"Could not load collaboration thread: {e.message}", "danger")
+        return redirect(url_for('collaboration_page'))
+    return render_template("collaboration_thread.html", thread=thread)
