@@ -163,3 +163,37 @@ def my_agents():
         flash(f"Could not load agents: {e.message}", "danger")
         return redirect(url_for('index'))
     return render_template("my_agents.html", agents=agents)
+
+# ---- Build new agent ----
+@app.route("/build", methods=["GET", "POST"])
+def build_page():
+    if "access_token" not in session:
+        flash("Please log in to build an agent.", "warning")
+        return redirect(url_for('login_page'))
+    
+    if request.method == "POST":
+        name = request.form.get("name")
+        description = request.form.get("description")
+        capabilities = request.form.getlist("capabilities")
+        price = request.form.get("price", type=float, default=0.0)
+        
+        if not name or not description:
+            flash("Name and description are required.", "danger")
+            return render_template("build.html")
+        
+        agent_data = {
+            "name": name,
+            "description": description,
+            "capabilities": capabilities,
+            "price": price
+        }
+        
+        try:
+            agent = api_client.create_agent(agent_data)
+            flash(f"Agent '{agent.get('name', name)}' created successfully!", "success")
+            return redirect(url_for('my_agents'))
+        except APIError as e:
+            flash(f"Failed to create agent: {e.message}", "danger")
+            return render_template("build.html")
+    
+    return render_template("build.html")
