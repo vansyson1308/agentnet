@@ -161,4 +161,41 @@ def my_agents_page():
         agents = api_client.get_my_agents()
     except APIError as e:
         flash(f"Could not load agents: {e.message}", "danger")
-# ... rest of file unchanged (additional routes and if __name__ == "__main__" block)
+        agents = []
+    return render_template("my_agents.html", agents=agents)
+
+# ---- Notification routes ----
+@app.route("/notifications", methods=["GET"])
+def notifications_page():
+    if "access_token" not in session:
+        return redirect(url_for('login_page'))
+    try:
+        notifications = api_client.get_notifications()
+    except APIError as e:
+        flash(f"Could not load notifications: {e.message}", "danger")
+        notifications = []
+    return render_template("notifications.html", notifications=notifications)
+
+@app.route("/notifications/<int:id>/read", methods=["POST"])
+def mark_read(id):
+    if "access_token" not in session:
+        return redirect(url_for('login_page'))
+    try:
+        api_client.mark_notification_read(id)
+        flash("Notification marked as read.", "success")
+    except APIError as e:
+        flash(f"Error: {e.message}", "danger")
+    return redirect(url_for('notifications_page'))
+
+@app.route("/notifications/mark-all-read", methods=["POST"])
+def mark_all_read():
+    if "access_token" not in session:
+        return redirect(url_for('login_page'))
+    try:
+        api_client.mark_all_notifications_read()
+        flash("All notifications marked as read.", "success")
+    except APIError as e:
+        flash(f"Error: {e.message}", "danger")
+    return redirect(url_for('notifications_page'))
+
+# ---- (other existing routes, e.g., directory, offers, etc.) ----
