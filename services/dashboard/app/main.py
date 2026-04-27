@@ -55,10 +55,8 @@ app.jinja_env.filters['trust_context'] = derive_trust_context
 def handle_exception(e):
     if isinstance(e, APIError):
         flash(f"API Error: {e.message}", "danger")
-        # Go back to referring page or index
         referer = request.headers.get("Referer")
         return redirect(referer or url_for('index'))
-    # General fallback
     app.logger.error(f"Unhandled Exception: {e}")
     flash("An unexpected backend error occurred.", "danger")
     return render_template("error.html", error=str(e)), 500
@@ -77,7 +75,6 @@ def index():
     if "access_token" not in session:
         return redirect(url_for('metaverse_page'))
     
-    # Get basic overview from wallets (used as proxy for account activity)
     try:
         wallets = api_client.get_wallets()
         total_credits = sum(w.get("balance_credits", 0) for w in wallets)
@@ -135,7 +132,6 @@ def logout():
 
 @app.route("/wallet", methods=["GET"])
 def wallet_page():
-    # Show wallets and history
     wallets = api_client.get_wallets()
     transactions = []
     try:
@@ -148,7 +144,6 @@ def wallet_page():
 @app.route("/wallet/<wallet_id>/fund", methods=["POST"])
 def fund_wallet(wallet_id):
     try:
-        # Hardcoding dev top-up to 1000 credits
         api_client.fund_wallet(wallet_id, 1000)
         flash("Successfully added 1,000 Dev Credits to wallet.", "success")
     except APIError as e:
@@ -156,44 +151,73 @@ def fund_wallet(wallet_id):
     return redirect(url_for('wallet_page'))
 
 @app.route("/agents", methods=["GET"])
-def my_agents():
+def my_agents_page():
     try:
         agents = api_client.get_my_agents()
     except APIError as e:
         flash(f"Could not load agents: {e.message}", "danger")
-        return redirect(url_for('index'))
+        agents = []
     return render_template("my_agents.html", agents=agents)
 
-# ---- Build new agent ----
-@app.route("/build", methods=["GET", "POST"])
-def build_page():
-    if "access_token" not in session:
-        flash("Please log in to build an agent.", "warning")
-        return redirect(url_for('login_page'))
-    
+@app.route("/agents/<agent_id>", methods=["GET"])
+def agent_detail_page(agent_id):
+    try:
+        agent = api_client.get_agent(agent_id)
+        return render_template("agent_detail.html", agent=agent)
+    except APIError as e:
+        flash(f"Agent not found: {e.message}", "danger")
+        return redirect(url_for('my_agents_page'))
+
+@app.route("/tasks", methods=["GET"])
+def tasks_page():
+    try:
+        tasks = api_client.get_tasks()
+    except APIError as e:
+        flash(f"Could not load tasks: {e.message}", "danger")
+        tasks = []
+    return render_template("tasks.html", tasks=tasks)
+
+@app.route("/create_agent", methods=["GET", "POST"])
+def create_agent_page():
     if request.method == "POST":
-        name = request.form.get("name")
-        description = request.form.get("description")
-        capabilities = request.form.getlist("capabilities")
-        price = request.form.get("price", type=float, default=0.0)
-        
-        if not name or not description:
-            flash("Name and description are required.", "danger")
-            return render_template("build.html")
-        
-        agent_data = {
-            "name": name,
-            "description": description,
-            "capabilities": capabilities,
-            "price": price
+        data = {
+            "name": request.form.get("name"),
+            "description": request.form.get("description"),
+            "capabilities": request.form.getlist("capabilities"),
         }
-        
         try:
-            agent = api_client.create_agent(agent_data)
-            flash(f"Agent '{agent.get('name', name)}' created successfully!", "success")
-            return redirect(url_for('my_agents'))
+            api_client.create_agent(data)
+            flash("Agent created successfully!", "success")
+            return redirect(url_for('my_agents_page'))
         except APIError as e:
             flash(f"Failed to create agent: {e.message}", "danger")
-            return render_template("build.html")
-    
-    return render_template("build.html")
+    return render_template("new_agent.html")
+
+@app.route("/offers", methods=["GET"])
+def offers_page():
+    try:
+        offers = api_client.get_offers()
+    except APIError as e:
+        flash(f"Could not load offers: {e.message}", "danger")
+        offers = []
+    return render_template("offers.html", offers=offers)
+
+@app.route("/collaboration", methods=["GET"])
+def collaboration_page():
+    try:
+        collaborations = api_client.get_collaborations()
+    except APIError as e:
+        flash(f"Could not load collaborations: {e.message}", "danger")
+        collaborations = []
+    return render_template("collaboration.html", collaborations=collaborations)
+
+@app.route("/metaverse")
+def metaverse_page():
+    try:
+        agents = api_client.get_agents()
+    except APIError:
+        agents = []
+    return render_template("metaverse.html", agents=agents)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
