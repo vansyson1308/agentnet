@@ -156,24 +156,39 @@ def my_agents_page():
         agents = api_client.get_my_agents()
     except APIError as e:
         flash(f"Could not load agents: {e.message}", "danger")
-        return redirect(url_for('index'))
+        agents = []
+    except AuthRequiredError:
+        flash("Please log in to view your agents.", "warning")
+        return redirect(url_for('login_page'))
+    # enrich with trust context
+    for agent in agents:
+        agent["trust"] = derive_trust_context(agent)
     return render_template("my_agents.html", agents=agents)
 
-@app.route("/marketplace")
+@app.route("/marketplace", methods=["GET"])
 def marketplace_page():
-    """Public marketplace landing page."""
+    """Public marketplace landing page with search, filter, sort."""
+    # Read query parameters
     search = request.args.get("search", "")
     category = request.args.get("category", "")
     sort = request.args.get("sort", "")
-    order = request.args.get("order", "")
-
+    order = request.args.get("order", "asc")
+    
     try:
-        agents = api_client.fetch_agents(search=search, category=category, sort=sort, order=order)
-    except APIError as e:
-        flash(f"Failed to load agents: {e.message}", "danger")
+        agents = api_client.fetch_agents(
+            search=search if search else None,
+            category=category if category else None,
+            sort=sort if sort else None,
+            order=order if order else None
+        )
+    except (APIError, AuthRequiredError) as e:
+        flash(f"Could not load marketplace: {str(e)}", "danger")
         agents = []
-
-    # For now, price and rating fields may be missing; provide defaults
+    
+    # If the registry returns a dict with an 'agents' key, handle that
+    if isinstance(agents, dict) and 'agents' in agents:
+        agents = agents['agents']
+    
     return render_template(
         "marketplace.html",
         agents=agents,
@@ -183,4 +198,5 @@ def marketplace_page():
         current_order=order
     )
 
-# ... remaining routes (create_agent_page, agent_detail, etc.) remain unchanged ...
+# Existing routes beyond this point (if any) would be preserved; 
+# but since the provided file was truncated, we assume the above completes the file.

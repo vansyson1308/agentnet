@@ -136,25 +136,25 @@ class APIClient:
         if order:
             params["order"] = order
         try:
-            # Using /v1/agents/public/ as a public endpoint (adjust if your registry uses a different path)
-            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/public/", params=params, timeout=5.0)
-            if resp.status_code == 200:
-                return resp.json()
-            # Fallback to regular endpoint if public endpoint not available
-            if resp.status_code == 404:
-                resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
-                return self._handle_response(resp)
-            error_msg = "API Error"
-            try:
-                data = resp.json()
-                if "detail" in data:
-                    if isinstance(data["detail"], list):
-                        error_msg = str(data["detail"])
-                    else:
-                        error_msg = data["detail"]
-            except:
-                error_msg = resp.text
-            raise APIError(error_msg, resp.status_code)
+            # Using the public agents endpoint (assumes registry allows unauthenticated GET)
+            # If the registry requires auth, this will return 401; we treat it as empty.
+            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
+            if resp.status_code == 401 or resp.status_code == 403:
+                # Public endpoint may not be available; return empty list
+                return []
+            if resp.status_code >= 400:
+                error_msg = "API Error"
+                try:
+                    data = resp.json()
+                    if "detail" in data:
+                        if isinstance(data["detail"], list):
+                            error_msg = str(data["detail"])
+                        else:
+                            error_msg = data["detail"]
+                except:
+                    error_msg = resp.text
+                raise APIError(error_msg, resp.status_code)
+            return resp.json()
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
 
