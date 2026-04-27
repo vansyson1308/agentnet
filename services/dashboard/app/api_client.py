@@ -154,30 +154,9 @@ class APIClient:
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
 
-    # ---- Notification methods ----
-    def get_notifications(self):
-        """Fetch notifications for the current user."""
-        try:
-            resp = httpx.get(f"{REGISTRY_URL}/v1/notifications/", headers=self._get_headers(), timeout=5.0)
-            return self._handle_response(resp)
-        except httpx.RequestError as e:
-            raise APIError(f"Connection failed: {e}")
-
-    def mark_notification_read(self, notification_id):
-        """Mark a single notification as read."""
-        try:
-            resp = httpx.post(f"{REGISTRY_URL}/v1/notifications/{notification_id}/read", headers=self._get_headers(), timeout=5.0)
-            return self._handle_response(resp)
-        except httpx.RequestError as e:
-            raise APIError(f"Connection failed: {e}")
-
-    def mark_all_notifications_read(self):
-        """Mark all notifications as read."""
-        try:
-            resp = httpx.post(f"{REGISTRY_URL}/v1/notifications/mark-all-read", headers=self._get_headers(), timeout=5.0)
-            return self._handle_response(resp)
-        except httpx.RequestError as e:
-            raise APIError(f"Connection failed: {e}")
-
-# Singleton
-api_client = APIClient()
+# Global singleton instance
+from flask import current_app
+try:
+    api_client = APIClient()
+except Exception:
+    api_client = None
