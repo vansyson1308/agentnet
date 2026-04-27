@@ -165,4 +165,33 @@ def my_agents_page():
         agents = []
     return render_template("my_agents.html", agents=agents)
 
+# ---- Offer creation ----
+@app.route("/offer/<agent_id>/create", methods=["GET", "POST"])
+def create_offer_page(agent_id):
+    try:
+        callee = api_client.get_agent(agent_id)
+    except APIError as e:
+        flash(f"Agent not found: {e.message}", "danger")
+        return redirect(url_for('directory_page'))
+    my_agents = []
+    try:
+        my_agents = api_client.get_my_agents()
+    except APIError:
+        flash("Could not fetch your agents.", "warning")
+    if request.method == "POST":
+        caller_agent_id = request.form.get("caller_agent_id")
+        title = request.form.get("title")
+        description = request.form.get("description")
+        price = request.form.get("price")
+        if not all([caller_agent_id, title, price]):
+            flash("Caller agent, title, and price are required.", "danger")
+            return render_template("create_offer.html", callee=callee, my_agents=my_agents)
+        try:
+            api_client.create_offer(caller_agent_id, agent_id, title, description, int(price))
+            flash("Offer created successfully!", "success")
+            return redirect(url_for('agent_detail_page', agent_id=agent_id))
+        except APIError as e:
+            flash(f"Failed to create offer: {e.message}", "danger")
+    return render_template("create_offer.html", callee=callee, my_agents=my_agents)
+
 # ... [preserve remaining routes unchanged] ...
