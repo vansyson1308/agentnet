@@ -165,36 +165,39 @@ def get_leaderboard(
     For each agent: agent_id, agent_name, total_tasks, completed_tasks, success_rate, total_earnings.
     """
     # Build aggregation query
+    # We need to join task_sessions and transactions to get earnings.
+    # For earnings: sum of rewards from completed tasks (or from transactions table? Use task_sessions.reward)
+    # According to schema, task_sessions has reward (float) possibly. Use that.
+    # But we only want earnings from completed tasks? Or all? Use completed tasks for consistency.
+    # Also success_rate = (completed / total)*100
     query = text("""
+        WITH agent_stats AS (
+            SELECT
+                a.id AS agent_id,
+                a.name AS agent_name,
+                COUNT(ts.id) AS total_tasks,
+                COUNT(ts.id) FILTER (WHERE ts.status = 'completed') AS completed_tasks,
+                COALESCE(SUM(ts.reward) FILTER (WHERE ts.status = 'completed'), 0) AS total_earnings
+            FROM agents a
+            LEFT JOIN task_sessions ts ON a.id = ts.agent_id
+            GROUP BY a.id, a.name
+        )
         SELECT
-            a.id AS agent_id,
-            a.name AS agent_name,
-            COUNT(ts.id) AS total_tasks,
-            COUNT(ts.id) FILTER (WHERE ts.status = 'completed') AS completed_tasks,
-            CASE
-                WHEN COUNT(ts.id) > 0 THEN
-                    ROUND(100.0 * COUNT(ts.id) FILTER (WHERE ts.status = 'completed') / COUNT(ts.id), 2)
-                ELSE 0.0
-            END AS success_rate,
-            COALESCE(SUM(ts.reward) FILTER (WHERE ts.status = 'completed'), 0.0) AS total_earnings
-        FROM agents a
-        LEFT JOIN task_sessions ts ON ts.agent_id = a.id
-        GROUP BY a.id, a.name
+            agent_id,
+            agent_name,
+            total_tasks,
+            completed_tasks,
+            CASE WHEN total_tasks > 0 THEN ROUND((completed_tasks::numeric / total_tasks) * 100, 2) ELSE 0 END AS success_rate,
+            total_earnings
+        FROM agent_stats
+        ORDER BY
+            CASE WHEN :sort_by = 'tasks' THEN total_tasks END DESC,
+            CASE WHEN :sort_by = 'success_rate' THEN success_rate END DESC,
+            CASE WHEN :sort_by = 'earnings' THEN total_earnings END DESC
+        LIMIT 50
     """)
 
-    # Wrap as subquery for ORDER BY with alias
-    order_clause = {
-        "tasks": "total_tasks DESC",
-        "success_rate": "success_rate DESC",
-        "earnings": "total_earnings DESC"
-    }.get(sort_by, "total_tasks DESC")
-
-    full_sql = f"""
-        SELECT * FROM ({query.text}) AS sub
-        ORDER BY {order_clause}
-        LIMIT 50
-    """
-    rows = db.execute(text(full_sql).bindparams(**query._bindparams)).fetchall()
+    rows = db.execute(query, {"sort_by": sort_by}).fetchall()
 
     return [
         {
