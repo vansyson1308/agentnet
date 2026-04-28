@@ -159,5 +159,134 @@ def my_agents_page():
         agents = []
     return render_template("my_agents.html", agents=agents)
 
-# ... rest of the file preserved (routes for offers, tasks, metaverse, etc.) ...
-# The exact content of the remainder is not provided, but is assumed to exist.
+@app.route("/agents/new", methods=["GET", "POST"])
+def new_agent_page():
+    if request.method == "POST":
+        data = {
+            "name": request.form.get("name"),
+            "description": request.form.get("description"),
+            "capabilities": request.form.getlist("capabilities"),
+            "pricing": {
+                "price_per_task": float(request.form.get("price_per_task", 0)),
+                "currency": request.form.get("currency", "credits")
+            },
+            "endpoint": request.form.get("endpoint"),
+        }
+        try:
+            api_client.create_agent(data)
+            flash("Agent created successfully.", "success")
+            return redirect(url_for('my_agents_page'))
+        except APIError as e:
+            flash(f"Agent creation failed: {e.message}", "danger")
+    return render_template("new_agent.html")
+
+@app.route("/tasks", methods=["GET"])
+def tasks_page():
+    try:
+        tasks = api_client.get_tasks()
+    except APIError as e:
+        flash(f"Could not load tasks: {e.message}", "danger")
+        tasks = []
+    return render_template("tasks.html", tasks=tasks)
+
+@app.route("/offers")
+def offers_page():
+    try:
+        offers = api_client.get_offers()
+    except APIError as e:
+        flash(f"Could not load offers: {e.message}", "danger")
+        offers = []
+    return render_template("offers.html", offers=offers)
+
+@app.route("/offers/create", methods=["GET", "POST"])
+def create_offer_page():
+    if request.method == "POST":
+        data = {
+            "agent_id": request.form.get("agent_id"),
+            "task_description": request.form.get("task_description"),
+            "max_price": float(request.form.get("max_price", 0)),
+            "currency": request.form.get("currency", "credits")
+        }
+        try:
+            api_client.create_offer(data)
+            flash("Offer created successfully.", "success")
+            return redirect(url_for('offers_page'))
+        except APIError as e:
+            flash(f"Offer creation failed: {e.message}", "danger")
+    agents = []
+    try:
+        agents = api_client.get_agents()
+    except APIError:
+        pass
+    return render_template("create_offer.html", agents=agents)
+
+@app.route("/metaverse")
+def metaverse_page():
+    try:
+        agents = api_client.get_agents()
+    except APIError:
+        agents = []
+        flash("Could not load agents for metaverse.", "warning")
+    return render_template("metaverse.html", agents=agents)
+
+@app.route("/notifications")
+def notifications_page():
+    try:
+        notifications = api_client.get_notifications()
+    except APIError:
+        notifications = []
+        flash("Could not load notifications.", "warning")
+    return render_template("notifications.html", notifications=notifications)
+
+@app.route("/collaboration")
+def collaboration_page():
+    try:
+        collaborations = api_client.get_collaborations()
+    except APIError:
+        collaborations = []
+        flash("Could not load collaborations.", "warning")
+    return render_template("collaboration.html", collaborations=collaborations)
+
+@app.route("/agent/<agent_id>")
+def agent_detail_page(agent_id):
+    try:
+        agent = api_client.get_agent(agent_id)
+    except APIError as e:
+        flash(f"Could not load agent: {e.message}", "danger")
+        return redirect(url_for('my_agents_page'))
+    return render_template("agent_detail.html", agent=agent)
+
+@app.route("/discover", methods=["GET", "POST"])
+def discover_page():
+    recommendations = []
+    if request.method == "POST":
+        capability = request.form.get("capability")
+        if capability:
+            try:
+                resp = api_client.discover_agents(capability)
+                recommendations = resp.get("recommendations", [])
+            except APIError as e:
+                flash(f"Discovery failed: {e.message}", "danger")
+    return render_template("discover.html", recommendations=recommendations)
+
+@app.route("/search")
+def search_page():
+    query = request.args.get("q", "")
+    category = request.args.get("category", "")
+    sort = request.args.get("sort", "name")
+    order = request.args.get("order", "asc")
+    try:
+        agents = api_client.fetch_agents(search=query, category=category, sort=sort, order=order)
+    except APIError:
+        agents = []
+        flash("Search failed.", "danger")
+    return render_template("search_results.html", agents=agents, query=query)
+
+@app.route("/profile")
+def profile_page():
+    try:
+        profile = api_client.get_profile()
+    except APIError:
+        profile = {}
+        flash("Could not load profile.", "warning")
+    return render_template("profile.html", profile=profile)
