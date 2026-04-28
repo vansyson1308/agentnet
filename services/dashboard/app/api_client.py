@@ -79,17 +79,11 @@ class APIClient:
             raise APIError(f"Connection failed: {e}")
 
     def get_agents(self, capability=None, limit=1000):
+        url = f"{REGISTRY_URL}/v1/agents/?limit={limit}"
+        if capability:
+            url += f"&capability={capability}"
         try:
-            headers = {}
-            token = session.get("access_token")
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-                url = f"{REGISTRY_URL}/v1/agents/?limit={limit}"
-            else:
-                url = f"{REGISTRY_URL}/v1/agents/public/?limit={limit}"
-            if capability:
-                url += f"&capability={capability}"
-            resp = httpx.get(url, headers=headers, timeout=5.0)
+            resp = httpx.get(url, headers=self._get_headers(), timeout=5.0)
             return self._handle_response(resp)
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
@@ -104,14 +98,7 @@ class APIClient:
 
     def create_agent(self, data):
         try:
-            headers = {}
-            token = session.get("access_token")
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-                url = f"{REGISTRY_URL}/v1/agents/"
-            else:
-                url = f"{REGISTRY_URL}/v1/agents/public-register"
-            resp = httpx.post(url, json=data, headers=headers, timeout=5.0)
+            resp = httpx.post(f"{REGISTRY_URL}/v1/agents/", json=data, headers=self._get_headers(), timeout=5.0)
             return self._handle_response(resp)
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
@@ -137,32 +124,33 @@ class APIClient:
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
 
-    def get_notifications(self):
-        try:
-            resp = httpx.get(f"{REGISTRY_URL}/v1/notifications/", headers=self._get_headers(), timeout=5.0)
-            return self._handle_response(resp)
-        except httpx.RequestError as e:
-            raise APIError(f"Connection failed: {e}")
-
     def fetch_agents(self, search=None, category=None, sort=None, order=None):
-        """Fetch agents with optional search, category, sort and order parameters."""
+        """Fetch agents from the public endpoint (no authentication required)."""
+        params = {}
+        if search:
+            params["search"] = search
+        if category:
+            params["category"] = category
+        if sort:
+            params["sort"] = sort
+        if order:
+            params["order"] = order
         try:
-            headers = {}
-            token = session.get("access_token")
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-            params = {}
-            if search:
-                params["search"] = search
-            if category:
-                params["category"] = category
-            if sort:
-                params["sort"] = sort
-            if order:
-                params["order"] = order
-            url = f"{REGISTRY_URL}/v1/agents/"
-            resp = httpx.get(url, headers=headers, params=params, timeout=5.0)
-            return self._handle_response(resp)
+            # Public endpoint – no auth headers
+            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
+            if resp.status_code >= 400:
+                error_msg = "API Error"
+                try:
+                    data = resp.json()
+                    if "detail" in data:
+                        if isinstance(data["detail"], list):
+                            error_msg = str(data["detail"])
+                        else:
+                            error_msg = data["detail"]
+                except:
+                    error_msg = resp.text
+                raise APIError(error_msg, resp.status_code)
+            return resp.json()
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
 
