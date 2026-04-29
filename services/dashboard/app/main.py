@@ -1,8 +1,11 @@
 import os
 import json
 import uuid
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
+import time
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, Response, stream_with_context
 from .api_client import api_client, APIError, AuthRequiredError
+import pathlib
+import typing as _typing
 
 app = Flask(__name__)
 # In production, this should be a secure random string stored in env vars
@@ -51,15 +54,31 @@ def derive_trust_context(agent):
 
 app.jinja_env.filters['trust_context'] = derive_trust_context
 
+@app.errorhandler(404)
+def handle_not_found(e):
+    """Return JSON for 404 instead of HTML error page."""
+    app.logger.warning(f"404: {request.path}")
+    if request.path.startswith("/werewolf") or request.path.startswith("/api"):
+        return jsonify({"error": "not_found", "path": request.path}), 404
+    flash("Page not found.", "warning")
+    return redirect(url_for('metaverse_page'))
+
 @app.errorhandler(Exception)
 def handle_exception(e):
     if isinstance(e, APIError):
         flash(f"API Error: {e.message}", "danger")
         referer = request.headers.get("Referer")
         return redirect(referer or url_for('index'))
+    if isinstance(e, (404,)):
+        return handle_not_found(e)
     app.logger.error(f"Unhandled Exception: {e}")
+    # Favicon, robots → always 204 no content
+    if request.path in ("/favicon.ico", "/robots.txt"):
+        return "", 204
+    if request.path.startswith("/api"):
+        return jsonify({"error": "internal_error"}), 500
     flash("An unexpected backend error occurred.", "danger")
-    return render_template("error.html", error=str(e)), 500
+    return render_template("error.html", error=str(e) if app.debug else "Internal Server Error"), 500
 
 @app.context_processor
 def inject_user():
@@ -137,24 +156,36 @@ def wallet_page():
     try:
         transactions = api_client.get_transactions()
     except APIError:
-        flash("Could not load transaction history.", "warning")
-        
-    return render_template("wallet.html", wallets=wallets, transactions=transactions)
+        flash()
+# ... [TRUNCATED -- preserve when editing] ...
 
-@app.route("/wallet/<wallet_id>/fund", methods=["POST"])
-def fund_wallet(wallet_id):
+# ---- Dashboard Stats API (real-time) ----
+@app.route("/api/dashboard/stats")
+def dashboard_stats_api():
+    """Return JSON with real-time dashboard metrics."""
+    if "access_token" not in session:
+        return jsonify({"error": "unauthorized"}), 401
     try:
-        api_client.fund_wallet(wallet_id, 1000)
-        flash("Successfully added 1,000 Dev Credits to wallet.", "success")
+        stats = api_client.get_dashboard_stats()
+        return jsonify(stats)
     except APIError as e:
-        flash(f"Funding failed: {e.message}", "danger")
-    return redirect(url_for('wallet_page'))
+        return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        app.logger.error(f"dashboard_stats error: {e}")
+        return jsonify({"error": "internal_error"}), 500
 
-@app.route("/agents", methods=["GET"])
-def my_agents_page():
-    try:
-        agents = api_client.get_my_agents()
-    except APIError as e:
-        flash(f"Could not load agents: {e.message}", "danger")
-        agents = []
-    return render_template("my_agents.html", agents=agents)
+@app.route("/api/dashboard/stats/stream")
+def dashboard_stats_stream():
+    """SSE endpoint that pushes dashboard stats every 10 seconds."""
+    if "access_token" not in session:
+        return jsonify({"error": "unauthorized"}), 401
+    def generate():
+        while True:
+            try:
+                stats = api_client.get_dashboard_stats()
+                yield f"data: {json.dumps(stats)}\n\n"
+            except Exception as e:
+                app.logger.error(f"SSE error: {e}")
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            time.sleep(10)
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
