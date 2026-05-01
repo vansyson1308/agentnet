@@ -8,7 +8,6 @@ import pathlib
 import typing as _typing
 
 app = Flask(__name__)
-# In production, this should be a secure random string stored in env vars
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev_secret_key_" + str(uuid.uuid4()))
 
 @app.errorhandler(AuthRequiredError)
@@ -33,7 +32,7 @@ def derive_trust_context(agent):
     elif success >= 0.80:
         label = "Generally Reliable"
         color = "#3b82f6"
-    elif timeouts > (total * 0.1): # more than 10% timeouts
+    elif timeouts > (total * 0.1):
         label = "Frequent Timeout Risk"
         color = "#ef4444"
     elif timeouts > 0:
@@ -56,12 +55,11 @@ app.jinja_env.filters['trust_context'] = derive_trust_context
 
 @app.errorhandler(404)
 def handle_not_found(e):
-    """Return JSON for 404 instead of HTML error page."""
     app.logger.warning(f"404: {request.path}")
     if request.path.startswith("/werewolf") or request.path.startswith("/api"):
         return jsonify({"error": "not_found", "path": request.path}), 404
     flash("Page not found.", "warning")
-    return redirect(url_for('metaverse_page'))
+    return redirect(url_for('landing_page'))
 
 @app.errorhandler(Exception)
 def handle_exception(e):
@@ -69,10 +67,10 @@ def handle_exception(e):
         flash(f"API Error: {e.message}", "danger")
         referer = request.headers.get("Referer")
         return redirect(referer or url_for('index'))
-    if isinstance(e, (404,)):
+    from werkzeug.exceptions import NotFound
+    if isinstance(e, NotFound):
         return handle_not_found(e)
     app.logger.error(f"Unhandled Exception: {e}")
-    # Favicon, robots → always 204 no content
     if request.path in ("/favicon.ico", "/robots.txt"):
         return "", 204
     if request.path.startswith("/api"):
@@ -84,15 +82,39 @@ def handle_exception(e):
 def inject_user():
     return dict(is_logged_in="access_token" in session)
 
-# ---- Public landing page ----
+# ============================================================
+# PUBLIC ROUTES (no auth required)
+# ============================================================
+
 @app.route("/landing")
 def landing_page():
     return render_template("landing.html")
 
+@app.route("/marketplace")
+def marketplace_page():
+    search = request.args.get("search")
+    category = request.args.get("category")
+    sort = request.args.get("sort", "rating")
+    order = request.args.get("order", "desc")
+    try:
+        agents = api_client.fetch_agents(search=search, category=category, sort=sort, order=order)
+    except APIError as e:
+        flash(f"Could not load marketplace: {e.message}", "danger")
+        agents = []
+    return render_template("marketplace.html", agents=agents)
+
+@app.route("/metaverse")
+def metaverse_page():
+    return render_template("metaverse.html")
+
+# ============================================================
+# AUTH ROUTES
+# ============================================================
+
 @app.route("/")
 def index():
     if "access_token" not in session:
-        return redirect(url_for('metaverse_page'))
+        return redirect(url_for('landing_page'))
     
     try:
         wallets = api_client.get_wallets()
@@ -135,9 +157,10 @@ def register_page():
             return render_template("register.html")
             
         try:
-            api_client.register(email, password)
-            flash("Account created! Please log in.", "success")
-            return redirect(url_for('login_page'))
+            resp = api_client.register(email, password)
+            session["access_token"] = resp.get("access_token")
+            flash("Registration successful! You are now logged in.", "success")
+            return redirect(url_for('index'))
         except APIError as e:
             flash(f"Registration failed: {e.message}", "danger")
             
@@ -146,46 +169,38 @@ def register_page():
 @app.route("/logout")
 def logout():
     session.clear()
-    flash("Logged out successfully.", "info")
-    return redirect(url_for('login_page'))
+    flash("You have been logged out.", "info")
+    return redirect(url_for('landing_page'))
 
-@app.route("/wallet", methods=["GET"])
-def wallet_page():
-    wallets = api_client.get_wallets()
-    transactions = []
-    try:
-        transactions = api_client.get_transactions()
-    except APIError:
-        flash()
-# ... [TRUNCATED -- preserve when editing] ...
+# ============================================================
+# ADDITIONAL ROUTES (placeholder, extend as needed)
+# ============================================================
 
-# ---- Dashboard Stats API (real-time) ----
-@app.route("/api/dashboard/stats")
-def dashboard_stats_api():
-    """Return JSON with real-time dashboard metrics."""
-    if "access_token" not in session:
-        return jsonify({"error": "unauthorized"}), 401
+@app.route("/agents")
+def agents_directory():
     try:
-        stats = api_client.get_dashboard_stats()
-        return jsonify(stats)
+        agents = api_client.get_agents()
     except APIError as e:
-        return jsonify({"error": str(e)}), 500
-    except Exception as e:
-        app.logger.error(f"dashboard_stats error: {e}")
-        return jsonify({"error": "internal_error"}), 500
+        flash(f"Could not load agents: {e.message}", "danger")
+        agents = []
+    return render_template("agents.html", agents=agents)
 
-@app.route("/api/dashboard/stats/stream")
-def dashboard_stats_stream():
-    """SSE endpoint that pushes dashboard stats every 10 seconds."""
+@app.route("/profile")
+def profile_page():
     if "access_token" not in session:
-        return jsonify({"error": "unauthorized"}), 401
-    def generate():
-        while True:
-            try:
-                stats = api_client.get_dashboard_stats()
-                yield f"data: {json.dumps(stats)}\n\n"
-            except Exception as e:
-                app.logger.error(f"SSE error: {e}")
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-            time.sleep(10)
-    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+        return redirect(url_for('login_page'))
+    try:
+        wallets = api_client.get_wallets()
+        user_id = next((w.get("owner_id") for w in wallets if w.get("owner_type") == "user"), None)
+        user = {"id": user_id, "email": session.get("email", "unknown")}
+    except APIError:
+        user = {}
+        flash("Could not load profile.", "warning")
+    return render_template("profile.html", user=user)
+
+# ============================================================
+# ERROR HANDLING AND STARTUP
+# ============================================================
+
+if __name__ == '__main__':
+    app.run(debug=True, host="0.0.0.0", port=5000)

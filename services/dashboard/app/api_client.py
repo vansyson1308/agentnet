@@ -140,7 +140,7 @@ class APIClient:
             # Public endpoint – no auth headers
             resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
             if resp.status_code >= 400:
-                error_msg = "API Error"
+                error_msg = "Error fetching agents"
                 try:
                     data = resp.json()
                     if "detail" in data:
@@ -155,37 +155,20 @@ class APIClient:
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
 
-    def get_dashboard_stats(self):
-        """Fetch tasks and compute real-time dashboard metrics."""
-        tasks = self.get_tasks()
-        now = datetime.now(timezone.utc)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        yesterday_start = today_start - timedelta(days=1)
-        tasks_today = []
-        tasks_24h = []
-        for t in tasks:
-            created_at = t.get("created_at")
-            if created_at:
-                try:
-                    created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                except (ValueError, AttributeError):
-                    continue
-                if created_dt >= today_start:
-                    tasks_today.append(t)
-                if created_dt >= yesterday_start:
-                    tasks_24h.append(t)
-        tasks_today_count = len(tasks_today)
-        total_24h = len(tasks_24h)
-        success_count = sum(1 for t in tasks_24h if t.get("status") == "completed")
-        success_rate = (success_count / total_24h * 100) if total_24h > 0 else 0.0
-        # Volume: sum of some metric? Assuming tasks have a "volume" or "credits" field. Fallback to count.
-        volume_24h = sum(t.get("volume", 0) for t in tasks_24h)  # adjust field name as needed
-        if volume_24h == 0:
-            volume_24h = total_24h  # fallback to count
-        return {
-            "tasks_today": tasks_today_count,
-            "success_rate": round(success_rate, 2),
-            "volume_24h": volume_24h
-        }
+    def update_agent(self, agent_id, data):
+        try:
+            resp = httpx.put(f"{REGISTRY_URL}/v1/agents/{agent_id}", json=data, headers=self._get_headers(), timeout=5.0)
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
+
+    def delete_agent(self, agent_id):
+        try:
+            resp = httpx.delete(f"{REGISTRY_URL}/v1/agents/{agent_id}", headers=self._get_headers(), timeout=5.0)
+            if resp.status_code == 204:
+                return True
+            return self._handle_response(resp)
+        except httpx.RequestError as e:
+            raise APIError(f"Connection failed: {e}")
 
 api_client = APIClient()
