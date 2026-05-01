@@ -40,9 +40,16 @@ for i, mw in enumerate(app.user_middleware):
         options["allow_origin_regex"] = r"https://.*\.trycloudflare\.com$"
         app.user_middleware[i] = Middleware(CORSMiddleware, **options)
         break
-# Mount rate limiter (60 req/min/IP default)
-# Disabled — middleware needs ASGI-compatible refactor
-# # app.add_middleware(RateLimitMiddleware, ...)  # DEFERRED: middleware needs BaseHTTPMiddleware refactor first
+# Mount rate limiter (env-configurable, defaults: 100 req/min users, 300 req/min agents)
+import os as _os
+app.add_middleware(
+    RateLimitMiddleware,
+    default_rate=int(_os.getenv("RATE_LIMIT_USER_PER_MIN", "100")),
+    default_burst=int(_os.getenv("RATE_LIMIT_USER_BURST", "150")),
+    agent_rate=int(_os.getenv("RATE_LIMIT_AGENT_PER_MIN", "300")),
+    agent_burst=int(_os.getenv("RATE_LIMIT_AGENT_BURST", "450")),
+    redis_url=_os.getenv("REDIS_URL", None),  # None = in-memory mode
+)
 setup_security_headers(app)
 
 # Configure tracing
