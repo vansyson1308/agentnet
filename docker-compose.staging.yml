@@ -1,0 +1,93 @@
+# AgentNet Staging — shares PostgreSQL & Redis with production
+# Uses same network (agentnet-network) but separate DB + ports
+services:
+  registry-staging:
+    build: ./services/registry
+    container_name: agentnet-staging-registry
+    environment:
+      POSTGRES_HOST: agentnet-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: agentnet_staging
+      REDIS_HOST: agentnet-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRATION: 3600
+      JAEGER_ENABLED: "false"
+      ENVIRONMENT: staging
+      CORS_ALLOWED_ORIGINS: "https://staging.agentnet.io.vn,http://localhost:8180"
+      RATE_LIMIT_PER_MINUTE: 60
+    ports:
+      - "8100:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    networks:
+      - agentnet_agentnet-network
+
+  payment-staging:
+    build: ./services/payment
+    container_name: agentnet-staging-payment
+    environment:
+      POSTGRES_HOST: agentnet-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: agentnet_staging
+      REDIS_HOST: agentnet-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRATION: 3600
+      JAEGER_ENABLED: "false"
+      ENVIRONMENT: staging
+      CORS_ALLOWED_ORIGINS: "https://staging.agentnet.io.vn,http://localhost:8180"
+    ports:
+      - "8101:8001"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001
+    restart: unless-stopped
+    networks:
+      - agentnet_agentnet-network
+
+  worker-staging:
+    build: ./services/worker
+    container_name: agentnet-staging-worker
+    environment:
+      POSTGRES_HOST: agentnet-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: agentnet_staging
+      REDIS_HOST: agentnet-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JAEGER_ENABLED: "false"
+      ENVIRONMENT: staging
+    command: python -m app.worker
+    restart: unless-stopped
+    networks:
+      - agentnet_agentnet-network
+
+  dashboard-staging:
+    build: ./services/dashboard
+    container_name: agentnet-staging-dashboard
+    environment:
+      REGISTRY_URL: http://agentnet-staging-registry:8000
+      PAYMENT_URL: http://agentnet-staging-payment:8001
+      DASHBOARD_PORT: 8080
+      WEREWOLF_STATE_FILE: /app/werewolf_data/werewolf_state.json
+      WEREWOLF_STATS_FILE: /app/werewolf_data/werewolf_stats.json
+    volumes:
+      - /opt/agentnet/werewolf_data:/app/werewolf_data
+    ports:
+      - "8180:8080"
+    restart: unless-stopped
+    networks:
+      - agentnet_agentnet-network
+
+networks:
+  agentnet_agentnet-network:
+    external: true
