@@ -159,7 +159,7 @@ def register_page():
         try:
             resp = api_client.register(email, password)
             session["access_token"] = resp.get("access_token")
-            flash("Registration successful. Welcome to AgentNet!", "success")
+            flash("Registration successful! You are now logged in.", "success")
             return redirect(url_for('index'))
         except APIError as e:
             flash(f"Registration failed: {e.message}", "danger")
@@ -168,12 +168,12 @@ def register_page():
 
 @app.route("/logout")
 def logout_page():
-    session.clear()
-    flash("Logged out.", "info")
+    session.pop("access_token", None)
+    flash("You have been signed out.", "info")
     return redirect(url_for('landing_page'))
 
 # ============================================================
-# PROTECTED ROUTES (require authentication)
+# PROTECTED ROUTES
 # ============================================================
 
 @app.route("/directory")
@@ -205,10 +205,6 @@ def tasks_page():
         tasks = []
     return render_template("tasks.html", tasks=tasks)
 
-@app.route("/collaboration")
-def collaboration_page():
-    return render_template("collaboration.html")
-
 @app.route("/my-agents")
 def my_agents_page():
     try:
@@ -218,31 +214,60 @@ def my_agents_page():
         agents = []
     return render_template("my_agents.html", agents=agents)
 
+@app.route("/notifications")
+def notifications_page():
+    return render_template("notifications.html")
+
+@app.route("/collaboration")
+def collaboration_page():
+    return render_template("collaboration.html")
+
+# ============================================================
+# AGENT CRUD
+# ============================================================
+
 @app.route("/new-agent", methods=["GET", "POST"])
 def register_agent_page():
     if request.method == "POST":
-        name = request.form.get("name")
-        description = request.form.get("description")
-        endpoint = request.form.get("endpoint")
-        capabilities = request.form.get("capabilities")
-        if not name:
+        data = {
+            "name": request.form.get("name"),
+            "description": request.form.get("description"),
+            "endpoint": request.form.get("endpoint"),
+            "capabilities": [c.strip() for c in request.form.get("capabilities", "").split(",") if c.strip()]
+        }
+        if not data["name"]:
             flash("Agent name is required.", "danger")
             return render_template("new_agent.html")
-        data = {
-            "name": name,
-            "description": description,
-            "endpoint": endpoint,
-            "capabilities": [c.strip() for c in capabilities.split(",") if c.strip()] if capabilities else []
-        }
         try:
             agent = api_client.create_agent(data)
-            flash(f"Agent '{agent.get('name', name)}' registered successfully.", "success")
+            flash(f"Agent '{agent.get('name')}' registered successfully!", "success")
             return redirect(url_for('my_agents_page'))
         except APIError as e:
-            flash(f"Failed to register agent: {e.message}", "danger")
+            flash(f"Failed to create agent: {e.message}", "danger")
     return render_template("new_agent.html")
 
-@app.route("/notifications")
-def notifications_page():
-    # Placeholder: notifications will be implemented later
-    return render_template("notifications.html")
+# ============================================================
+# WALLET OPERATIONS
+# ============================================================
+
+@app.route("/wallet/fund", methods=["POST"])
+def fund_wallet():
+    wallet_id = request.form.get("wallet_id")
+    amount = request.form.get("amount")
+    if not wallet_id or not amount:
+        flash("Wallet ID and amount are required.", "danger")
+        return redirect(url_for('wallet_page'))
+    try:
+        amount = float(amount)
+        api_client.fund_wallet(wallet_id, amount)
+        flash("Wallet funded successfully.", "success")
+    except (ValueError, APIError) as e:
+        flash(f"Error funding wallet: {e}", "danger")
+    return redirect(url_for('wallet_page'))
+
+# ============================================================
+# ERROR HANDLING
+# ============================================================
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
