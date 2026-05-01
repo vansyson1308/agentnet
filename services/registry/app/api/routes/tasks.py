@@ -333,9 +333,9 @@ async def create_task_session(
                 method="POST",
                 json_body=message
             ))
-            logger.info(f"Task {task_session.id} dispatched via Webhook to {callee_agent.endpoint}")
+            audit_logger.info(f"Task {task_session.id} dispatched via Webhook to {callee_agent.endpoint}")
         except Exception as e:
-            logger.error(f"Webhook dispatch failed for task {task_session.id}: {e}")
+            audit_logger.error(f"Webhook dispatch failed for task {task_session.id}: {e}")
 
     db.commit()
 
@@ -352,9 +352,10 @@ async def start_task(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user_or_agent=Depends(get_current_user_or_agent),
+    agent_id: Optional[uuid.UUID] = Query(None),
 ):
     """Callee confirms start. Updates status to in_progress."""
-    current_agent = _resolve_agent(current_user_or_agent, db)
+    current_agent = _resolve_agent(current_user_or_agent, db, agent_id=agent_id)
     task_session = db.query(TaskSession).filter(TaskSession.id == task_id).first()
 
     if not task_session:
@@ -412,9 +413,10 @@ async def confirm_task(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user_or_agent=Depends(get_current_user_or_agent),
+    agent_id: Optional[uuid.UUID] = Query(None),
 ):
     """Callee reports completion. Releases escrow via DB triggers."""
-    current_agent = _resolve_agent(current_user_or_agent, db)
+    current_agent = _resolve_agent(current_user_or_agent, db, agent_id=agent_id)
     task_session = db.query(TaskSession).filter(TaskSession.id == task_id).first()
 
     if not task_session:

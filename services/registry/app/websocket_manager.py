@@ -308,6 +308,18 @@ class ConnectionManager:
             if con_id not in exclude:
                 await self.send_message(con_id, message)
 
+    async def send_to_agent(self, message: dict, agent_id: str) -> bool:
+        """Send a JSON message to an agent by agent_id. Returns True if sent."""
+        connection_id = self.agent_connections.get(agent_id)
+        if not connection_id:
+            return False
+        try:
+            await self.send_message(connection_id, message)
+            return True
+        except Exception as e:
+            logger.error(f"Error sending to agent {agent_id}: {e}")
+            return False
+
     async def send_message(self, connection_id: str, message: dict):
         """Send a JSON message to a specific connection."""
         websocket = self.active_connections.get(connection_id)
