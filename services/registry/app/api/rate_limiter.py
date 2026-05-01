@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
-import aioredis
+import redis.asyncio as aioredis
 
 class TokenBucket:
     """In-memory token bucket fallback (khi Redis chưa available)."""
