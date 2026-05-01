@@ -1,7 +1,7 @@
 # AgentNet -- Agent Backlog
 
 > Source of truth for what the agent fleet should build next.
-> Format: YAML block. Planner reads this, picks first `status: open` item,
+> Format: YAML block. Planner reads this, picks first item with `status: dispatched` or `status: todo`,
 > dispatches to Builder. After QA passes, status -> `done`.
 > User can edit this file directly to add/reprioritize tasks.
 >
@@ -11,647 +11,292 @@
 
 ```yaml
 backlog:
-- id: AB-001
-  title: Add /v1/agents/{id}/capabilities endpoint
+- id: AB-409
+  title: Redesign AgentNet dashboard UI — dark theme, agent activity timeline, mobile-responsive
   priority: high
-  files_to_modify:
-  - services/registry/app/api/routes/agents.py
-  description: 'Add a dedicated GET /v1/agents/{agent_id}/capabilities endpoint that
-
-    returns just the capabilities array. Useful for clients doing
-
-    capability discovery without fetching full agent metadata.
-
-
-    Implementation hints:
-
-    - Add new route in routes/agents.py (after the existing GET /{agent_id} route).
-
-    - Use the existing get_db dependency.
-
-    - Query the Agent model and return its capabilities field.
-
-    - Return 404 if agent not found.
-
-    - The endpoint MUST be unauthenticated (read-only public info) to match other discovery endpoints.
-
-    '
-  acceptance:
-  - test "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/v1/agents/$AGENT_ID/capabilities)"
-    = "200"
-  - curl -s http://127.0.0.1:8000/v1/agents/$AGENT_ID/capabilities | python3 -c "import sys, json; d =
-    json.load(sys.stdin); assert isinstance(d, list) and len(d) > 0, f\"got {d}\""
   status: done
-  thread_id: 60d49688-55a0-49a7-8aef-bd4090f06225
-  retries: 1
-  shipped_at: '2026-04-25T10:19:03Z'
-- id: AB-002
-  title: 'CORS: allow trycloudflare.com origin pattern'
-  priority: high
-  files_to_modify:
-  - services/registry/app/main.py
-  description: 'Production CORS list misses cloudflare tunnel hostnames. Update the
-
-    CORS middleware to include allow_origin_regex matching r"https://.*\.trycloudflare\.com$".
-
-
-    Find the existing add_middleware(CORSMiddleware, ...) call and add
-
-    allow_origin_regex parameter alongside allow_origins. Keep all other
-
-    params (allow_credentials, allow_methods, allow_headers) intact.
-
-    '
-  acceptance:
-  - grep -q "trycloudflare" services/registry/app/main.py
-  - grep -q "allow_origin_regex" services/registry/app/main.py
-  status: done
-  thread_id: 707918bd-0e74-4cfb-befc-13d591d6ca58
-  retries: 1
-  shipped_at: '2026-04-25T10:20:35Z'
-- id: AB-003
-  title: 'Dashboard: dark mode toggle (CSS skeleton + button)'
-  priority: low
+  shipped_at: '2026-04-27T03:40:00Z'
   files_to_modify:
   - services/dashboard/app/static/css/dark.css
+  - services/dashboard/app/static/css/timeline.css
   - services/dashboard/app/templates/base.html
-  description: 'Add a theme toggle button to the dashboard navbar. Provide
-
-    services/dashboard/app/static/css/dark.css with overrides for
-
-    body/card/text colors when class ''theme-dark'' is on body.
-
-    Add a small inline JS snippet in base.html that toggles the class
-
-    on click and persists choice to localStorage.
-
-
-    Keep changes minimal -- do not refactor unrelated styles.
-
-    '
+  description: Redesign AgentNet dashboard UI with dark theme, real-time agent activity timeline, and
+    mobile responsiveness. Define CSS variables for dark theme, add timeline.css with vertical timeline
+    styles, add media queries for 768px/1024px breakpoints, hamburger menu on mobile. Add timeline-root
+    placeholder to index page.
   acceptance:
-  - test -s services/dashboard/app/static/css/dark.css
-  - grep -q "theme-toggle" services/dashboard/app/templates/base.html
-  - grep -q "theme-dark" services/dashboard/app/static/css/dark.css
-  status: done
-  thread_id: b12226af-07be-4789-b4af-2d9fc00ef16e
-  retries: 4
-  blocked_by: qa-failed-4x
-  shipped_at: '2026-04-25T10:23:37Z'
-- id: AB-004
-  title: Add /v1/stats/by-capability summary endpoint
-  priority: medium
-  files_to_modify:
-  - services/registry/app/api/routes/stats.py
-  description: 'Add an endpoint that aggregates task volume per capability across
-
-    the workplace. Returns array of objects with shape:
-
-    [{capability: str, total_tasks: int, completed_count: int}].
-
-
-    Use existing Task model + group by capability. Sort descending by total_tasks.
-
-    Mount the new route at GET /v1/stats/by-capability.
-
-    '
-  acceptance:
-  - 'test "$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/v1/stats/by-capability)"
-    = "200"'
-  - 'curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/v1/stats/by-capability | python3
-    -c "import sys, json; d = json.load(sys.stdin); assert isinstance(d, list), f\"got {type(d)}\""'
-  status: done
-  thread_id: a498aebe-6648-42c8-98ce-3b79121cbf47
-  retries: 1
-  shipped_at: '2026-04-25T10:24:38Z'
-- id: AB-005
-  title: Add ROADMAP.md to repo root
-  priority: low
-  files_to_modify:
-  - ROADMAP.md
-  description: 'Create a top-level ROADMAP.md describing AgentNet''s near-term direction:
-
-    - Q2 2026 focus: agent reputation system, on-chain settlement extension.
-
-    - Q3 2026 focus: marketplace UI for human users, capability search.
-
-    Use clear markdown with H1 title, two H2 sections, bullet points.
-
-    '
-  acceptance:
-  - test -s ROADMAP.md
-  - grep -q "^# " ROADMAP.md
-  - grep -qE "Q2 2026|Q3 2026" ROADMAP.md
-  status: done
-  thread_id: bb9f1511-1dec-42ca-87ef-7fa1a8d77f8b
-  shipped_at: '2026-04-25T10:25:38Z'
-- id: AB-006
-  title: Add /v1/health/deep with subsystem checks
-  priority: medium
-  files_to_modify:
-  - services/registry/app/api/routes/health.py
-  - services/registry/app/api/routes/__init__.py
-  description: 'Current /health is shallow. Add a new health.py routes file with GET /v1/health/deep that
-    returns: { "ok": bool, "postgres": {"ok": bool, "latency_ms": float}, "redis": {"ok": bool, "latency_ms":
-    float} }
-
-    ok = postgres.ok && redis.ok. Use try/except around each subsystem check. Mount via routes/__init__.py. '
-  acceptance:
-  - test "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/v1/health/deep)" = "200"
-  - 'curl -s http://127.0.0.1:8000/v1/health/deep | python3 -c "import sys, json; d = json.load(sys.stdin);
-    assert all(k in d for k in (\"postgres\", \"redis\", \"ok\")), f\"keys missing: {list(d.keys())}\""'
-  status: blocked
-  thread_id: c16b5155-df4f-4792-82b9-27b03bd043a8
-  retries: 6
-  blocked_by: qa-failed-6x
-- id: AB-007
-  title: Daily ship-log story poster (storyteller v4)
-  priority: medium
-  files_to_modify:
-  - hermes_storyteller_v4.py
-  description: 'A new file (Python script) that, when run, reads /opt/agentnet/SHIP_LOG.md
-
-    from the last 24 hours, formats a markdown story like:
-
-
-    # Daily Progress -- 2026-04-25
-
-    Shipped today (3): AB-001, AB-002, AB-006
-
-    In progress (1): AB-004
-
-    Blocked (0):
-
-
-    Then POSTs to /v1/stories/ with title "Daily Progress -- <date>".
-
-
-    Designed to be run by cron once per day. Uses /v1/auth/user/login.
-
-    '
-  acceptance:
-  - test -s hermes_storyteller_v4.py
-  - grep -q "Daily Progress" hermes_storyteller_v4.py
-  - grep -q "SHIP_LOG.md" hermes_storyteller_v4.py
-  status: done
-  thread_id: da31c97e-889a-4a2e-987c-b46e8d33142e
-  retries: 1
-  shipped_at: '2026-04-25T10:37:40Z'
-- id: AB-008
-  title: 'README badge: agent fleet status'
-  priority: low
-  status: review
-  files_to_modify:
-  - README.md
-  description: 'Add a simple status section near the top of README.md (after the title
-
-    badges block) listing the active 24/7 agent services and their roles:
-
-
-    ## Agent Fleet (24/7)
-
-    - hermes-brain (DeepSeek V4) -- orchestrator via Telegram
-
-    - openclaw-workhorse (DeepSeek V4 Flash) -- bulk research/fetch
-
-    - hermes-planner-v4 -- backlog reader, dispatches to builder
-
-    - hermes-builder-v6 -- DeepSeek codegen + git commit
-
-    - hermes-qaagent-v6 -- acceptance test runner
-
-    - hermes-storyteller-v3 -- daily ship-log narration
-
-    '
-  acceptance:
-  - grep -q "Agent Fleet" README.md
-  - grep -q "hermes-builder-v6" README.md
-  thread_id: 8d06323f-d64f-4112-9139-c74f0069a1ee
-- id: AB-100
-  title: Add /v1/agents/leaderboard endpoint (top 5 by success rate)
+  - curl -s http://127.0.0.1:8000/ | grep -q '<html.*class="dark-theme"'
+  - curl -s http://127.0.0.1:8000/ | grep -q 'timeline-container'
+  - test -f services/dashboard/app/static/css/timeline.css
+- id: AB-410
+  title: Add public agent marketplace landing page with search + filter
   priority: high
-  description: 'Add a public, unauthenticated GET endpoint /v1/agents/leaderboard that returns the top
-    5 agents sorted by success_rate descending. Only agents with completed_tasks > 0 are included. The
-    response is a JSON array of objects each containing: id (int), name (str), success_rate (float), completed_tasks
-    (int). success_rate is computed as successful_tasks / completed_tasks (both fields exist on the Agent
-    model). Use the existing Agent model from services/registry/app/models.py. The endpoint must be added
-    to the agents router in services/registry/app/api/routes/agents.py. Implementation: define a new async
-    function leaderboard() with @router.get(''/leaderboard''). Get a database session via Depends(get_db).
-    Query Agent, filter where completed_tasks > 0, order by (successful_tasks / completed_tasks).desc(),
-    limit(5). Return a list of dicts. Use result.scalars().all() to get agent objects, then build dicts.
-    No authentication dependency. No rate limiting. Ensure the endpoint is registered (the router is included
-    in app).'
   status: done
-  files_to_modify:
-  - services/registry/app/api/routes/agents.py
-  acceptance:
-  - curl -s http://127.0.0.1:8000/v1/agents/leaderboard | jq '. | length' | xargs test 0 -lt
-  - curl -s http://127.0.0.1:8000/v1/agents/leaderboard | jq '.[].success_rate' | sort -r -n | head -1
-    | xargs test $(curl -s http://127.0.0.1:8000/v1/agents/leaderboard | jq '.[0].success_rate') -eq
-  - curl -s http://127.0.0.1:8000/v1/agents/leaderboard | jq '.[].completed_tasks' | grep -q '0' && exit
-    1 || exit 0
-  enriched_at: '2026-04-25T10:42:22Z'
-  enriched_with_research: false
-  thread_id: 2a3875f3-7c5c-4e9f-ac86-7e7e9d6da4cd
-  shipped_at: '2026-04-25T10:44:42Z'
-- id: AB-101
-  title: Add agent reputation history tracking (best practice)
-  priority: medium
-  description: Add agent reputation history tracking by creating a new database migration (08-reputation-history.sql)
-    with table agent_reputation_history (agent_id UUID references agents, snapshot_date DATE, reputation_tier
-    TEXT, success_rate DOUBLE PRECISION, created_at TIMESTAMPTZ DEFAULT NOW()), unique constraint on (agent_id,
-    snapshot_date). In reputation.py, add function record_reputation_snapshot(agent_id, tier, success_rate)
-    that upserts a row for today's date using ON CONFLICT (agent_id, snapshot_date) DO UPDATE SET (reputation_tier,
-    success_rate) = (excluded.*). In agents.py, add GET /agents/{agent_id}/reputation/history endpoint
-    (authenticated) that returns a list of snapshot records for the agent ordered by snapshot_date DESC.
-    Deploy the migration via the existing init-db mechanism (e.g., run 08-reputation-history.sql on startup).
-    This follows best practice for time-series data by using a separate table with a date-based unique
-    constraint, enabling efficient daily snapshots without duplicates.
-  research_query: best practice storing time-series agent reputation history PostgreSQL 2026
-  status: blocked
-  enrich_failed_at: 1777115021.6147885
-  files_to_modify:
-  - services/registry/init-db/08-reputation-history.sql
-  - services/registry/app/reputation.py
-  - services/registry/app/api/routes/agents.py
-  acceptance:
-  - 'curl -s -o /dev/null -w ''%{http_code}'' -H ''Authorization: Bearer $TOKEN'' http://127.0.0.1:8000/agents/$AGENT_ID/reputation/history
-    | grep -q 200'
-  - 'curl -s -H ''Authorization: Bearer $TOKEN'' http://127.0.0.1:8000/agents/$AGENT_ID/reputation/history
-    | grep -q ''\['''
-  enriched_at: '2026-04-25T11:14:00Z'
-  enriched_with_research: false
-  thread_id: 0610d3dd-454c-4ec2-b61e-88d3d61fc344
-  retries: 3
-  blocked_by: qa-failed-3x
-- id: AB-200
-  title: Sua UI UX cua website AgentNet
-  priority: high
-  description: Refactor base.html to include a responsive navigation bar (navbar) with logo, user login
-    button, and links to Dashboard, Directory, and Offers. Use a fixed-top navbar with light background
-    and proper spacing. Update dark.css to define CSS variables for consistent theming, improve typography
-    (system font stack), and add styles for cards (agent cards in directory), grid layout, and hover effects.
-    Modify directory.html to wrap agent items in a grid container with card classes. This improves visual
-    hierarchy, mobile responsiveness, and overall user experience without introducing a heavy framework.
-  status: blocked
-  files_to_modify:
-  - services/dashboard/app/templates/base.html
-  - services/dashboard/app/static/css/dark.css
-  - services/dashboard/app/templates/directory.html
-  acceptance:
-  - curl -s http://127.0.0.1:8000 | grep -q '<nav class="navbar"'
-  - curl -s http://127.0.0.1:8000 | grep -q '<main class="container"'
-  - curl -s http://127.0.0.1:8000/directory | grep -q 'class="grid-container"'
-  enriched_at: '2026-04-25T11:22:13Z'
-  enriched_with_research: false
-  thread_id: 621ea446-8a28-48bb-b33e-42ac0a9c8390
-  retries: 3
-  blocked_by: qa-failed-3x
-- id: AB-201
-  title: 'Upgrade agentnet.io.vn website: research + detailed plan'
-  priority: high
-  description: 'Create a detailed multi-phase plan document (UPGRADE_PLAN.md) for upgrading the agentnet.io.vn
-    website. The plan is based on a full audit of the current React SPA (Vite+TS+Tailwind) served via
-    Nginx, and the backend services (registry, payment, simulation, dashboard). It covers 6 phases:
-
-
-    Phase 1: UX Audit & Quick Wins – inventory all existing pages (Dashboard, Agents, Offers, Chat, Network,
-    Marketplace, Collaboration, Chronicle) and their components; list missing pages (pricing, docs, signup
-    flow, agent directory search, task history) and propose adding them; identify low-hanging improvements
-    like loading spinners, error boundaries, mobile responsiveness.
-
-
-    Phase 2: Performance & Code Quality – implement lazy-loading, code splitting per route, bundle size
-    optimization, caching strategy (Service Worker for static assets), and replace any deprecated dependencies.
-
-
-    Phase 3: Marketing Landing Page – build a separate marketing landing page (e.g., /landing) with SEO-optimized
-    content, meta tags, Open Graph, and structured data; consider a SSG or static export for that page.
-
-
-    Phase 4: Integration Improvements – enhance WebSocket reconnection logic, API error boundaries with
-    user-friendly fallbacks, and authentication flow consistency (e.g., token refresh, redirect after
-    login).
-
-
-    Phase 5: Blog/Docs Section – add a markdown-based blog or documentation sub-site (e.g., /blog, /docs)
-    using React Router and a markdown renderer; maybe integrate with a headless CMS or just static markdown
-    files.
-
-
-    Phase 6: Monitoring & Analytics – integrate analytics (e.g., Plausible), performance monitoring (Lighthouse
-    CI), and user feedback widgets. Each phase includes concrete acceptance criteria in the plan document.'
-  research_query: best practices React dashboard UX upgrade 2026 microservices marketplace
-  status: done
-  files_to_modify:
-  - UPGRADE_PLAN.md
-  acceptance:
-  - test -f UPGRADE_PLAN.md
-  - 'grep -q ''Phase 1: UX Audit & Quick Wins'' UPGRADE_PLAN.md'
-  - 'grep -q ''Phase 6: SEO & Documentation Site'' UPGRADE_PLAN.md'
-  enriched_at: '2026-04-25T11:26:04Z'
-  enriched_with_research: false
-  thread_id: 9ab66829-b017-4a85-96bb-84b187f677b2
-  shipped_at: '2026-04-25T11:32:07Z'
-- id: AB-202
-  title: 'Phase 1: UX Audit & Quick Wins'
-  priority: high
-  files_to_modify:
-  - UPGRADE_PLAN.md
-  description: Inventory all existing pages (Dashboard, Agents, Offers, Chat, Network, Marketplace, Collaboration,
-    Chronicle) and their components. Identify missing pages (pricing, docs, signup flow, agent directory
-    search, task history). Add loading spinners for async data, implement error boundaries with user-friendly
-    fallbacks, improve mobile responsiveness (320px-768px), add missing meta tags for existing pages.
-  acceptance:
-  - test -f UPGRADE_PLAN.md
-  - grep -q 'Phase 1' UPGRADE_PLAN.md
-  status: done
-  thread_id: 08ef2f9e-b8bb-4de7-ae89-7acf788f2bfc
-  shipped_at: '2026-04-25T11:58:54Z'
-- id: AB-203
-  title: 'Phase 2: Performance & Code Quality'
-  priority: high
-  description: 'Add a service worker for cache-first static asset caching (CSS, JS, images) to improve
-    performance and offline resilience. Create `services/dashboard/app/static/js/service-worker.js` that
-    installs and activates, then intercepts fetch requests for static assets (e.g., /static/*) and serves
-    cached responses with a cache-first strategy. Register the service worker in the <head> of `base.html`
-    after checking `navigator.serviceWorker` availability. Audit `requirements.txt`: remove any deprecated
-    or unused packages (e.g., if `deprecated-pkg` is present), update remaining packages to latest compatible
-    versions (use `pip list --outdated` to identify, then bump versions in requirements.txt while preserving
-    compatibility with the Python 3.9+ runtime). No React or Vite build is present in this repo, so code
-    splitting and bundle analysis are not applicable. Instead, the performance focus is on caching and
-    dependency hygiene.'
-  status: done
-  files_to_modify:
-  - services/dashboard/app/static/js/service-worker.js
-  - services/dashboard/app/templates/base.html
-  - services/dashboard/requirements.txt
-  acceptance:
-  - test -f services/dashboard/app/static/js/service-worker.js
-  - grep -q "navigator.serviceWorker.register" services/dashboard/app/templates/base.html
-  - pip install -r services/dashboard/requirements.txt >/dev/null 2>&1
-  enriched_at: '2026-04-25T11:56:02Z'
-  enriched_with_research: false
-  thread_id: 35f102ee-aa32-4938-8cb2-f6bde3e1055a
-  shipped_at: '2026-04-25T12:00:12Z'
-- id: AB-204
-  title: 'Phase 3: Marketing Landing Page'
-  priority: medium
-  description: Build SEO-optimized marketing landing page at /landing as static export or standalone entry.
-    Add meta tags, Open Graph tags, JSON-LD structured data. Ensure page can be served independently from
-    main SPA (via Nginx or subdomain).
-  status: done
-  files_to_modify:
-  - UPGRADE_PLAN.md
-  acceptance:
-  - grep -q 'Phase 3' UPGRADE_PLAN.md
-  thread_id: bcf93805-5c81-43f3-bbc6-703c192dcad3
-  shipped_at: '2026-04-25T12:01:42Z'
-- id: AB-205
-  title: 'Phase 4: Integration Improvements'
-  priority: high
-  description: Implement WebSocket exponential backoff reconnection with max retries. Wrap all API calls
-    in unified error handler with toast notifications. Ensure seamless token refresh (401 → refresh →
-    retry). Standardize loading/error/empty states across all data-fetching components.
-  status: done
-  files_to_modify:
-  - UPGRADE_PLAN.md
-  acceptance:
-  - grep -q 'Phase 4' UPGRADE_PLAN.md
-  thread_id: b6efd1c6-3f67-46a2-88f3-d2739e1b3447
-  shipped_at: '2026-04-25T12:02:43Z'
-- id: AB-206
-  title: 'Phase 5: Blog/Docs Section'
-  priority: medium
-  description: Add React Router routes for /blog and /docs. Use react-markdown to render .md files from
-    /content/ dir. Apply Tailwind prose classes. /blog lists posts with title/date/excerpt. /docs has
-    sidebar nav. Syntax highlighting for code blocks.
-  status: done
-  files_to_modify:
-  - UPGRADE_PLAN.md
-  acceptance:
-  - grep -q 'Phase 5' UPGRADE_PLAN.md
-  thread_id: 033a0fa4-9f6e-4746-a5e6-069208a12e5d
-  shipped_at: '2026-04-25T12:03:44Z'
-- id: AB-207
-  title: 'Phase 6: SEO & Documentation Site'
-  priority: medium
-  description: Integrate Plausible analytics for privacy-friendly tracking. Set up Lighthouse CI for performance
-    regression detection. Add feedback widget on Dashboard, Agents, Marketplace. Ensure all public pages
-    have meta tags, XML sitemap, robots.txt. Implement structured data (JSON-LD) for agents, reviews,
-    pricing.
-  status: done
-  files_to_modify:
-  - UPGRADE_PLAN.md
-  acceptance:
-  - grep -q 'Phase 6' UPGRADE_PLAN.md
-  thread_id: 750d7129-07d7-40e5-8faa-1b44cfe3e393
-  shipped_at: '2026-04-25T12:04:44Z'
-- id: AB-300
-  title: Mount RateLimitMiddleware in registry main.py
-  priority: high
-  files_to_modify:
-  - services/registry/app/main.py
-  description: 'Mount the existing RateLimitMiddleware (already imported from app.api.rate_limiter) onto
-    the FastAPI app instance. Use defaults: 60 req/min/IP for general endpoints. Place app.add_middleware
-    call AFTER CORSMiddleware setup. Do NOT modify any existing endpoints.'
-  acceptance:
-  - grep -q "add_middleware(RateLimitMiddleware" services/registry/app/main.py
-  status: done
-  thread_id: f5f3ce82-6d2a-4954-93fd-f195bfec98ca
-  shipped_at: '2026-04-25T14:51:35Z'
-- id: AB-301
-  title: Mount RateLimitMiddleware in payment main.py
-  priority: high
-  files_to_modify:
-  - services/payment/app/main.py
-  description: Same pattern as AB-300 but for payment service. Import RateLimitMiddleware from .api.rate_limiter
-    (or wherever it lives in payment service -- check existing imports). Mount with default 60 req/min/IP.
-    If RateLimitMiddleware doesn't exist in payment, create a copy file payment/app/api/rate_limiter.py
-    mirroring the registry one (in-memory token bucket).
-  acceptance:
-  - grep -qE "(RateLimit|add_middleware.*Rate)" services/payment/app/main.py
-  status: done
-  thread_id: 03c642db-b9b1-4372-8bec-fa80f84407cf
-  shipped_at: '2026-04-25T14:52:35Z'
-- id: AB-302
-  title: Add audit_log table migration
-  priority: high
-  files_to_modify:
-  - services/registry/init-db/02_audit_log.sql
-  - services/registry/app/models.py
-  description: 'Add a new audit_log table for security event tracking. Create migration file 02_audit_log.sql
-    with: CREATE TABLE IF NOT EXISTS audit_log (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), actor_user_id
-    uuid, actor_ip inet, action text NOT NULL, target_id text, payload_summary text, success boolean DEFAULT
-    true, created_at timestamptz NOT NULL DEFAULT now()). Add index on (action, created_at). Also add
-    corresponding SQLAlchemy model AuditLog in models.py.'
-  acceptance:
-  - test -f services/registry/init-db/02_audit_log.sql
-  - grep -q "CREATE TABLE.*audit_log" services/registry/init-db/02_audit_log.sql
-  - grep -q "class AuditLog" services/registry/app/models.py
-  status: done
-  thread_id: 568ed55a-1937-4b2b-890d-4ff75479fbc7
-  shipped_at: '2026-04-25T14:54:06Z'
-- id: AB-303
-  title: Strip sensitive fields from public GET /v1/agents/{id}
-  priority: medium
-  files_to_modify:
-  - services/registry/app/api/routes/agents.py
-  description: 'The GET /v1/agents/{agent_id} endpoint currently returns the full agent record including
-    endpoint URL and public_key. For info disclosure protection, when caller is unauthenticated (no Bearer
-    token or invalid one), return a redacted version: omit `endpoint` and `public_key` fields. When caller
-    IS authenticated, return full record. Implement using a helper function or response model variant.
-    Do NOT change other agent endpoints.'
-  acceptance:
-  - grep -qE "(endpoint.*pop|exclude.*endpoint|RedactedAgent|public_key.*pop)" services/registry/app/api/routes/agents.py
-  status: blocked
-  thread_id: 8fe37b11-becd-4348-98bd-ca20fefc5471
-  retries: 3
-  blocked_by: qa-failed-3x
-- id: AB-310
-  title: Add password policy validator on user register
-  priority: high
-  files_to_modify:
-  - services/registry/app/api/routes/auth.py
-  description: 'In the POST /v1/auth/user/register endpoint, before creating the user, validate the password
-    meets policy: at least 12 characters, contains at least one uppercase letter, one lowercase letter,
-    one digit. If fails, raise HTTPException 400 with detail explaining which rule failed. Use a helper
-    function _validate_password(pw: str) that returns None on pass or error message on fail.'
-  acceptance:
-  - grep -q "_validate_password\|password.*12\|len(.*password.*>= 12" services/registry/app/api/routes/auth.py
-  status: done
-  thread_id: 97d92f15-eff4-4074-ba55-05c988ee1fe0
-  shipped_at: '2026-04-25T15:00:40Z'
-- id: AB-311
-  title: Add email_verification_tokens table
-  priority: high
-  files_to_modify:
-  - services/registry/init-db/03_email_verification.sql
-  description: 'Migration: create table email_verification_tokens (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id uuid REFERENCES users(id) ON DELETE CASCADE, token text UNIQUE NOT NULL, expires_at timestamptz
-    NOT NULL, consumed_at timestamptz, created_at timestamptz DEFAULT now()). Index on token. Also ALTER
-    TABLE users ADD COLUMN IF NOT EXISTS is_email_verified boolean DEFAULT false.'
-  acceptance:
-  - test -f services/registry/init-db/03_email_verification.sql
-  - grep -q "email_verification_tokens" services/registry/init-db/03_email_verification.sql
-  - grep -q "is_email_verified" services/registry/init-db/03_email_verification.sql
-  status: done
-  thread_id: 723ba1c3-0d2e-4992-8d97-e39a13fb324c
-  shipped_at: '2026-04-25T15:01:40Z'
-- id: AB-312
-  title: Add /v1/auth/verify-email endpoint
-  priority: high
-  files_to_modify:
-  - services/registry/app/api/routes/auth.py
-  description: 'Add a new endpoint GET /v1/auth/verify-email?token=XXX that: 1) looks up email_verification_tokens
-    by token, 2) checks expires_at > now() AND consumed_at IS NULL, 3) sets users.is_email_verified=true
-    for that user_id, 4) sets consumed_at=now() on the token, 5) returns {ok: true, message: ''verified''}
-    on success or 400 on expired/invalid. Also add POST /v1/auth/resend-verification (requires email in
-    body) that creates a new token and (TODO logs token to /var/log/agentnet-verify.log since SMTP not
-    yet configured).'
-  acceptance:
-  - grep -qE "(verify-email|verify_email)" services/registry/app/api/routes/auth.py
-  - grep -q "is_email_verified" services/registry/app/api/routes/auth.py
-  status: done
-  thread_id: fde58bf2-1699-4333-8ed1-241a44289492
-  shipped_at: '2026-04-25T15:03:06Z'
-- id: AB-320
-  title: Add /marketplace public landing page on dashboard
-  priority: medium
+  shipped_at: '2026-04-27T19:24:54Z'
   files_to_modify:
   - services/dashboard/app/templates/marketplace.html
   - services/dashboard/app/main.py
-  description: 'Create a public landing page route GET /marketplace on the dashboard service. The HTML
-    template should: - explain what AgentNet is (1-paragraph), - show a signup form (email + password
-    fields, ToS checkbox), - POST to /v1/auth/user/register on submit (via JS fetch), - on success show
-    ''Check your email for verification link'', - include link to /docs (FastAPI auto OpenAPI). Use minimal
-    inline CSS, no external frameworks. The route should NOT require auth.'
+  - services/dashboard/app/api_client.py
+  description: 'Add a public agent marketplace landing page at /marketplace. The page displays all registered
+    agents in a responsive grid layout. Each agent card shows name, capabilities, rating (stars or numeric),
+    and price (if set). Features: a search bar at top that filters agent names/capabilities via query
+    parameter "search", a filter dropdown for capability/category (query param "category"), and sort controls
+    for rating or price (query params "sort" and "order"). The page reads from the existing GET /v1/agents
+    endpoint (in registry service) which already supports query parameters "search", "category", "sort",
+    "order". Modify the dashboard"s main.py to add a GET /marketplace route that calls api_client.fetch_agents(query_params)
+    and renders the marketplace template. Update api_client.py with a fetch_agents method that calls the
+    registry API. Overwrite the existing marketplace.html template with a new design using responsive
+    CSS grid the same as dark.css theme. Use JavaScript for dynamic search/filter without page reload,
+    or keep it server-side for simplicity. Ensure the page is accessible without authentication (public).
+    Mobile-responsive: must work on 320px-768px.'
   acceptance:
-  - test -f services/dashboard/app/templates/marketplace.html
-  - grep -q "marketplace" services/dashboard/app/main.py
-  - grep -q "AgentNet" services/dashboard/app/templates/marketplace.html
-  status: done
-  thread_id: 7774fca0-2177-4fa8-80ac-280c89b212b0
-  retries: 1
-  shipped_at: '2026-04-25T15:06:13Z'
-- id: AB-400
-  title: Audit log entry for every ImprovementProposal lifecycle transition
+  - curl -s http://127.0.0.1:8080/marketplace | grep -q 'search-bar'
+  - curl -s 'http://127.0.0.1:8080/marketplace?search=echo&category=utility' | grep -q 'Echo Agent'
+  - curl -s 'http://127.0.0.1:8080/marketplace?sort=rating&order=desc' | grep -q 'grid-layout'
+  status: migrated-to-paperclip
+  thread_id: ebcfae15-17c2-4bbe-8076-20227a3c4c69
+  qa_feedback: null
+  retries: 3
+  blocked_by: done
+- id: AB-411
+  title: Build agent referral leaderboard — top agents by task count/success rate
   priority: medium
   files_to_modify:
-  - services/registry/app/api/routes/improvements.py
-  description: 'Whenever an improvement proposal is created, approved, rejected, converted to a task,
-    or marked implemented, write one row to audit_log with action like "improvement.create",
-    "improvement.approve", etc. Include actor_user_id (current_user.id when present), target_id (proposal
-    UUID), payload_summary (JSON of relevant fields), success=true. The reflection loop in the worker
-    auto-generates proposals; for those rows, actor_user_id can be NULL and action is
-    "improvement.auto_generate". Do not break the existing route signatures; add a small _log_audit
-    helper that opens its own short transaction so a failed audit never breaks the main mutation.'
-  status: open
+  - services/registry/app/api/routes/stats.py
+  - services/dashboard/app/templates/leaderboard.html
+  - services/dashboard/app/main.py
+  description: 'Add a public leaderboard page at /leaderboard served by the dashboard service, and a new
+    API endpoint /api/v1/leaderboard in the registry service (stats.py). The endpoint aggregates data
+    from the tasks table: for each agent, compute total tasks (count), completed tasks (status="completed"),
+    success rate = (completed / total)*100, and total earnings from task rewards. Accept query parameter
+    sort_by with values "tasks", "success_rate", "earnings". Return a JSON array sorted descending. Limit
+    to top 50 agents. Dashboard template leaderboard.html renders a table with all 50 entries. Each agent
+    name links to /agents/{agent_id}. Mobile-responsive: table scrolls horizontally on small screens.'
   acceptance:
-  - 'PROPOSAL_ID=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json"
-    -d ''{"title":"audit-test","source":"human_feedback"}'' http://127.0.0.1:8000/v1/improvements/ |
-    python3 -c "import sys, json; print(json.load(sys.stdin)[''id''])"); test -n "$PROPOSAL_ID"'
-  - 'docker compose exec -T postgres psql -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM
-    audit_log WHERE action = ''improvement.create'' AND target_id = ''$PROPOSAL_ID''" | grep -q "1"'
-- id: AB-401
-  title: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints
-  priority: high
-  files_to_modify:
-  - 'NOTE: this lives in a separate repo (the React SPA is deployed at dashboard.agentnet.io.vn from
-    /opt/agentnet-dashboard-ui/). Hermes builder should clone that repo, add new tabs Goals / Lab /
-    Memory consuming GET /v1/goals, /v1/improvements, /v1/memory, plus the agent mission editor on
-    the existing agent profile page.'
-  description: 'Add three new tabs to the React SPA: Goals (society goal map + create form), Lab
-    (improvement proposals with approve/reject/convert buttons), Memory (society + agent lessons,
-    tag filter). Mount under the existing top-nav alongside Dashboard / Agents / Offers. Reuse the
-    existing API client wrapper; new endpoints follow the same JWT auth pattern as the rest. Add
-    a "Mission" panel to the agent profile page that lets the owner edit mission text + active
-    goal_id. UX should reuse existing card / status-pill components.'
-  status: open
-  acceptance:
-  - 'curl -fsS https://dashboard.agentnet.io.vn/ | grep -q "Goals"'
-  - 'curl -fsS https://dashboard.agentnet.io.vn/ | grep -q "Lab"'
-  - 'curl -fsS https://dashboard.agentnet.io.vn/ | grep -q "Memory"'
-- id: AB-402
-  title: Simulation service produces realistic Goals + ImprovementProposals
+  - curl -s http://127.0.0.1:8000/api/v1/leaderboard?sort_by=tasks | python3 -c "import sys,json; d=json.load(sys.stdin);
+    assert len(d)>0; print('OK')"
+  - curl -s http://127.0.0.1:8080/leaderboard | grep -q 'Leaderboard'
+  status: migrated-to-paperclip
+  thread_id: 2247291d-2007-4f89-a6a9-e26be6877015
+  qa_feedback: null
+  retries: 3
+  blocked_by: qa-failed-3x
+- id: AB-412
+  title: Add live task execution timeline with WebSocket streaming to dashboard
   priority: medium
   files_to_modify:
-  - services/simulation/app/services/simulation_runner.py
-  description: 'When the swarm simulation runs (capability=swarm_simulation), seed each simulated
-    agent with a realistic mission text + 1-2 active goals. After each simulated task ends, write
-    one MemoryItem (AGENT-scope for the simulated callee) and -- on failures -- one
-    ImprovementProposal. This keeps the lab populated with realistic activity without waiting for
-    real failed tasks. Gate via env var SIMULATION_PRODUCE_GOALS=1 so existing simulations stay
-    deterministic by default.'
-  status: open
+  - services/registry/app/api/routes/websocket.py
+  - services/dashboard/app/templates/tasks.html
+  - services/dashboard/app/static/js/werewolf.js
+  description: 'Add a live task execution timeline to the dashboard that displays tasks moving through
+    states: created -> enriched -> dispatched -> in_progress -> review -> done/failed. The registry service
+    exposes a WebSocket endpoint at /ws/tasks/timeline that pushes task state change events. Each event
+    includes: task_id, agent_name, escrow_amount, current_state, previous_state, duration (seconds since
+    creation), and timestamp. The dashboard"s tasks.html template should include a new timeline container
+    (<div id="task-timeline">) with auto-scroll to latest entry. The werewolf.js file should connect to
+    the WebSocket, parse incoming JSON, and render each task as a row showing: agent name, current state
+    (with color coding), duration, and escrow amount. The timeline should show the last 50 tasks and auto-scroll
+    to the newest. Mobile-responsive: timeline should stack vertically on mobile.'
   acceptance:
-  - 'docker compose exec -T postgres psql -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM
-    goals WHERE owner_type = ''AGENT''" | python3 -c "import sys; n=int(sys.stdin.read().split()[2]);
-    assert n > 0, f''expected goals, got {n}''"'
-- id: AB-403
-  title: Hedera HCS audit stamp on IMPLEMENTED proposals
+  - 'curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/ws/tasks/timeline
+    | grep 101'
+  - grep -q 'ws://127.0.0.1:8000/ws/tasks/timeline' services/dashboard/app/static/js/werewolf.js
+  - grep -q 'timeline' services/dashboard/app/templates/tasks.html
+  status: migrated-to-paperclip
+  thread_id: c7b5a48d-5097-491f-8796-9a74922559ce
+  qa_feedback: null
+  retries: 3
+  blocked_by: qa-failed-3x
+- id: AB-413
+  title: Implement agent auto-scaling — spawn worker agent on high backlog load
   priority: low
   files_to_modify:
-  - services/registry/app/api/routes/improvements.py
-  description: 'When a proposal transitions to status=IMPLEMENTED, write a consensus stamp to a
-    Hedera HCS topic so the implementation history is immutable. Topic id from env
-    HCS_IMPROVEMENT_TOPIC_ID. The HCS message payload is JSON of {proposal_id, source_task_id,
-    converted_task_id, implemented_at, summary_hash}. Failure to write to HCS must NOT block the
-    DB transition (best-effort, log + retry queued separately).'
-  status: open
+  - services/registry/app/auto_scaler.py
+  - services/registry/app/main.py
+  - services/registry/requirements.txt
+  description: Implement auto-scaling for Builder agents. Create a new module auto_scaler.py that periodically
+    (every 60 seconds) queries the task queue depth. If backlog exceeds 50 and Builder is busy, spawn
+    a new Docker container via python docker SDK. When backlog drops below 20, stop the spawned container
+    and clean up. Low priority — skip if other items pending.
   acceptance:
-  - 'grep -q "HCS_IMPROVEMENT_TOPIC_ID" services/registry/app/api/routes/improvements.py'
-  - 'grep -qi "hcs" services/registry/app/api/routes/improvements.py'
+  - curl -s http://127.0.0.1:8000/agents | python3 -c "import sys,json; data=json.load(sys.stdin); agents=[a
+    for a in data if a.get('agent_type')=='builder-scaling']; print(len(agents))" | grep -q '0'
+  status: migrated-to-paperclip
+  thread_id: 8ade54e9-6e45-4c07-ba84-eb540cba251a
+  qa_feedback: null
+  retries: 3
+  blocked_by: qa-failed-3x
+- id: AB-414
+  title: Add werewolf game spectator mode with mobile-responsive layout
+  priority: medium
+  files_to_modify:
+  - services/dashboard/app/templates/werewolf_arena.html
+  - services/dashboard/app/main.py
+  - services/dashboard/app/static/css/werewolf.css
+  description: 'Add a spectator mode to the Werewolf game page. When a user visits /werewolf/spectate,
+    they see the game state (players, roles revealed on death, day/night cycle, vote history) without
+    being a player. Mobile-responsive: layout stacks vertically on screens <768px, game board scales to
+    fit viewport. Add spectator-specific CSS in werewolf.css.'
+  acceptance:
+  - curl -s http://127.0.0.1:8000/werewolf/spectate | grep -q 'spectator'
+  status: migrated-to-paperclip
+  thread_id: 846abc5e-c84e-41ea-b853-ca2d97490630
+  qa_feedback: null
+  retries: 3
+  blocked_by: qa-failed-3x
 ```
 
 ## How to add a new task
 
 1. Edit this file (commit to git or just save).
 2. Append a new entry under `backlog:` with a unique `id` (next: AB-009, AB-010, ...).
-3. Set `status: open` and at least one `acceptance` criterion as an executable bash one-liner.
+3. Set `status: migrated-to-paperclip` and at least one `acceptance` criterion as an executable bash one-liner.
 4. Planner picks it up next cycle (every ~30s).
 
 ## Manual override
 
-To pause an agent: set `status: blocked` and add `blocked_by: manual-hold`.
+To pause an agent: set `status: migrated-to-paperclip` and add `blocked_by: manual-hold`.
 To force-rerun a "done" task: change `status` back to `open` (creates a new commit).
+
+- id: PAP-5-METAVERSE-1
+  title: '[METAVERSE] Three.js 3D agent space — WebGL scene + orbit controls + grid floor'
+  priority: high
+  status: done
+  description: |
+    Tạo trang /metaverse trong dashboard service. Dùng Three.js CDN tạo scene với:
+    - Grid floor (10x10) làm mặt sàn ảo
+    - OrbitControls cho phép xoay/zoom/pan
+    - Ambient light + directional light
+    - Camera bắt đầu góc nhìn từ trên cao
+    - Responsive canvas fill viewport
+  acceptance:
+    - 'curl -s http://127.0.0.1:8080/metaverse | grep -q "three.js"'
+    - 'curl -s http://127.0.0.1:8080/metaverse | grep -q "OrbitControls"'
+
+- id: PAP-5-METAVERSE-2
+  title: '[METAVERSE] Agent avatar spheres — render agents as 3D objects with labels'
+  priority: high
+  status: dispatched
+  description: |
+    Fetch agents từ API /v1/agents, render mỗi agent thành sphere 3D trên grid:
+    - Sphere màu random theo agent type
+    - Label tên agent floating trên sphere (CSS2DRenderer hoặc sprite)
+    - Position ngẫu nhiên trên grid floor
+    - Sphere animation nhẹ (pulse scale)
+  acceptance:
+    - 'curl -s http://127.0.0.1:8080/metaverse | grep -q "MeshStandardMaterial"'
+    - 'curl -s http://127.0.0.1:8080/metaverse | grep -q "agent.position"'
+
+- id: PAP-5-METAVERSE-3
+  title: '[METAVERSE] Real-time WebSocket sync — agent positions update live'
+  priority: medium
+  status: dispatched
+  description: |
+    Kết nối WebSocket tới AgentNet registry /ws để nhận agent activity:
+    - Khi agent online/offline → sphere chuyển màu (xanh/đỏ)
+    - Task execution → particle effect + movement animation
+    - Reconnect logic nếu WS disconnect
+    - Hiển thị event feed ở sidebar
+  acceptance:
+    - 'curl -s http://127.0.0.1:8080/metaverse | grep -q "new WebSocket"'
+    - 'curl -s http://127.0.0.1:8080/metaverse | grep -q "agent-activity"'
+
+- id: PAP-6-MARKET-1
+  title: '[MARKETPLACE] Public landing page — hero, features grid, pricing tiers, CTA'
+  priority: high
+  status: dispatched
+  description: |
+    Trang /public-landing cho AgentNet marketplace:
+    - Hero section với animated gradient + tagline "AI Agents for Hire"
+    - Features grid 3 cột (Discover, Hire, Pay) với icons
+    - Pricing tiers: Free, Pro ($10/mo), Enterprise ($50/mo)
+    - CTA button "Get Started" → /register
+    - Footer với links
+    - Responsive (mobile stack)
+  acceptance:
+    - 'curl -s http://127.0.0.1:8080/public-landing | grep -c "pricing-tier" | grep "3"'
+    - 'curl -s http://127.0.0.1:8080/public-landing | grep -q "hero-gradient"'
+
+- id: PAP-6-MARKET-2
+  title: '[MARKETPLACE] Agent search + filter — discover agents with real-time filtering'
+  priority: high
+  status: dispatched
+  description: |
+    Nâng cấp trang /marketplace với real-time search:
+    - Search bar filter agent name + capabilities
+    - Category dropdown (utility, creative, devops, gaming)
+    - Sort by rating, price, recent
+    - Grid layout responsive (2 col mobile, 3 col tablet, 4 col desktop)
+    - Fetch từ /v1/agents với query params
+  acceptance:
+    - 'curl -s "http://127.0.0.1:8080/marketplace?search=echo" | grep -q "Echo Agent"'
+    - 'curl -s "http://127.0.0.1:8080/marketplace?category=utility" | grep -q "grid-layout"'
+
+- id: PAP-6-MARKET-3
+  title: '[MARKETPLACE] Agent registration wizard — multi-step form for public users'
+  priority: medium
+  status: dispatched
+  description: |
+    Multi-step wizard form /agent/register:
+    - Step 1: Basic info (name, type, endpoint)
+    - Step 2: Capabilities selector (checkboxes)
+    - Step 3: Pricing (credits per task)
+    - Step 4: Review + Submit → POST /v1/agents
+    - Progress indicator, back/next buttons, validation per step
+    - No auth required (public users can register agents)
+  acceptance:
+    - 'curl -s http://127.0.0.1:8080/agent/register | grep -c "form-step" | grep "4"'
+    - 'curl -s http://127.0.0.1:8080/agent/register | grep -q "wizard-progress"'
+
+- id: AB-415
+  title: '[APP] Provisioning Catalog — service discovery endpoint for agents'
+  priority: high
+  status: dispatched
+  description: |
+    Build a provisioning catalog API mirroring Stripe Projects' `stripe projects catalog`.
+    - GET /v1/catalog → JSON array of provisionable services (domain, hosting, storage, db, API keys...)
+    - Each entry: {provider, service, description, pricing, regions, tiers, required_params}
+    - Provider registry: Cloudflare, Vultr, GitHub, HuggingFace, etc.
+    - Agents query this to discover what they can auto-provision
+    - DB table: provisioning_services + provisioning_providers
+  research_query: "Stripe Projects catalog API format JSON schema service discovery 2026"
+
+- id: AB-416
+  title: '[APP] Scoped API Token — per-resource, per-agent credentials with limits'
+  priority: high
+  status: dispatched
+  description: |
+    Scoped API tokens system — giống Stripe Shared Payment Token + Cloudflare scoped token.
+    - POST /v1/tokens → create token scoped to specific resource+agent, with: spending_cap, expiry, allowed_actions
+    - Token chỉ có quyền trên resource được cấp (domain X, bucket Y), không full account
+    - DB: scoped_tokens table (token_hash, agent_id, resource_type, resource_id, caps, expires_at)
+    - Integration với escrow system: khi agent dùng token, check cap trước khi trừ wallet
+  research_query: "Cloudflare scoped API token architecture per-resource permissions 2026"
+
+- id: AB-417
+  title: '[APP] Projects API — group resources into persistent projects for agents'
+  priority: medium
+  status: dispatched
+  description: |
+    Projects concept — mirroring Stripe Projects' state.json.
+    - POST /v1/projects → create project (name, agent_id)
+    - GET /v1/projects/{id} → list resources in project + their status
+    - POST /v1/projects/{id}/resources → add resource to project
+    - DB: projects table + project_resources table
+    - Project state exportable as JSON (state.json equivalent) cho CI/CD
+  research_query: "Stripe Projects state.json schema resource grouping best practices"
+
+- id: AB-418
+  title: '[APP] Platform Orchestrator API — third-party provisioning endpoint'
+  priority: high
+  status: dispatched
+  description: |
+    Orchestrator API — cho phép platform bên thứ 3 (như Stripe, Vercel, Netlify) gọi AgentNet
+    để provision account + resources cho user của họ. Mirror Cloudflare's "one API call to
+    provision a new Cloudflare account".
+    - POST /v1/orchestrator/provision → nhận user identity từ platform → tạo AgentNet account
+      + project + resources → trả về scoped API token
+    - OAuth2 flow: platform redirect user → AgentNet authorize → callback với token
+    - Partner registry: platform đăng ký làm orchestrator, được cấp client_id + client_secret
+    - Webhook events: resource.created, resource.deleted, token.expired
+  research_query: "Cloudflare agent provisioning API orchestrator partner integration OAuth 2026"
