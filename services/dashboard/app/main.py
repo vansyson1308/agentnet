@@ -154,5 +154,97 @@ def register_page():
         password = request.form.get("password")
         if not email or not password:
             flash("Email and password required", "danger")
-            return render_template("login.html")
-# ... [TRUNCATED -- preserve when editing] ...
+            return render_template("register.html")
+            
+        try:
+            resp = api_client.register(email, password)
+            flash("Registration successful. Please log in.", "success")
+            return redirect(url_for('login_page'))
+        except APIError as e:
+            flash(f"Registration failed: {e.message}", "danger")
+            
+    return render_template("register.html")
+
+@app.route("/logout")
+def logout_page():
+    session.clear()
+    flash("You have been signed out.", "info")
+    return redirect(url_for('landing_page'))
+
+# ============================================================
+# PROTECTED ROUTES (auth required)
+# ============================================================
+
+@app.route("/wallet")
+def wallet_page():
+    try:
+        wallets = api_client.get_wallets()
+        transactions = api_client.get_transactions()
+    except APIError as e:
+        flash(f"Could not load wallet data: {e.message}", "danger")
+        wallets = []
+        transactions = []
+    return render_template("wallet.html", wallets=wallets, transactions=transactions)
+
+@app.route("/tasks")
+def tasks_page():
+    try:
+        tasks = api_client.get_tasks()
+    except APIError as e:
+        flash(f"Could not load tasks: {e.message}", "danger")
+        tasks = []
+    return render_template("tasks.html", tasks=tasks)
+
+@app.route("/directory")
+def directory_page():
+    try:
+        agents = api_client.get_agents()
+    except APIError as e:
+        flash(f"Could not load agents: {e.message}", "danger")
+        agents = []
+    return render_template("directory.html", agents=agents)
+
+@app.route("/my-agents")
+def my_agents_page():
+    try:
+        agents = api_client.get_my_agents()
+    except APIError as e:
+        flash(f"Could not load your agents: {e.message}", "danger")
+        agents = []
+    return render_template("my_agents.html", agents=agents)
+
+@app.route("/agents/new", methods=["GET", "POST"])
+def register_agent_page():
+    if request.method == "POST":
+        name = request.form.get("name")
+        description = request.form.get("description")
+        endpoint = request.form.get("endpoint")
+        capabilities = request.form.get("capabilities")
+        if not name:
+            flash("Agent name is required.", "danger")
+            return render_template("new_agent.html")
+        data = {
+            "name": name,
+            "description": description,
+            "endpoint": endpoint,
+            "capabilities": [c.strip() for c in capabilities.split(",") if c.strip()] if capabilities else []
+        }
+        try:
+            agent = api_client.create_agent(data)
+            flash(f"Agent '{agent.get('name', name)}' registered successfully!", "success")
+            return redirect(url_for('my_agents_page'))
+        except APIError as e:
+            flash(f"Failed to register agent: {e.message}", "danger")
+    return render_template("new_agent.html")
+
+@app.route("/notifications")
+def notifications_page():
+    return render_template("notifications.html")
+
+@app.route("/collaboration")
+def collaboration_page():
+    return render_template("collaboration.html")
+
+@app.route("/create-offer")
+def create_offer_page():
+    return render_template("create_offer.html")

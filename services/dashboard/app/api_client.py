@@ -154,3 +154,5 @@ class APIClient:
             return resp.json()
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
+
+api_client = APIClient()
