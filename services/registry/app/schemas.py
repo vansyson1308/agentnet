@@ -450,3 +450,188 @@ class ErrorResponse(BaseModel):
     detail: str
     code: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# AgentNet Provisioning Protocol (APP) — AB-415 through AB-418
+# ─────────────────────────────────────────────────────────────────────────
+
+
+# — AB-415: Provisioning Catalog —
+
+class ProvisioningProviderBase(BaseModel):
+    slug: str
+    name: str
+    description: Optional[str] = None
+    website: Optional[str] = None
+    logo_url: Optional[str] = None
+
+
+class ProvisioningProviderCreate(ProvisioningProviderBase):
+    pass
+
+
+class ProvisioningProviderResponse(ProvisioningProviderBase):
+    id: UUID4
+    is_active: bool
+    created_at: datetime
+    services: list[Any] = []  # ProvisioningServiceResponse — updated via model_rebuild()
+
+    class Config:
+        from_attributes = True
+
+
+class ProvisioningServiceBase(BaseModel):
+    service_name: str
+    description: Optional[str] = None
+    category: str
+    tier: str = "free"
+    pricing_credits: int = 0
+    pricing_usdc: float = 0
+    regions: list[str] = []
+    required_params: list[str] = []
+    output_params: dict[str, Any] = {}
+
+
+class ProvisioningServiceCreate(ProvisioningServiceBase):
+    provider_id: UUID4
+
+
+class ProvisioningServiceResponse(ProvisioningServiceBase):
+    id: UUID4
+    provider_id: UUID4
+    is_active: bool
+    created_at: datetime
+    provider_slug: str = ""
+    provider_name: str = ""
+
+    class Config:
+        from_attributes = True
+
+
+# — AB-416: Scoped API Token —
+
+class ScopedTokenCreate(BaseModel):
+    agent_id: UUID4
+    resource_type: str
+    resource_id: Optional[UUID4] = None
+    project_id: Optional[UUID4] = None
+    spending_cap: int = 100
+    allowed_actions: list[str] = ["read"]
+    expires_in: Optional[int] = None  # seconds from now; None = no expiry
+
+
+class ScopedTokenResponse(BaseModel):
+    id: UUID4
+    agent_id: UUID4
+    resource_type: str
+    resource_id: Optional[str] = None
+    project_id: Optional[UUID4] = None
+    spending_cap: int
+    total_spent: int = 0
+    allowed_actions: list[str] = []
+    expires_at: Optional[datetime] = None
+    is_revoked: bool = False
+    created_at: datetime
+    raw_token: Optional[str] = None  # shown only on creation
+
+    class Config:
+        from_attributes = True
+
+
+# — AB-417: Projects —
+
+class ProjectCreate(BaseModel):
+    name: str
+    agent_id: UUID4
+    description: Optional[str] = None
+
+
+class ProjectResourceCreate(BaseModel):
+    resource_type: str
+    resource_ref: str
+    provider: str
+    scoped_token_id: Optional[UUID4] = None
+
+
+class ProjectResourceResponse(BaseModel):
+    id: UUID4
+    project_id: UUID4
+    resource_type: str
+    resource_ref: Optional[str] = None
+    provider: Optional[str] = None
+    status: str = "provisioned"
+    scoped_token_id: Optional[UUID4] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProjectResponse(BaseModel):
+    id: UUID4
+    name: str
+    agent_id: Optional[UUID4] = None
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    resources: list[ProjectResourceResponse] = []
+
+    class Config:
+        from_attributes = True
+
+
+class ProjectStateExport(BaseModel):
+    """Machine-readable project state — mirrors Stripe state.json."""
+    project_id: str
+    name: str
+    agent_id: Optional[str] = None
+    description: Optional[str] = None
+    resources: list[dict[str, Any]] = []
+    created_at: datetime
+
+
+# — AB-418: Platform Orchestrator —
+
+class OrchestratorPartnerCreate(BaseModel):
+    name: str
+    platform_url: Optional[str] = None
+    webhook_url: Optional[str] = None
+
+
+class OrchestratorPartnerResponse(BaseModel):
+    id: UUID4
+    name: str
+    platform_url: Optional[str] = None
+    webhook_url: Optional[str] = None
+    client_id: str
+    is_active: bool
+    created_at: datetime
+    client_secret: Optional[str] = None  # shown only on creation
+
+    class Config:
+        from_attributes = True
+
+
+class OrchestratorProvisionRequest(BaseModel):
+    client_id: str
+    client_secret: str
+    user_email: str
+    project_name: str = "default"
+
+
+class OrchestratorProvisionResponse(BaseModel):
+    user_id: str
+    agent_id: str
+    wallet_id: str
+    project_id: str
+    scoped_token: str
+    token_id: str
+    expires_at: Optional[datetime] = None
+    spending_cap: int
+    allowed_actions: list[str]
+
+
+# Resolve forward references
+ProvisioningProviderResponse.model_rebuild()
+

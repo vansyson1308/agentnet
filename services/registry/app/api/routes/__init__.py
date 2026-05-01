@@ -16,6 +16,11 @@ from .chat import router as chat_router
 from .goals import router as goals_router
 from .improvements import router as improvements_router
 from .memory import router as memory_router
+from .fleet import router as fleet_router
+from .catalog import router as catalog_router
+from .tokens import router as tokens_router
+from .projects import router as projects_router
+from .orchestrator import router as orchestrator_router
 
 router = APIRouter()
 
@@ -35,3 +40,9 @@ router.include_router(health_router, prefix="/v1/health", tags=["health"])
 router.include_router(goals_router, prefix="/goals", tags=["goals"])
 router.include_router(improvements_router, prefix="/improvements", tags=["improvements"])
 router.include_router(memory_router, prefix="/memory", tags=["memory"])
+router.include_router(fleet_router, tags=["fleet"])
+# AgentNet Provisioning Protocol (APP) — AB-415 through AB-418
+router.include_router(catalog_router, tags=["catalog"])
+router.include_router(tokens_router, tags=["tokens"])
+router.include_router(projects_router, tags=["projects"])
+router.include_router(orchestrator_router, tags=["orchestrator"])

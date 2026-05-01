@@ -111,6 +111,7 @@ class AgentMessageType(str, enum.Enum):
     SYSTEM = "system"
     PROPOSAL = "proposal"
     REVIEW_RESULT = "review_result"
+    REVIEW_REQUEST = "review_request"
     COMPLETED = "completed"
 
 
@@ -622,3 +623,119 @@ class MemoryItem(Base):
     # Relationships
     agent = relationship("Agent", foreign_keys=[agent_id])
     source_task = relationship("TaskSession", foreign_keys=[source_task_id])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# AgentNet Provisioning Protocol (APP) — AB-415 through AB-418
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class ProvisioningProvider(Base):
+    """A service provider registered in the provisioning catalog."""
+    __tablename__ = "provisioning_providers"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    slug = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=False)
+    description = Column(Text)
+    website = Column(String)
+    logo_url = Column(String)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    services = relationship("ProvisioningService", back_populates="provider", cascade="all, delete-orphan")
+
+
+class ProvisioningService(Base):
+    """A provisionable service in the catalog."""
+    __tablename__ = "provisioning_services"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    provider_id = Column(UUID(as_uuid=True), ForeignKey("provisioning_providers.id", ondelete="CASCADE"), nullable=False)
+    service_name = Column(String, nullable=False)
+    description = Column(Text)
+    category = Column(String, nullable=False, index=True)  # domain, hosting, storage, db, ai, security
+    tier = Column(String, nullable=False, default="free")  # free, starter, pro, enterprise
+    pricing_credits = Column(Integer, default=0)  # one-time or monthly in AgentNet credits
+    pricing_usdc = Column(Numeric(12, 6), default=0)
+    regions = Column(PG_JSONB, default=[])  # ["us-east", "eu-west", "ap-southeast"]
+    required_params = Column(PG_JSONB, default=[])  # ["domain_name", "zone_id"]
+    output_params = Column(PG_JSONB, default={})  # {"api_token": "...", "nameservers": [...]}
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    provider = relationship("ProvisioningProvider", back_populates="services")
+
+
+class ScopedToken(Base):
+    """Scoped API token — per-resource, per-agent credentials with limits.
+
+    Mirrors Stripe Shared Payment Token + Cloudflare scoped token.
+    """
+    __tablename__ = "scoped_tokens"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    token_hash = Column(String, nullable=False, index=True)
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    resource_type = Column(String, nullable=False)  # domain, bucket, project, account
+    resource_id = Column(String)  # external resource ref
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"))
+    spending_cap = Column(Integer, nullable=False, default=100)
+    total_spent = Column(Integer, nullable=False, default=0)
+    allowed_actions = Column(PG_JSONB, default=[])  # ["read", "write", "deploy", "delete"]
+    expires_at = Column(DateTime(timezone=True))
+    is_revoked = Column(Boolean, default=False)
+    revoked_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    agent = relationship("Agent", foreign_keys=[agent_id])
+    project = relationship("Project", foreign_keys=[project_id], back_populates="scoped_tokens")
+
+
+class Project(Base):
+    """Persistent resource grouping — mirrors Stripe Projects' state.json."""
+    __tablename__ = "projects"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"))
+    description = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    agent = relationship("Agent", foreign_keys=[agent_id])
+    resources = relationship("ProjectResource", back_populates="project", cascade="all, delete-orphan")
+    scoped_tokens = relationship("ScopedToken", back_populates="project")
+
+
+class ProjectResource(Base):
+    """A resource within a project."""
+    __tablename__ = "project_resources"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    resource_type = Column(String, nullable=False)  # domain, bucket, database, worker, api_key
+    resource_ref = Column(String)  # external identifier
+    provider = Column(String)  # cloudflare, vultr, github, huggingface
+    status = Column(String, default="provisioned")  # provisioned, active, error, destroyed
+    scoped_token_id = Column(UUID(as_uuid=True), ForeignKey("scoped_tokens.id", ondelete="SET NULL"))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    project = relationship("Project", back_populates="resources")
+
+
+class OrchestratorPartner(Base):
+    """A third-party platform registered as an orchestrator.
+
+    These platforms can provision AgentNet accounts on behalf of their users.
+    """
+    __tablename__ = "orchestrator_partners"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    platform_url = Column(String)
+    webhook_url = Column(String)  # events: resource.created, resource.deleted, token.expired
+    client_id = Column(String, unique=True, nullable=False)
+    client_secret_hash = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
