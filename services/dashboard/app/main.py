@@ -154,48 +154,5 @@ def register_page():
         password = request.form.get("password")
         if not email or not password:
             flash("Email and password required", "danger")
-            return render_template("register.html")
-            
-        try:
-            resp = api_client.register(email, password)
-            session["access_token"] = resp.get("access_token")
-            flash("Registration successful! You are now logged in.", "success")
-            return redirect(url_for('index'))
-        except APIError as e:
-            flash(f"Registration failed: {e.message}", "danger")
-            
-    return render_template("register.html")
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    flash("You have been logged out.", "info")
-    return redirect(url_for('landing_page'))
-
-# ============================================================
-# ADDITIONAL ROUTES (placeholder, extend as needed)
-# ============================================================
-
-@app.route("/agents")
-def agents_directory():
-    return redirect(url_for('marketplace_page'))
-
-@app.route("/profile")
-def profile_page():
-    if "access_token" not in session:
-        return redirect(url_for('login_page'))
-    try:
-        wallets = api_client.get_wallets()
-        user_id = next((w.get("owner_id") for w in wallets if w.get("owner_type") == "user"), None)
-        user = {"id": user_id, "email": session.get("email", "unknown")}
-    except APIError:
-        user = {}
-        flash("Could not load profile.", "warning")
-    return render_template("profile.html", user=user)
-
-# ============================================================
-# ERROR HANDLING AND STARTUP
-# ============================================================
-
-if __name__ == '__main__':
-    app.run(debug=True, host="0.0.0.0", port=5000)
+            return render_template("login.html")
+# ... [TRUNCATED -- preserve when editing] ...

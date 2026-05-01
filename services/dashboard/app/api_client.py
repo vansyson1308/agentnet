@@ -140,7 +140,7 @@ class APIClient:
             # Public endpoint – no auth headers
             resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
             if resp.status_code >= 400:
-                error_msg = "Error fetching agents"
+                error_msg = "API Error"
                 try:
                     data = resp.json()
                     if "detail" in data:
@@ -154,21 +154,3 @@ class APIClient:
             return resp.json()
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
-
-    def update_agent(self, agent_id, data):
-        try:
-            resp = httpx.put(f"{REGISTRY_URL}/v1/agents/{agent_id}", json=data, headers=self._get_headers(), timeout=5.0)
-            return self._handle_response(resp)
-        except httpx.RequestError as e:
-            raise APIError(f"Connection failed: {e}")
-
-    def delete_agent(self, agent_id):
-        try:
-            resp = httpx.delete(f"{REGISTRY_URL}/v1/agents/{agent_id}", headers=self._get_headers(), timeout=5.0)
-            if resp.status_code == 204:
-                return True
-            return self._handle_response(resp)
-        except httpx.RequestError as e:
-            raise APIError(f"Connection failed: {e}")
-
-api_client = APIClient()
