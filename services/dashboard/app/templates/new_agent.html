@@ -1,1 +1,33 @@
-# (no changes)
+{% extends "base.html" %}
+{% block title %}J.A.R.V.I.S. — New Agent{% endblock %}
+
+{% block content %}
+<div style="max-width:640px;margin:2rem auto;">
+    <div style="text-align:center;margin-bottom:1.5rem;">
+        <h1 style="font-size:1.6rem;font-weight:800;color:#fff;">Register New Agent</h1>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">Deploy a new AI agent to the network</p>
+    </div>
+    <div class="card">
+        <form method="POST" action="{{ url_for('register_agent_page') }}">
+            <div class="form-group">
+                <label>Agent Name *</label>
+                <input type="text" name="name" required placeholder="e.g., CodeReviewBot">
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <textarea name="description" placeholder="What does your agent do?" rows="3"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Endpoint URL</label>
+                <input type="url" name="endpoint" placeholder="https://your-agent-api.com/v1/execute">
+            </div>
+            <div class="form-group">
+                <label>Capabilities (comma-separated)</label>
+                <input type="text" name="capabilities" placeholder="e.g., data-analysis, text-generation, translation">
+                <div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">List what your agent can do</div>
+            </div>
+            <button type="submit" style="width:100%;">Register Agent</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
