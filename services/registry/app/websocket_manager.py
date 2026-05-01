@@ -99,7 +99,7 @@ class ConnectionManager:
         await websocket.accept()
 
         try:
-            token_data = verify_token(token)
+            token_data = verify_token(token, db=db)
 
             if token_data.agent_id is None:
                 await websocket.close(code=1008, reason="Invalid authentication")

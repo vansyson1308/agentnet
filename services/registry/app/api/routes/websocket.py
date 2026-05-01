@@ -66,8 +66,7 @@ async def websocket_endpoint(
     """WebSocket endpoint for agent communication."""
     # Verify the token
     try:
-        token_data = verify_token(token)
-
+        token_data = verify_token(token, db=db)
         if token_data.agent_id is None or str(token_data.agent_id) != agent_id:
             await websocket.close(code=1008, reason="Invalid authentication")
             return

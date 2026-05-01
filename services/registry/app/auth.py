@@ -3,7 +3,7 @@ import hashlib
 import json
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Union
 
 import ed25519
@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from .database import get_db
-from .models import Agent, User
+from .models import Agent, User, ScopedToken
 from .schemas import AgentToken, TokenData, UserToken
 
 # Environment variables
@@ -92,14 +92,42 @@ def create_agent_token(agent_id: uuid.UUID) -> AgentToken:
     return AgentToken(access_token=encoded_jwt, token_type="bearer", expires_in=JWT_EXPIRATION)
 
 
-def verify_token(token: str) -> TokenData:
-    """Verify a JWT token and return the token data."""
+def verify_token(token: str, db: Optional[Session] = None) -> TokenData:
+    """Verify a JWT token or scoped token (spt_) and return token data.
+
+    Two token types:
+    - JWT: standard user/agent Bearer tokens (existing behavior)
+    - spt_: scoped API tokens with resource limits (new)
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+    # ── Scoped token (spt_ prefix) ──
+    if token.startswith("spt_"):
+        if db is None:
+            raise credentials_exception
+        token_hash = _hash_scoped_token(token)
+        spt = db.query(ScopedToken).filter(
+            ScopedToken.token_hash == token_hash,
+            ScopedToken.is_revoked == False,
+        ).first()
+        if not spt:
+            raise credentials_exception
+        if spt.expires_at and spt.expires_at < datetime.now(timezone.utc):
+            raise credentials_exception
+        return TokenData(
+            agent_id=spt.agent_id,
+            scoped_token_id=spt.id,
+            allowed_actions=spt.allowed_actions or [],
+            spending_cap=spt.spending_cap,
+            resource_type=spt.resource_type,
+            resource_id=spt.resource_id,
+        )
+
+    # ── JWT token (existing logic, unchanged) ──
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         id: str = payload.get("sub")
@@ -122,7 +150,7 @@ def verify_token(token: str) -> TokenData:
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
     """Get the current user from a JWT token."""
-    token_data = verify_token(token)
+    token_data = verify_token(token, db=db)
 
     if token_data.user_id is None:
         raise HTTPException(
@@ -141,7 +169,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
 
 async def get_current_agent(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> Agent:
     """Get the current agent from a JWT token."""
-    token_data = verify_token(token)
+    token_data = verify_token(token, db=db)
 
     if token_data.agent_id is None:
         raise HTTPException(
@@ -162,7 +190,7 @@ async def get_current_user_or_agent(
     token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
 ) -> Union[User, Agent]:
     """Get the current user or agent from a JWT token."""
-    token_data = verify_token(token)
+    token_data = verify_token(token, db=db)
 
     if token_data.user_id is not None:
         user = db.query(User).filter(User.id == token_data.user_id).first()
