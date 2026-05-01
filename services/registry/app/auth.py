@@ -201,3 +201,12 @@ def hash_input(data: dict) -> str:
     # Sort keys to ensure consistent hashing
     sorted_data = json.dumps(data, sort_keys=True)
     return hashlib.sha256(sorted_data.encode()).hexdigest()
+
+
+def _hash_scoped_token(raw: str) -> str:
+    """Hash a scoped token (spt_ prefix) using SHA-256.
+
+    Mirrors tokens.py:_hash_token. Used by verify_token() when
+    the Bearer token has the 'spt_' prefix.
+    """
+    return hashlib.sha256(raw.encode()).hexdigest()
