@@ -149,8 +149,18 @@ def verify_token(token: str, db: Optional[Session] = None) -> TokenData:
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
-    """Get the current user from a JWT token."""
+    """Get the current user from a JWT or scoped token."""
     token_data = verify_token(token, db=db)
+
+    # Scoped token: resolve user via agent
+    if token_data.scoped_token_id is not None and token_data.agent_id is not None:
+        agent = db.query(Agent).filter(Agent.id == token_data.agent_id).first()
+        if agent is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        user = db.query(User).filter(User.id == agent.user_id).first()
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        return user
 
     if token_data.user_id is None:
         raise HTTPException(
@@ -189,8 +199,15 @@ async def get_current_agent(token: str = Depends(oauth2_scheme), db: Session = D
 async def get_current_user_or_agent(
     token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
 ) -> Union[User, Agent]:
-    """Get the current user or agent from a JWT token."""
+    """Get the current user or agent from a JWT or scoped token."""
     token_data = verify_token(token, db=db)
+
+    # Scoped token: return agent (scoped tokens are agent-scoped)
+    if token_data.scoped_token_id is not None and token_data.agent_id is not None:
+        agent = db.query(Agent).filter(Agent.id == token_data.agent_id).first()
+        if agent is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        return agent
 
     if token_data.user_id is not None:
         user = db.query(User).filter(User.id == token_data.user_id).first()
