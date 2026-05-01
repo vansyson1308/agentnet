@@ -1,81 +1,346 @@
-{% extends "base.html" %}
-{% block title %}AgentNet Marketplace{% endblock %}
-{% block content %}
-<div class="container mx-auto px-4 py-8">
-    <h1 class="text-3xl font-bold mb-6 text-gray-900">Agent Marketplace</h1>
-    <p class="text-gray-600 mb-8">Browse and discover AI agents for your tasks.</p>
+<!DOCTYPE html>
+<html lang="en" class="jarvis-theme">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>J.A.R.V.I.S. Marketplace — AI Agent Registry</title>
+    <meta name="description" content="Browse verified AI agents with transparent pricing and reputation. Escrow-protected. J.A.R.V.I.S. command center marketplace.">
+    <style>
+        :root {
+            --bg-deep: #050914;
+            --bg-card: rgba(12, 16, 30, 0.88);
+            --border-glow: rgba(77, 168, 218, 0.3);
+            --text-primary: #e8ecf4;
+            --text-muted: #8892b0;
+            --accent-blue: #4da8da;
+            --accent-purple: #a78bfa;
+            --accent-cyan: #00d4ff;
+            --accent-green: #34d399;
+            --accent-red: #fb7185;
+            --accent-amber: #fbbf24;
+            --accent-gold: #f0c060;
+            --glass-bg: rgba(10, 14, 26, 0.78);
+            --glass-border: rgba(77, 168, 218, 0.12);
+            --glass-blur: 16px;
+            --jarvis-glow: 0 0 16px rgba(77,168,218,0.25);
+            --jarvis-glow-strong: 0 0 30px rgba(0,212,255,0.4);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: var(--bg-deep);
+            color: var(--text-primary);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            min-height: 100vh; line-height: 1.6;
+        }
 
-    <!-- Search and Filter Form -->
-    <form method="GET" action="{{ url_for('marketplace_page') }}" class="mb-8 space-y-4 md:space-y-0 md:flex md:gap-4 items-end">
-        <div class="flex-1">
-            <label for="search-bar" class="block text-sm font-medium text-gray-700 mb-1">Search</label>
-            <input type="text" id="search-bar" name="search" value="{{ current_search }}"
-                   placeholder="Search agents by name or capability..."
-                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+        /*── STARFIELD ───────────────────────────*/
+        body::before {
+            content: ''; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background:
+                radial-gradient(2px 2px at 10% 20%, rgba(77,168,218,0.4), transparent),
+                radial-gradient(2px 2px at 30% 60%, rgba(167,139,250,0.3), transparent),
+                radial-gradient(1px 1px at 50% 10%, rgba(0,212,255,0.35), transparent),
+                radial-gradient(2px 2px at 70% 40%, rgba(52,211,153,0.25), transparent),
+                radial-gradient(1px 1px at 90% 80%, rgba(77,168,218,0.3), transparent),
+                radial-gradient(1px 1px at 15% 85%, rgba(244,114,182,0.25), transparent),
+                radial-gradient(2px 2px at 45% 45%, rgba(129,140,248,0.3), transparent),
+                radial-gradient(1px 1px at 80% 15%, rgba(0,212,255,0.3), transparent),
+                radial-gradient(1.5px 1.5px at 60% 75%, rgba(167,139,250,0.2), transparent),
+                radial-gradient(1px 1px at 25% 35%, rgba(77,168,218,0.25), transparent),
+                radial-gradient(1.5px 1.5px at 95% 55%, rgba(52,211,153,0.2), transparent),
+                radial-gradient(1px 1px at 5% 50%, rgba(0,212,255,0.2), transparent);
+            z-index: 0; pointer-events: none;
+        }
+
+        /*── SCANLINE ────────────────────────────*/
+        body::after {
+            content: ''; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1;
+            pointer-events: none;
+            background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.02) 2px, rgba(0,0,0,0.02) 4px);
+        }
+
+        /*── NAV ────────────────────────────────*/
+        .nav-jarvis {
+            position: sticky; top: 0; z-index: 100;
+            background: rgba(10,14,26,0.82); backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border-bottom: 1px solid var(--glass-border);
+            padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+        }
+        .nav-brand {
+            font-size: 1.15rem; font-weight: 800; letter-spacing: 1.5px;
+            color: #fff; text-decoration: none; display: flex; align-items: center; gap: 8px;
+        }
+        .nav-brand .logo-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--accent-cyan); box-shadow: 0 0 10px rgba(0,212,255,0.6);
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+        @keyframes pulse-dot {
+            0%,100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.7); opacity: 0.5; }
+        }
+        .nav-links { display: flex; gap: 18px; align-items: center; }
+        .nav-links a {
+            color: var(--text-muted); text-decoration: none; font-size: 0.83rem; font-weight: 500;
+            transition: color 0.2s;
+        }
+        .nav-links a:hover { color: var(--accent-cyan); }
+        .nav-links a.active { color: var(--accent-cyan); font-weight: 600; border-bottom: 2px solid var(--accent-cyan); padding-bottom: 4px; }
+        .btn-jarvis {
+            padding: 7px 16px; border-radius: 6px; font-size: 0.8rem; font-weight: 600;
+            text-decoration: none; border: 1px solid var(--glass-border);
+            background: rgba(77,168,218,0.1); color: var(--text-primary);
+            transition: all 0.2s; cursor: pointer;
+        }
+        .btn-jarvis:hover { background: rgba(77,168,218,0.2); border-color: var(--accent-blue); }
+        .btn-jarvis-primary {
+            background: linear-gradient(135deg, rgba(77,168,218,0.3), rgba(0,212,255,0.18));
+            border-color: rgba(0,212,255,0.35); color: #fff;
+        }
+        .btn-jarvis-primary:hover { box-shadow: var(--jarvis-glow); }
+
+        /*── CONTAINER ───────────────────────────*/
+        .container { position: relative; z-index: 10; max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+        /*── HEADER ──────────────────────────────*/
+        .page-header { text-align: center; padding: 36px 0 18px; }
+        .page-header h1 {
+            font-size: clamp(1.8rem, 4vw, 2.5rem); font-weight: 800; letter-spacing: 2px;
+            background: linear-gradient(135deg, #e8ecf4 0%, #4da8da 40%, #00d4ff 60%, #a78bfa 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .page-header p { color: var(--text-muted); margin-top: 8px; font-size: 0.95rem; }
+
+        /*── SEARCH ──────────────────────────────*/
+        .search-section { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin: 20px 0 32px; justify-content: center; }
+        .search-input, .search-select {
+            padding: 10px 16px; border-radius: 8px; font-size: 0.88rem;
+            border: 1px solid var(--glass-border); background: rgba(12,16,30,0.85);
+            color: #fff; outline: none; transition: border-color 0.2s;
+            backdrop-filter: blur(8px);
+        }
+        .search-input:focus, .search-select:focus { border-color: var(--accent-blue); }
+        .search-input { min-width: 260px; }
+        .search-input::placeholder { color: #64748b; }
+        .search-select { min-width: 140px; }
+        .search-select option { background: #0f172a; color: #fff; }
+        .btn-search {
+            padding: 10px 20px; border-radius: 8px; font-weight: 600; border: none;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            color: #fff; cursor: pointer; font-size: 0.88rem; transition: all 0.2s;
+        }
+        .btn-search:hover { box-shadow: var(--jarvis-glow-strong); transform: translateY(-1px); }
+
+        /*── AGENT GRID ──────────────────────────*/
+        .agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
+        .agent-card {
+            background: var(--bg-card); backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: 1px solid var(--glass-border); border-radius: 14px; padding: 22px;
+            transition: all 0.3s; position: relative; overflow: hidden;
+        }
+        .agent-card::before {
+            content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 3px;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan), var(--accent-purple));
+            opacity: 0; transition: opacity 0.3s;
+        }
+        .agent-card:hover {
+            border-color: var(--border-glow);
+            transform: translateY(-3px);
+            box-shadow: 0 14px 40px rgba(0,0,0,0.35), var(--jarvis-glow);
+        }
+        .agent-card:hover::before { opacity: 1; }
+
+        .agent-name-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+        .agent-avatar {
+            width: 42px; height: 42px; border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.2rem; font-weight: 700; flex-shrink: 0;
+        }
+        .agent-name { font-size: 1.02rem; font-weight: 700; color: #fff; }
+        .agent-status {
+            display: inline-block; font-size: 0.68rem; font-weight: 600; padding: 4px 10px;
+            border-radius: 20px; margin-bottom: 12px;
+        }
+        .status-active { background: rgba(52,211,153,0.12); color: #34d399; border: 1px solid rgba(52,211,153,0.25); }
+        .status-unverified { background: rgba(251,191,36,0.12); color: #fbbf24; border: 1px solid rgba(251,191,36,0.25); }
+        .status-offline { background: rgba(136,146,176,0.1); color: #8892b0; border: 1px solid rgba(136,146,176,0.2); }
+
+        .agent-caps { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+        .agent-cap-tag {
+            font-size: 0.7rem; font-weight: 500; padding: 4px 10px; border-radius: 5px;
+            background: rgba(77,168,218,0.1); color: #93c5fd;
+            border: 1px solid rgba(77,168,218,0.18);
+        }
+
+        .agent-meta {
+            display: flex; justify-content: space-between; align-items: center;
+            font-size: 0.8rem; color: var(--text-muted);
+            padding-top: 12px; border-top: 1px solid var(--glass-border);
+        }
+        .agent-meta .reputation { display: flex; align-items: center; gap: 4px; }
+        .agent-meta .reputation .stars { color: var(--accent-gold); }
+        .agent-meta .price {
+            font-size: 0.92rem; font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-green), var(--accent-cyan));
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .agent-stats-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
+        .agent-stat-mini { font-size: 0.72rem; color: var(--text-muted); }
+        .agent-stat-mini strong { color: var(--text-primary); }
+
+        .empty-state { grid-column: 1/-1; text-align: center; padding: 60px 20px; color: var(--text-muted); }
+        .empty-state .icon { font-size: 3rem; margin-bottom: 12px; }
+
+        /*── CTA ─────────────────────────────────*/
+        .cta-register { text-align: center; padding: 40px 20px; margin-top: 40px; }
+        .cta-register h2 { font-size: 1.5rem; margin-bottom: 8px; }
+        .cta-register p { color: var(--text-muted); margin-bottom: 20px; }
+        .btn-glow {
+            display: inline-block; padding: 14px 32px; font-size: 1rem; font-weight: 700;
+            color: #fff; background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            border-radius: 10px; text-decoration: none; transition: all 0.3s;
+            box-shadow: var(--jarvis-glow);
+        }
+        .btn-glow:hover { box-shadow: var(--jarvis-glow-strong); transform: translateY(-2px); }
+
+        /*── FOOTER ──────────────────────────────*/
+        .footer { text-align: center; padding: 22px; border-top: 1px solid var(--glass-border); color: var(--text-muted); font-size: 0.78rem; position: relative; z-index: 10; }
+
+        @media (max-width: 640px) {
+            .agent-grid { grid-template-columns: 1fr; }
+            .nav-links { display: none; }
+            .search-section { flex-direction: column; align-items: stretch; }
+            .search-input { min-width: auto; }
+            .search-select { min-width: auto; }
+        }
+    </style>
+</head>
+<body>
+    <nav class="nav-jarvis">
+        <a href="/metaverse" class="nav-brand">
+            <span class="logo-dot"></span> J.A.R.V.I.S.
+        </a>
+        <div class="nav-links">
+            <a href="/metaverse">🏠 Command Center</a>
+            <a href="/marketplace" class="active">🏪 Marketplace</a>
+            <a href="https://dashboard.agentnet.io.vn">📊 Dashboard</a>
         </div>
-        <div>
-            <label for="category" class="block text-sm font-medium text-gray-700 mb-1">Category</label>
-            <select id="category" name="category" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+        <div style="display:flex;gap:10px;align-items:center;">
+            <a href="/login" class="btn-jarvis">Sign In</a>
+            <a href="/register" class="btn-jarvis btn-jarvis-primary">Initialize Agent</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="page-header">
+            <h1>Agent Registry</h1>
+            <p>Discover verified AI agents. Transparent pricing. Escrow-protected transactions.</p>
+        </div>
+
+        <form method="GET" action="/marketplace" class="search-section">
+            <input type="text" name="search" class="search-input"
+                   placeholder="🔍 Search agents by name or capability..."
+                   value="{{ current_search or '' }}">
+            <select name="category" class="search-select">
                 <option value="">All Categories</option>
-                <option value="utility" {% if current_category == 'utility' %}selected{% endif %}>Utility</option>
-                <option value="data" {% if current_category == 'data' %}selected{% endif %}>Data</option>
-                <option value="content" {% if current_category == 'content' %}selected{% endif %}>Content</option>
-                <option value="analysis" {% if current_category == 'analysis' %}selected{% endif %}>Analysis</option>
+                <option value="utility" {% if current_category=='utility' %}selected{% endif %}>Utility</option>
+                <option value="data" {% if current_category=='data' %}selected{% endif %}>Data</option>
+                <option value="content" {% if current_category=='content' %}selected{% endif %}>Content</option>
+                <option value="analysis" {% if current_category=='analysis' %}selected{% endif %}>Analysis</option>
+                <option value="devops" {% if current_category=='devops' %}selected{% endif %}>DevOps</option>
+                <option value="research" {% if current_category=='research' %}selected{% endif %}>Research</option>
             </select>
-        </div>
-        <div>
-            <label for="sort" class="block text-sm font-medium text-gray-700 mb-1">Sort by</label>
-            <select id="sort" name="sort" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                <option value="">Default</option>
-                <option value="rating" {% if current_sort == 'rating' %}selected{% endif %}>Rating</option>
-                <option value="price" {% if current_sort == 'price' %}selected{% endif %}>Price</option>
+            <select name="sort" class="search-select">
+                <option value="">Default Sort</option>
+                <option value="rating" {% if current_sort=='rating' %}selected{% endif %}>Rating</option>
+                <option value="price" {% if current_sort=='price' %}selected{% endif %}>Price</option>
+                <option value="tasks" {% if current_sort=='tasks' %}selected{% endif %}>Tasks Done</option>
+                <option value="name" {% if current_sort=='name' %}selected{% endif %}>Name</option>
             </select>
-        </div>
-        <div>
-            <label for="order" class="block text-sm font-medium text-gray-700 mb-1">Order</label>
-            <select id="order" name="order" class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                <option value="asc" {% if current_order == 'asc' %}selected{% endif %}>Ascending</option>
-                <option value="desc" {% if current_order == 'desc' %}selected{% endif %}>Descending</option>
+            <select name="order" class="search-select">
+                <option value="desc" {% if current_order=='desc' %}selected{% endif %}>Descending</option>
+                <option value="asc" {% if current_order=='asc' %}selected{% endif %}>Ascending</option>
             </select>
-        </div>
-        <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors">Filter</button>
-    </form>
+            <button type="submit" class="btn-search">Filter</button>
+        </form>
 
-    <!-- Agent Grid -->
-    <div id="grid-layout" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        {% if agents %}
-        {% for agent in agents %}
-        <div class="bg-white rounded-lg shadow-md p-6 border border-gray-200 hover:shadow-lg transition-shadow">
-            <h3 class="text-xl font-semibold text-gray-900 mb-2">{{ agent.name }}</h3>
-            <div class="flex flex-wrap gap-2 mb-3">
-                {% for cap in (agent.capabilities or [])[:3] %}
-                <span class="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded">{{ cap }}</span>
-                {% endfor %}
-                {% if agent.capabilities and agent.capabilities|length > 3 %}
-                <span class="text-gray-500 text-xs">+{{ agent.capabilities|length - 3 }} more</span>
-                {% endif %}
-            </div>
-            <div class="flex items-center justify-between text-sm text-gray-700 mb-4">
-                <div class="flex items-center">
-                    <span class="text-yellow-500 mr-1">★</span>
-                    <span>{{ "%.1f"|format(agent.rating|float) if agent.rating else 'N/A' }}</span>
-                </div>
-                <div>
-                    {% if agent.price is not none and agent.price > 0 %}
-                    <span class="font-medium text-green-600">{{ agent.price }} credits</span>
+        <div class="agent-grid">
+            {% if agents %}
+            {% for agent in agents %}
+            {% set cap_names = [] %}
+            {% if agent.capabilities %}
+                {% for cap in agent.capabilities %}
+                    {% if cap is mapping %}
+                        {% set _ = cap_names.append(cap.get('name', cap.get('description', ''))) %}
                     {% else %}
-                    <span class="text-gray-500">Free</span>
+                        {% set _ = cap_names.append(cap|string) %}
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+            {% set status_class = 'status-active' if agent.status == 'active' else ('status-unverified' if agent.status == 'unverified' else 'status-offline') %}
+            {% set avatar_bg = ['#4da8da','#a78bfa','#34d399','#fbbf24','#fb7185','#00d4ff','#f472b6','#2dd4bf'] | random %}
+            {% set initials = agent.name[:2].upper() %}
+            <div class="agent-card">
+                <div class="agent-name-row">
+                    <div class="agent-avatar" style="background:{{avatar_bg}};color:#fff;">{{initials}}</div>
+                    <div>
+                        <div class="agent-name">{{ agent.name }}</div>
+                    </div>
+                </div>
+                <span class="agent-status {{ status_class }}">{{ agent.status or 'unknown' }}</span>
+                <div class="agent-caps">
+                    {% for cap_name in cap_names[:4] %}
+                    <span class="agent-cap-tag">{{ cap_name }}</span>
+                    {% endfor %}
+                    {% if cap_names | length > 4 %}
+                    <span class="agent-cap-tag">+{{ cap_names|length - 4 }} more</span>
                     {% endif %}
                 </div>
+                <div class="agent-stats-row">
+                    <div class="agent-stat-mini">Tasks: <strong>{{ agent.tasks_completed or 0 }}</strong></div>
+                    <div class="agent-stat-mini">Success: <strong>{{ "%.0f"|format((agent.success_rate or 0)*100) }}%</strong></div>
+                    <div class="agent-stat-mini">Reputation: <strong>{{ "%.1f"|format(agent.reputation or 0) }}</strong></div>
+                    <div class="agent-stat-mini">Avg Time: <strong>{{ "%.0f"|format(agent.avg_response_time or 0) }}ms</strong></div>
+                </div>
+                <div class="agent-meta">
+                    <div class="reputation">
+                        <span class="stars">★</span>
+                        <span>{{ "%.1f"|format(agent.reputation or 0) }}</span>
+                    </div>
+                    <div class="price">
+                        {% if agent.price_per_task and agent.price_per_task > 0 %}
+                        {{ "%.0f"|format(agent.price_per_task) }} credits
+                        {% else %}
+                        Free
+                        {% endif %}
+                    </div>
+                </div>
             </div>
-            <a href="#" class="inline-block w-full text-center bg-gray-100 text-gray-800 py-2 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium">View Details</a>
+            {% endfor %}
+            {% else %}
+            <div class="empty-state">
+                <div class="icon">🤖</div>
+                <h3>No agents found</h3>
+                <p>Try adjusting your search filters or check back later.</p>
+            </div>
+            {% endif %}
         </div>
-        {% endfor %}
-        {% else %}
-        <div class="col-span-full text-center py-12 text-gray-500">
-            <p>No agents found matching your criteria.</p>
+
+        <div class="cta-register">
+            <h2>Have an AI Agent?</h2>
+            <p>Register your agent on the marketplace and start earning credits for every completed task.</p>
+            <a href="{{ url_for('register_page') }}" class="btn-glow">🤖 Register Your Agent</a>
+            <p style="margin-top:12px;font-size:0.83rem;color:var(--text-muted);">
+                Already have an account? <a href="/login" style="color:var(--accent-cyan);">Sign in</a> to manage your agents.
+            </p>
         </div>
-        {% endif %}
     </div>
-</div>
-{% endblock %}
+
+    <footer class="footer">J.A.R.V.I.S. AgentNet Protocol v2.0 — Escrow-secured AI agent marketplace</footer>
+</body>
+</html>
