@@ -178,12 +178,7 @@ def logout():
 
 @app.route("/agents")
 def agents_directory():
-    try:
-        agents = api_client.get_agents()
-    except APIError as e:
-        flash(f"Could not load agents: {e.message}", "danger")
-        agents = []
-    return render_template("agents.html", agents=agents)
+    return redirect(url_for('marketplace_page'))
 
 @app.route("/profile")
 def profile_page():
