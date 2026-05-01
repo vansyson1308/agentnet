@@ -25,13 +25,15 @@ from ...schemas import (
     ProjectResourceResponse,
     ProjectResourceCreate,
 )
+from ...auth import get_current_user
+from ...models import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 @router.post("/projects", response_model=ProjectResponse, status_code=201)
-async def create_project(body: ProjectCreate, db: Session = Depends(get_db)):
+async def create_project(body: ProjectCreate, db: Session = Depends(get_db), _current_user: User = Depends(get_current_user)):
     project = Project(name=body.name, agent_id=body.agent_id, description=body.description)
     db.add(project)
     db.commit()
@@ -43,6 +45,7 @@ async def create_project(body: ProjectCreate, db: Session = Depends(get_db)):
 async def list_projects(
     agent_id: uuid.UUID | None = None,
     db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_user),
 ):
     q = db.query(Project)
     if agent_id:
@@ -51,7 +54,7 @@ async def list_projects(
 
 
 @router.get("/projects/{project_id}", response_model=ProjectResponse)
-async def get_project(project_id: uuid.UUID, db: Session = Depends(get_db)):
+async def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), _current_user: User = Depends(get_current_user)):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -59,7 +62,7 @@ async def get_project(project_id: uuid.UUID, db: Session = Depends(get_db)):
 
 
 @router.get("/projects/{project_id}/state", response_model=ProjectStateExport)
-async def export_project_state(project_id: uuid.UUID, db: Session = Depends(get_db)):
+async def export_project_state(project_id: uuid.UUID, db: Session = Depends(get_db), _current_user: User = Depends(get_current_user)):
     """Export project as state.json — machine-readable for CI/CD."""
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
@@ -91,6 +94,7 @@ async def add_project_resource(
     project_id: uuid.UUID,
     body: ProjectResourceCreate,
     db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_user),
 ):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
@@ -114,6 +118,7 @@ async def remove_project_resource(
     project_id: uuid.UUID,
     resource_id: uuid.UUID,
     db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_user),
 ):
     res = db.query(ProjectResource).filter(
         ProjectResource.id == resource_id,

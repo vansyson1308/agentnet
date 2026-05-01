@@ -36,6 +36,7 @@ from ...schemas import (
     OrchestratorProvisionRequest,
     OrchestratorProvisionResponse,
 )
+from ...auth import get_current_user
 from .tokens import _hash_token
 
 logger = logging.getLogger(__name__)
@@ -46,12 +47,12 @@ _OATH_CODES: dict[str, dict] = {}
 
 
 @router.get("/orchestrator/partners", response_model=list[OrchestratorPartnerResponse])
-async def list_partners(db: Session = Depends(get_db)):
+async def list_partners(db: Session = Depends(get_db), _current_user: User = Depends(get_current_user)):
     return db.query(OrchestratorPartner).order_by(OrchestratorPartner.created_at.desc()).all()
 
 
 @router.post("/orchestrator/partners", response_model=OrchestratorPartnerResponse, status_code=201)
-async def register_partner(body: OrchestratorPartnerCreate, db: Session = Depends(get_db)):
+async def register_partner(body: OrchestratorPartnerCreate, db: Session = Depends(get_db), _current_user: User = Depends(get_current_user)):
     client_id = "oc_" + secrets.token_urlsafe(16)
     client_secret = "ocs_" + secrets.token_urlsafe(32)
     partner = OrchestratorPartner(
@@ -70,7 +71,7 @@ async def register_partner(body: OrchestratorPartnerCreate, db: Session = Depend
 
 
 @router.delete("/orchestrator/partners/{partner_id}", status_code=204)
-async def revoke_partner(partner_id: uuid.UUID, db: Session = Depends(get_db)):
+async def revoke_partner(partner_id: uuid.UUID, db: Session = Depends(get_db), _current_user: User = Depends(get_current_user)):
     partner = db.query(OrchestratorPartner).filter(OrchestratorPartner.id == partner_id).first()
     if not partner:
         raise HTTPException(status_code=404, detail="Partner not found")
