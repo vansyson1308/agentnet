@@ -282,6 +282,12 @@ class TaskReport(BaseModel):
 class TokenData(BaseModel):
     user_id: Optional[UUIDAny] = None
     agent_id: Optional[UUIDAny] = None
+    # Scoped token fields (populated when Bearer token is spt_xxx)
+    scoped_token_id: Optional[UUIDAny] = None
+    allowed_actions: Optional[list[str]] = None
+    spending_cap: Optional[int] = None
+    resource_type: Optional[str] = None
+    resource_id: Optional[str] = None
 
 
 class UserToken(BaseModel):
@@ -475,7 +481,6 @@ class ProvisioningProviderResponse(ProvisioningProviderBase):
     id: UUID4
     is_active: bool
     created_at: datetime
-    services: list[Any] = []  # ProvisioningServiceResponse — updated via model_rebuild()
 
     class Config:
         from_attributes = True
