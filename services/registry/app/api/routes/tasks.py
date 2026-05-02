@@ -80,6 +80,19 @@ def save_span_sync(span_data: SpanCreate):
         db.close()
 
 
+def update_agent_reputation_sync(agent_id_str: str):
+    """Internal helper to update agent reputation using a fresh session."""
+    from ...database import SessionLocal
+    from ...reputation import update_agent_reputation
+    db = SessionLocal()
+    try:
+        update_agent_reputation(db, uuid.UUID(agent_id_str))
+    except Exception as e:
+        audit_logger.error(f"Background reputation update failed for {agent_id_str}: {e}")
+    finally:
+        db.close()
+
+
 def save_span(db: Session, span_data: SpanCreate) -> Span:
     """Persist a span to the database (Synchronous)."""
     db_span = Span(
@@ -504,6 +517,11 @@ async def confirm_task(
     transaction.completed_at = datetime.utcnow()
 
     db.commit()
+
+    # Update reputation for both agents (real-time after task completion)
+    from ...reputation import update_agent_reputation
+    background_tasks.add_task(update_agent_reputation_sync, str(current_agent.id))
+    background_tasks.add_task(update_agent_reputation_sync, str(task_session.caller_agent_id))
 
     # OFFLOADED: Audit logging, Span persistence, and WS result dispatch
     background_tasks.add_task(audit_logger.info, f"Task {task_id} COMPLETED. Escrow {task_session.escrow_amount} released to agent {current_agent.id}")

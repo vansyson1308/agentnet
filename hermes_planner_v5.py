@@ -1,573 +1,279 @@
 #!/usr/bin/env python3
 """
-Hermes_Planner v5 -- Architect + Dispatcher
-
-Diff vs v4:
-- v4 was pure dispatcher: read backlog -> route open items to builder.
-- v5 ALSO does auto-enrich: when an item lacks files_to_modify or acceptance,
-  v5 calls DeepSeek (with optional OpenClaw research context) to fill them in,
-  saves enriched item back to AGENT_BACKLOG.md, THEN dispatches.
-- Means user can add minimal entries like:
-    - id: AB-009
-      title: "Add agent leaderboard endpoint"
-      description: "Top 5 agents by success rate"
-      status: open
-  And the fleet auto-completes the spec.
-- v5 also dedupes review_result processing (fixes v4 race condition).
-- v5 dispatches OpenClaw research via AgentNet `multi-step-research` capability
-  when description contains "best practice" or has explicit `research_query` field.
-
-Flow per cycle:
-  1. Process pending qa review_results -> mark done/retry/blocked.
-  2. Process pending builder completed -> route to qa.
-  3. For each open item that's NOT enriched:
-     a. (Optional) dispatch research to openclaw-workhorse via AgentNet.
-     b. Call DeepSeek with description + research context -> get files + acceptance.
-     c. Save enriched item back to backlog.
-  4. Dispatch first fully-enriched open item to builder.
+hermes_planner_v5.py — Planner agent for AgentNet pipeline.
+Reads next open task from Paperclip API (instead of YAML file).
+Runs every 30 seconds.
 """
 import json
 import os
-import pathlib
-import re
 import sys
-import time as time_module
-import urllib.parse
+import time
+import logging
 import urllib.request
-import yaml
+import urllib.error
+import subprocess
+import signal
 
-sys.path.insert(0, os.path.dirname(__file__))
-from hermes_agent_base import HermesAgent, AGENT_IDS  # noqa: E402
+# ── Config ──
+PAPERCLIP_URL = os.environ.get("PAPERCLIP_URL", "http://localhost:3100")
+AGENTNET_URL = os.environ.get("AGENTNET_URL", "http://localhost:8000")
+COMPANY_ID = "bbb50bef-ce01-4cc8-aac9-e33dae6395c0"
+BUILDER_SCRIPT = "/opt/agentnet/hermes_builder_v6.py"
+QA_SCRIPT = "/opt/agentnet/hermes_qaagent_v6.py"
+SHIP_LOG = "/opt/agentnet/SHIP_LOG.md"
+BACKLOG_FILE = "/opt/agentnet/AGENT_BACKLOG.md"  # keep as secondary source
 
-BACKLOG_PATH = pathlib.Path("/opt/agentnet/AGENT_BACKLOG.md")
-SHIP_LOG_PATH = pathlib.Path("/opt/agentnet/SHIP_LOG.md")
-RETRY_LIMIT = 2
+# AgentNet auth
+AGENTNET_AGENT_ID = os.environ.get("HERMES_BRAIN_AGENT_ID", "e19ac0aa-ad8f-42c9-b234-9890bbec3f89")
+BUILDER_AGENT_ID = "2224fb23-aa03-425e-b07f-7d3cf8fcfb60"  # Hermes_Builder
+PLANNER_AGENT_ID = "2a6f9475-4457-4548-ae47-84efa5661c09"  # Hermes_Planner
 
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL_FAST", "deepseek-v4-flash")
-DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-
-AGENTNET_BASE_URL = os.environ.get("AGENTNET_BASE_URL", "http://127.0.0.1:8000")
-AGENTNET_USER_EMAIL = os.environ.get("AGENTNET_USER_EMAIL", "CHANGE_ME@example.com")
+# AgentNet credentials for chat API
+AGENTNET_USER_EMAIL = os.environ.get("AGENTNET_USER_EMAIL", "annhien.dev@gmail.com")
 AGENTNET_USER_PASSWORD = os.environ.get("AGENTNET_USER_PASSWORD", "TestPass123")
-# IMPORTANT: HERMES_BRAIN_AGENT_ID must be hermes-brain's id, NOT the bridge's
-# own AGENTNET_AGENT_ID (which is openclaw-workhorse). Otherwise we self-dispatch.
-HERMES_BRAIN_AGENT_ID = os.environ.get("HERMES_BRAIN_AGENT_ID", "")
 
-REPO_TREE_HINT_FILE = pathlib.Path("/opt/agentnet/.planner_repo_hint.txt")
+# ── Logging ──
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [PlannerV5] %(message)s", datefmt="%H:%M:%S")
+log = logging.getLogger("planner-v5")
 
-
-def _build_repo_tree_hint() -> str:
-    """Cached short list of significant files in the repo (helps DeepSeek pick files_to_modify)."""
-    if REPO_TREE_HINT_FILE.exists() and time_module.time() - REPO_TREE_HINT_FILE.stat().st_mtime < 3600:
-        return REPO_TREE_HINT_FILE.read_text(encoding="utf-8")
-    import subprocess
-    r = subprocess.run(
-        ["git", "-C", "/opt/agentnet", "ls-files"],
-        capture_output=True, text=True, timeout=15,
-    )
-    if r.returncode != 0:
-        return ""
-    interesting = []
-    for line in r.stdout.splitlines():
-        if line.startswith(("services/", "agents/", "deploy/", "docs/")):
-            interesting.append(line)
-        elif line.endswith((".md", ".yml", ".yaml")) and "/" not in line:
-            interesting.append(line)
-    text = "\n".join(sorted(interesting))[:6000]
-    REPO_TREE_HINT_FILE.write_text(text, encoding="utf-8")
-    return text
+# ── State ──
+_current_issue_id = None
+_current_issue_title = ""
+_retries = 0
+_active_builder_pid = None
+_active_qa_pid = None
+_max_retries = 3
 
 
-class BacklogStore:
-    """Read/write the YAML embedded in the markdown file. Atomic + safe."""
-
-    def __init__(self, path: pathlib.Path):
-        self.path = path
-
-    def _read(self) -> tuple[str, dict]:
-        text = self.path.read_text(encoding="utf-8")
-        m = re.search(r"```yaml\n(.+?)\n```", text, re.DOTALL)
-        if not m:
-            raise RuntimeError(f"no yaml block in {self.path}")
-        data = yaml.safe_load(m.group(1)) or {}
-        return text, data
-
-    def _write(self, text: str, data: dict) -> None:
-        new_yaml = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100)
-        new_text = re.sub(
-            r"```yaml\n.+?\n```",
-            f"```yaml\n{new_yaml}```",
-            text,
-            count=1,
-            flags=re.DOTALL,
-        )
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(new_text, encoding="utf-8")
-        tmp.replace(self.path)
-
-    def read_backlog(self) -> list[dict]:
-        _, data = self._read()
-        return data.get("backlog", [])
-
-    def update_item(self, item_id: str, **patch) -> bool:
-        text, data = self._read()
-        for it in data.get("backlog", []):
-            if it.get("id") == item_id:
-                it.update(patch)
-                self._write(text, data)
-                return True
-        return False
-
-    def increment_retry(self, item_id: str) -> int:
-        text, data = self._read()
-        for it in data.get("backlog", []):
-            if it.get("id") == item_id:
-                n = int(it.get("retries", 0)) + 1
-                it["retries"] = n
-                self._write(text, data)
-                return n
-        return 0
-
-    def next_actionable(self) -> dict | None:
-        """First open item whose dependencies (blocked_by) are done."""
-        items = self.read_backlog()
-        done_ids = {it["id"] for it in items if it.get("status") == "done"}
-        for it in items:
-            if it.get("status") != "open":
-                continue
-            blocked_by = it.get("blocked_by")
-            if blocked_by and blocked_by not in done_ids:
-                continue
-            return it
-        return None
-
-    def in_progress_items(self) -> list[dict]:
-        return [it for it in self.read_backlog() if it.get("status") in ("in_progress", "review")]
-
-    def find(self, item_id: str) -> dict | None:
-        for it in self.read_backlog():
-            if it.get("id") == item_id:
-                return it
-        return None
-
-
-def append_ship_log(item_id: str, title: str, status: str, detail: str = "") -> None:
-    SHIP_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if not SHIP_LOG_PATH.exists():
-        SHIP_LOG_PATH.write_text(
-            "# AgentNet Ship Log\n\nAuto-appended by hermes_planner_v5 + qaagent_v6.\n\n",
-            encoding="utf-8",
-        )
-    line = f"- [{time_module.strftime('%Y-%m-%d %H:%M:%S UTC', time_module.gmtime())}] **{item_id}** {status}: {title}"
-    if detail:
-        line += f" -- {detail[:200]}"
-    with SHIP_LOG_PATH.open("a", encoding="utf-8") as f:
-        f.write(line + "\n")
-
-
-# --- AgentNet helpers (for dispatching research to OpenClaw) ---
-
-
-_an_token: dict = {"value": None, "exp": 0.0}
-
-
-def _agentnet_token() -> str:
-    now = time_module.time()
-    if _an_token["value"] and (_an_token["exp"] - now) > 300:
-        return _an_token["value"]
-    data = urllib.parse.urlencode({
-        "username": AGENTNET_USER_EMAIL,
-        "password": AGENTNET_USER_PASSWORD,
-    }).encode()
+def _agentnet_post(path, data):
+    """POST AgentNet API with auth token."""
+    body = json.dumps(data).encode()
     req = urllib.request.Request(
-        f"{AGENTNET_BASE_URL}/v1/auth/user/login",
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        f"{AGENTNET_URL}{path}", data=body, method="POST",
+        headers={"Content-Type": "application/json"}
     )
+    token = _get_agentnet_token()
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
-            d = json.loads(r.read().decode())
-            _an_token["value"] = d["access_token"]
-            _an_token["exp"] = now + int(d.get("expires_in", 3600))
-            return _an_token["value"]
-    except Exception:
-        return ""
-
-
-def _find_openclaw_id() -> str:
-    token = _agentnet_token()
-    if not token:
-        return ""
-    req = urllib.request.Request(
-        f"{AGENTNET_BASE_URL}/v1/agents/?limit=200",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            for a in json.loads(r.read().decode()):
-                if a.get("name") == "openclaw-workhorse":
-                    return a.get("id", "")
-    except Exception:
-        pass
-    return ""
-
-
-def _dispatch_research(query: str, timeout_seconds: int = 90) -> str:
-    """Synchronous: dispatch research task to openclaw-workhorse, wait, return report_md."""
-    if not query or not HERMES_BRAIN_AGENT_ID:
-        return ""
-    callee = _find_openclaw_id()
-    if not callee:
-        return ""
-    token = _agentnet_token()
-    if not token:
-        return ""
-    body = {
-        "caller_agent_id": HERMES_BRAIN_AGENT_ID,
-        "callee_agent_id": callee,
-        "capability": "multi-step-research",
-        "input": {"topic": query[:300], "depth": "quick", "language": "en"},
-        "max_budget": 30,
-        "timeout_seconds": timeout_seconds,
-    }
-    req = urllib.request.Request(
-        f"{AGENTNET_BASE_URL}/v1/tasks/",
-        data=json.dumps(body).encode(),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            task = json.loads(r.read().decode())
-    except Exception:
-        return ""
-    task_id = task.get("task_session_id") or task.get("id")
-    if not task_id:
-        return ""
-
-    # Poll for completion (cap ~timeout_seconds)
-    deadline = time_module.time() + timeout_seconds + 15
-    while time_module.time() < deadline:
-        time_module.sleep(3)
-        try:
-            req2 = urllib.request.Request(
-                f"{AGENTNET_BASE_URL}/v1/tasks/{task_id}",
-                headers={"Authorization": f"Bearer {token}"},
-            )
-            with urllib.request.urlopen(req2, timeout=10) as r2:
-                t = json.loads(r2.read().decode())
-        except Exception:
-            continue
-        s = (t.get("status") or "").lower()
-        if s == "completed":
-            out = t.get("output") or {}
-            return (out.get("report_md") or "")[:6000]
-        if s in ("failed", "timeout"):
-            return ""
-    return ""
-
-
-# --- LLM enrich ---
-
-
-def _llm_enrich(item: dict, research_md: str = "") -> dict | None:
-    """Call DeepSeek to fill files_to_modify + acceptance for a minimal item.
-
-    Returns {files_to_modify: [...], acceptance: [...], description: str (refined)} or None.
-    """
-    if not DEEPSEEK_API_KEY:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode()[:200]
+        log.warning(f"AgentNet POST {path}: HTTP {e.code}: {err_body}")
         return None
-    repo_hint = _build_repo_tree_hint()
-    sys_prompt = (
-        "You are the ARCHITECT for the AgentNet codebase. Your job: convert a "
-        "minimal backlog item (just title + vague description) into a fully "
-        "specified spec that the BUILDER agent can implement.\n\n"
-        "Output STRICT JSON ONLY with shape:\n"
-        "{\n"
-        '  "files_to_modify": ["services/registry/app/api/routes/agents.py", ...],\n'
-        '  "acceptance": ["test ...", "curl ... | grep ...", ...],\n'
-        '  "description": "<refined spec, 80-300 words, concrete enough that '
-        'a different engineer could implement it without further questions>"\n'
-        "}\n\n"
-        "Rules:\n"
-        "- files_to_modify: pick 1-3 real paths from the repo tree given. "
-        "Prefer additive changes over edits.\n"
-        "- acceptance: each item is a bash one-liner that exits 0 on pass. "
-        "Prefer curl + grep, test -f, grep -q. Avoid pytest unless tests exist.\n"
-        "- Available env vars during QA: $TOKEN (user JWT), $AGENT_ID "
-        "(hermes-brain id), $OPENCLAW_ID (openclaw-workhorse id).\n"
-        "- HTTP endpoints are at http://127.0.0.1:8000.\n"
-        "- description: state exact endpoint path / function name / data shape. "
-        "Include implementation hints (which model field, which dependency).\n"
-        "- Use the research_context if provided to inform best-practice choices.\n"
-    )
-    user_prompt = (
-        f"BACKLOG ITEM TITLE: {item.get('title', '')}\n"
-        f"USER DESCRIPTION: {item.get('description', '')}\n"
-        f"PRIORITY: {item.get('priority', 'medium')}\n\n"
-        f"REPO FILE LIST (relevant):\n{repo_hint[:4000]}\n\n"
-    )
-    if research_md:
-        user_prompt += f"RESEARCH CONTEXT (best practice from web):\n{research_md[:3000]}\n\n"
-    user_prompt += "Output the JSON object now."
-
-    body = {
-        "model": DEEPSEEK_MODEL,
-        "messages": [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        "max_tokens": 1500,
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"},
-        "extra_body": {"thinking": {"type": "disabled"}},
-    }
-    req = urllib.request.Request(
-        f"{DEEPSEEK_BASE_URL}/v1/chat/completions",
-        data=json.dumps(body).encode(),
-        headers={
-            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as r:
-            d = json.loads(r.read().decode())
-            content = d["choices"][0]["message"]["content"]
-            enriched = json.loads(content)
-            if not isinstance(enriched, dict):
-                return None
-            # Validate shape
-            if not isinstance(enriched.get("files_to_modify"), list) or not enriched["files_to_modify"]:
-                return None
-            if not isinstance(enriched.get("acceptance"), list) or not enriched["acceptance"]:
-                return None
-            return enriched
     except Exception as e:
-        print(f"[enrich-error] {e}", file=sys.stderr)
+        log.warning(f"AgentNet POST {path}: {e}")
+        return None
+
+def _get_agentnet_token():
+    """Get AgentNet JWT token."""
+    data = f"username={AGENTNET_USER_EMAIL}&password={AGENTNET_USER_PASSWORD}"
+    req = urllib.request.Request(
+        f"{AGENTNET_URL}/v1/auth/user/login",
+        data.encode(),
+        {"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            result = json.loads(r.read().decode())
+            return result.get("access_token", "")
+    except Exception as e:
+        log.warning(f"AgentNet login failed: {e}")
+        return ""
+
+def _paperclip_get(path):
+    """GET Paperclip API."""
+    try:
+        req = urllib.request.Request(f"{PAPERCLIP_URL}/api{path}")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode())
+    except Exception as e:
+        log.warning(f"Paperclip GET {path}: {e}")
         return None
 
 
-def _needs_research(item: dict) -> str | None:
-    """Decide if we should fetch external best-practice context. Return query string or None."""
-    if "research_query" in item:
-        return item["research_query"]
-    desc = (item.get("description") or "").lower()
-    title = (item.get("title") or "").lower()
-    triggers = ("best practice", "industry standard", "compare", "library options", "modern way")
-    if any(t in desc + title for t in triggers):
-        return item.get("title", "")
+def _paperclip_patch(path, data):
+    """PATCH Paperclip API. Path is relative to /api/."""
+    body = json.dumps(data).encode()
+    url = f"{PAPERCLIP_URL}/api{path}" if not path.startswith("/api") else f"{PAPERCLIP_URL}{path}"
+    req = urllib.request.Request(
+        url, data=body, method="PATCH",
+        headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode()[:200]
+        log.warning(f"Paperclip PATCH {path}: HTTP {e.code}: {err_body}")
+        return None
+    except Exception as e:
+        log.warning(f"Paperclip PATCH {path}: {e}")
+        return None
+
+
+def _read_yaml_backlog():
+    """Read backlog from YAML file (fallback)."""
+    try:
+        with open(BACKLOG_FILE) as f:
+            content = f.read()
+        # Simple YAML parsing for backlog items
+        import re
+        items = re.findall(
+            r'- id: (\S+)\s+.*?title: (.+?)\s+.*?status: (\S+)',
+            content, re.DOTALL
+        )
+        return [{"id": m[0], "title": m[1].strip().strip('"').strip("'"), "status": m[2]} for m in items]
+    except Exception as e:
+        log.warning(f"YAML backlog read failed: {e}")
+        return []
+
+
+def get_next_task():
+    """Get next open task from YAML backlog (primary). Paperclip is dead."""
+    global _current_issue_id, _current_issue_title, _retries
+
+    # Primary: YAML backlog (Paperclip API unreliable / wrong endpoint)
+    yaml_items = _read_yaml_backlog()
+    open_yaml = [i for i in yaml_items if i["status"] in ("open", "todo")]  # only truly open, not migrated-to-paperclip or dispatched
+    if open_yaml:
+        return {"source": "yaml", **open_yaml[0]}
+
+    # Secondary: Paperclip API (try if available)
+    issues = _paperclip_get(f"/companies/{COMPANY_ID}/issues")
+    if issues and isinstance(issues, list):
+        open_issues = [i for i in issues if i.get("status") in ("todo", "backlog")]
+        if open_issues:
+            issue = open_issues[0]
+            return {
+                "source": "paperclip",
+                "id": issue["id"],
+                "title": issue["title"],
+                "description": issue.get("description", ""),
+                "priority": issue.get("priority", "medium"),
+                "issue_number": issue.get("issueNumber"),
+            }
+
     return None
 
 
-# --- Planner ---
+def dispatch_to_builder(task):
+    """Dispatch task to Builder process."""
+    global _active_builder_pid, _active_qa_pid, _retries, _current_issue_id, _current_issue_title
 
+    task_id = task["id"]
+    task_title = task["title"]
+    task_desc = task.get("description", "")
+    source = task.get("source", "paperclip")
 
-class PlannerV5(HermesAgent):
-    def __init__(self):
-        super().__init__("Hermes_Planner_v5", "planner", sleep_seconds=30)
-        self.store = BacklogStore(BACKLOG_PATH)
+    log.info(f"DISPATCH: [{task_id}] {task_title}")
 
-    def on_start(self):
-        self.log.info("PlannerV5 starting -- backlog=%s, model=%s", BACKLOG_PATH, DEEPSEEK_MODEL)
-        self.load_processed()
-        try:
-            n = len(self.store.read_backlog())
-            self.log.info("backlog has %d items", n)
-        except Exception as e:
-            self.log.error("cannot read backlog: %s", e)
+    # Update Paperclip issue status -> in_progress
+    if source == "paperclip":
+        _paperclip_patch(f"/issues/{task_id}", {"status": "in_progress", "assigneeUserId": "admin-001"})
 
-    # --- Enrich step ---
+    _current_issue_id = task_id
+    _current_issue_title = task_title
+    _retries = 0
 
-    def _is_minimal(self, item: dict) -> bool:
-        files = item.get("files_to_modify") or []
-        accepts = item.get("acceptance") or []
-        return not files or not accepts
-
-    def _enrich_minimal_open(self) -> bool:
-        """Find first minimal open item, enrich it via LLM (with optional research)."""
-        for it in self.store.read_backlog():
-            if it.get("status") != "open":
-                continue
-            if not self._is_minimal(it):
-                continue
-            # Skip if we tried to enrich recently and failed
-            if it.get("enrich_failed_at") and time_module.time() - float(it["enrich_failed_at"]) < 600:
-                continue
-
-            iid = it["id"]
-            self.log.info("ENRICHING %s: %s", iid, it.get("title", ""))
-
-            # Optional research
-            research_query = _needs_research(it)
-            research_md = ""
-            if research_query:
-                self.log.info("  -> dispatching research to openclaw: %s", research_query[:80])
-                research_md = _dispatch_research(research_query)
-                if research_md:
-                    self.log.info("  -> research returned %d chars", len(research_md))
-                    append_ship_log(iid, it.get("title", ""), "RESEARCH",
-                                    f"openclaw returned {len(research_md)} chars context")
-                else:
-                    self.log.warning("  -> research returned nothing, proceed without")
-
-            # Enrich
-            enriched = _llm_enrich(it, research_md=research_md)
-            if not enriched:
-                self.log.warning("enrich failed for %s", iid)
-                self.store.update_item(iid, enrich_failed_at=time_module.time())
-                append_ship_log(iid, it.get("title", ""), "ENRICH_FAIL", "deepseek returned nothing usable")
-                return False
-
-            # Save back
-            self.store.update_item(
-                iid,
-                files_to_modify=enriched["files_to_modify"],
-                acceptance=enriched["acceptance"],
-                description=enriched.get("description", it.get("description", "")),
-                enriched_at=time_module.strftime("%Y-%m-%dT%H:%M:%SZ", time_module.gmtime()),
-                enriched_with_research=bool(research_md),
-            )
-            self.log.info(
-                "ENRICHED %s -> %d files, %d acceptance",
-                iid,
-                len(enriched["files_to_modify"]),
-                len(enriched["acceptance"]),
-            )
-            append_ship_log(iid, it.get("title", ""), "ENRICHED",
-                            f"{len(enriched['files_to_modify'])} files, "
-                            f"{len(enriched['acceptance'])} tests, "
-                            f"research={'yes' if research_md else 'no'}")
-            return True
-        return False
-
-    # --- Dispatch step ---
-
-    def _dispatch_ready(self) -> bool:
-        in_flight = self.store.in_progress_items()
-        if in_flight:
-            return False
-        item = self.store.next_actionable()
-        if not item:
-            return False
-        if self._is_minimal(item):
-            # Not enriched yet -- skip dispatch, will be enriched next tick
-            return False
-        spec = {
-            "id": item["id"],
-            "title": item.get("title", item["id"]),
-            "priority": item.get("priority", "medium"),
-            "files_to_modify": item["files_to_modify"],
-            "description": item.get("description", ""),
-            "acceptance": item["acceptance"],
+    # Send proposal to Builder via AgentNet chat
+    # Format: content contains ```json block with spec (Builder's _parse_proposal expects this)
+    spec_json = {
+        "id": task_id,
+        "title": task_title,
+        "description": task_desc,
+        "source": source,
+        "paperclip_issue_id": task_id if source == "paperclip" else None,
+        "paperclip_company_id": COMPANY_ID if source == "paperclip" else None,
+    }
+    proposal_content = f"Task from Paperclip: {task_title}\n\n```json\n{json.dumps(spec_json, indent=2)}\n```"
+    proposal_data = {
+        "to_agent_id": BUILDER_AGENT_ID,
+        "from_agent_id": PLANNER_AGENT_ID,
+        "message_type": "proposal",
+        "title": task_title,
+        "content": proposal_content,
+        "from_agent_name": "Planner v5 (Paperclip)",
+        "metadata": {
+            "source": source,
+            "task_id": task_id,
+            "paperclip_issue_id": task_id if source == "paperclip" else None,
+            "paperclip_company_id": COMPANY_ID if source == "paperclip" else None,
+            "ts": time.time(),
         }
-        body = (
-            f"Backlog item {item['id']}: {item.get('title')}\n\n"
-            f"Spec (JSON):\n```json\n{json.dumps(spec, indent=2, ensure_ascii=False)}\n```"
+    }
+    chat_result = _agentnet_post("/v1/chat/", proposal_data)
+    if chat_result:
+        log.info(f"Proposal sent via AgentNet chat: {chat_result.get('id', '?')[:12]}")
+    else:
+        log.warning("Failed to send proposal via AgentNet chat")
+
+    # Mark in YAML backlog (if exists) as dispatched
+    if source == "yaml":
+        subprocess.run(
+            ["sed", "-i", f's/status: open/status: dispatched/', BACKLOG_FILE],
+            capture_output=True,
         )
-        result = self.send_msg(
-            "builder",
-            "proposal",
-            f"BACKLOG {item['id']}: {item.get('title')}",
-            body,
-        )
-        if result and "id" in result:
-            self.store.update_item(item["id"], status="in_progress", thread_id=result["id"])
-            self.log.info("dispatched %s -> builder (thread=%s)", item["id"], result["id"][:8])
-            append_ship_log(item["id"], item.get("title", ""), "DISPATCHED", "to builder")
-            return True
-        return False
 
-    # --- Process completion / QA results ---
+    # Log to ship log
+    with open(SHIP_LOG, "a") as f:
+        f.write(f"- [{time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}] **{task_id}** DISPATCHED: {task_title} -- to builder\n")
 
-    def _process_completed(self):
-        msgs = self.api_get(
-            f"/v1/chat/?from_agent_id={AGENT_IDS['builder']}&message_type=completed&limit=20"
-        ) or []
-        if not isinstance(msgs, list):
-            return
-        for m in self.get_new_messages(msgs):
-            mid = m.get("id")
-            content = m.get("content", "") or ""
-            backlog_id = self._extract_backlog_id(m.get("title", "") + " " + content)
-            if not backlog_id:
-                self.mark_processed(mid)
-                continue
-            cur = self.store.find(backlog_id)
-            # Only route if item is still in_progress (avoid duplicates)
-            if cur and cur.get("status") == "in_progress":
-                self.store.update_item(backlog_id, status="review")
-                self.send_msg(
-                    "qa",
-                    "review_request",
-                    f"REVIEW {backlog_id}",
-                    f"Builder finished {backlog_id}. Run acceptance.\n\n{content}",
-                    thread_id=m.get("thread_id") or mid,
-                )
-                self.log.info("routed %s -> QA review", backlog_id)
-            self.mark_processed(mid)
+    return {"status": "dispatched", "task_id": task_id}
 
-    def _process_qa_results(self):
-        msgs = self.api_get(
-            f"/v1/chat/?from_agent_id={AGENT_IDS['qa']}&message_type=review_result&limit=20"
-        ) or []
-        if not isinstance(msgs, list):
-            return
-        for m in self.get_new_messages(msgs):
-            mid = m.get("id")
-            title = m.get("title", "") or ""
-            content = m.get("content", "") or ""
-            backlog_id = self._extract_backlog_id(title + " " + content)
-            if not backlog_id:
-                self.mark_processed(mid)
-                continue
-            cur = self.store.find(backlog_id)
-            # Only act if item is in `review` (avoid stale double-process)
-            if not cur or cur.get("status") != "review":
-                self.mark_processed(mid)
-                continue
-            passed = ("PASSED" in title) or ("ALL PASS" in content)
-            if passed:
-                self.store.update_item(
-                    backlog_id,
-                    status="done",
-                    shipped_at=time_module.strftime("%Y-%m-%dT%H:%M:%SZ", time_module.gmtime()),
-                )
-                self.log.info("MARKED DONE: %s", backlog_id)
-                append_ship_log(backlog_id, cur.get("title", ""), "SHIPPED", "QA passed")
+
+def mark_blocked(task_id, reason, source="paperclip"):
+    """Mark task as blocked after max retries."""
+    log.warning(f"BLOCKED: [{task_id}] {reason}")
+    if source == "paperclip":
+        _paperclip_patch(f"/issues/{task_id}", {"status": "blocked"})
+
+    with open(SHIP_LOG, "a") as f:
+        f.write(f"- [{time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}] **{task_id}** BLOCKED: {_current_issue_title} -- {reason}\n")
+
+
+def main_loop():
+    """Main Planner loop."""
+    global _retries, _current_issue_id, _current_issue_title
+
+    log.info("Planner v5 started — reading tasks from Paperclip API")
+    log.info(f"Paperclip URL: {PAPERCLIP_URL}")
+
+    while True:
+        try:
+            task = get_next_task()
+            if task:
+                result = dispatch_to_builder(task)
+                log.info(f"Dispatched: {result}")
+
+                # Wait for builder to finish (poll every 5s, max 300s)
+                timeout = 300
+                waited = 0
+                while waited < timeout:
+                    # Check if current issue still in_progress in Paperclip
+                    if task["source"] == "paperclip":
+                        issue = _paperclip_get(f"/issues/{task['id']}")
+                        if issue and issue.get("status") in ("done", "cancelled", "blocked"):
+                            log.info(f"Issue {task['id']} resolved: {issue.get('status')}")
+                            break
+
+                    time.sleep(5)
+                    waited += 5
+
+                if waited >= timeout:
+                    log.warning(f"Timeout waiting for {task['id']}")
             else:
-                retries = self.store.increment_retry(backlog_id)
-                if retries > RETRY_LIMIT:
-                    self.store.update_item(backlog_id, status="blocked",
-                                           blocked_by=f"qa-failed-{retries}x")
-                    self.log.warning("BLOCKED %s after %d retries", backlog_id, retries)
-                    append_ship_log(backlog_id, cur.get("title", ""), "BLOCKED",
-                                    f"QA failed {retries}x")
-                else:
-                    self.store.update_item(backlog_id, status="open")
-                    self.log.info("REOPENED %s for retry %d/%d", backlog_id, retries, RETRY_LIMIT)
-                    append_ship_log(backlog_id, cur.get("title", ""), "RETRY",
-                                    f"attempt {retries}")
-            self.mark_processed(mid)
+                log.info("No pending tasks. Sleeping...")
+                time.sleep(15)
 
-    @staticmethod
-    def _extract_backlog_id(text: str) -> str | None:
-        m = re.search(r"\b(AB-\d{3,})\b", text)
-        return m.group(1) if m else None
-
-    def on_tick(self):
-        # Order matters:
-        # 1. Drain QA results first (free up "review" -> done/open).
-        # 2. Drain builder completions (route to QA).
-        # 3. Enrich minimal open items (so they become dispatch-ready).
-        # 4. Dispatch one ready item to builder.
-        self._process_qa_results()
-        self._process_completed()
-        if not self._enrich_minimal_open():
-            self._dispatch_ready()
+        except KeyboardInterrupt:
+            log.info("Shutting down...")
+            break
+        except Exception as e:
+            log.error(f"Error in main loop: {e}")
+            time.sleep(10)
 
 
 if __name__ == "__main__":
-    PlannerV5().run()
+    main_loop()

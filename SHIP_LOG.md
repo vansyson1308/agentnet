@@ -117,3 +117,308 @@ Auto-appended by hermes_planner_v4 + qaagent_v6.
 - [2026-04-25 15:04:42 UTC] **AB-320** DISPATCHED: Add /marketplace public landing page on dashboard -- to builder
 - [2026-04-25 15:06:13 UTC] **AB-320** SHIPPED: Add /marketplace public landing page on dashboard -- QA passed
 - [2026-04-25 22:04:32 UTC] **AB-008** DISPATCHED: README badge: agent fleet status -- to builder
+- [2026-04-26 15:56:39 UTC] **AB-008** DISPATCHED: README badge: agent fleet status -- to builder
+- [2026-04-26 15:58:10 UTC] **AB-008** SHIPPED: README badge: agent fleet status -- QA passed
+- [2026-04-26 15:58:10 UTC] **AB-400** DISPATCHED: Audit log entry for every ImprovementProposal lifecycle transition -- to builder
+- [2026-04-26 16:00:22 UTC] **AB-400** RETRY: Audit log entry for every ImprovementProposal lifecycle transition -- attempt 1
+- [2026-04-26 16:00:22 UTC] **AB-400** DISPATCHED: Audit log entry for every ImprovementProposal lifecycle transition -- to builder
+- [2026-04-26 16:02:23 UTC] **AB-400** RETRY: Audit log entry for every ImprovementProposal lifecycle transition -- attempt 2
+- [2026-04-26 16:02:23 UTC] **AB-400** DISPATCHED: Audit log entry for every ImprovementProposal lifecycle transition -- to builder
+- [2026-04-26 16:04:24 UTC] **AB-400** BLOCKED: Audit log entry for every ImprovementProposal lifecycle transition -- QA failed 3x
+- [2026-04-26 16:04:24 UTC] **AB-401** DISPATCHED: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints -- to builder
+- [2026-04-26 16:06:25 UTC] **AB-401** RETRY: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints -- attempt 1
+- [2026-04-26 16:06:25 UTC] **AB-401** DISPATCHED: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints -- to builder
+- [2026-04-26 16:08:26 UTC] **AB-401** RETRY: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints -- attempt 2
+- [2026-04-26 16:08:27 UTC] **AB-401** DISPATCHED: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints -- to builder
+- [2026-04-26 16:10:28 UTC] **AB-401** BLOCKED: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints -- QA failed 3x
+- [2026-04-26 16:10:28 UTC] **AB-402** DISPATCHED: Simulation service produces realistic Goals + ImprovementProposals -- to builder
+- [2026-04-26 16:11:59 UTC] **AB-402** RETRY: Simulation service produces realistic Goals + ImprovementProposals -- attempt 1
+- [2026-04-26 16:11:59 UTC] **AB-402** DISPATCHED: Simulation service produces realistic Goals + ImprovementProposals -- to builder
+- [2026-04-26 16:14:00 UTC] **AB-402** RETRY: Simulation service produces realistic Goals + ImprovementProposals -- attempt 2
+- [2026-04-26 16:14:00 UTC] **AB-402** DISPATCHED: Simulation service produces realistic Goals + ImprovementProposals -- to builder
+- [2026-04-26 16:15:31 UTC] **AB-402** BLOCKED: Simulation service produces realistic Goals + ImprovementProposals -- QA failed 3x
+- [2026-04-26 16:15:31 UTC] **AB-403** DISPATCHED: Hedera HCS audit stamp on IMPLEMENTED proposals -- to builder
+- [2026-04-26 16:17:32 UTC] **AB-403** RETRY: Hedera HCS audit stamp on IMPLEMENTED proposals -- attempt 1
+- [2026-04-26 16:17:32 UTC] **AB-403** DISPATCHED: Hedera HCS audit stamp on IMPLEMENTED proposals -- to builder
+- [2026-04-26 16:19:33 UTC] **AB-403** RETRY: Hedera HCS audit stamp on IMPLEMENTED proposals -- attempt 2
+- [2026-04-26 16:19:34 UTC] **AB-403** DISPATCHED: Hedera HCS audit stamp on IMPLEMENTED proposals -- to builder
+- [2026-04-26 16:21:34 UTC] **AB-403** BLOCKED: Hedera HCS audit stamp on IMPLEMENTED proposals -- QA failed 3x
+- [2026-04-26 17:00:41 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 2 tests, research=no
+- [2026-04-26 17:01:24 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 1 tests, research=no
+- [2026-04-26 17:02:06 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 1 tests, research=no
+- [2026-04-26 17:02:57 UTC] **AB-404** ENRICH_FAIL: Improve: storytelling -- deepseek returned nothing usable
+- [2026-04-26 17:03:40 UTC] **AB-404** ENRICHED: Improve: storytelling -- 1 files, 1 tests, research=no
+- [2026-04-26 17:03:52 UTC] **AB-404** ENRICH_FAIL: Improve: storytelling -- deepseek returned nothing usable
+- [2026-04-26 17:04:19 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 2 tests, research=no
+- [2026-04-26 17:04:23 UTC] **AB-404** ENRICH_FAIL: Improve: storytelling -- deepseek returned nothing usable
+- [2026-04-26 17:05:00 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 2 tests, research=no
+- [2026-04-26 17:05:48 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 2 tests, research=no
+- [2026-04-26 17:06:30 UTC] **AB-404** ENRICHED: Improve: storytelling -- 1 files, 2 tests, research=no
+- [2026-04-26 17:07:21 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 2 tests, research=no
+- [2026-04-26 17:08:07 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 3 tests, research=no
+- [2026-04-26 17:08:50 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 2 tests, research=no
+- [2026-04-26 17:09:41 UTC] **AB-404** ENRICH_FAIL: Improve: storytelling -- deepseek returned nothing usable
+- [2026-04-26 17:10:22 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 1 tests, research=no
+- [2026-04-26 17:11:07 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 2 tests, research=no
+- [2026-04-26 17:11:52 UTC] **AB-404** ENRICHED: Improve: storytelling -- 1 files, 2 tests, research=no
+- [2026-04-26 17:12:02 UTC] **AB-404** ENRICH_FAIL: Improve: storytelling -- deepseek returned nothing usable (attempt 1)
+- [2026-04-26 17:12:26 UTC] **AB-404** ENRICH_FAIL: Improve: storytelling -- deepseek returned nothing usable (attempt 1)
+- [2026-04-26 17:12:30 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 2 tests, research=no
+- [2026-04-26 17:12:32 UTC] **AB-404** ENRICH_FAIL: Improve: storytelling -- deepseek returned nothing usable (attempt 1)
+- [2026-04-26 17:13:02 UTC] **AB-404** ENRICH_FAIL: Improve: storytelling -- deepseek returned nothing usable (attempt 1)
+- [2026-04-26 17:13:22 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 2 tests, research=no
+- [2026-04-26 17:13:33 UTC] **AB-404** ENRICH_FAIL: Improve: storytelling -- deepseek returned nothing usable (attempt 1)
+- [2026-04-26 17:13:57 UTC] **AB-404** ENRICH_FAIL: Improve: storytelling -- deepseek returned nothing usable (attempt 1)
+- [2026-04-26 17:14:01 UTC] **AB-404** ENRICHED: Improve: storytelling -- 1 files, 1 tests, research=no
+- [2026-04-26 17:14:27 UTC] **AB-404** ENRICH_FAIL: Improve: storytelling -- deepseek returned nothing usable (attempt 1)
+- [2026-04-26 17:14:44 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 1 tests, research=no
+- [2026-04-26 17:15:35 UTC] **AB-404** ENRICHED: Improve: storytelling -- 2 files, 1 tests, research=no
+- [2026-04-26 17:22:45 UTC] **AB-408** ENRICH_FAIL: Self-Improvement: AgentNet brainstorm + implement features -- deepseek returned nothing usable (attempt 1)
+- [2026-04-26 17:46:09 UTC] **AB-408** DISPATCHED: Self-Improvement: AgentNet brainstorm + implement features -- to builder
+- [2026-04-26 17:46:53 UTC] **AB-408** SHIPPED: Self-Improvement: AgentNet brainstorm + implement features -- QA passed
+- [2026-04-26 18:00:05 UTC] **AB-409** ENRICHED: Redesign AgentNet dashboard UI — dark theme, agent activity timeline, mobile-responsive -- 3 files, 3 tests, research=no
+- [2026-04-26 18:00:43 UTC] **AB-410** ENRICHED: Add public agent marketplace landing page with search + filter -- 3 files, 3 tests, research=no
+- [2026-04-26 18:01:32 UTC] **AB-411** ENRICH_FAIL: Build agent referral leaderboard — top agents by task count/success rate -- deepseek returned nothing usable (attempt 1)
+- [2026-04-26 18:01:51 UTC] **AB-412** ENRICHED: Add live task execution timeline with WebSocket streaming to dashboard -- 3 files, 3 tests, research=no
+- [2026-04-26 18:02:19 UTC] **AB-413** ENRICH_FAIL: Implement agent auto-scaling — spawn worker agent on high backlog load -- deepseek returned nothing usable (attempt 1)
+- [2026-04-26 18:07:00 UTC] **AB-411** ENRICHED: Build agent referral leaderboard — top agents by task count/success rate -- 3 files, 3 tests, research=no
+- [2026-04-26 18:07:06 UTC] **AB-411** ENRICHED: Build agent referral leaderboard — top agents by task count/success rate -- 3 files, 3 tests, research=no
+- [2026-04-26 18:07:37 UTC] **AB-413** ENRICHED: Implement agent auto-scaling — spawn worker agent on high backlog load -- 2 files, 2 tests, research=no
+- [2026-04-26 18:07:54 UTC] **AB-413** ENRICHED: Implement agent auto-scaling — spawn worker agent on high backlog load -- 3 files, 3 tests, research=no
+- [2026-04-26 18:15:10 UTC] **AB-400** DISPATCHED: Audit log entry for every ImprovementProposal lifecycle transition -- to builder
+- [2026-04-26 18:15:40 UTC] **AB-400** RETRY: Audit log entry for every ImprovementProposal lifecycle transition -- attempt 1
+- [2026-04-26 18:15:41 UTC] **AB-400** DISPATCHED: Audit log entry for every ImprovementProposal lifecycle transition -- to builder
+- [2026-04-26 18:16:11 UTC] **AB-400** RETRY: Audit log entry for every ImprovementProposal lifecycle transition -- attempt 2
+- [2026-04-26 18:16:11 UTC] **AB-400** DISPATCHED: Audit log entry for every ImprovementProposal lifecycle transition -- to builder
+- [2026-04-26 18:16:42 UTC] **AB-400** BLOCKED: Audit log entry for every ImprovementProposal lifecycle transition -- QA failed 3x
+- [2026-04-26 18:16:42 UTC] **AB-401** DISPATCHED: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints -- to builder
+- [2026-04-26 18:17:29 UTC] **AB-401** RETRY: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints -- attempt 1
+- [2026-04-26 18:17:29 UTC] **AB-401** DISPATCHED: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints -- to builder
+- [2026-04-26 18:17:43 UTC] **AB-401** RETRY: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints -- attempt 2
+- [2026-04-26 18:17:43 UTC] **AB-401** DISPATCHED: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints -- to builder
+- [2026-04-26 18:18:13 UTC] **AB-401** DISPATCHED: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints -- to builder
+- [2026-04-26 18:20:01 UTC] **AB-401** BLOCKED: Wire the React SPA at /opt/agentnet-dashboard-ui/ to the new endpoints -- QA failed 3x
+- [2026-04-26 18:20:01 UTC] **AB-402** DISPATCHED: Simulation service produces realistic Goals + ImprovementProposals -- to builder
+- [2026-04-26 18:21:32 UTC] **AB-402** RETRY: Simulation service produces realistic Goals + ImprovementProposals -- attempt 1
+- [2026-04-26 18:21:32 UTC] **AB-402** DISPATCHED: Simulation service produces realistic Goals + ImprovementProposals -- to builder
+- [2026-04-26 18:23:46 UTC] **AB-402** RETRY: Simulation service produces realistic Goals + ImprovementProposals -- attempt 2
+- [2026-04-26 18:23:47 UTC] **AB-402** DISPATCHED: Simulation service produces realistic Goals + ImprovementProposals -- to builder
+- [2026-04-26 18:25:48 UTC] **AB-402** BLOCKED: Simulation service produces realistic Goals + ImprovementProposals -- QA failed 3x
+- [2026-04-26 18:25:48 UTC] **AB-403** DISPATCHED: Hedera HCS audit stamp on IMPLEMENTED proposals -- to builder
+- [2026-04-26 18:27:36 UTC] **AB-403** RETRY: Hedera HCS audit stamp on IMPLEMENTED proposals -- attempt 1
+- [2026-04-26 18:27:36 UTC] **AB-403** DISPATCHED: Hedera HCS audit stamp on IMPLEMENTED proposals -- to builder
+- [2026-04-26 18:29:07 UTC] **AB-403** RETRY: Hedera HCS audit stamp on IMPLEMENTED proposals -- attempt 2
+- [2026-04-26 18:29:07 UTC] **AB-403** DISPATCHED: Hedera HCS audit stamp on IMPLEMENTED proposals -- to builder
+- [2026-04-26 18:30:51 UTC] **AB-403** BLOCKED: Hedera HCS audit stamp on IMPLEMENTED proposals -- QA failed 3x
+- [2026-04-26 18:30:51 UTC] **AB-409** DISPATCHED: Redesign AgentNet dashboard UI — dark theme, agent activity timeline, mobile-responsive -- to builder
+- [2026-04-26 18:32:39 UTC] **AB-409** RETRY: Redesign AgentNet dashboard UI — dark theme, agent activity timeline, mobile-responsive -- attempt 1
+- [2026-04-26 18:32:39 UTC] **AB-409** DISPATCHED: Redesign AgentNet dashboard UI — dark theme, agent activity timeline, mobile-responsive -- to builder
+- [2026-04-26 18:34:10 UTC] **AB-409** RETRY: Redesign AgentNet dashboard UI — dark theme, agent activity timeline, mobile-responsive -- attempt 2
+- [2026-04-26 18:34:10 UTC] **AB-409** DISPATCHED: Redesign AgentNet dashboard UI — dark theme, agent activity timeline, mobile-responsive -- to builder
+- [2026-04-26 18:34:23 UTC] **AB-409** BLOCKED: Redesign AgentNet dashboard UI — dark theme, agent activity timeline, mobile-responsive -- QA failed 3x
+- [2026-04-26 18:34:24 UTC] **AB-410** DISPATCHED: Add public agent marketplace landing page with search + filter -- to builder
+- [2026-04-26 18:36:54 UTC] **AB-410** RETRY: Add public agent marketplace landing page with search + filter -- attempt 1
+- [2026-04-26 18:36:55 UTC] **AB-410** DISPATCHED: Add public agent marketplace landing page with search + filter -- to builder
+- [2026-04-26 18:37:12 UTC] **AB-410** RETRY: Add public agent marketplace landing page with search + filter -- attempt 2
+- [2026-04-26 18:37:12 UTC] **AB-410** DISPATCHED: Add public agent marketplace landing page with search + filter -- to builder
+- [2026-04-26 18:37:56 UTC] **AB-410** BLOCKED: Add public agent marketplace landing page with search + filter -- QA failed 3x
+- [2026-04-26 18:37:57 UTC] **AB-411** DISPATCHED: Build agent referral leaderboard — top agents by task count/success rate -- to builder
+- [2026-04-26 18:39:44 UTC] **AB-411** RETRY: Build agent referral leaderboard — top agents by task count/success rate -- attempt 1
+- [2026-04-26 18:39:44 UTC] **AB-411** DISPATCHED: Build agent referral leaderboard — top agents by task count/success rate -- to builder
+- [2026-04-26 18:42:07 UTC] **AB-411** RETRY: Build agent referral leaderboard — top agents by task count/success rate -- attempt 2
+- [2026-04-26 18:42:08 UTC] **AB-411** DISPATCHED: Build agent referral leaderboard — top agents by task count/success rate -- to builder
+- [2026-04-26 18:43:46 UTC] **AB-411** BLOCKED: Build agent referral leaderboard — top agents by task count/success rate -- QA failed 3x
+- [2026-04-26 18:43:46 UTC] **AB-412** DISPATCHED: Add live task execution timeline with WebSocket streaming to dashboard -- to builder
+- [2026-04-26 18:57:09 UTC] **AB-412** RETRY: Add live task execution timeline with WebSocket streaming to dashboard -- attempt 1
+- [2026-04-26 18:57:10 UTC] **AB-412** DISPATCHED: Add live task execution timeline with WebSocket streaming to dashboard -- to builder
+- [2026-04-26 18:57:10 UTC] **AB-412** DISPATCHED: Add live task execution timeline with WebSocket streaming to dashboard -- to builder
+- [2026-04-26 18:59:04 UTC] **AB-412** RETRY: Add live task execution timeline with WebSocket streaming to dashboard -- attempt 2
+- [2026-04-26 18:59:05 UTC] **AB-412** DISPATCHED: Add live task execution timeline with WebSocket streaming to dashboard -- to builder
+- [2026-04-26 18:59:41 UTC] **AB-412** BLOCKED: Add live task execution timeline with WebSocket streaming to dashboard -- QA failed 3x
+- [2026-04-26 18:59:42 UTC] **AB-413** DISPATCHED: Implement agent auto-scaling — spawn worker agent on high backlog load -- to builder
+- [2026-04-26 19:03:06 UTC] **AB-413** RETRY: Implement agent auto-scaling — spawn worker agent on high backlog load -- attempt 1
+- [2026-04-26 19:03:06 UTC] **AB-413** DISPATCHED: Implement agent auto-scaling — spawn worker agent on high backlog load -- to builder
+- [2026-04-26 19:04:33 UTC] **AB-413** RETRY: Implement agent auto-scaling — spawn worker agent on high backlog load -- attempt 2
+- [2026-04-26 19:04:34 UTC] **AB-413** DISPATCHED: Implement agent auto-scaling — spawn worker agent on high backlog load -- to builder
+- [2026-04-26 19:05:07 UTC] **AB-413** BLOCKED: Implement agent auto-scaling — spawn worker agent on high backlog load -- QA failed 3x
+- [2026-04-27 03:57:32 UTC] **AB-410** DISPATCHED: Add public agent marketplace landing page with search + filter -- to builder
+- [2026-04-27 03:58:59 UTC] **AB-410** RETRY: Add public agent marketplace landing page with search + filter -- attempt 1
+- [2026-04-27 03:58:59 UTC] **AB-410** DISPATCHED: Add public agent marketplace landing page with search + filter -- to builder
+- [2026-04-27 04:00:35 UTC] **AB-410** RETRY: Add public agent marketplace landing page with search + filter -- attempt 2
+- [2026-04-27 04:00:35 UTC] **AB-410** DISPATCHED: Add public agent marketplace landing page with search + filter -- to builder
+- [2026-04-27 04:02:21 UTC] **AB-410** BLOCKED: Add public agent marketplace landing page with search + filter -- QA failed 3x
+- [2026-04-27 04:02:21 UTC] **AB-411** DISPATCHED: Build agent referral leaderboard — top agents by task count/success rate -- to builder
+- [2026-04-27 04:04:22 UTC] **AB-411** RETRY: Build agent referral leaderboard — top agents by task count/success rate -- attempt 1
+- [2026-04-27 04:04:22 UTC] **AB-411** DISPATCHED: Build agent referral leaderboard — top agents by task count/success rate -- to builder
+- [2026-04-27 04:06:22 UTC] **AB-411** RETRY: Build agent referral leaderboard — top agents by task count/success rate -- attempt 2
+- [2026-04-27 04:06:22 UTC] **AB-411** DISPATCHED: Build agent referral leaderboard — top agents by task count/success rate -- to builder
+- [2026-04-27 04:07:53 UTC] **AB-411** BLOCKED: Build agent referral leaderboard — top agents by task count/success rate -- QA failed 3x
+- [2026-04-27 04:07:53 UTC] **AB-412** DISPATCHED: Add live task execution timeline with WebSocket streaming to dashboard -- to builder
+- [2026-04-27 04:09:32 UTC] **AB-412** RETRY: Add live task execution timeline with WebSocket streaming to dashboard -- attempt 1
+- [2026-04-27 04:09:32 UTC] **AB-412** DISPATCHED: Add live task execution timeline with WebSocket streaming to dashboard -- to builder
+- [2026-04-27 04:11:24 UTC] **AB-412** RETRY: Add live task execution timeline with WebSocket streaming to dashboard -- attempt 2
+- [2026-04-27 04:11:24 UTC] **AB-412** DISPATCHED: Add live task execution timeline with WebSocket streaming to dashboard -- to builder
+- [2026-04-27 04:13:25 UTC] **AB-412** BLOCKED: Add live task execution timeline with WebSocket streaming to dashboard -- QA failed 3x
+- [2026-04-27 04:13:25 UTC] **AB-413** DISPATCHED: Implement agent auto-scaling — spawn worker agent on high backlog load -- to builder
+- [2026-04-27 04:14:33 UTC] **AB-413** RETRY: Implement agent auto-scaling — spawn worker agent on high backlog load -- attempt 1
+- [2026-04-27 04:14:34 UTC] **AB-413** DISPATCHED: Implement agent auto-scaling — spawn worker agent on high backlog load -- to builder
+- [2026-04-27 04:15:34 UTC] **AB-413** RETRY: Implement agent auto-scaling — spawn worker agent on high backlog load -- attempt 2
+- [2026-04-27 04:15:34 UTC] **AB-413** DISPATCHED: Implement agent auto-scaling — spawn worker agent on high backlog load -- to builder
+- [2026-04-27 04:17:27 UTC] **AB-413** BLOCKED: Implement agent auto-scaling — spawn worker agent on high backlog load -- QA failed 3x
+- [2026-04-27 04:17:27 UTC] **AB-414** DISPATCHED: Add werewolf game spectator mode with mobile-responsive layout -- to builder
+- [2026-04-27 04:19:28 UTC] **AB-414** RETRY: Add werewolf game spectator mode with mobile-responsive layout -- attempt 1
+- [2026-04-27 04:19:28 UTC] **AB-414** DISPATCHED: Add werewolf game spectator mode with mobile-responsive layout -- to builder
+- [2026-04-27 04:21:28 UTC] **AB-414** RETRY: Add werewolf game spectator mode with mobile-responsive layout -- attempt 2
+- [2026-04-27 04:21:29 UTC] **AB-414** DISPATCHED: Add werewolf game spectator mode with mobile-responsive layout -- to builder
+- [2026-04-27 04:23:29 UTC] **AB-414** BLOCKED: Add werewolf game spectator mode with mobile-responsive layout -- QA failed 3x
+- [2026-04-27 07:16:57 UTC] **AB-410** DISPATCHED: Add public agent marketplace landing page with search + filter -- to builder
+- [2026-04-27 07:20:17 UTC] **AB-410** RETRY: Add public agent marketplace landing page with search + filter -- attempt 1
+- [2026-04-27 07:20:17 UTC] **AB-410** DISPATCHED: Add public agent marketplace landing page with search + filter -- to builder
+- [2026-04-27 07:22:18 UTC] **AB-410** RETRY: Add public agent marketplace landing page with search + filter -- attempt 2
+- [2026-04-27 07:22:18 UTC] **AB-410** DISPATCHED: Add public agent marketplace landing page with search + filter -- to builder
+- [2026-04-27 07:24:18 UTC] **AB-410** BLOCKED: Add public agent marketplace landing page with search + filter -- QA failed 3x
+- [2026-04-27 10:26:49 UTC] **5eedc646-97a8-4500-877c-3e6063bb52d8** DISPATCHED: Redesign AgentNet dashboard UI -- to builder
+- [2026-04-27 10:26:58 UTC] **5eedc646-97a8-4500-877c-3e6063bb52d8** DISPATCHED: Redesign AgentNet dashboard UI -- to builder
+- [2026-04-27 10:27:35 UTC] **5eedc646-97a8-4500-877c-3e6063bb52d8** DISPATCHED: Redesign AgentNet dashboard UI -- to builder
+- [2026-04-27 10:28:29 UTC] **a51d2587-5f66-47fd-9778-6a2245293084** DISPATCHED: Add werewolf game spectator mode with mobile-responsive layout -- to builder
+- [2026-04-27 10:33:31 UTC] **b521485c-25c4-449e-8927-bd2e322fb76f** DISPATCHED: Add live task execution timeline with WebSocket streaming to dashboard -- to builder
+- [2026-04-27 10:38:48 UTC] **720404a6-3ecf-4926-80e7-7c68e6878736** DISPATCHED: Build agent referral leaderboard — top agents by task count/success rate -- to builder
+- [2026-04-27 10:41:45 UTC] **720404a6-3ecf-4926-80e7-7c68e6878736** DISPATCHED: Build agent referral leaderboard — top agents by task count/success rate -- to builder
+- [2026-04-27 10:45:24 UTC] **b521485c-25c4-449e-8927-bd2e322fb76f** DISPATCHED: Add live task execution timeline with WebSocket streaming to dashboard -- to builder
+- [2026-04-27 10:47:46 UTC] **PAPERCLIP-INTEGRATION** Pipeline live: Paperclip -> Planner v5 -> AgentNet Chat -> Builder v6 -> QA v6
+- [2026-04-27 10:47:46 UTC] **b521485c** SHIPPED: Add live task execution timeline via Paperclip pipeline (commit aa96299)
+- [2026-04-27 11:38:46 UTC] **fa15edf0-cfda-4ad9-bca3-63f5159583b6** DISPATCHED: 🎯 [GOAL] Metaverse UI/UX — biến AgentNet thành không gian 3D ảo tung chảo -- to builder
+- [2026-04-27 11:40:50 UTC] **b43aba64-1209-4459-aa24-46a56c16c5c3** DISPATCHED: 🎯 [GOAL] Public Marketplace — ra mắt AgentNet cho người dùng thực đăng ký và deploy agent -- to builder
+- [2026-04-27 11:40:52 UTC] **fa15edf0-cfda-4ad9-bca3-63f5159583b6** DISPATCHED: 🎯 [GOAL] Metaverse UI/UX — biến AgentNet thành không gian 3D ảo tung chảo -- to builder
+- [2026-04-27 11:41:35 UTC] **b43aba64-1209-4459-aa24-46a56c16c5c3** DISPATCHED: 🎯 [GOAL] Public Marketplace — ra mắt AgentNet cho người dùng thực đăng ký và deploy agent -- to builder
+- [2026-04-27 11:41:48 UTC] **fa15edf0-cfda-4ad9-bca3-63f5159583b6** DISPATCHED: 🎯 [GOAL] Metaverse UI/UX — biến AgentNet thành không gian 3D ảo tung chảo -- to builder
+- [2026-04-27 14:18:18 UTC] **06f741ad-1d8d-4608-ae08-3dceb575d93d** DISPATCHED: [Metaverse] Three.js 3D scene engine — render interactive agent avatars in browser -- to builder
+- [2026-04-27 14:18:49 UTC] **73ce5fea-8718-40be-b228-93dde1da4a32** DISPATCHED: [Marketplace] User auth — register/login with email + social OAuth -- to builder
+- [2026-04-27 14:21:30 UTC] **09501d03-6989-4967-ac32-cffdd52d3a33** DISPATCHED: [Marketplace] Landing page — hero, features, pricing, CTA -- to builder
+- [2026-04-27 14:22:07 UTC] **b39aa37b-2f0c-4579-99c4-5e9c5f7aa653** DISPATCHED: [Marketplace] Agent registration wizard — public users create agents -- to builder
+- [2026-04-27 14:27:09 UTC] **756fe110-2288-4893-bef4-e5ea1a0d059a** DISPATCHED: [Metaverse] Agent Plaza — virtual gathering space with real-time WebSocket sync -- to builder
+- [2026-04-27 16:26:46 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 16:27:17 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 16:32:17 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 16:37:18 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 16:42:18 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 16:47:19 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 16:52:20 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 16:57:20 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 17:02:21 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 17:07:21 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 17:12:22 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 17:17:22 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 17:22:23 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 17:27:23 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 17:32:24 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 17:37:24 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 17:42:25 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 17:47:26 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 17:52:26 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 17:57:27 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 18:02:27 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 18:07:28 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 18:12:28 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 18:17:29 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 18:22:29 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 18:24:10 UTC] **09501d03-6989-4967-ac32-cffdd52d3a33** DISPATCHED: [Marketplace] Landing page — hero, features, pricing, CTA -- to builder
+- [2026-04-27 18:27:30 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 18:29:11 UTC] **b39aa37b-2f0c-4579-99c4-5e9c5f7aa653** DISPATCHED: [Marketplace] Agent registration wizard — public users create agents -- to builder
+- [2026-04-27 18:30:20 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 18:30:49 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 18:31:48 UTC] **PAP-5-METAVERSE-1** DISPATCHED: [METAVERSE] -- to builder
+- [2026-04-27 18:35:21 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 18:36:48 UTC] **756fe110-2288-4893-bef4-e5ea1a0d059a** DISPATCHED: [Metaverse] Agent Plaza — virtual gathering space with real-time WebSocket sync -- to builder
+- [2026-04-27 18:40:21 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 18:45:22 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 18:50:22 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 18:55:23 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 19:00:24 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 19:05:24 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 19:10:25 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 19:15:25 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 19:20:26 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 19:23:09 UTC] **PAP-5-METAVERSE-2** DISPATCHED: [METAVERSE] -- to builder
+- [2026-04-27 19:25:26 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 19:30:27 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 19:35:28 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 19:40:28 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 19:45:29 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 19:50:29 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 19:55:30 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 20:00:30 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 20:05:31 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 20:10:31 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 20:15:32 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 20:20:33 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 20:25:33 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 20:30:34 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 20:35:34 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 20:40:35 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 20:45:35 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 20:50:36 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 20:55:36 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 21:00:37 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 21:05:37 UTC] **AB-410** DISPATCHED: Add -- to builder
+- [2026-04-27 21:10:38 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 21:15:39 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 21:20:39 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 21:25:40 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 21:30:40 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 21:35:41 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 21:40:41 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 21:45:42 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 21:50:42 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 21:55:43 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 22:00:43 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 22:05:44 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 22:10:45 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 22:15:45 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 22:20:46 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 22:25:46 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 22:30:47 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 22:35:47 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 22:40:48 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 22:45:48 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 22:50:49 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 22:55:50 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 23:00:50 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 23:05:51 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 23:10:51 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 23:15:52 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 23:20:52 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 23:25:53 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 23:30:53 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 23:35:54 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 23:40:54 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 23:45:55 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 23:50:56 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-27 23:55:56 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 00:00:57 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 00:05:57 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 00:10:58 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 00:15:58 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 00:20:59 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 00:25:59 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 00:31:00 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 00:36:01 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 00:41:01 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 00:46:02 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 00:51:02 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 00:56:03 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 01:01:03 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 01:06:04 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 01:11:04 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 01:16:05 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 01:21:05 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-28 01:26:06 UTC] **AB-411** DISPATCHED: Build -- to builder
+- [2026-04-29 16:58:33 UTC] **1cb027ea-520b-4fe7-8fda-1f9edaaf1205** DISPATCHED: Sửa Live Feed WebSocket trên Dashboard — kết nối /ws/ -- to builder
+- [2026-04-29 16:58:44 UTC] **0a981b9b-a60b-40da-8321-5b9199cca339** DISPATCHED: Nâng cấp Dashboard stats API — hiển thị số liệu real-time -- to builder
+- [2026-05-01 11:07:22 UTC] **AB-415** DISPATCHED: [APP] -- to builder
+- [2026-05-01 19:25:03 UTC] **QA-TEST-001** DISPATCHED: QA -- to builder
+- [2026-05-01 19:25:07 UTC] **QA-TEST-001** DISPATCHED: QA -- to builder
+- [2026-05-01 19:28:03 UTC] **QA-TEST-001** DISPATCHED: QA -- to builder
+- [2026-05-01 19:33:04 UTC] **QA-TEST-001** DISPATCHED: QA -- to builder
+- [2026-05-01 19:38:04 UTC] **QA-TEST-001** DISPATCHED: QA -- to builder
+- [2026-05-01 19:43:05 UTC] **QA-TEST-001** DISPATCHED: QA -- to builder

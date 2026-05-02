@@ -1,0 +1,158 @@
+{
+  "game_id": "wwv2-1777507231",
+  "winner": "werewolves",
+  "players": [
+    {
+      "id": "hermes-planner",
+      "name": "Planner",
+      "role": "werewolf",
+      "alive": true
+    },
+    {
+      "id": "hermes-builder",
+      "name": "Builder",
+      "role": "villager",
+      "alive": false
+    },
+    {
+      "id": "hermes-qaagent",
+      "name": "QAAgent",
+      "role": "witch",
+      "alive": false
+    },
+    {
+      "id": "hermes-storyteller",
+      "name": "Storyteller",
+      "role": "werewolf",
+      "alive": true
+    },
+    {
+      "id": "echo",
+      "name": "Echo",
+      "role": "villager",
+      "alive": false
+    },
+    {
+      "id": "poll",
+      "name": "Poll",
+      "role": "villager",
+      "alive": false
+    },
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "role": "villager",
+      "alive": false
+    },
+    {
+      "id": "hermes-builder-v6",
+      "name": "BuilderV6",
+      "role": "hunter",
+      "alive": false
+    },
+    {
+      "id": "shadow",
+      "name": "Shadow",
+      "role": "villager",
+      "alive": false
+    },
+    {
+      "id": "ember",
+      "name": "Ember",
+      "role": "villager",
+      "alive": true
+    },
+    {
+      "id": "frost",
+      "name": "Frost",
+      "role": "seer",
+      "alive": true
+    },
+    {
+      "id": "blitz",
+      "name": "Blitz",
+      "role": "guard",
+      "alive": true
+    },
+    {
+      "id": "nova",
+      "name": "Nova",
+      "role": "werewolf",
+      "alive": true
+    },
+    {
+      "id": "vex",
+      "name": "Vex",
+      "role": "werewolf",
+      "alive": true
+    },
+    {
+      "id": "drift",
+      "name": "Drift",
+      "role": "villager",
+      "alive": true
+    }
+  ],
+  "public_history": [
+    {
+      "type": "day_announcement",
+      "content": "Game started! 15 players. 4 werewolves among us.",
+      "day": 0
+    },
+    {
+      "type": "day_announcement",
+      "content": "Night 1 begins. Everyone goes to sleep.",
+      "day": 0
+    },
+    {
+      "type": "night_result",
+      "content": "Last night, Echo died.",
+      "day": 0
+    },
+    {
+      "type": "execution",
+      "content": "Builder was executed.",
+      "day": 0
+    },
+    {
+      "type": "day_announcement",
+      "content": "Night 1 begins. Everyone goes to sleep.",
+      "day": 0
+    },
+    {
+      "type": "night_result",
+      "content": "Last night, Builder, QAAgent died.",
+      "day": 0
+    },
+    {
+      "type": "execution",
+      "content": "Shadow was executed.",
+      "day": 0
+    },
+    {
+      "type": "day_announcement",
+      "content": "Night 2 begins. Everyone goes to sleep.",
+      "day": 0
+    },
+    {
+      "type": "night_result",
+      "content": "Last night, Echo, Poll, Shadow died.",
+      "day": 0
+    },
+    {
+      "type": "execution",
+      "content": "OpenClaw was executed.",
+      "day": 0
+    },
+    {
+      "type": "day_announcement",
+      "content": "Night 3 begins. Everyone goes to sleep.",
+      "day": 0
+    },
+    {
+      "type": "game_over",
+      "content": "Werewolves win! They have taken over the village.",
+      "day": 0
+    }
+  ]
+}

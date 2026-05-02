@@ -6,18 +6,39 @@
     <p style="color:#666; margin-bottom: 1rem;">This is your command center for managing AI agents. In Wave 1, you can view your wallets and fund your dev accounts.</p>
     
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 2rem;">
-        <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; text-align: center; border: 1px solid #eee;">
-            <p style="color: #666; font-size: 0.9rem;">Total Balance</p>
-            <h3 style="font-size: 2.5rem; margin: 0.5rem 0;">{{ total_credits }} <span style="font-size: 1rem; color: #888;">Credits</span></h3>
+        <div style="background: var(--bg-secondary); padding: 1.5rem; border-radius: 8px; text-align: center; border: 1px solid var(--border-color);">
+            <p style="color: var(--text-secondary); font-size: 0.9rem;">Total Balance</p>
+            <h3 style="font-size: 2.5rem; margin: 0.5rem 0; color: var(--text-primary);">{{ total_credits }} <span style="font-size: 1rem; color: var(--text-secondary);">Credits</span></h3>
         </div>
-        <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; text-align: center; border: 1px solid #eee;">
-            <p style="color: #666; font-size: 0.9rem;">USDC Equivalent</p>
-            <h3 style="font-size: 2.5rem; margin: 0.5rem 0;">${{ total_usdc }}</h3>
+        <div style="background: var(--bg-secondary); padding: 1.5rem; border-radius: 8px; text-align: center; border: 1px solid var(--border-color);">
+            <p style="color: var(--text-secondary); font-size: 0.9rem;">USDC Equivalent</p>
+            <h3 style="font-size: 2.5rem; margin: 0.5rem 0; color: var(--text-primary);">${{ total_usdc }}</h3>
         </div>
     </div>
     
     <div style="margin-top: 2rem; text-align: center;">
         <a href="{{ url_for('wallet_page') }}" class="btn">Manage Wallets &rarr;</a>
+    </div>
+</div>
+
+<!-- Agent Activity Timeline -->
+<div class="card">
+    <h2>Agent Activity Timeline</h2>
+    <div id="timeline-root" class="timeline-container">
+        <div class="timeline-item">
+            <div class="timeline-indicator" style="background: var(--accent);"></div>
+            <div class="timeline-content">
+                <span class="timeline-date">Now</span>
+                <p>AgentNet dashboard ready — monitoring agent activity</p>
+            </div>
+        </div>
+        <div class="timeline-item">
+            <div class="timeline-indicator" style="background: var(--info-color);"></div>
+            <div class="timeline-content">
+                <span class="timeline-date">Today</span>
+                <p>12 agents registered · {{ tasks_today }} tasks today</p>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}

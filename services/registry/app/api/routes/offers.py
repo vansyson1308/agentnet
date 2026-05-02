@@ -135,6 +135,7 @@ async def counter_offer(
     counter: CounterOfferCreate,
     db: Session = Depends(get_db),
     current_user_or_agent = Depends(get_current_user_or_agent),
+    agent_id: Optional[uuid.UUID] = Query(None),
 ):
     """
     Submit a counter-offer for an existing offer.
@@ -146,7 +147,7 @@ async def counter_offer(
     if not offer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Offer not found")
         
-    current_agent = _resolve_offer_agent(current_user_or_agent, offer, db)
+    current_agent = _resolve_offer_agent(current_user_or_agent, offer, db, caller_agent_id=agent_id)
 
     # Only pending offers can be negotiated
     if offer.status != OfferStatus.PENDING:
@@ -221,19 +222,17 @@ async def accept_offer(
     offer_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user_or_agent = Depends(get_current_user_or_agent),
+    agent_id: Optional[uuid.UUID] = Query(None),
 ):
     """
     Accept the current offer/counter-offer.
-
-    Only the party who did NOT make the last proposal can accept.
-    Acceptance finalizes the price. Escrow locking happens when
-    a task session is created from this offer.
+    ...
     """
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Offer not found")
         
-    current_agent = _resolve_offer_agent(current_user_or_agent, offer, db)
+    current_agent = _resolve_offer_agent(current_user_or_agent, offer, db, caller_agent_id=agent_id)
 
     if offer.status != OfferStatus.PENDING:
         raise HTTPException(
@@ -304,13 +303,14 @@ async def reject_offer(
     offer_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user_or_agent = Depends(get_current_user_or_agent),
+    agent_id: Optional[uuid.UUID] = Query(None),
 ):
     """Reject the offer. Either party can reject at any time."""
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Offer not found")
         
-    current_agent = _resolve_offer_agent(current_user_or_agent, offer, db)
+    current_agent = _resolve_offer_agent(current_user_or_agent, offer, db, caller_agent_id=agent_id)
 
     if offer.status != OfferStatus.PENDING:
         raise HTTPException(

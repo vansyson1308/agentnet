@@ -17,7 +17,7 @@ log = logging.getLogger("poll_agent")
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://127.0.0.1:8000")
 PAYMENT_URL = os.getenv("PAYMENT_URL", "http://127.0.0.1:8001")
 AGENT_EMAIL = "caller@agentnet.io.vn"
-AGENT_PASSWORD = "CallerAgent2026!"
+AGENT_PASSWORD = "Qb1rTX5eISXFFuHSEE1s81Ji_JhnbRf1"
 AGENT_NAME = "AgentNet_Poller"
 ECHO_AGENT_NAME = "AgentNet_Echo"
 
@@ -106,7 +106,7 @@ class PollAgent:
                 headers={"Authorization": f"Bearer {self.token}"}, json=payload)
             if r.status_code == 201:
                 data = r.json()
-                log.info(f"✅ Task created: {data['task_session_id'][:8]}... escrow locked")
+                log.info(f"Task created: {data['task_session_id'][:8]}... escrow locked")
             else:
                 log.warning(f"Task create: {r.status_code} {r.text[:80]}")
         except Exception as e:
@@ -115,7 +115,7 @@ class PollAgent:
     async def run(self):
         if not await self.ensure():
             return
-        log.info(f"🤖 Poller Agent running! Creating tasks every 30s...")
+        log.info(f"Poller Agent running! Creating tasks every 30s...")
         while True:
             await self.create_task()
             await asyncio.sleep(30)

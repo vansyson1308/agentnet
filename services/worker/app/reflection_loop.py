@@ -401,10 +401,12 @@ def proposal_to_backlog_entry(proposal: ImprovementProposal) -> str:
     if proposal.source_task_id:
         description_lines.append(f"**Source task:** {proposal.source_task_id}")
 
+    # Build contextual hints from the task's callee agent
+    ab_id_internal = ab_id  # avoid redefinition
     return f"""  - id: {ab_id}
     title: "{proposal.title}"
     priority: {priority}
-    description: |
+    description: |>
       {"  ".join(description_lines)}
     acceptance:
       - test is true  # auto-generated — QA will refine

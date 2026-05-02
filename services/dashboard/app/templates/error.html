@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en" class="dark-theme">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Error — AgentNet</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dark.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-container">
+            <a href="{{ url_for('index') }}" class="navbar-brand">
+                <span class="navbar-logo">⚡</span> AgentNet
+            </a>
+        </div>
+    </nav>
+    <main class="container">
+        <div class="card" style="text-align: center; padding: 3rem;">
+            <h2>⚠️ Internal Server Error</h2>
+            <p style="color: var(--text-secondary); margin: 1rem 0;">{{ error }}</p>
+            <a href="{{ url_for('login_page') }}" class="btn btn-primary">Back to Login</a>
+        </div>
+    </main>
+</body>
+</html>

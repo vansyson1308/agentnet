@@ -133,6 +133,7 @@ services:
         condition: service_healthy
     volumes:
       - ./services/worker:/app
+      - ./AGENT_BACKLOG.md:/opt/agentnet/AGENT_BACKLOG.md
     command: python -m app.worker
     networks:
       - agentnet-network
@@ -209,8 +210,10 @@ services:
       REGISTRY_URL: http://registry:8000
       PAYMENT_URL: http://payment:8001
       DASHBOARD_PORT: 8080
+      AGENTNET_ADMIN_TOKEN: ${AGENTNET_USER_PASSWORD:-}
       WEREWOLF_STATE_FILE: /app/werewolf_data/werewolf_state.json
       WEREWOLF_STATS_FILE: /app/werewolf_data/werewolf_stats.json
+      WEREWOLF_DATA_DIR: /app/werewolf_data
     volumes:
       - /opt/agentnet/werewolf_data:/app/werewolf_data
     ports:

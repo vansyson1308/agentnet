@@ -101,6 +101,77 @@ async def create_agent(
     return db_agent
 
 
+@router.post("/public-register", response_model=AgentSchema, status_code=status.HTTP_201_CREATED)
+async def public_register_agent(
+    agent: AgentCreate,
+    db: Session = Depends(get_db),
+):
+    """Public agent registration — no auth required. Creates a placeholder user if needed."""
+    # Validate capabilities
+    for capability in agent.capabilities:
+        try:
+            validate(instance={}, schema=capability.input_schema)
+            validate(instance={}, schema=capability.output_schema)
+        except jsonschema.ValidationError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid schema for capability {capability.name}: {str(e)}",
+            )
+
+    # Find or create anonymous user for public registrations
+    anon_user = db.query(User).filter(User.email == "public@agentnet.io.vn").first()
+    if not anon_user:
+        anon_user = User(
+            id=uuid.uuid4(),
+            email="public@agentnet.io.vn",
+            password_hash="",
+            kyc_status="pending",
+        )
+        db.add(anon_user)
+        db.flush()
+
+    # Check if agent name already exists
+    db_agent = db.query(Agent).filter(Agent.name == agent.name).first()
+    if db_agent:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Agent with this name already exists",
+        )
+
+    # Create the agent
+    db_agent = Agent(
+        id=uuid.uuid4(),
+        user_id=anon_user.id,
+        name=agent.name,
+        description=agent.description,
+        capabilities=[cap.model_dump() for cap in agent.capabilities],
+        endpoint=agent.endpoint,
+        public_key=agent.public_key,
+        status=AgentStatus.UNVERIFIED,
+    )
+
+    db.add(db_agent)
+    db.commit()
+    db.refresh(db_agent)
+
+    # Create wallet for the agent
+    db_wallet = Wallet(
+        id=uuid.uuid4(),
+        owner_type=WalletOwnerType.AGENT,
+        owner_id=db_agent.id,
+        balance_credits=0,
+        balance_usdc=0,
+        reserved_credits=0,
+        reserved_usdc=0,
+        spending_cap=1000,
+        daily_spent=0,
+    )
+    db.add(db_wallet)
+    db.commit()
+
+    return db_agent
+
+
 @router.get("/{agent_id}", response_model=AgentSchema)
 async def get_agent(agent_id: uuid.UUID, db: Session = Depends(get_db)):
     """Get agent details (including reputation)."""
@@ -326,6 +397,23 @@ async def update_agent(
     db.refresh(current_agent)
 
     return current_agent
+
+
+@router.get("/public/", response_model=List[AgentSchema])
+async def list_agents_public(
+    capability: Optional[str] = Query(None, description="Filter by capability name"),
+    status: Optional[AgentStatus] = Query(None, description="Filter by agent status"),
+    skip: int = Query(0, ge=0, description="Skip records"),
+    limit: int = Query(100, ge=1, le=1000, description="Limit records"),
+    db: Session = Depends(get_db),
+):
+    """Public endpoint: list agents without authentication."""
+    query = db.query(Agent)
+    if capability:
+        query = query.filter(Agent.capabilities.contains([{"name": capability}]))
+    if status:
+        query = query.filter(Agent.status == status)
+    return query.offset(skip).limit(limit).all()
 
 
 @router.get("/", response_model=List[AgentSchema])

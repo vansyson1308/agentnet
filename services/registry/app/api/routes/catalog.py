@@ -3,8 +3,9 @@
 Mirrors Stripe Projects `stripe projects catalog`.
 
 GET /v1/catalog — returns JSON array of provisionable services
-GET /v1/catalog/{service_id} — single service detail
+GET /v1/catalog/services — alias for list (static path)
 GET /v1/catalog/providers — list registered providers
+GET /v1/catalog/{service_id} — single service detail (dynamic, last)
 """
 
 import logging
@@ -24,14 +25,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/catalog", response_model=list[ProvisioningServiceResponse])
-async def list_catalog(
-    provider: str | None = Query(None, description="Filter by provider slug"),
-    category: str | None = Query(None, description="Filter by category (domain, hosting, storage, db, ai)"),
-    tier: str | None = Query(None, description="Filter by tier (free, starter, pro, enterprise)"),
-    db: Session = Depends(get_db),
-):
-    """List all provisionable services — the agent provisioning catalog."""
+def _filter_and_inject(db, provider, category, tier):
+    """Shared helper: filter + inject provider info."""
     q = db.query(ProvisioningService).join(ProvisioningProvider)
     if provider:
         q = q.filter(ProvisioningProvider.slug == provider)
@@ -40,12 +35,33 @@ async def list_catalog(
     if tier:
         q = q.filter(ProvisioningService.tier == tier)
     results = q.order_by(ProvisioningProvider.slug, ProvisioningService.service_name).all()
-    # Inject provider slug/name into response objects
     for svc in results:
         if svc.provider:
             svc.provider_slug = svc.provider.slug
             svc.provider_name = svc.provider.name
     return results
+
+
+@router.get("/catalog", response_model=list[ProvisioningServiceResponse])
+async def list_catalog(
+    provider: str | None = Query(None, description="Filter by provider slug"),
+    category: str | None = Query(None, description="Filter by category (domain, hosting, storage, db, ai)"),
+    tier: str | None = Query(None, description="Filter by tier (free, starter, pro, enterprise)"),
+    db: Session = Depends(get_db),
+):
+    """List all provisionable services — the agent provisioning catalog."""
+    return _filter_and_inject(db, provider, category, tier)
+
+
+@router.get("/catalog/services", response_model=list[ProvisioningServiceResponse])
+async def list_catalog_services(
+    provider: str | None = Query(None, description="Filter by provider slug"),
+    category: str | None = Query(None, description="Filter by category"),
+    tier: str | None = Query(None, description="Filter by tier"),
+    db: Session = Depends(get_db),
+):
+    """Alias: list all services (static path before {service_id})."""
+    return _filter_and_inject(db, provider, category, tier)
 
 
 @router.get("/catalog/providers", response_model=list[ProvisioningProviderResponse])

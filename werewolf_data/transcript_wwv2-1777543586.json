@@ -1,0 +1,233 @@
+{
+  "game_id": "wwv2-1777543586",
+  "winner": "werewolves",
+  "players": [
+    {
+      "id": "hermes-planner",
+      "name": "Planner",
+      "role": "villager",
+      "alive": false
+    },
+    {
+      "id": "hermes-builder",
+      "name": "Builder",
+      "role": "villager",
+      "alive": true
+    },
+    {
+      "id": "hermes-qaagent",
+      "name": "QAAgent",
+      "role": "hunter",
+      "alive": false
+    },
+    {
+      "id": "hermes-storyteller",
+      "name": "Storyteller",
+      "role": "villager",
+      "alive": false
+    },
+    {
+      "id": "echo",
+      "name": "Echo",
+      "role": "villager",
+      "alive": false
+    },
+    {
+      "id": "poll",
+      "name": "Poll",
+      "role": "witch",
+      "alive": false
+    },
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "role": "villager",
+      "alive": true
+    },
+    {
+      "id": "hermes-builder-v6",
+      "name": "BuilderV6",
+      "role": "villager",
+      "alive": false
+    },
+    {
+      "id": "shadow",
+      "name": "Shadow",
+      "role": "guard",
+      "alive": true
+    },
+    {
+      "id": "ember",
+      "name": "Ember",
+      "role": "werewolf",
+      "alive": false
+    },
+    {
+      "id": "frost",
+      "name": "Frost",
+      "role": "seer",
+      "alive": false
+    },
+    {
+      "id": "blitz",
+      "name": "Blitz",
+      "role": "villager",
+      "alive": false
+    },
+    {
+      "id": "nova",
+      "name": "Nova",
+      "role": "werewolf",
+      "alive": true
+    },
+    {
+      "id": "vex",
+      "name": "Vex",
+      "role": "werewolf",
+      "alive": true
+    },
+    {
+      "id": "drift",
+      "name": "Drift",
+      "role": "werewolf",
+      "alive": true
+    }
+  ],
+  "public_history": [
+    {
+      "type": "day_announcement",
+      "content": "Game started! 15 players. 4 werewolves among us.",
+      "day": 0
+    },
+    {
+      "type": "day_announcement",
+      "content": "Night 1 begins. Everyone goes to sleep.",
+      "day": 0
+    },
+    {
+      "type": "night_result",
+      "content": "No one died last night.",
+      "day": 0
+    },
+    {
+      "type": "execution",
+      "content": "Vote resulted in a tie (hermes-qaagent, echo). No one was executed.",
+      "day": 0
+    },
+    {
+      "type": "day_announcement",
+      "content": "Night 1 begins. Everyone goes to sleep.",
+      "day": 0
+    },
+    {
+      "type": "night_result",
+      "content": "No one died last night.",
+      "day": 0
+    },
+    {
+      "type": "execution",
+      "content": "Vote resulted in a tie (drift, blitz). No one was executed.",
+      "day": 0
+    },
+    {
+      "type": "day_announcement",
+      "content": "Night 2 begins. Everyone goes to sleep.",
+      "day": 0
+    },
+    {
+      "type": "night_result",
+      "content": "Last night, Storyteller died.",
+      "day": 0
+    },
+    {
+      "type": "execution",
+      "content": "Vote resulted in a tie (hermes-builder, openclaw, vex). No one was executed.",
+      "day": 0
+    },
+    {
+      "type": "day_announcement",
+      "content": "Night 3 begins. Everyone goes to sleep.",
+      "day": 0
+    },
+    {
+      "type": "night_result",
+      "content": "Last night, Frost died.",
+      "day": 0
+    },
+    {
+      "type": "execution",
+      "content": "Ember was executed.",
+      "day": 0
+    },
+    {
+      "type": "day_announcement",
+      "content": "Night 4 begins. Everyone goes to sleep.",
+      "day": 0
+    },
+    {
+      "type": "night_result",
+      "content": "Last night, Storyteller, Echo, Ember died.",
+      "day": 0
+    },
+    {
+      "type": "execution",
+      "content": "BuilderV6 was executed.",
+      "day": 0
+    },
+    {
+      "type": "day_announcement",
+      "content": "Night 5 begins. Everyone goes to sleep.",
+      "day": 0
+    },
+    {
+      "type": "night_result",
+      "content": "Last night, BuilderV6, Frost died.",
+      "day": 0
+    },
+    {
+      "type": "execution",
+      "content": "Vote resulted in a tie (drift, poll, hermes-builder). No one was executed.",
+      "day": 0
+    },
+    {
+      "type": "day_announcement",
+      "content": "Night 6 begins. Everyone goes to sleep.",
+      "day": 0
+    },
+    {
+      "type": "night_result",
+      "content": "Last night, Storyteller, Echo, Poll, Ember died.",
+      "day": 0
+    },
+    {
+      "type": "execution",
+      "content": "Vote resulted in a tie (openclaw, vex). No one was executed.",
+      "day": 0
+    },
+    {
+      "type": "day_announcement",
+      "content": "Night 7 begins. Everyone goes to sleep.",
+      "day": 0
+    },
+    {
+      "type": "night_result",
+      "content": "Last night, Planner, BuilderV6, Frost died.",
+      "day": 0
+    },
+    {
+      "type": "execution",
+      "content": "Blitz was executed.",
+      "day": 0
+    },
+    {
+      "type": "day_announcement",
+      "content": "Night 8 begins. Everyone goes to sleep.",
+      "day": 0
+    },
+    {
+      "type": "game_over",
+      "content": "Werewolves win! They have taken over the village.",
+      "day": 0
+    }
+  ]
+}

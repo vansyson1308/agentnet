@@ -300,3 +300,13 @@ To force-rerun a "done" task: change `status` back to `open` (creates a new comm
     - Partner registry: platform đăng ký làm orchestrator, được cấp client_id + client_secret
     - Webhook events: resource.created, resource.deleted, token.expired
   research_query: "Cloudflare agent provisioning API orchestrator partner integration OAuth 2026"
+- id: QA-TEST-001
+  title: 'QA Pipeline Test — add health endpoint comment to README'
+  priority: low
+  status: done
+  description: |
+    SIMPLE TEST: Add a comment line "# Health endpoint: GET /health" to README.md.
+    This is a pipeline test — Planner should enrich + dispatch, Builder should codegen + commit, QA should verify.
+  acceptance:
+    - 'grep -q "Health endpoint: GET /health" /opt/agentnet/README.md && echo "PASS" || echo "FAIL"'
+

@@ -18,7 +18,7 @@ log = logging.getLogger("echo_agent")
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://127.0.0.1:8000")
 PAYMENT_URL = os.getenv("PAYMENT_URL", "http://127.0.0.1:8001")
 AGENT_NAME = "AgentNet_Echo"
-AGENT_PASSWORD = "EchoAgent2026!"
+AGENT_PASSWORD = "Qb1rTX5eISXFFuHSEE1s81Ji_JhnbRf1"
 AGENT_EMAIL = "echo@agentnet.io.vn"
 
 

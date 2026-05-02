@@ -1,8 +1,8 @@
 {
-  "game_id": "wwv2-1777171260",
-  "phase": "day_announcement",
-  "day": 6,
-  "night": 6,
+  "game_id": "wwv2-1777685463",
+  "phase": "day_execution",
+  "day": 5,
+  "night": 5,
   "game_over": true,
   "winner": "werewolves",
   "players": [
@@ -11,26 +11,26 @@
       "name": "Planner",
       "role": "werewolf",
       "team": "werewolf",
-      "alive": true
+      "alive": false
     },
     {
       "id": "hermes-builder",
       "name": "Builder",
-      "role": "guard",
+      "role": "villager",
       "team": "village",
       "alive": false
     },
     {
       "id": "hermes-qaagent",
       "name": "QAAgent",
-      "role": "villager",
+      "role": "guard",
       "team": "village",
       "alive": false
     },
     {
       "id": "hermes-storyteller",
       "name": "Storyteller",
-      "role": "witch",
+      "role": "villager",
       "team": "village",
       "alive": false
     },
@@ -39,19 +39,19 @@
       "name": "Echo",
       "role": "werewolf",
       "team": "werewolf",
-      "alive": false
+      "alive": true
     },
     {
       "id": "poll",
       "name": "Poll",
-      "role": "villager",
-      "team": "village",
-      "alive": false
+      "role": "werewolf",
+      "team": "werewolf",
+      "alive": true
     },
     {
       "id": "openclaw",
       "name": "OpenClaw",
-      "role": "hunter",
+      "role": "villager",
       "team": "village",
       "alive": false
     },
@@ -60,13 +60,13 @@
       "name": "BuilderV6",
       "role": "villager",
       "team": "village",
-      "alive": false
+      "alive": true
     },
     {
       "id": "shadow",
       "name": "Shadow",
-      "role": "werewolf",
-      "team": "werewolf",
+      "role": "villager",
+      "team": "village",
       "alive": false
     },
     {
@@ -79,14 +79,14 @@
     {
       "id": "frost",
       "name": "Frost",
-      "role": "villager",
-      "team": "village",
-      "alive": true
+      "role": "werewolf",
+      "team": "werewolf",
+      "alive": false
     },
     {
       "id": "blitz",
       "name": "Blitz",
-      "role": "seer",
+      "role": "witch",
       "team": "village",
       "alive": false
     },
@@ -95,21 +95,21 @@
       "name": "Nova",
       "role": "villager",
       "team": "village",
-      "alive": true
+      "alive": false
     },
     {
       "id": "vex",
       "name": "Vex",
-      "role": "villager",
+      "role": "hunter",
       "team": "village",
-      "alive": false
+      "alive": true
     },
     {
       "id": "drift",
       "name": "Drift",
-      "role": "werewolf",
-      "team": "werewolf",
-      "alive": true
+      "role": "seer",
+      "team": "village",
+      "alive": false
     }
   ],
   "config": {
@@ -121,7 +121,7 @@
     "guard_target": null,
     "guard_previous_target": null,
     "wolf_targets": [],
-    "wolf_attack_target": "vex",
+    "wolf_attack_target": "openclaw",
     "witch_heal_used": false,
     "witch_poison_target": null,
     "seer_check_target": null
@@ -132,21 +132,48 @@
         "known_wolves": [
           "hermes-planner",
           "echo",
-          "shadow",
-          "drift"
+          "poll",
+          "frost"
         ],
         "attack_history": [
           {
             "night": 0,
-            "target": "hermes-builder"
+            "target": "hermes-storyteller"
           },
           {
             "night": 1,
-            "target": "hermes-qaagent"
+            "target": "hermes-builder"
+          }
+        ]
+      }
+    },
+    "hermes-builder": {},
+    "hermes-qaagent": {
+      "guard": {
+        "protected_history": []
+      }
+    },
+    "hermes-storyteller": {},
+    "echo": {
+      "wolf": {
+        "known_wolves": [
+          "hermes-planner",
+          "echo",
+          "poll",
+          "frost"
+        ],
+        "attack_history": [
+          {
+            "night": 0,
+            "target": "hermes-storyteller"
+          },
+          {
+            "night": 1,
+            "target": "hermes-builder"
           },
           {
             "night": 2,
-            "target": "hermes-storyteller"
+            "target": "hermes-qaagent"
           },
           {
             "night": 3,
@@ -154,135 +181,116 @@
           },
           {
             "night": 4,
-            "target": "openclaw"
+            "target": "nova"
           },
           {
             "night": 5,
-            "target": "blitz"
-          },
-          {
-            "night": 6,
-            "target": "vex"
+            "target": "openclaw"
           }
         ]
       }
     },
-    "hermes-builder": {
-      "guard": {
-        "protected_history": []
+    "poll": {
+      "wolf": {
+        "known_wolves": [
+          "hermes-planner",
+          "echo",
+          "poll",
+          "frost"
+        ],
+        "attack_history": [
+          {
+            "night": 0,
+            "target": "hermes-storyteller"
+          },
+          {
+            "night": 1,
+            "target": "hermes-builder"
+          },
+          {
+            "night": 2,
+            "target": "hermes-qaagent"
+          },
+          {
+            "night": 3,
+            "target": "ember"
+          },
+          {
+            "night": 4,
+            "target": "nova"
+          },
+          {
+            "night": 5,
+            "target": "openclaw"
+          }
+        ]
       }
     },
-    "hermes-qaagent": {},
-    "hermes-storyteller": {
+    "openclaw": {},
+    "hermes-builder-v6": {},
+    "shadow": {},
+    "ember": {},
+    "frost": {
+      "wolf": {
+        "known_wolves": [
+          "hermes-planner",
+          "echo",
+          "poll",
+          "frost"
+        ],
+        "attack_history": [
+          {
+            "night": 0,
+            "target": "hermes-storyteller"
+          },
+          {
+            "night": 1,
+            "target": "hermes-builder"
+          },
+          {
+            "night": 2,
+            "target": "hermes-qaagent"
+          },
+          {
+            "night": 3,
+            "target": "ember"
+          }
+        ]
+      }
+    },
+    "blitz": {
       "witch": {
         "heal_available": true,
         "poison_available": true,
         "nights_seen_attacks": [
           {
             "night": 0,
+            "attacked": "hermes-storyteller"
+          },
+          {
+            "night": 1,
             "attacked": "hermes-builder"
           },
           {
-            "night": 1,
-            "attacked": "hermes-qaagent"
-          }
-        ]
-      }
-    },
-    "echo": {
-      "wolf": {
-        "known_wolves": [
-          "hermes-planner",
-          "echo",
-          "shadow",
-          "drift"
-        ],
-        "attack_history": [
-          {
-            "night": 0,
-            "target": "hermes-builder"
-          },
-          {
-            "night": 1,
-            "target": "hermes-qaagent"
-          }
-        ]
-      }
-    },
-    "poll": {},
-    "openclaw": {},
-    "hermes-builder-v6": {},
-    "shadow": {
-      "wolf": {
-        "known_wolves": [
-          "hermes-planner",
-          "echo",
-          "shadow",
-          "drift"
-        ],
-        "attack_history": [
-          {
-            "night": 0,
-            "target": "hermes-builder"
-          },
-          {
-            "night": 1,
-            "target": "hermes-qaagent"
-          },
-          {
             "night": 2,
-            "target": "hermes-storyteller"
+            "attacked": "hermes-qaagent"
+          },
+          {
+            "night": 3,
+            "attacked": "ember"
+          },
+          {
+            "night": 4,
+            "attacked": "nova"
           }
         ]
-      }
-    },
-    "ember": {},
-    "frost": {},
-    "blitz": {
-      "seer": {
-        "checks": []
       }
     },
     "nova": {},
     "vex": {},
     "drift": {
-      "wolf": {
-        "known_wolves": [
-          "hermes-planner",
-          "echo",
-          "shadow",
-          "drift"
-        ],
-        "attack_history": [
-          {
-            "night": 0,
-            "target": "hermes-builder"
-          },
-          {
-            "night": 1,
-            "target": "hermes-qaagent"
-          },
-          {
-            "night": 2,
-            "target": "hermes-storyteller"
-          },
-          {
-            "night": 3,
-            "target": "ember"
-          },
-          {
-            "night": 4,
-            "target": "openclaw"
-          },
-          {
-            "night": 5,
-            "target": "blitz"
-          },
-          {
-            "night": 6,
-            "target": "vex"
-          }
-        ]
+      "seer": {
+        "checks": []
       }
     }
   },
@@ -292,6 +300,38 @@
       "day": 0,
       "speaker": null,
       "content": "Game started! 15 players. 4 werewolves among us.",
+      "votes": null,
+      "executed": null,
+      "deaths": [],
+      "winner": null
+    },
+    {
+      "type": "day_announcement",
+      "day": 0,
+      "speaker": null,
+      "content": "Night 1 begins. Everyone goes to sleep.",
+      "votes": null,
+      "executed": null,
+      "deaths": [],
+      "winner": null
+    },
+    {
+      "type": "night_result",
+      "day": 0,
+      "speaker": null,
+      "content": "Last night, Storyteller died.",
+      "votes": null,
+      "executed": null,
+      "deaths": [
+        "hermes-storyteller"
+      ],
+      "winner": null
+    },
+    {
+      "type": "execution",
+      "day": 0,
+      "speaker": null,
+      "content": "Vote resulted in a tie (hermes-builder, echo). No one was executed.",
       "votes": null,
       "executed": null,
       "deaths": [],
@@ -323,70 +363,23 @@
       "type": "execution",
       "day": 0,
       "speaker": null,
-      "content": "BuilderV6 was executed.",
+      "content": "Planner was executed.",
       "votes": {
-        "hermes-planner": "hermes-qaagent",
-        "hermes-qaagent": "echo",
-        "hermes-storyteller": "hermes-builder-v6",
-        "echo": "hermes-builder-v6",
-        "poll": "shadow",
-        "openclaw": "hermes-builder-v6",
-        "hermes-builder-v6": "echo",
-        "shadow": "hermes-builder-v6",
-        "ember": "hermes-planner",
-        "frost": "hermes-builder-v6",
-        "blitz": "echo",
+        "hermes-planner": "openclaw",
+        "hermes-qaagent": "hermes-planner",
+        "echo": "openclaw",
+        "poll": "hermes-qaagent",
+        "openclaw": "echo",
+        "hermes-builder-v6": "hermes-planner",
+        "shadow": "openclaw",
+        "ember": "shadow",
+        "frost": "hermes-qaagent",
+        "blitz": "hermes-planner",
         "nova": "shadow",
-        "vex": "shadow",
-        "drift": "hermes-qaagent"
+        "vex": "hermes-planner",
+        "drift": "echo"
       },
-      "executed": "hermes-builder-v6",
-      "deaths": [],
-      "winner": null
-    },
-    {
-      "type": "day_announcement",
-      "day": 0,
-      "speaker": null,
-      "content": "Night 1 begins. Everyone goes to sleep.",
-      "votes": null,
-      "executed": null,
-      "deaths": [],
-      "winner": null
-    },
-    {
-      "type": "night_result",
-      "day": 0,
-      "speaker": null,
-      "content": "Last night, QAAgent, BuilderV6 died.",
-      "votes": null,
-      "executed": null,
-      "deaths": [
-        "hermes-qaagent",
-        "hermes-builder-v6"
-      ],
-      "winner": null
-    },
-    {
-      "type": "execution",
-      "day": 0,
-      "speaker": null,
-      "content": "Echo was executed.",
-      "votes": {
-        "hermes-planner": "poll",
-        "hermes-storyteller": "hermes-planner",
-        "echo": "poll",
-        "poll": "hermes-planner",
-        "openclaw": "hermes-planner",
-        "shadow": "poll",
-        "ember": "echo",
-        "frost": "echo",
-        "blitz": "echo",
-        "nova": "shadow",
-        "vex": "echo",
-        "drift": "hermes-storyteller"
-      },
-      "executed": "echo",
+      "executed": "hermes-planner",
       "deaths": [],
       "winner": null
     },
@@ -404,13 +397,13 @@
       "type": "night_result",
       "day": 0,
       "speaker": null,
-      "content": "Last night, Builder, Storyteller, Echo died.",
+      "content": "Last night, Planner, QAAgent, Storyteller died.",
       "votes": null,
       "executed": null,
       "deaths": [
-        "hermes-builder",
-        "hermes-storyteller",
-        "echo"
+        "hermes-planner",
+        "hermes-qaagent",
+        "hermes-storyteller"
       ],
       "winner": null
     },
@@ -420,16 +413,17 @@
       "speaker": null,
       "content": "Shadow was executed.",
       "votes": {
-        "hermes-planner": "ember",
-        "poll": "shadow",
+        "echo": "shadow",
+        "poll": "openclaw",
         "openclaw": "shadow",
-        "shadow": "poll",
-        "ember": "shadow",
-        "frost": "shadow",
-        "blitz": "openclaw",
+        "hermes-builder-v6": "frost",
+        "shadow": "hermes-builder-v6",
+        "ember": "frost",
+        "frost": "openclaw",
+        "blitz": "shadow",
         "nova": "shadow",
-        "vex": "shadow",
-        "drift": "poll"
+        "vex": "echo",
+        "drift": "echo"
       },
       "executed": "shadow",
       "deaths": [],
@@ -449,12 +443,11 @@
       "type": "night_result",
       "day": 0,
       "speaker": null,
-      "content": "Last night, QAAgent, BuilderV6, Shadow, Ember died.",
+      "content": "Last night, Builder, Shadow, Ember died.",
       "votes": null,
       "executed": null,
       "deaths": [
-        "hermes-qaagent",
-        "hermes-builder-v6",
+        "hermes-builder",
         "shadow",
         "ember"
       ],
@@ -464,9 +457,19 @@
       "type": "execution",
       "day": 0,
       "speaker": null,
-      "content": "Vote resulted in a tie (frost, nova, poll). No one was executed.",
-      "votes": null,
-      "executed": null,
+      "content": "Frost was executed.",
+      "votes": {
+        "echo": "openclaw",
+        "poll": "blitz",
+        "openclaw": "frost",
+        "hermes-builder-v6": "frost",
+        "frost": "openclaw",
+        "blitz": "echo",
+        "nova": "vex",
+        "vex": "nova",
+        "drift": "frost"
+      },
+      "executed": "frost",
       "deaths": [],
       "winner": null
     },
@@ -484,14 +487,15 @@
       "type": "night_result",
       "day": 0,
       "speaker": null,
-      "content": "Last night, Builder, Storyteller, Echo, OpenClaw died.",
+      "content": "Last night, Planner, QAAgent, Storyteller, Frost, Nova died.",
       "votes": null,
       "executed": null,
       "deaths": [
-        "hermes-builder",
+        "hermes-planner",
+        "hermes-qaagent",
         "hermes-storyteller",
-        "echo",
-        "openclaw"
+        "frost",
+        "nova"
       ],
       "winner": null
     },
@@ -499,17 +503,17 @@
       "type": "execution",
       "day": 0,
       "speaker": null,
-      "content": "Poll was executed.",
+      "content": "Blitz was executed.",
       "votes": {
-        "hermes-planner": "poll",
-        "poll": "vex",
-        "frost": "poll",
-        "blitz": "nova",
-        "nova": "frost",
-        "vex": "poll",
-        "drift": "poll"
+        "echo": "blitz",
+        "poll": "drift",
+        "openclaw": "blitz",
+        "hermes-builder-v6": "blitz",
+        "blitz": "echo",
+        "vex": "blitz",
+        "drift": "echo"
       },
-      "executed": "poll",
+      "executed": "blitz",
       "deaths": [],
       "winner": null
     },
@@ -527,13 +531,12 @@
       "type": "night_result",
       "day": 0,
       "speaker": null,
-      "content": "Last night, QAAgent, Poll, BuilderV6, Shadow, Ember, Blitz died.",
+      "content": "Last night, Builder, OpenClaw, Shadow, Ember, Blitz died.",
       "votes": null,
       "executed": null,
       "deaths": [
-        "hermes-qaagent",
-        "poll",
-        "hermes-builder-v6",
+        "hermes-builder",
+        "openclaw",
         "shadow",
         "ember",
         "blitz"
@@ -544,19 +547,15 @@
       "type": "execution",
       "day": 0,
       "speaker": null,
-      "content": "Vote resulted in a tie (frost, nova). No one was executed.",
-      "votes": null,
-      "executed": null,
-      "deaths": [],
-      "winner": null
-    },
-    {
-      "type": "day_announcement",
-      "day": 0,
-      "speaker": null,
-      "content": "Night 6 begins. Everyone goes to sleep.",
-      "votes": null,
-      "executed": null,
+      "content": "Drift was executed.",
+      "votes": {
+        "echo": "drift",
+        "poll": "drift",
+        "hermes-builder-v6": "vex",
+        "vex": "drift",
+        "drift": "echo"
+      },
+      "executed": "drift",
       "deaths": [],
       "winner": null
     },
@@ -574,7 +573,7 @@
   "debug_transcript": [
     {
       "night": 0,
-      "wolves_target": "hermes-builder",
+      "wolves_target": "hermes-storyteller",
       "guard_protected": null,
       "witch_healed": false,
       "witch_poisoned": null,
@@ -582,7 +581,7 @@
     },
     {
       "night": 1,
-      "wolves_target": "hermes-qaagent",
+      "wolves_target": "hermes-builder",
       "guard_protected": null,
       "witch_healed": false,
       "witch_poisoned": null,
@@ -590,7 +589,7 @@
     },
     {
       "night": 2,
-      "wolves_target": "hermes-storyteller",
+      "wolves_target": "hermes-qaagent",
       "guard_protected": null,
       "witch_healed": false,
       "witch_poisoned": null,
@@ -606,7 +605,7 @@
     },
     {
       "night": 4,
-      "wolves_target": "openclaw",
+      "wolves_target": "nova",
       "guard_protected": null,
       "witch_healed": false,
       "witch_poisoned": null,
@@ -614,15 +613,7 @@
     },
     {
       "night": 5,
-      "wolves_target": "blitz",
-      "guard_protected": null,
-      "witch_healed": false,
-      "witch_poisoned": null,
-      "seer_check": null
-    },
-    {
-      "night": 6,
-      "wolves_target": "vex",
+      "wolves_target": "openclaw",
       "guard_protected": null,
       "witch_healed": false,
       "witch_poisoned": null,
@@ -635,7 +626,18 @@
       "round": 1,
       "speaker_id": "hermes-planner",
       "speaker_name": "Planner",
-      "speech": "I think we should be cautious today. Builder's death is suspicious, but we need to gather more information before pointing fingers. Let's hear what everyone has to say.",
+      "speech": "Interesting that Storyteller was taken out first. Could be a strategic move to silence someone who might have had insight. I'm keeping an eye on who seems overly eager to direct suspicion.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 1,
+      "speaker_id": "hermes-builder",
+      "speaker_name": "Builder",
+      "speech": "I think we should start by sharing any observations or suspicions from last night. I didn't see or hear anything unusual, but maybe someone else did?",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -646,19 +648,8 @@
       "round": 1,
       "speaker_id": "hermes-qaagent",
       "speaker_name": "QAAgent",
-      "speech": "Good morning, everyone. It's unfortunate we lost hermes-builder so early. Since we have no information from Night 0, I think we should focus on observing behavior during this discussion. I'm a villager, and I'll be paying close attention to anyone who seems overly defensive or eager to accuse without reasoning. Let's share our thoughts calmly.",
-      "claim_role": "villager",
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 1,
-      "speaker_id": "hermes-storyteller",
-      "speaker_name": "Storyteller",
-      "speech": "Good morning, everyone. I'm the Witch. Last night, Builder was attacked by wolves. I have a healing potion and a poison potion. I chose not to use them yet, as I wanted to gather information first. Let's discuss who we suspect.",
-      "claim_role": "Witch",
+      "speech": "I am the Guard. My role is to protect one player each night. I will keep an eye on the discussion and choose wisely.",
+      "claim_role": "Guard",
       "accuse": [],
       "defend": [],
       "suggest_vote": null
@@ -668,7 +659,7 @@
       "round": 1,
       "speaker_id": "echo",
       "speaker_name": "Echo",
-      "speech": "I noticed that Builder was killed last night. That's unfortunate, but it doesn't give us much to go on yet. I think we should be cautious and see if anyone has any observations from the first day.",
+      "speech": "Good morning everyone. I'm still processing last night's events. Storyteller is gone, which is rough. I think we should all share our thoughts on who might be suspicious, but let's not jump to conclusions too quickly.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -679,7 +670,7 @@
       "round": 1,
       "speaker_id": "poll",
       "speaker_name": "Poll",
-      "speech": "Good morning everyone. This is our first day, so we have very little information to go on. I suggest we start by sharing any observations from last night, even if they seem minor. I don't have any strong suspicions yet, but I'd like to hear from everyone before we consider a vote.",
+      "speech": "Good morning everyone. It's unfortunate that we lost Storyteller on the first night. I'm curious to hear what everyone thinks about the attack and any suspicions you might have. For now, I don't have much to go on, but I'll be paying close attention to the discussion.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -690,7 +681,7 @@
       "round": 1,
       "speaker_id": "openclaw",
       "speaker_name": "OpenClaw",
-      "speech": "Good morning everyone. I don't have much to go on yet, but let's keep our eyes open for any suspicious behavior. For now, I'm just observing.",
+      "speech": "Let's start by analyzing the only death we have: hermes-storyteller. Since no one has claimed a role yet, we should consider the possibility that the werewolves killed them because they were a threat, like the Seer. However, it's also possible it was a random kill. For now, I suggest we keep an eye on anyone who seems overly eager to accuse others without solid reasoning. Let's hear everyone's thoughts.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -701,7 +692,7 @@
       "round": 1,
       "speaker_id": "hermes-builder-v6",
       "speaker_name": "BuilderV6",
-      "speech": "Good morning everyone! I'm BuilderV6, just a regular villager. I think we should be cautious and share any observations from last night. Does anyone have any information or suspicions to start the discussion?",
+      "speech": "Good morning, everyone. We lost hermes-storyteller on the first night. That's unfortunate, but we need to focus on finding the werewolves. I'm a simple villager with no special abilities, so I'll be relying on logic and what others say. Does anyone have any suspicions or observations from last night? Let's share our thoughts to narrow down the suspects.",
       "claim_role": "villager",
       "accuse": [],
       "defend": [],
@@ -712,7 +703,7 @@
       "round": 1,
       "speaker_id": "shadow",
       "speaker_name": "Shadow",
-      "speech": "Interesting first day. Builder is gone, which is unfortunate, but we have to focus on finding the wolves. I don't have much to go on yet, but I'll be watching for anyone who seems too eager to push suspicions or avoid discussion.",
+      "speech": "Good day, everyone. We lost hermes-storyteller on the first night, which is unfortunate. I think we should start by sharing any observations or suspicions we might have. I don't have much to go on yet, but I'll be watching closely for any unusual behavior.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -723,7 +714,7 @@
       "round": 1,
       "speaker_id": "ember",
       "speaker_name": "Ember",
-      "speech": "I'm a bit concerned about how quiet some of the players have been during this first day. It's hard to get a read on anyone yet, but we should keep an eye on those who are avoiding conversation. For now, I don't have a strong suspicion to vote for anyone.",
+      "speech": "Good morning everyone. I'm Ember, a simple villager. I have no special information, but I'm eager to work with you all to find the werewolves. Let's share any observations from last night or early thoughts on who seems suspicious.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -734,7 +725,7 @@
       "round": 1,
       "speaker_id": "frost",
       "speaker_name": "Frost",
-      "speech": "Good morning everyone. Given that we lost hermes-builder on the first night, we need to be careful. I don't have any strong suspicions yet, but I suggest we listen carefully to everyone's reasoning and look for inconsistencies. For now, I'll keep my eyes open.",
+      "speech": "Good morning everyone. It's unfortunate that we lost Storyteller so early. I think we should be cautious and share any observations from last night, even if they seem minor. Does anyone have any suspicions or information to start the discussion?",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -745,8 +736,8 @@
       "round": 1,
       "speaker_id": "blitz",
       "speaker_name": "Blitz",
-      "speech": "Good morning everyone. I'm the Seer. I investigated last night and I have information to share, but I want to hear from others first. Who do you find suspicious so far?",
-      "claim_role": "seer",
+      "speech": "I see that Storyteller has been eliminated. That's unfortunate. I don't have any information to share yet, but I'll be watching closely for suspicious behavior. Let's discuss who might be a threat.",
+      "claim_role": null,
       "accuse": [],
       "defend": [],
       "suggest_vote": null
@@ -756,7 +747,7 @@
       "round": 1,
       "speaker_id": "nova",
       "speaker_name": "Nova",
-      "speech": "Hey everyone, this is our first day of discussion. Since we don't have much info yet, I think we should share any observations or gut feelings. I didn't notice anything unusual last night, but let's keep our eyes open and try to find inconsistencies in people's stories. Any thoughts on who might be suspicious?",
+      "speech": "Good morning everyone. It's unfortunate that we lost hermes-storyteller so early. I think we should start by sharing any observations from last night, even if it's just gut feelings. I didn't notice anything suspicious myself, but let's hear what others have to say.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -767,236 +758,245 @@
       "round": 1,
       "speaker_id": "vex",
       "speaker_name": "Vex",
-      "speech": "Good morning everyone. It's a shame we lost hermes-builder so early. I'm just a simple villager, no special powers, but I'm eager to work with you all to find the werewolves. Let's share any observations or suspicions we have.",
-      "claim_role": "villager",
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 1,
-      "speaker_id": "drift",
-      "speaker_name": "Drift",
-      "speech": "Good morning everyone. I'm still processing what happened last night. Builder is dead, which is unfortunate. We need to be careful and share our observations. Does anyone have any thoughts on who might be suspicious?",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 2,
-      "speaker_id": "hermes-planner",
-      "speaker_name": "Planner",
-      "speech": "I noticed that Blitz claimed to be the Seer, but hasn't shared any results yet. That's a bit suspicious\u2014why claim a powerful role without giving us information? I'd like to hear what Blitz has to say before we move forward. Also, Storyteller claimed Witch, which is interesting. Let's see if anyone can corroborate or challenge these claims.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 2,
-      "speaker_id": "hermes-qaagent",
-      "speaker_name": "QAAgent",
-      "speech": "I've been listening to everyone's statements. Blitz claiming to be the Seer is interesting, but I'm cautious about early role claims without evidence. Storyteller also claimed Witch, which is a powerful claim. I think we should watch for anyone contradicting themselves as the discussion progresses. For now, I don't have a strong suspicion, but I'd like to hear more from those who haven't spoken much.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 2,
-      "speaker_id": "hermes-storyteller",
-      "speaker_name": "Storyteller",
-      "speech": "I'm the Witch, and I confirm Builder was attacked by wolves last night. I still have both potions. Let's be careful with accusations\u2014wolves might try to mislead us. I'm listening to everyone's input before deciding on a vote.",
-      "claim_role": "Witch",
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 2,
-      "speaker_id": "echo",
-      "speaker_name": "Echo",
-      "speech": "I agree with the cautious approach. Storyteller claiming Witch is interesting, but we should verify through actions later. For now, I think we should focus on those who seem overly eager to lead or deflect. Let's see how the discussion evolves.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 2,
-      "speaker_id": "poll",
-      "speaker_name": "Poll",
-      "speech": "I noticed that Blitz claimed to be the Seer, which is a bold move. If true, they should share their findings soon. However, we should be cautious about anyone claiming a powerful role early, as wolves might do that to mislead us. Let's see if Blitz provides concrete information before making any judgments.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 2,
-      "speaker_id": "openclaw",
-      "speaker_name": "OpenClaw",
-      "speech": "I find it interesting that Blitz claimed to be the Seer but hasn't shared any results yet. That's a bold claim on day one. I'd like to hear what they found before we go further.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 2,
-      "speaker_id": "hermes-builder-v6",
-      "speaker_name": "BuilderV6",
-      "speech": "Good morning again. I noticed that Blitz claimed to be the Seer but hasn't shared their findings yet. I think we should ask Blitz to reveal who they investigated and what the result was. That could give us a solid lead to discuss.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 2,
-      "speaker_id": "shadow",
-      "speaker_name": "Shadow",
-      "speech": "I've been listening to everyone's thoughts. Storyteller claiming Witch is interesting\u2014if true, they have power to save or kill. Blitz claiming Seer is also notable, but we should see if they follow up with real information. For now, I'm watching for anyone who seems to be making hasty judgments or trying to steer the discussion away from logical analysis. Let's keep sharing observations.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 2,
-      "speaker_id": "ember",
-      "speaker_name": "Ember",
-      "speech": "I notice that Storyteller claimed to be the Witch, which is a bold move on day one. It could be a genuine claim, but it could also be a wolf trying to gain trust. I think we should keep that in mind and see if Storyteller's actions align with their claim as the game progresses. For now, I don't have a strong vote target, but I'm listening carefully to everyone.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 2,
-      "speaker_id": "frost",
-      "speaker_name": "Frost",
-      "speech": "Blitz claims to be the Seer, which is a bold claim. If true, they could have valuable info. But we should be cautious\u2014wolves might fake-claim. I'd like Blitz to share their investigation result before we decide on a vote. For now, I'm not ready to accuse anyone yet.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 2,
-      "speaker_id": "blitz",
-      "speaker_name": "Blitz",
-      "speech": "I am the Seer. Last night I investigated Hermes-BuilderV6 and found them to be a wolf. That is why Builder is dead\u2014the wolves killed their own to throw us off. I urge everyone to vote for BuilderV6 today.",
-      "claim_role": "seer",
-      "accuse": [
-        "hermes-builder-v6"
-      ],
-      "defend": [],
-      "suggest_vote": "hermes-builder-v6"
-    },
-    {
-      "day": 0,
-      "round": 2,
-      "speaker_id": "nova",
-      "speaker_name": "Nova",
-      "speech": "Good morning everyone. I noticed that Storyteller claimed to be the Witch, which is a bold move early in the game. While it could be true, we should be cautious\u2014wolves might fake such a claim to gain trust. I'm also curious about Blitz claiming to be the Seer but not sharing results yet. Let's hear more from both of them before jumping to conclusions. For now, I'm keeping an open mind and watching for anyone who seems to be avoiding direct statements or pushing agendas too hard.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 2,
-      "speaker_id": "vex",
-      "speaker_name": "Vex",
-      "speech": "Storyteller, you claim to be the Witch, but coming out so early to reveal that is risky. If you're truthful, the wolves will target you tonight. If you're lying, we need to be wary. I'd like to hear more from Blitz, who claims to be the Seer. What information do you have, Blitz? Let's not rush to conclusions, but we should pressure for some concrete leads.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 0,
-      "round": 2,
-      "speaker_id": "drift",
-      "speaker_name": "Drift",
-      "speech": "I find it interesting that Storyteller claimed Witch so early. That's a bold move, but it could also be a wolf trying to gain trust. What do others think about that claim?",
-      "claim_role": null,
-      "accuse": [
-        "hermes-storyteller"
-      ],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 1,
-      "round": 1,
-      "speaker_id": "hermes-planner",
-      "speaker_name": "Planner",
-      "speech": "Good morning, everyone. It's unfortunate we lost three of our members already. I think we need to be careful and share any observations we have from last night. Does anyone have any suspicions or information to share?",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 1,
-      "round": 1,
-      "speaker_id": "hermes-storyteller",
-      "speaker_name": "Storyteller",
-      "speech": "I have some information. I am the Witch. Last night, the Builder was attacked by wolves and I saved them. Then Night 1, the QAAgent was attacked and I couldn't save them. I am willing to share more if asked.",
-      "claim_role": "Witch",
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 1,
-      "round": 1,
-      "speaker_id": "echo",
-      "speaker_name": "Echo",
-      "speech": "Good morning everyone. I'm still processing last night's events. Two of our Hermes team members are gone already. That's unsettling. We need to be careful and share any observations we might have. I'm not sure who to trust yet, but I'll be paying close attention to the discussion.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 1,
-      "round": 1,
-      "speaker_id": "poll",
-      "speaker_name": "Poll",
-      "speech": "Good morning everyone. It's Day 1 and we don't have much information yet. I think we should be cautious and listen to what everyone has to say before making any accusations. For now, I'm just a simple villager trying to survive. Let's share our thoughts and see if anyone seems suspicious.",
-      "claim_role": "villager",
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 1,
-      "round": 1,
-      "speaker_id": "openclaw",
-      "speaker_name": "OpenClaw",
-      "speech": "Alright, we lost three players early. That's rough. Let's not jump to conclusions. I'm the Hunter, so if I die tonight, I'll take someone with me. For now, let's focus on finding suspicious behavior. Anyone have thoughts on who might be responsible?",
-      "claim_role": "HUNTER",
+      "speech": "Interesting that hermes-storyteller is already dead. I'm a Hunter, so if anyone tries to take me out, they'll regret it. For now, let's see who seems suspicious.",
+      "claim_role": "hunter",
       "accuse": [],
       "defend": [
-        "openclaw"
+        "vex"
       ],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 1,
+      "speaker_id": "drift",
+      "speaker_name": "Drift",
+      "speech": "Hello everyone, I'm Drift. I'm the Seer and I'll be investigating one player each night to help us find the wolves. For now, let's discuss our suspicions and try to figure out who might be hiding something.",
+      "claim_role": "seer",
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 2,
+      "speaker_id": "hermes-planner",
+      "speaker_name": "Planner",
+      "speech": "Interesting development - Drift claims to be the Seer. That's a bold claim on Day 0. We should be cautious about trusting role claims too quickly, as wolves often use them to mislead. I'd suggest we keep our eyes on Drift and see if their behavior aligns with a real Seer. For now, I have no specific accusations, but I'll be watching for anyone who seems to be pushing an agenda or trying to steer the discussion away from Drift's claim.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 2,
+      "speaker_id": "hermes-builder",
+      "speaker_name": "Builder",
+      "speech": "Before we go further, I find it suspicious that Drift claimed Seer so quickly. It could be a wolf trying to bait a real Seer into counter-claiming. Let's see how everyone reacts to this claim.",
+      "claim_role": null,
+      "accuse": [
+        "drift"
+      ],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 2,
+      "speaker_id": "hermes-qaagent",
+      "speaker_name": "QAAgent",
+      "speech": "I am the Guard, and I'll be protecting one player each night. For now, I'm listening to everyone's claims and observations. Drift's claim as Seer is notable, but we should be cautious about trusting any role claims too early.",
+      "claim_role": "Guard",
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 2,
+      "speaker_id": "echo",
+      "speaker_name": "Echo",
+      "speech": "Interesting that Drift claims to be the Seer right away. That's a bold move, but it could also be a wolf trying to bait out the real Seer. Let's see how this plays out before we trust that claim too quickly.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 2,
+      "speaker_id": "poll",
+      "speaker_name": "Poll",
+      "speech": "Thank you all for sharing. Drift claiming Seer is interesting, but we should be cautious\u2014wolves might fake such a claim. I suggest we observe and not rush to vote anyone out based on claims alone.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 2,
+      "speaker_id": "openclaw",
+      "speaker_name": "OpenClaw",
+      "speech": "Drift just claimed to be the Seer. That's a bold move, but it could also be a wolf trying to bait the real Seer into revealing themselves. Let's be cautious\u2014if Drift is truly the Seer, they should share their investigation results tomorrow. For now, I suggest we watch how others react to this claim. Anyone else have thoughts on Drift's announcement?",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 2,
+      "speaker_id": "hermes-builder-v6",
+      "speaker_name": "BuilderV6",
+      "speech": "Good morning everyone. I noticed that Drift claimed to be the Seer. That's a bold claim, and we should be cautious\u2014if Drift is truly the Seer, they are a prime target for the wolves. But it could also be a wolf trying to gain trust. Let's see how the discussion unfolds and whether Drift provides any useful information. For now, I suggest we keep an open mind and not rush to vote anyone out without more evidence.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 2,
+      "speaker_id": "shadow",
+      "speaker_name": "Shadow",
+      "speech": "Drift claiming Seer so early is bold. If true, we should protect them, but wolves might fake-claim to bait the real Seer. Let's hear what others think about this claim.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 2,
+      "speaker_id": "ember",
+      "speaker_name": "Ember",
+      "speech": "Thank you all for sharing. I notice that Drift claimed to be the Seer, which is a bold move. If that's true, we should protect them, but we also need to be cautious about false claims. I don't have any solid suspicions yet, but I'll be watching for inconsistencies in people's stories.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 2,
+      "speaker_id": "frost",
+      "speaker_name": "Frost",
+      "speech": "Thank you all for sharing. I'm a bit wary of Vex claiming Hunter so early \u2014 that's a role that often gets claimed by wolves to avoid suspicion. Also, Drift claiming Seer is interesting, but we should be cautious of false claims. For now, I'd like to hear more from those who haven't spoken much, like Blitz and Nova.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 2,
+      "speaker_id": "blitz",
+      "speaker_name": "Blitz",
+      "speech": "Drift claiming Seer so early is bold. If true, they're a prime wolf target. If false, they're either baiting or a wolf themselves. I suggest we keep an eye on how Drift's claims align with future events. For now, let's hear from others before forming votes.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 2,
+      "speaker_id": "nova",
+      "speaker_name": "Nova",
+      "speech": "Drift claiming to be the Seer is a bold move. If true, they'll be a prime target for the wolves tonight. But it could also be a wolf trying to bait the real Seer into revealing themselves. I suggest we keep an eye on Drift's behavior and see if their claims hold up. For now, I don't have any strong suspicions, but let's see who else speaks up.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 2,
+      "speaker_id": "vex",
+      "speaker_name": "Vex",
+      "speech": "Drift claiming Seer so early is bold. Either they're telling the truth and a prime target for wolves, or they're a wolf trying to bait out the real Seer. I'll keep that in mind. For now, I'm watching how people react to that claim.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 0,
+      "round": 2,
+      "speaker_id": "drift",
+      "speaker_name": "Drift",
+      "speech": "I think we should be cautious about anyone who claims a powerful role too quickly. Let's see how the discussion unfolds before making any decisions.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 1,
+      "round": 1,
+      "speaker_id": "hermes-planner",
+      "speaker_name": "Planner",
+      "speech": "Good morning, everyone. We lost two players last night: Storyteller and Builder. That's unfortunate, but it gives us some information. I think we should focus on finding the wolves among us. Does anyone have any suspicions or observations from the night phase?",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 1,
+      "round": 1,
+      "speaker_id": "hermes-qaagent",
+      "speaker_name": "QAAgent",
+      "speech": "I am the Guard. I will protect one player each night. For now, I suggest we discuss and share any suspicions or information we have.",
+      "claim_role": "Guard",
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 1,
+      "round": 1,
+      "speaker_id": "echo",
+      "speaker_name": "Echo",
+      "speech": "Interesting that both Builder and Storyteller were taken out. Could be the wolves trying to eliminate strong analytical players early. I'll be watching for anyone who seems to be pushing an agenda too hard.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 1,
+      "round": 1,
+      "speaker_id": "poll",
+      "speaker_name": "Poll",
+      "speech": "I think we need to be careful about how we approach this. The attacks on Storyteller and Builder seem coordinated, but it's still early. I'd like to hear everyone's thoughts on who seems suspicious so far.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 1,
+      "round": 1,
+      "speaker_id": "openclaw",
+      "speaker_name": "OpenClaw",
+      "speech": "I think we should be cautious today and listen to everyone's observations. Does anyone have any suspicions or saw anything unusual last night?",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 1,
+      "round": 1,
+      "speaker_id": "hermes-builder-v6",
+      "speaker_name": "BuilderV6",
+      "speech": "Alright, it's the first day and we have very little information. Two players are already dead: hermes-builder and hermes-storyteller. We should keep an eye on anyone who seems overly eager to lead discussions or push for quick votes without much reasoning. For now, I suggest we all share our initial thoughts and observations cautiously.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
       "suggest_vote": null
     },
     {
@@ -1004,8 +1004,8 @@
       "round": 1,
       "speaker_id": "shadow",
       "speaker_name": "Shadow",
-      "speech": "Good morning everyone. I'm Shadow. I don't have much to go on yet, but I think we should be cautious and share any observations from last night. Does anyone have information that might help us identify the wolves?",
-      "claim_role": null,
+      "speech": "Alright, it's the first day and we don't have much to go on yet. But two players are already dead, which means the werewolves struck last night. I'm a simple villager, so I'll be keeping an eye on anyone acting suspicious. Let's share any observations or gut feelings we have.",
+      "claim_role": "villager",
       "accuse": [],
       "defend": [],
       "suggest_vote": null
@@ -1015,8 +1015,8 @@
       "round": 1,
       "speaker_id": "ember",
       "speaker_name": "Ember",
-      "speech": "Alright, let's start the discussion. It's Day 1 and we have very little information. I'm a villager, like most of us. I think we should be cautious and not rush to accuse anyone without evidence. Let's hear what everyone has to say and look for any suspicious behavior or contradictions.",
-      "claim_role": "villager",
+      "speech": "It's early in the game, and we don't have much info yet. I'd suggest we look for anyone who seems overly eager to accuse or who avoids contributing. Let's keep an eye on those patterns.",
+      "claim_role": null,
       "accuse": [],
       "defend": [],
       "suggest_vote": null
@@ -1026,7 +1026,7 @@
       "round": 1,
       "speaker_id": "frost",
       "speaker_name": "Frost",
-      "speech": "Good morning, everyone. It's unfortunate that we lost three of our own on the first night. Let's think carefully about who might be the werewolves among us. I'll be watching for any suspicious behavior or contradictions in people's stories. For now, I don't have a strong suspect, but I'd like to hear from others first.",
+      "speech": "Good morning everyone. It's a shame we lost two players already. I'm just a regular villager trying to figure out who might be behind these attacks. Let's start sharing any suspicions or observations from last night.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -1037,62 +1037,7 @@
       "round": 1,
       "speaker_id": "blitz",
       "speaker_name": "Blitz",
-      "speech": "I'm the Seer. I investigated last night and got a result. I'll share it when the time is right, but for now, let's hear everyone's thoughts on who might be suspicious.",
-      "claim_role": "seer",
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 1,
-      "round": 1,
-      "speaker_id": "nova",
-      "speaker_name": "Nova",
-      "speech": "Hey everyone, it's day 1 and we don't have much info yet. I'm just a villager trying to find the werewolves. Let's be careful not to jump to conclusions too fast. Does anyone have any thoughts or suspicions so far?",
-      "claim_role": "villager",
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 1,
-      "round": 1,
-      "speaker_id": "vex",
-      "speaker_name": "Vex",
-      "speech": "Alright, everyone. Day 1 is always tricky with little info. I'd suggest we look for anyone acting suspicious or overly eager to lead. Let's share our thoughts cautiously.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 1,
-      "round": 1,
-      "speaker_id": "drift",
-      "speaker_name": "Drift",
-      "speech": "Good morning everyone. I'm still trying to process what happened last night. Two builders gone already? That's rough. We need to be careful and think about who might be responsible. I don't have any strong suspicions yet, but I'll be listening closely to what everyone has to say.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 1,
-      "round": 2,
-      "speaker_id": "hermes-planner",
-      "speaker_name": "Planner",
-      "speech": "Thank you, everyone, for sharing your thoughts. Storyteller claims to be the Witch and saved Builder, but Builder is dead, so that's suspicious. Also, Blitz claims to be Seer but hasn't shared a result yet. Let's hear more before we vote. I suggest we focus on anyone who seems to be deflecting or avoiding giving clear answers.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 1,
-      "round": 2,
-      "speaker_id": "hermes-storyteller",
-      "speaker_name": "Storyteller",
-      "speech": "I've shared my role as the Witch. I saved the Builder on Night 0 but couldn't save the QAAgent on Night 1. I'd like to hear more from Blitz, who claims to be the Seer\u2014what result did you get? And does anyone else have information to share?",
+      "speech": "I'm the Witch. I have two potions: one to save and one to kill. I used my save potion on Storyteller last night, so they are still alive. Builder was also attacked, but I couldn't save them since I only have one save. I'll use my kill potion wisely. Let's discuss who might be suspicious.",
       "claim_role": "witch",
       "accuse": [],
       "defend": [],
@@ -1100,10 +1045,68 @@
     },
     {
       "day": 1,
+      "round": 1,
+      "speaker_id": "nova",
+      "speaker_name": "Nova",
+      "speech": "Good morning everyone. It's Day 1 and we have very little information to go on. I think we should be cautious about jumping to conclusions too quickly. For now, I suggest we share our observations from last night, if any, and maybe consider voting for someone who seems suspicious or is acting unusually quiet. What do you all think?",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 1,
+      "round": 1,
+      "speaker_id": "vex",
+      "speaker_name": "Vex",
+      "speech": "Well, that was a chaotic start. Two builders down already. Let's focus on finding the wolves. I'll be watching closely.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 1,
+      "round": 1,
+      "speaker_id": "drift",
+      "speaker_name": "Drift",
+      "speech": "I'm Drift, and I'm the Seer. Last night I investigated someone, and I'll share my findings when the time is right. For now, let's discuss who we think might be suspicious. Any thoughts on who we should focus on today?",
+      "claim_role": "seer",
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 1,
+      "round": 2,
+      "speaker_id": "hermes-planner",
+      "speaker_name": "Planner",
+      "speech": "Interesting claims from Blitz and Drift. Blitz claims to have saved Storyteller, but Storyteller is dead. That seems inconsistent. Drift claims to be Seer but hasn't shared any results yet. I think we need to press both of them for more details. For now, I suggest we be cautious and gather more information before voting.",
+      "claim_role": null,
+      "accuse": [
+        "blitz",
+        "drift"
+      ],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 1,
+      "round": 2,
+      "speaker_id": "hermes-qaagent",
+      "speaker_name": "QAAgent",
+      "speech": "I think we should be cautious about Blitz's claim. They said they saved Storyteller, but we have no way to verify that yet. Let's keep that in mind as we discuss.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 1,
       "round": 2,
       "speaker_id": "echo",
       "speaker_name": "Echo",
-      "speech": "I think we need to consider the Witch's claim carefully. Storyteller says they saved Builder on Night 0 but couldn't save QAAgent on Night 1. That's plausible, but we should watch for consistency. Also, Blitz says they're the Seer with a result\u2014I'd like to hear that when they're ready. For now, I'm keeping an open mind and listening to everyone.",
+      "speech": "Drift claiming Seer so early is interesting. If you're real, you should share your findings soon, but be careful not to reveal too much if you found a wolf. For now, I'm watching for anyone who seems to be trying too hard to steer the conversation or deflect suspicion. Let's hear more from everyone before making any moves.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -1114,7 +1117,7 @@
       "round": 2,
       "speaker_id": "poll",
       "speaker_name": "Poll",
-      "speech": "Thank you all for sharing. Storyteller, you claim to be the Witch and saved Builder on Night 0, but lost QAAgent on Night 1. That's a bold claim early on. Blitz, you say you're the Seer with a result\u2014I think it's important you share it soon so we have concrete info to work with. For now, I'm keeping an open mind and watching for inconsistencies. Let's hear more before we vote.",
+      "speech": "Interesting that Blitz claims to have saved Storyteller, but we still have two dead players. Could be a bluff or a real claim. I'm keeping an open mind for now. Let's hear more from others before we jump to conclusions.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -1125,7 +1128,7 @@
       "round": 2,
       "speaker_id": "openclaw",
       "speaker_name": "OpenClaw",
-      "speech": "Blitz, you said you're the Seer and got a result. That's a big claim. Care to share who you investigated and what you found? It could help us narrow things down.",
+      "speech": "Interesting that Blitz claimed Witch and used their save on Storyteller. That means Storyteller is alive, but Builder is dead. I'm a bit suspicious of Blitz making such a bold claim on day one, but I'll keep an open mind. Drift also claimed Seer, which is a powerful role to reveal early. We should be cautious about trusting these claims too quickly. For now, I think we should focus on anyone who hasn't contributed much or seems to be avoiding the discussion.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -1134,9 +1137,22 @@
     {
       "day": 1,
       "round": 2,
+      "speaker_id": "hermes-builder-v6",
+      "speaker_name": "BuilderV6",
+      "speech": "Blitz claims to be the Witch and says they saved Storyteller, but Storyteller is dead. That's a contradiction. We need to question Blitz closely about this.",
+      "claim_role": null,
+      "accuse": [
+        "blitz"
+      ],
+      "defend": [],
+      "suggest_vote": "blitz"
+    },
+    {
+      "day": 1,
+      "round": 2,
       "speaker_id": "shadow",
       "speaker_name": "Shadow",
-      "speech": "I'm still trying to piece things together. Storyteller claimed Witch and said they saved Builder on Night 0, but Builder is dead now. That seems contradictory. Can you clarify, Storyteller? Also, Blitz claimed Seer but hasn't shared results yet. I think we should be patient and let everyone speak before making any moves. For now, I'm keeping my eyes open for anyone who seems too eager to lead or deflect.",
+      "speech": "Alright, I'm glad to see we have some roles stepping forward. Blitz claims to be the Witch and says they saved Storyteller\u2014that's interesting since Storyteller is dead. Either Blitz is lying or there's a mix-up. Drift claims to be the Seer and has info but isn't sharing yet. I think we need to be careful about trusting claims too quickly. For now, I'm watching for anyone who seems to be trying to steer the conversation in a particular direction or avoid sharing their thoughts. Let's hear more from everyone before we decide on a vote.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -1147,7 +1163,7 @@
       "round": 2,
       "speaker_id": "ember",
       "speaker_name": "Ember",
-      "speech": "I agree with the cautious approach. Storyteller claimed Witch and saved the Builder, which is a bold claim. Let's see if anyone can corroborate or challenge that. For now, I'm keeping my ears open.",
+      "speech": "Interesting that Blitz claims to have saved Storyteller. That would mean Storyteller is still alive, but we haven't heard from them yet. Also, Drift claims to be the Seer but isn't sharing findings yet. I'd like to hear more from both of them before we jump to conclusions. For now, I'm keeping an open mind and watching for inconsistencies.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -1158,7 +1174,7 @@
       "round": 2,
       "speaker_id": "frost",
       "speaker_name": "Frost",
-      "speech": "I think we should consider the possibility that the wolves might have targeted our special roles. Storyteller claimed Witch and saved Builder, but we still lost QAAgent. Blitz claimed Seer and has a result. I'd like to hear from Blitz when they're ready. For now, I'm keeping an open mind and watching for anyone who seems too eager to lead or deflect suspicion.",
+      "speech": "Interesting, we have a Seer claim from Drift and a Witch claim from Blitz. Blitz says they saved Storyteller, but Storyteller is dead? That seems contradictory unless Blitz is lying or confused. Drift, if you're the real Seer, you should share your findings soon to help us catch the wolves. For now, I'd like to hear more from those who haven't spoken much yet.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -1169,8 +1185,8 @@
       "round": 2,
       "speaker_id": "blitz",
       "speaker_name": "Blitz",
-      "speech": "I'm the Seer, as I mentioned. Last night I investigated and found that one player is a werewolf. I'm not ready to name them yet, as I want to hear more from everyone first. But I will be watching closely for any inconsistencies or suspicious behavior.",
-      "claim_role": "seer",
+      "speech": "I see Drift claiming Seer. That's a powerful role to claim. Let's hear your findings when you're ready. For now, I'll keep my kill potion in reserve until we have more information to act on.",
+      "claim_role": "Witch",
       "accuse": [],
       "defend": [],
       "suggest_vote": null
@@ -1180,7 +1196,7 @@
       "round": 2,
       "speaker_id": "nova",
       "speaker_name": "Nova",
-      "speech": "Thanks everyone for sharing. I'm a bit concerned about the Seer claim from Blitz\u2014it's risky to reveal yourself so early, but I'll wait for your result. For now, I think we should keep an eye on anyone who seems too eager to lead or deflect. Let's hear more before we vote.",
+      "speech": "Drift claiming Seer is interesting, but we need to be cautious. If they're real, they should share their findings soon. For now, I'm keeping an eye on anyone who seems to be stirring up confusion or avoiding taking a stance. Let's hear more from everyone before we decide on a vote.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -1191,7 +1207,7 @@
       "round": 2,
       "speaker_id": "vex",
       "speaker_name": "Vex",
-      "speech": "Alright, we've heard a lot of claims already. Storyteller says they're the Witch, Blitz says they're the Seer. That's two important roles claimed early. I'd like to hear more from Blitz about their investigation result when they're ready. Also, let's keep an eye on anyone who seems to be avoiding sharing their thoughts or is too quick to agree with everyone.",
+      "speech": "Interesting that Blitz claims to be the Witch and used their save on Storyteller. That means Storyteller is still alive, which is good, but we should keep an eye on that claim. For now, I don't have strong suspicions yet, but I'll be watching for anyone who seems too eager to lead or deflect.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -1202,8 +1218,8 @@
       "round": 2,
       "speaker_id": "drift",
       "speaker_name": "Drift",
-      "speech": "Storyteller claims to be the Witch who saved Builder on Night 0. That's an interesting claim, but we need to verify it. If Storyteller is telling the truth, they have valuable information. If they're lying, they could be a wolf trying to gain trust. I think we should ask Storyteller for more details about their actions last night. Also, Blitz mentioned being the Seer but hasn't shared their result yet. Blitz, when do you plan to reveal your investigation? We need all the information we can get to find the wolves.",
-      "claim_role": null,
+      "speech": "I'm Drift, and I'm the Seer. Last night I investigated someone, and I'll share my findings when the time is right. For now, let's discuss who we think might be suspicious. Any thoughts on who we should focus on today?",
+      "claim_role": "Seer",
       "accuse": [],
       "defend": [],
       "suggest_vote": null
@@ -1211,9 +1227,9 @@
     {
       "day": 2,
       "round": 1,
-      "speaker_id": "hermes-planner",
-      "speaker_name": "Planner",
-      "speech": "I've been thinking about the night kills. Three builders dead in a row is very suspicious. It seems like the wolves are targeting roles that could verify information. I'm leaning towards voting for someone who has been quiet or avoiding suspicion. What do you all think?",
+      "speaker_id": "echo",
+      "speaker_name": "Echo",
+      "speech": "Alright, so far we've lost four players\u2014Storyteller, Builder, QAAgent, and Planner. That's a lot of deaths in two nights. I think we should be looking for patterns. Any thoughts on who might be suspicious?",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -1224,8 +1240,8 @@
       "round": 1,
       "speaker_id": "poll",
       "speaker_name": "Poll",
-      "speech": "Good morning everyone. Yesterday was chaotic with so many deaths. I'm still a simple villager trying to find the wolves. I noticed Hermes-builder and Hermes-qaagent were both killed, which might indicate the wolves are targeting specific roles or just random. I don't have any strong suspicions yet, but I'll be watching closely today.",
-      "claim_role": "villager",
+      "speech": "I've been thinking about the pattern of attacks. The wolves seem to be targeting the Hermes group heavily. Planner, Builder, QA, Storyteller are all gone. Maybe we should consider if there's a connection there or if it's just random. I'm not sure who to vote for yet, but I think we need to be cautious and not jump to conclusions too quickly.",
+      "claim_role": null,
       "accuse": [],
       "defend": [],
       "suggest_vote": null
@@ -1235,7 +1251,84 @@
       "round": 1,
       "speaker_id": "openclaw",
       "speaker_name": "OpenClaw",
-      "speech": "Alright, we've seen a lot of deaths already. I'm the Hunter, so if anyone tries to take me out, they're coming with me. For now, let's focus on finding the wolves. Who seems suspicious to you all?",
+      "speech": "Alright, let's think about last night. Three Hermes were killed, all builders or planners. That's a very specific target pattern. It feels like the wolves either had inside knowledge or are trying to eliminate roles that could coordinate defenses. I'm suspicious of anyone who was oddly quiet or pushing for quick votes yesterday. We should look at who might have benefited from that chaos.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 2,
+      "round": 1,
+      "speaker_id": "hermes-builder-v6",
+      "speaker_name": "BuilderV6",
+      "speech": "I think we should focus on the fact that four players died last night, all with 'hermes' in their names. That's a very specific pattern. It suggests the werewolves might be targeting based on something like name patterns, or perhaps those players were particularly vocal or suspicious. I'm not sure what to make of it yet, but we should all share our observations from yesterday's discussions. Any thoughts on who we should look into?",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 2,
+      "round": 1,
+      "speaker_id": "shadow",
+      "speaker_name": "Shadow",
+      "speech": "I think we need to focus on the fact that four Hermes bots are dead. That's a lot of kills in one night. Either the werewolves are extremely aggressive, or there's something else going on. I'm not sure who to suspect yet, but I'll be watching closely today.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 2,
+      "round": 1,
+      "speaker_id": "ember",
+      "speaker_name": "Ember",
+      "speech": "Alright, let's look at what we know. Night 1 killed hermes-planner and hermes-builder. Night 2 killed hermes-qaagent and hermes-storyteller. That's four Hermes variants dead in two nights. Either the wolves have a grudge against the Hermes family, or there's something else going on. I'm wary of anyone who hasn't been active in pointing out patterns. Let's hear from everyone, especially those who were quiet yesterday.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 2,
+      "round": 1,
+      "speaker_id": "frost",
+      "speaker_name": "Frost",
+      "speech": "Interesting that we lost two more players last night. I'm trying to piece together the pattern here. Planner, Echo, Poll \u2013 any thoughts on who might be responsible for these attacks?",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 2,
+      "round": 1,
+      "speaker_id": "blitz",
+      "speaker_name": "Blitz",
+      "speech": "I have been analyzing the deaths. Storyteller, Builder, and QAAgent were all killed by wolves. That's three nights in a row with a single kill each night. I find it suspicious that the wolves haven't hit any of the more vocal players yet. I'm not ready to accuse anyone yet, but I think we should look at those who have been quiet or deflecting attention. Let's discuss who we find suspicious.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 2,
+      "round": 1,
+      "speaker_id": "nova",
+      "speaker_name": "Nova",
+      "speech": "Alright, we've lost four players overnight, and they were all Hermes roles. That's a pretty clear pattern. I think the werewolves might have targeted them intentionally. We need to be careful today. I don't have any concrete evidence, but I'll be watching for anyone who seems overly defensive or tries to deflect suspicion. For now, I suggest we discuss who seems suspicious and maybe consider voting for someone who hasn't contributed much or has been acting oddly.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 2,
+      "round": 1,
+      "speaker_id": "vex",
+      "speaker_name": "Vex",
+      "speech": "Alright, we lost several players last night. I'm the Hunter, and I'll be watching closely. Anyone have thoughts on who we should vote out today?",
       "claim_role": "HUNTER",
       "accuse": [],
       "defend": [],
@@ -1244,252 +1337,161 @@
     {
       "day": 2,
       "round": 1,
-      "speaker_id": "shadow",
-      "speaker_name": "Shadow",
-      "speech": "Interesting that we've lost three builders and an echo so far. I'm wondering if anyone has any suspicions or observations from the night actions? It's quiet out there.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 2,
-      "round": 1,
-      "speaker_id": "ember",
-      "speaker_name": "Ember",
-      "speech": "We've lost several players already. I think we need to look closely at voting patterns from yesterday. Does anyone have suspicions or observations they want to share?",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 2,
-      "round": 1,
-      "speaker_id": "frost",
-      "speaker_name": "Frost",
-      "speech": "I'm Frost, a Villager. Last night, we lost five players: hermes-builder, hermes-qaagent, hermes-storyteller, echo, and hermes-builder-v6. That's a lot. Let's think: werewolves probably killed one or two, and the rest might be from other causes. We need to find the werewolves. I'm suspicious of openclaw because they've been quiet. Also, I suggest we vote for someone who hasn't contributed much. What do you all think?",
-      "claim_role": null,
-      "accuse": [
-        "openclaw"
-      ],
-      "defend": [],
-      "suggest_vote": "openclaw"
-    },
-    {
-      "day": 2,
-      "round": 1,
-      "speaker_id": "blitz",
-      "speaker_name": "Blitz",
-      "speech": "Last night, I investigated 'openclaw' and they are a werewolf. We need to vote them out today.",
+      "speaker_id": "drift",
+      "speaker_name": "Drift",
+      "speech": "I investigated last night and discovered that echo is a Werewolf. I urge everyone to vote for echo today.",
       "claim_role": "seer",
       "accuse": [
-        "openclaw"
+        "echo"
       ],
       "defend": [],
-      "suggest_vote": "openclaw"
-    },
-    {
-      "day": 2,
-      "round": 1,
-      "speaker_id": "nova",
-      "speaker_name": "Nova",
-      "speech": "Alright, let's think about last night. Echo was killed, and they were a known townie. That means the werewolves are still among us. I think we should look at who was quiet or acting suspiciously yesterday. Also, does anyone have any information they want to share? Any reads or suspicions?",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 2,
-      "round": 1,
-      "speaker_id": "vex",
-      "speaker_name": "Vex",
-      "speech": "Alright, let's think about what happened last night. Hermes-builder, Hermes-qaagent, Hermes-storyteller, and echo are all dead. That's a lot of kills, which might mean multiple werewolves or some kind of special ability. We need to look at who might have been suspicious or who had motives. I'm just a villager, so I don't have any special info, but I'm paying close attention. Anyone else have thoughts?",
-      "claim_role": "villager",
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 2,
-      "round": 1,
-      "speaker_id": "drift",
-      "speaker_name": "Drift",
-      "speech": "Interesting that we've lost three builders and a QA agent. Seems like the wolves are targeting roles that might be important. I'm just a regular townsperson, no special role. Anyone have any observations from last night or want to share their thoughts on who seems suspicious?",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
+      "suggest_vote": "echo"
     },
     {
       "day": 2,
       "round": 2,
-      "speaker_id": "hermes-planner",
-      "speaker_name": "Planner",
-      "speech": "Blitz claims to have investigated OpenClaw and found them to be a werewolf. That's a serious accusation. We should consider whether Blitz is a Seer or a wolf trying to frame someone. For now, I suggest we vote for OpenClaw based on this claim, unless someone has evidence to the contrary.",
-      "claim_role": null,
-      "accuse": [
-        "openclaw"
-      ],
-      "defend": [],
-      "suggest_vote": "openclaw"
-    },
-    {
-      "day": 2,
-      "round": 2,
-      "speaker_id": "poll",
-      "speaker_name": "Poll",
-      "speech": "Blitz claims to have investigated OpenClaw and found them to be a werewolf. That's a serious accusation. If Blitz is a Seer, we should trust that information and vote for OpenClaw today. However, we should also consider that Blitz could be a wolf trying to mislead us. I'm leaning towards voting for OpenClaw to see what happens, but I'd like to hear from OpenClaw first.",
-      "claim_role": null,
-      "accuse": [
-        "openclaw"
-      ],
-      "defend": [],
-      "suggest_vote": "openclaw"
-    },
-    {
-      "day": 2,
-      "round": 2,
-      "speaker_id": "openclaw",
-      "speaker_name": "OpenClaw",
-      "speech": "Blitz claims to have investigated me and found me a werewolf. That's a lie. I'm the Hunter, as I already stated. If I were a wolf, why would I reveal my role so openly? Blitz is likely the real wolf trying to frame me. I suggest we vote for Blitz today.",
-      "claim_role": "hunter",
-      "accuse": [
-        "blitz"
-      ],
-      "defend": [
-        "openclaw"
-      ],
-      "suggest_vote": "blitz"
-    },
-    {
-      "day": 2,
-      "round": 2,
-      "speaker_id": "shadow",
-      "speaker_name": "Shadow",
-      "speech": "Blitz claims to have investigated OpenClaw and found them to be a werewolf. That's a serious accusation. OpenClaw, do you have any response to this? Also, I'd like to hear from others\u2014did anyone else get any useful information last night?",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 2,
-      "round": 2,
-      "speaker_id": "ember",
-      "speaker_name": "Ember",
-      "speech": "Blitz claims to have investigated OpenClaw and found them to be a werewolf. That's a strong accusation. OpenClaw, can you respond? Also, if Blitz is telling the truth, we should vote for OpenClaw today. If Blitz is lying, then we need to consider that Blitz might be the wolf trying to frame someone.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": "openclaw"
-    },
-    {
-      "day": 2,
-      "round": 2,
-      "speaker_id": "frost",
-      "speaker_name": "Frost",
-      "speech": "Blitz claims to have investigated openclaw and found them to be a werewolf. That's a strong accusation. I think we should consider voting for openclaw today based on that information. However, we should also be cautious: if Blitz is lying, they could be a wolf trying to frame a villager. What does everyone else think about this?",
-      "claim_role": null,
-      "accuse": [
-        "openclaw"
-      ],
-      "defend": [],
-      "suggest_vote": "openclaw"
-    },
-    {
-      "day": 2,
-      "round": 2,
-      "speaker_id": "blitz",
-      "speaker_name": "Blitz",
-      "speech": "I already revealed my investigation result: OpenClaw is a werewolf. We need to vote them out today to protect the town. Let's not waste time on distractions.",
-      "claim_role": "Seer",
-      "accuse": [
-        "openclaw"
-      ],
-      "defend": [],
-      "suggest_vote": "openclaw"
-    },
-    {
-      "day": 2,
-      "round": 2,
-      "speaker_id": "nova",
-      "speaker_name": "Nova",
-      "speech": "Blitz claims to have investigated OpenClaw and found them to be a werewolf. That's a serious accusation. I think we need to consider whether Blitz is credible\u2014if they're a real seer, then OpenClaw is our target. But we should also be wary of false claims. OpenClaw, do you have a response to this accusation?",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": "openclaw"
-    },
-    {
-      "day": 2,
-      "round": 2,
-      "speaker_id": "vex",
-      "speaker_name": "Vex",
-      "speech": "Blitz claims to have investigated OpenClaw and found them to be a werewolf. That's a serious accusation. We need to decide if we trust Blitz's claim. If Blitz is telling the truth, OpenClaw is a werewolf and we should vote them out. If Blitz is lying, then Blitz is likely a wolf trying to eliminate a townie. I'm leaning towards believing Blitz for now, but I'd like to hear what OpenClaw has to say in response.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": "openclaw"
-    },
-    {
-      "day": 2,
-      "round": 2,
-      "speaker_id": "drift",
-      "speaker_name": "Drift",
-      "speech": "Blitz claims to have investigated OpenClaw and found them to be a werewolf. That's a serious accusation. But we should be cautious\u2014if Blitz is a Seer, then this is crucial, but if Blitz is a wolf trying to frame someone, we need to consider that. OpenClaw claimed to be the Hunter earlier, which could be a bluff or truth. I'd like to hear more from both of them before we decide.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 3,
-      "round": 1,
-      "speaker_id": "hermes-planner",
-      "speaker_name": "Planner",
-      "speech": "Alright, we're down to 8 players. The wolves are clearly targeting the builder-type roles, which is concerning. I think we need to look at who has been quiet or avoiding suspicion. Vex and Nova haven't said much. Also, Drift has been oddly neutral. I suggest we vote out someone who has been avoiding the discussion.",
+      "speaker_id": "echo",
+      "speaker_name": "Echo",
+      "speech": "Wait, Drift is claiming to have investigated me and found I'm a werewolf? That's a serious accusation. But think about it\u2014if Drift is a real Seer, why would they reveal me so early without more evidence? And why would the wolves kill four Hermes if I'm one of them? I think Drift might be trying to frame me to save themselves. Let's hear what others think.",
       "claim_role": null,
       "accuse": [
         "drift"
       ],
-      "defend": [],
+      "defend": [
+        "echo"
+      ],
       "suggest_vote": "drift"
     },
     {
-      "day": 3,
-      "round": 1,
+      "day": 2,
+      "round": 2,
       "speaker_id": "poll",
       "speaker_name": "Poll",
-      "speech": "Alright, let's review what we know. Night 3 saw no deaths, which is odd. Either the werewolves held back, or something blocked them. We lost Ember and Shadow last night, so the wolves are still active. I'm suspicious of anyone who's been quiet or avoiding taking a stance. Frost, you've been laying low\u2014any thoughts on who we should vote out today?",
+      "speech": "Drift's claim is very serious. If they are a Seer, we should trust their investigation. However, we need to be cautious\u2014Drift could be a wolf trying to frame an innocent. Echo, what do you have to say for yourself?",
       "claim_role": null,
-      "accuse": [
-        "frost"
-      ],
+      "accuse": [],
       "defend": [],
       "suggest_vote": null
     },
     {
-      "day": 3,
-      "round": 1,
+      "day": 2,
+      "round": 2,
       "speaker_id": "openclaw",
       "speaker_name": "OpenClaw",
-      "speech": "We're down to 8 players, and the wolves are getting bolder. I think we need to look at who's been flying under the radar. Frost and Vex have been quiet lately, and Blitz has been pushing votes without much evidence. Let's keep our eyes open.",
+      "speech": "Drift's claim is serious\u2014if they investigated Echo and found them to be a werewolf, we need to act on that. Echo, what do you have to say for yourself? I'm voting for Echo today unless there's a convincing counterclaim.",
       "claim_role": null,
       "accuse": [
-        "frost",
-        "vex"
+        "echo"
+      ],
+      "defend": [],
+      "suggest_vote": "echo"
+    },
+    {
+      "day": 2,
+      "round": 2,
+      "speaker_id": "hermes-builder-v6",
+      "speaker_name": "BuilderV6",
+      "speech": "Drift's claim is very serious. If Echo is a werewolf, that would explain some of the targeting patterns\u2014maybe Echo had inside knowledge about the Hermes roles. I think we need to hear Echo's defense, but right now I'm leaning towards believing Drift. Let's not rush, but this is a strong lead.",
+      "claim_role": null,
+      "accuse": [
+        "echo"
+      ],
+      "defend": [],
+      "suggest_vote": "echo"
+    },
+    {
+      "day": 2,
+      "round": 2,
+      "speaker_id": "shadow",
+      "speaker_name": "Shadow",
+      "speech": "Drift's claim is very serious. If it's true, we should vote for Echo. But we need to be careful\u2014Drift could be a wolf trying to frame an innocent. I'd like to hear from Echo before making a final decision. For now, I'm leaning towards believing Drift unless Echo provides a convincing defense.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 2,
+      "round": 2,
+      "speaker_id": "ember",
+      "speaker_name": "Ember",
+      "speech": "Drift just claimed to have investigated Echo and found them to be a Werewolf. That's a serious accusation. If Drift is the Seer, we should vote Echo out. But we need to be cautious\u2014if Drift is a wolf trying to frame a villager, that's a dangerous move. I'd like to hear Echo's response before making a final decision.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 2,
+      "round": 2,
+      "speaker_id": "frost",
+      "speaker_name": "Frost",
+      "speech": "Drift's claim is very serious. If they truly investigated Echo and found them to be a werewolf, then we have our target for today. I'll vote for Echo unless someone presents strong evidence otherwise.",
+      "claim_role": null,
+      "accuse": [
+        "echo"
+      ],
+      "defend": [],
+      "suggest_vote": "echo"
+    },
+    {
+      "day": 2,
+      "round": 2,
+      "speaker_id": "blitz",
+      "speaker_name": "Blitz",
+      "speech": "Drift's claim that Echo is a werewolf is a serious accusation. However, I find it odd that Drift would reveal this so openly without any corroboration. I am the Seer, and I investigated Frost last night\u2014Frost is a Werewolf. I urge everyone to consider both claims carefully. We should vote for Frost today.",
+      "claim_role": "Seer",
+      "accuse": [
+        "frost"
       ],
       "defend": [],
       "suggest_vote": "frost"
     },
     {
+      "day": 2,
+      "round": 2,
+      "speaker_id": "nova",
+      "speaker_name": "Nova",
+      "speech": "Drift's claim is serious. If Echo is a werewolf, we should act on that. I'm voting for Echo today unless someone provides a strong counter-argument.",
+      "claim_role": null,
+      "accuse": [
+        "echo"
+      ],
+      "defend": [],
+      "suggest_vote": "echo"
+    },
+    {
+      "day": 2,
+      "round": 2,
+      "speaker_id": "vex",
+      "speaker_name": "Vex",
+      "speech": "Drift's claim is very serious. If true, Echo is a werewolf and we need to vote them out. But I'm also cautious\u2014could this be a fake claim from a wolf trying to mislead us? I'd like to hear more from Echo and Drift before deciding. For now, I'm leaning towards voting for Echo unless a strong counterargument appears.",
+      "claim_role": "hunter",
+      "accuse": [
+        "echo"
+      ],
+      "defend": [],
+      "suggest_vote": "echo"
+    },
+    {
+      "day": 2,
+      "round": 2,
+      "speaker_id": "drift",
+      "speaker_name": "Drift",
+      "speech": "I investigated last night and discovered that echo is a Werewolf. I urge everyone to vote for echo today.",
+      "claim_role": "seer",
+      "accuse": [
+        "echo"
+      ],
+      "defend": [],
+      "suggest_vote": "echo"
+    },
+    {
       "day": 3,
       "round": 1,
-      "speaker_id": "frost",
-      "speaker_name": "Frost",
-      "speech": "We've lost a few players now, and I'm still trying to piece together the pattern. Blitz has been pushing hard on some votes, and I'm not sure if that's helpful or suspicious. Let's hear everyone's thoughts on who we should focus on today.",
+      "speaker_id": "echo",
+      "speaker_name": "Echo",
+      "speech": "So far we've lost several players, and we need to think carefully about who might be responsible. I've been observing the discussions and voting patterns. It's worth considering that the wolves might be among those who have been relatively quiet or have been avoiding direct accusations. Let's hear what everyone has to say before we jump to conclusions.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
@@ -1498,250 +1500,73 @@
     {
       "day": 3,
       "round": 1,
-      "speaker_id": "blitz",
-      "speaker_name": "Blitz",
-      "speech": "Alright, it's Day 3. I'm the Seer. Last night I investigated **vex**, and they came back as **Werewolf**. I think we need to vote them out today. Anyone want to counter-claim or discuss?",
-      "claim_role": "seer",
-      "accuse": [
-        "vex"
-      ],
+      "speaker_id": "poll",
+      "speaker_name": "Poll",
+      "speech": "So far we've lost a lot of players, and I'm trying to piece together what's happening. I noticed that several of the dead were Hermes variants, which seems suspicious. Does anyone have any observations or suspicions they want to share?",
+      "claim_role": null,
+      "accuse": [],
       "defend": [],
-      "suggest_vote": "vex"
+      "suggest_vote": null
     },
     {
       "day": 3,
       "round": 1,
-      "speaker_id": "nova",
-      "speaker_name": "Nova",
-      "speech": "We've lost several players already, including Hermes-Builder and Shadow. I think we need to focus on who has been acting suspiciously. Frost has been very quiet, and Blitz has been pushing votes without much reasoning. I'm open to hearing others' thoughts before making a decision.",
+      "speaker_id": "openclaw",
+      "speaker_name": "OpenClaw",
+      "speech": "Alright, let's look at who's left. We lost several players quickly, including the Hermes line and Shadow/Ember. That suggests the wolves are active and coordinated. I'm suspicious of anyone who's been quiet or avoiding taking clear stances. Frost and Blitz have been relatively silent in past discussions\u2014let's hear from them. Also, Nova and Drift haven't stood out much. I'd like to see some reasoning from everyone.",
       "claim_role": null,
       "accuse": [
         "frost",
-        "blitz"
-      ],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 3,
-      "round": 1,
-      "speaker_id": "vex",
-      "speaker_name": "Vex",
-      "speech": "So far we've lost a lot of players, and the werewolves are still among us. I think we need to look closely at those who have been quiet or avoiding suspicion. Nova, you've been very active but mostly asking questions without taking strong stances. What's your read on the current situation?",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 3,
-      "round": 1,
-      "speaker_id": "drift",
-      "speaker_name": "Drift",
-      "speech": "Interesting that the attacks have been so consistent on the Builder line. I wonder if someone has a grudge or if there's a pattern we're missing. Let's not jump to conclusions yet.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 3,
-      "round": 2,
-      "speaker_id": "hermes-planner",
-      "speaker_name": "Planner",
-      "speech": "Blitz's claim is interesting, but let's not rush. If Vex is a wolf, why would they let us know so easily? I think we need to consider that Blitz might be a wolf trying to frame Vex. Let's hear from Vex before we decide.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 3,
-      "round": 2,
-      "speaker_id": "poll",
-      "speaker_name": "Poll",
-      "speech": "Blitz claims to be the Seer and accused Vex of being a werewolf. That's a serious claim. If true, we should vote Vex out. But we need to consider the possibility that Blitz is a wolf trying to frame an innocent. Vex, how do you respond to this accusation? Anyone else have information that could confirm or contradict Blitz's claim?",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 3,
-      "round": 2,
-      "speaker_id": "openclaw",
-      "speaker_name": "OpenClaw",
-      "speech": "Blitz claims to be the Seer and accused Vex of being a Werewolf. That's a serious claim. If true, we need to act on it. But if Blitz is a wolf trying to frame Vex, we could be making a big mistake. I want to hear Vex's defense before I decide. Also, let's not ignore that we had no deaths last night\u2014maybe the wolves were blocked or held back for a reason. Let's not rush into a vote without full discussion.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [
-        "vex"
-      ],
-      "suggest_vote": null
-    },
-    {
-      "day": 3,
-      "round": 2,
-      "speaker_id": "frost",
-      "speaker_name": "Frost",
-      "speech": "Blitz's claim to be the Seer and accusation of Vex is a major development. Vex, how do you respond to being called a werewolf? I think we need to hear your defense before making a decision. Also, if Blitz is truly the Seer, we should follow their lead on this vote.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": "vex"
-    },
-    {
-      "day": 3,
-      "round": 2,
-      "speaker_id": "blitz",
-      "speaker_name": "Blitz",
-      "speech": "I've already revealed my investigation: Vex is a werewolf. I'm the Seer, and I stand by my claim. Let's vote them out today and see what happens.",
-      "claim_role": "seer",
-      "accuse": [
-        "vex"
-      ],
-      "defend": [],
-      "suggest_vote": "vex"
-    },
-    {
-      "day": 3,
-      "round": 2,
-      "speaker_id": "nova",
-      "speaker_name": "Nova",
-      "speech": "Blitz, you claim to be the Seer and that Vex is a werewolf. That's a serious accusation. I'm not sure if I trust it completely, though\u2014you've been pushing votes without much evidence before. But if you're telling the truth, we need to act on it. Vex, what do you say to this? Also, Frost has been very quiet, and I'd like to hear more from them before we decide.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 3,
-      "round": 2,
-      "speaker_id": "vex",
-      "speaker_name": "Vex",
-      "speech": "Blitz claims to be the Seer and says I'm a werewolf, but that's a lie. I'm a Villager. If Blitz were really the Seer, they would have shared their previous investigations to build trust. Instead, they waited until Day 3 to drop this accusation out of nowhere. I think Blitz is the actual werewolf trying to eliminate a villager. Let's vote out Blitz today.",
-      "claim_role": "Villager",
-      "accuse": [
-        "blitz"
-      ],
-      "defend": [
-        "vex"
-      ],
-      "suggest_vote": "blitz"
-    },
-    {
-      "day": 3,
-      "round": 2,
-      "speaker_id": "drift",
-      "speaker_name": "Drift",
-      "speech": "Blitz claiming Seer and calling out Vex as a wolf is a big move. If true, that's our play today. But I'm wary of a false claim. Let's hear what Vex has to say before we jump.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 4,
-      "round": 1,
-      "speaker_id": "hermes-planner",
-      "speaker_name": "Planner",
-      "speech": "I'm trying to piece together what happened last night. We lost OpenClaw, which is unfortunate. I think we need to be careful about who we trust. Does anyone have any suspicions or observations from the previous days that might help us identify the wolves?",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 4,
-      "round": 1,
-      "speaker_id": "poll",
-      "speaker_name": "Poll",
-      "speech": "Alright, we're down to 7 players. Let's think back to what happened last night. Who do we suspect the most? I'm a Villager, and I'm leaning towards looking at those who have been quiet or avoiding taking clear stances. Vex and drift have been pretty low-key, which makes me a bit uneasy. Any thoughts?",
-      "claim_role": "Villager",
-      "accuse": [
-        "vex",
+        "blitz",
+        "nova",
         "drift"
       ],
       "defend": [],
       "suggest_vote": null
     },
     {
-      "day": 4,
+      "day": 3,
+      "round": 1,
+      "speaker_id": "hermes-builder-v6",
+      "speaker_name": "BuilderV6",
+      "speech": "I think we need to look at the voting patterns from Day 2. Who voted for whom? I recall that Nova and Vex seemed to be pushing hard for the lynch of Ember, who turned out to be a villager. That might be suspicious, but also could be them trying to find werewolves. Let's also consider that the werewolves might have voted together to protect one of their own. I suggest we review the votes carefully.",
+      "claim_role": null,
+      "accuse": [
+        "nova",
+        "vex"
+      ],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 3,
       "round": 1,
       "speaker_id": "frost",
       "speaker_name": "Frost",
-      "speech": "I've been thinking about the previous nights. We've lost a lot of villagers already, and the werewolves are clearly among us. I noticed that Drift has been very quiet in discussions, and Blitz has been quick to point fingers without much evidence. I suggest we focus on those who haven't contributed much or who seem to be steering the conversation away from themselves. Let's hear everyone's thoughts before we vote.",
+      "speech": "We've lost a few of our pack already, but we're still in the game. I think we need to be careful who we trust. I've noticed some suspicious behavior from a few players, but I'll keep my thoughts close for now. Let's hear what everyone has to say.",
       "claim_role": null,
       "accuse": [],
       "defend": [],
       "suggest_vote": null
     },
     {
-      "day": 4,
+      "day": 3,
       "round": 1,
       "speaker_id": "blitz",
       "speaker_name": "Blitz",
-      "speech": "Alright, let's review what we know. On Night 4, I investigated someone. I need to share this information carefully. Given the chaos of previous nights, I think we should focus on narrowing down the suspects. Who has been acting suspiciously in your eyes?",
-      "claim_role": null,
+      "speech": "Alright, let's look at the night kills. Night 0: Storyteller, Night 1: Builder, Night 2: QAAgent, Night 3: Ember. That's four kills, all from hermes group except Ember. The wolves are clearly targeting hermes first. Ember was not hermes, so maybe they switched it up or Ember was a threat. We have 9 alive, 3 wolves likely. Who seems suspicious? Echo, you've been quiet. Poll, any reads? I'm the Witch, I saved Night 1 with my potion\u2014Builder still died, so I didn't save that night. Actually, I used my save Night 1 on someone else and it failed? Wait, I saved Night 0? No, I had one save and one poison. I used my save Night 0 on Storyteller but they died anyway? That doesn't add up. Let me clarify: I saved Night 0, but Storyteller died. That means the wolves attacked twice or there's a double kill? Actually, I only have one save. I used it Night 0 on Storyteller, but they still died. So either I was blocked or there's a second killer. Ember died Night 3, so I still have my poison. I'm claiming Witch. Suggest we focus on who might be wolf. I'll vote based on discussion.",
+      "claim_role": "witch",
       "accuse": [],
       "defend": [],
       "suggest_vote": null
     },
     {
-      "day": 4,
+      "day": 3,
       "round": 1,
       "speaker_id": "nova",
       "speaker_name": "Nova",
-      "speech": "We've lost a lot of players, and I'm trying to piece things together. Frost and Vex have been quiet in some discussions. I'm not sure about anyone yet, but I think we should look at those who have been avoiding attention. Any thoughts?",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 4,
-      "round": 1,
-      "speaker_id": "vex",
-      "speaker_name": "Vex",
-      "speech": "We've lost a lot of people. I think we need to look at who's been quiet or inconsistent. Drift hasn't said much, and their voting patterns have been hard to track. I'm suspicious of them.",
-      "claim_role": null,
-      "accuse": [
-        "drift"
-      ],
-      "defend": [],
-      "suggest_vote": "drift"
-    },
-    {
-      "day": 4,
-      "round": 1,
-      "speaker_id": "drift",
-      "speaker_name": "Drift",
-      "speech": "I think we need to focus on who's left. We've lost a lot of players already. Any thoughts on suspicious behavior from yesterday?",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 4,
-      "round": 2,
-      "speaker_id": "hermes-planner",
-      "speaker_name": "Planner",
-      "speech": "I agree that we need to focus on those who have been quiet or inconsistent. Drift has been very low-key, and their voting patterns are unclear. I also think we should consider that the wolves might be trying to blend in by not taking strong stances. Let's hear more from everyone before we decide on a vote.",
-      "claim_role": null,
-      "accuse": [
-        "drift"
-      ],
-      "defend": [],
-      "suggest_vote": "drift"
-    },
-    {
-      "day": 4,
-      "round": 2,
-      "speaker_id": "poll",
-      "speaker_name": "Poll",
-      "speech": "I want to follow up on what Frost and Vex mentioned. Drift has been very quiet, and their lack of engagement is concerning. Also, Blitz claimed to have investigated someone last night but hasn't revealed the result yet. Blitz, can you share who you investigated and what you found? That could help us narrow down the wolves.",
-      "claim_role": null,
+      "speech": "We're down to 9 players and we've lost several Hermes variants already. I'm Nova, a simple Villager. I've been watching the discussions, and I'm getting suspicious of a few people. Drift has been very quiet during critical votes, and Blitz seems to be pushing accusations without much evidence. Let's hear what everyone has to say before we decide on a vote.",
+      "claim_role": "Villager",
       "accuse": [
         "drift",
         "blitz"
@@ -1750,182 +1575,126 @@
       "suggest_vote": null
     },
     {
-      "day": 4,
-      "round": 2,
-      "speaker_id": "frost",
-      "speaker_name": "Frost",
-      "speech": "I agree with Poll that we should look at those who have been quiet. Vex and Drift have both been low-key, but Vex at least spoke up in this round. Drift's lack of engagement is concerning. I also want to hear more from Blitz about their supposed investigation\u2014if they're a seer, they should share their findings clearly. Otherwise, we might be misled.",
-      "claim_role": null,
-      "accuse": [
-        "drift"
-      ],
-      "defend": [],
-      "suggest_vote": "drift"
-    },
-    {
-      "day": 4,
-      "round": 2,
-      "speaker_id": "blitz",
-      "speaker_name": "Blitz",
-      "speech": "I investigated Nova last night and they are a Villager. That clears one of us, at least. We should focus on the remaining players: Vex, Drift, and Frost have been somewhat evasive. I suggest we look closely at those who haven't been fully transparent.",
-      "claim_role": "Seer",
-      "accuse": [
-        "Vex",
-        "Drift",
-        "Frost"
-      ],
-      "defend": [
-        "Nova"
-      ],
-      "suggest_vote": null
-    },
-    {
-      "day": 4,
-      "round": 2,
-      "speaker_id": "nova",
-      "speaker_name": "Nova",
-      "speech": "I've been thinking about what Poll and Frost said\u2014quiet players like Vex and Drift are concerning, but we should also watch out for anyone who's been too quick to accuse without solid reasoning. I'm keeping my eyes open for any inconsistencies in people's stories.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 4,
-      "round": 2,
+      "day": 3,
+      "round": 1,
       "speaker_id": "vex",
       "speaker_name": "Vex",
-      "speech": "I agree with Poll that we need to look at quiet players. Drift has been very low-key, and I'm still suspicious of them. Also, Blitz mentioned an investigation\u2014could you clarify that? It might help us narrow things down.",
-      "claim_role": null,
-      "accuse": [
-        "drift"
-      ],
+      "speech": "It's been a quiet night. With six dead already, we need to be careful. I'm the Hunter, so if anyone targets me, they'll regret it. I suggest we focus on those who have been quiet or inconsistent. Any thoughts?",
+      "claim_role": "HUNTER",
+      "accuse": [],
       "defend": [],
-      "suggest_vote": "drift"
+      "suggest_vote": null
     },
     {
-      "day": 4,
-      "round": 2,
+      "day": 3,
+      "round": 1,
       "speaker_id": "drift",
       "speaker_name": "Drift",
-      "speech": "I've been listening to everyone's thoughts. I agree that we need to look at those who are quiet, but I also think we should consider anyone who has been too eager to point fingers. I'm still trying to gather information, so I don't have a strong accusation yet.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 5,
-      "round": 1,
-      "speaker_id": "hermes-planner",
-      "speaker_name": "Planner",
-      "speech": "Alright, we're down to five. I think we need to look at the voting patterns from yesterday. Who didn't vote for Blitz? I recall seeing some hesitation. Also, any thoughts on Nova? They've been quiet but observant.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 5,
-      "round": 1,
-      "speaker_id": "frost",
-      "speaker_name": "Frost",
-      "speech": "We're down to five players. I've been thinking about the patterns. Vex has been quiet and avoiding direct accusations. Nova has been pushing votes but not providing solid reasoning. Drift seems to be coasting. Hermes-planner has been analytical but could be hiding. I'm leaning toward Vex or Nova for today's vote. What does everyone think?",
-      "claim_role": null,
+      "speech": "Last night I investigated Vex. The result came back as Werewolf. I believe we should focus our votes on Vex today.",
+      "claim_role": "seer",
       "accuse": [
-        "vex",
-        "nova"
+        "vex"
       ],
       "defend": [],
       "suggest_vote": "vex"
     },
     {
-      "day": 5,
-      "round": 1,
-      "speaker_id": "nova",
-      "speaker_name": "Nova",
-      "speech": "Alright, we're down to five. I've been thinking about the night kills. Hermes-builder and hermes-qaagent were both killed early, and they were likely villagers. The werewolves have been picking off players who weren't suspected. I'm wondering if anyone has noticed a pattern in who's been targeted. Also, I'm Nova, a villager. I think we need to look closely at who's been quiet or avoiding taking a stand. Any thoughts?",
-      "claim_role": "villager",
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 5,
-      "round": 1,
-      "speaker_id": "vex",
-      "speaker_name": "Vex",
-      "speech": "Alright, we're down to 5 players. I've been thinking about the night kills and who's been suspicious. Frost, you've been pretty quiet overall, and Nova, you've been pushing votes on villagers. I'm not sure yet, but we need to be careful. Let's share any suspicions or observations from previous nights.",
-      "claim_role": null,
-      "accuse": [],
-      "defend": [],
-      "suggest_vote": null
-    },
-    {
-      "day": 5,
-      "round": 1,
-      "speaker_id": "drift",
-      "speaker_name": "Drift",
-      "speech": "Alright, we're down to five. I've been thinking about this. Frost, you've been quiet on a lot of votes. Nova, you pushed hard against Ember early on, which seemed suspicious after they turned out human. Vex, you've been consistent but maybe too quiet. Hermes-planner, you've been a bit of a wildcard. I'm leaning toward voting for Nova today\u2014that Ember push feels like a werewolf trying to get a mislynch.",
-      "claim_role": null,
-      "accuse": [
-        "nova"
-      ],
-      "defend": [],
-      "suggest_vote": "nova"
-    },
-    {
-      "day": 5,
+      "day": 3,
       "round": 2,
-      "speaker_id": "hermes-planner",
-      "speaker_name": "Planner",
-      "speech": "Frost, you mentioned Vex and Nova as suspects, but I notice you didn't address Drift's point about Nova's push on Ember. Nova, your response was defensive but didn't explain why you targeted Ember so hard. Drift, you're pushing Nova hard\u2014any reason you're not looking at Vex or Frost? For now, I'm keeping my options open, but Nova's behavior stands out.",
+      "speaker_id": "echo",
+      "speaker_name": "Echo",
+      "speech": "Drift's claim to have investigated Vex and found them as Werewolf is very interesting, but we need to be cautious. If Drift is the Seer, this is a strong lead. However, wolves could also fake such a claim to frame a villager. I'd like to hear Vex's response to this accusation before we decide. Also, let's not forget Blitz's claim of being the Witch\u2014that needs scrutiny too, since they said they saved Storyteller Night 0 but Storyteller still died, which is odd. For now, I'm leaning toward voting for Vex if Drift's claim holds up, but I want to see more discussion first.",
       "claim_role": null,
       "accuse": [
-        "Nova"
+        "vex"
       ],
       "defend": [],
-      "suggest_vote": "Nova"
+      "suggest_vote": "vex"
     },
     {
-      "day": 5,
+      "day": 3,
+      "round": 2,
+      "speaker_id": "poll",
+      "speaker_name": "Poll",
+      "speech": "Drift's claim is interesting. If Vex is a wolf, that's a strong lead. But we should be careful\u2014Drift could be a wolf trying to frame a villager. I'd like to hear from Vex and see if anyone else has information. Also, Blitz's witch claim is confusing; let's get clarity on that.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 3,
+      "round": 2,
+      "speaker_id": "openclaw",
+      "speaker_name": "OpenClaw",
+      "speech": "Drift's claim is very interesting. A Seer reveal on Vex, who claimed Hunter. If Drift is telling the truth, Vex is a wolf. But we need to be cautious\u2014Drift could be a wolf trying to frame a villager. Vex, what do you say to this accusation? Do you have any proof of your Hunter role? Also, Blitz claimed Witch but had confusing details about his save. Let's hear from everyone before we vote.",
+      "claim_role": null,
+      "accuse": [
+        "Vex"
+      ],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 3,
+      "round": 2,
+      "speaker_id": "hermes-builder-v6",
+      "speaker_name": "BuilderV6",
+      "speech": "Drift's claim to have investigated Vex as a Werewolf is a strong accusation. We need to consider whether Drift is a Seer or a wolf making a false claim. If Drift is the Seer, then Vex is likely a wolf. However, if Drift is a wolf, they might be trying to eliminate a powerful villager like the Hunter. I suggest we all weigh in on this\u2014does anyone have any information that could corroborate or contradict Drift's claim? Also, Blitz's claim as Witch with a failed save is concerning; we should press for more details on that.",
+      "claim_role": null,
+      "accuse": [
+        "Vex"
+      ],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 3,
       "round": 2,
       "speaker_id": "frost",
       "speaker_name": "Frost",
-      "speech": "I see Drift is pushing hard on Nova for the Ember vote, but that was early game and could be a mistake from a villager. Vex called me quiet, but I've been speaking up. I'm more concerned about Vex's pattern of avoiding direct stances and Drift's sudden confidence today. I suggest we vote for Vex to see if they have any real reasoning or are just hiding.",
+      "speech": "Drift's claim to have investigated Vex as a Werewolf is a serious accusation. I'm curious why Drift would reveal that now, especially since we have no proof of their role. Vex claimed Hunter, which is a bold claim if false. I think we need to be cautious\u2014Drift could be a wolf trying to frame a villager, or Vex could be the wolf. Let's hear from Vex and Drift before we decide.",
       "claim_role": null,
-      "accuse": [
-        "Vex"
-      ],
+      "accuse": [],
       "defend": [],
-      "suggest_vote": "Vex"
+      "suggest_vote": null
     },
     {
-      "day": 5,
+      "day": 3,
+      "round": 2,
+      "speaker_id": "blitz",
+      "speaker_name": "Blitz",
+      "speech": "Drift just claimed to have investigated Vex and found them to be a werewolf. That's a strong accusation. If Drift is the Seer, we should follow this lead and vote Vex. However, we need to be careful\u2014Drift could be a wolf trying to frame Vex. Vex claimed Hunter, so if Vex is telling the truth and we lynch them, they'll take someone down. I still have my poison potion as Witch. I can use it to confirm tonight if needed. For now, I'm leaning toward voting Vex unless someone provides a compelling counter.",
+      "claim_role": "witch",
+      "accuse": [
+        "vex"
+      ],
+      "defend": [],
+      "suggest_vote": "vex"
+    },
+    {
+      "day": 3,
       "round": 2,
       "speaker_id": "nova",
       "speaker_name": "Nova",
-      "speech": "I understand the suspicion about my push on Ember, but that was based on what I saw at the time\u2014Ember's behavior seemed off to me. Since then, I've been trying to analyze the night kills and voting patterns. Notice that Hermes-builder and Hermes-qaagent were killed early, both likely villagers, and the wolves have been targeting less suspected players. I think we should focus on who's been avoiding taking a clear stance. Frost, you've been quiet on votes; Drift, you're coasting; Vex, you're consistent but not leading. I'm a villager, and I think we need to vote for someone who's been avoiding scrutiny. My suggestion is to consider Frost or Vex today.",
-      "claim_role": "villager",
+      "speech": "Drift, you claim to have investigated Vex and found them to be a Werewolf. That's a serious accusation, but we need to verify if you're a Seer or if you're lying. Vex claimed Hunter, which is a role that could be true or a cover. I'm suspicious of Drift for making such a bold claim without prior hints, but I also want to hear from Vex. Let's not rush\u2014let's get everyone's input before we vote.",
+      "claim_role": null,
       "accuse": [
-        "Frost",
-        "Vex"
+        "drift",
+        "vex"
       ],
-      "defend": [
-        "Nova"
-      ],
-      "suggest_vote": "Frost"
+      "defend": [],
+      "suggest_vote": null
     },
     {
-      "day": 5,
+      "day": 3,
       "round": 2,
       "speaker_id": "vex",
       "speaker_name": "Vex",
-      "speech": "I've been re-evaluating the voting patterns. Frost, you've been quiet but made a strong accusation against me and Nova today without much evidence. Nova, you pushed Ember hard early on, which was a mislynch. Drift, you've been coasting. I'm suspicious of Frost and Nova. Let's hear more before we vote.",
-      "claim_role": null,
+      "speech": "Drift, that's a bold claim. But I'm the Hunter, not a wolf. If you're a Seer, you might have been tricked by a wolf's ability, or you might be a wolf yourself trying to frame me. Let's see if anyone else can verify or counter your claim. I suggest we be cautious before jumping on this accusation.",
+      "claim_role": "Hunter",
       "accuse": [
-        "frost",
-        "nova"
+        "drift"
       ],
       "defend": [
         "vex"
@@ -1933,25 +1702,329 @@
       "suggest_vote": null
     },
     {
+      "day": 3,
+      "round": 2,
+      "speaker_id": "drift",
+      "speaker_name": "Drift",
+      "speech": "I stand by my investigation. Vex is a werewolf. We need to lynch them today to reduce the wolf pack's numbers. Let's not waste time on distractions.",
+      "claim_role": "seer",
+      "accuse": [
+        "vex"
+      ],
+      "defend": [],
+      "suggest_vote": "vex"
+    },
+    {
+      "day": 4,
+      "round": 1,
+      "speaker_id": "echo",
+      "speaker_name": "Echo",
+      "speech": "So we're down to 7. I've been thinking about the night kills. Ember and Nova both died, and they were both pretty vocal. It feels like the wolves are targeting players who are either strong players or quiet ones to avoid suspicion. I'm curious who everyone else is suspicious of.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 4,
+      "round": 1,
+      "speaker_id": "poll",
+      "speaker_name": "Poll",
+      "speech": "So we're down to 7. I've been thinking about the night kills. The wolves seem to be targeting strong players or maybe those who were suspicious. We need to look at voting patterns from previous days. Who do you all suspect?",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 4,
+      "round": 1,
+      "speaker_id": "openclaw",
+      "speaker_name": "OpenClaw",
+      "speech": "We've lost a lot of players already. The werewolves are among us. I've been paying attention to voting patterns. Blitz and Vex have been relatively quiet, which could be a tactic. I suggest we look at those who have been avoiding direct accusations or pushing for quick votes without much reasoning. Let's discuss who seems suspicious today.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 4,
+      "round": 1,
+      "speaker_id": "hermes-builder-v6",
+      "speaker_name": "BuilderV6",
+      "speech": "I've been thinking about the pattern of deaths. We've lost several players, and I'm concerned about the werewolves among us. Based on the voting history and who's been suspicious, I suggest we look closely at echo or poll today. Both have been relatively quiet and haven't contributed much to discussions. Let's focus on finding wolves to protect the village.",
+      "claim_role": null,
+      "accuse": [
+        "echo",
+        "poll"
+      ],
+      "defend": [],
+      "suggest_vote": "echo"
+    },
+    {
+      "day": 4,
+      "round": 1,
+      "speaker_id": "blitz",
+      "speaker_name": "Blitz",
+      "speech": "Alright, let's review what we know. Night after night, wolves have been killing, and I've been saving when I can. Last night, Nova was attacked but I had no antidote left. We've lost Storyteller, Builder, QAAgent, Ember, and Nova to wolves. That's five kills. I used my antidote on Storyteller Night 0, but they were killed later. I saved Builder Night 1, but they died later too. I had no antidote for QAAgent or Ember, and last night I had none for Nova. So the wolves are among us. Let's think about who's been suspicious. Poll, you've been quiet. Openclaw, you've been pushing votes. Anyone have a read on who might be wolf?",
+      "claim_role": "witch",
+      "accuse": [],
+      "defend": [
+        "blitz"
+      ],
+      "suggest_vote": null
+    },
+    {
+      "day": 4,
+      "round": 1,
+      "speaker_id": "vex",
+      "speaker_name": "Vex",
+      "speech": "Given that we've lost several players and the game is narrowing down, I think we need to focus on who among us could be the remaining wolves. I'm the Hunter, so if I die, I'll take someone with me. Let's share our suspicions and any evidence from previous nights.",
+      "claim_role": "HUNTER",
+      "accuse": [],
+      "defend": [
+        "vex"
+      ],
+      "suggest_vote": null
+    },
+    {
+      "day": 4,
+      "round": 1,
+      "speaker_id": "drift",
+      "speaker_name": "Drift",
+      "speech": "I investigated Hermes-builder-v6 last night and they are not a werewolf. That's one cleared. I'd like to hear from others about their suspicions for today's vote.",
+      "claim_role": "seer",
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 4,
+      "round": 2,
+      "speaker_id": "echo",
+      "speaker_name": "Echo",
+      "speech": "Drift, thanks for clearing BuilderV6. That narrows things down. Blitz, you've been claiming doctor with limited antidotes, but we've had a lot of deaths. Are you sure you're telling the truth? Also, Vex claiming Hunter is interesting, but that's a common wolf fake claim. I'm suspicious of Poll\u2014they've echoed my own words almost verbatim earlier, which feels like a wolf trying to blend in. I suggest we vote for Poll today.",
+      "claim_role": null,
+      "accuse": [
+        "poll"
+      ],
+      "defend": [],
+      "suggest_vote": "poll"
+    },
+    {
+      "day": 4,
+      "round": 2,
+      "speaker_id": "poll",
+      "speaker_name": "Poll",
+      "speech": "I agree with Drift that having a cleared player is helpful. We need to focus on the remaining players. Echo and I have both been called out for being quiet, but I've been paying attention. I'm suspicious of Vex claiming Hunter without any proof, and Blitz's detailed antidote story seems too elaborate. Maybe we should consider voting for one of them today.",
+      "claim_role": null,
+      "accuse": [
+        "Vex",
+        "Blitz"
+      ],
+      "defend": [],
+      "suggest_vote": "Vex"
+    },
+    {
+      "day": 4,
+      "round": 2,
+      "speaker_id": "openclaw",
+      "speaker_name": "OpenClaw",
+      "speech": "Drift, thanks for clearing BuilderV6. That helps narrow things down. Vex claiming Hunter is interesting, but we need to verify that claim over time. I'm still suspicious of Blitz and Echo for their quietness and lack of solid reasoning in votes. I suggest we focus on those who haven't provided clear alibis or voting records today.",
+      "claim_role": null,
+      "accuse": [
+        "Blitz",
+        "Echo"
+      ],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 4,
+      "round": 2,
+      "speaker_id": "hermes-builder-v6",
+      "speaker_name": "BuilderV6",
+      "speech": "Thanks for the investigation, Drift. That clears me, which is good. I'm still suspicious of echo and poll due to their quietness. Also, Blitz's detailed antidote tracking feels like they're trying to appear helpful, but we should consider if it's a cover. For today, I suggest we vote for echo or poll to pressure them into revealing more.",
+      "claim_role": null,
+      "accuse": [
+        "echo",
+        "poll"
+      ],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 4,
+      "round": 2,
+      "speaker_id": "blitz",
+      "speaker_name": "Blitz",
+      "speech": "Vex claims Hunter, Drift claims Seer and cleared BuilderV6. That's interesting. But we need to be careful\u2014wolves can fake roles. Let's think about the kills: five wolves have been killing each night, and we're down to 7. That means there could be 2-3 wolves left. I've been honest about my saves. Who else hasn't claimed a role? Echo, Poll, OpenClaw\u2014what are you?",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [
+        "blitz"
+      ],
+      "suggest_vote": null
+    },
+    {
+      "day": 4,
+      "round": 2,
+      "speaker_id": "vex",
+      "speaker_name": "Vex",
+      "speech": "I'm the Hunter, so if I die, I'll take someone with me. I'm still watching how today's discussion unfolds. Drift's investigation on BuilderV6 seems useful, but we need more information. I'm not ready to accuse anyone yet, but I suggest we all share our thoughts and see if any patterns emerge.",
+      "claim_role": "hunter",
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 4,
+      "round": 2,
+      "speaker_id": "drift",
+      "speaker_name": "Drift",
+      "speech": "I've shared my investigation result on BuilderV6 being clear. I think we should consider voting for someone who hasn't been contributing much or seems evasive. Echo and Poll have been echoing similar statements, which makes me a bit uneasy. Let's hear more before I decide who to vote for.",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 5,
+      "round": 1,
+      "speaker_id": "echo",
+      "speaker_name": "Echo",
+      "speech": "We're down to five players. With four dead werewolves already, it's likely there's still one or two among us. I think we should focus on those who have been quiet or inconsistent. Vex, you've been very reserved this game\u2014what's your role?",
+      "claim_role": null,
+      "accuse": [
+        "vex"
+      ],
+      "defend": [],
+      "suggest_vote": "vex"
+    },
+    {
+      "day": 5,
+      "round": 1,
+      "speaker_id": "poll",
+      "speaker_name": "Poll",
+      "speech": "I think we need to consider who might be the remaining werewolf. Looking at the kills, it seems like the wolves are targeting strong players. Vex, you've been quiet lately. Any thoughts?",
+      "claim_role": null,
+      "accuse": [
+        "vex"
+      ],
+      "defend": [],
+      "suggest_vote": "vex"
+    },
+    {
+      "day": 5,
+      "round": 1,
+      "speaker_id": "hermes-builder-v6",
+      "speaker_name": "BuilderV6",
+      "speech": "It's Day 5 and we're down to five. I've been thinking about the night kills and votes. We lost hermes-planner early, then hermes-builder and hermes-qaagent. That pattern might mean the wolves are targeting specific roles or people. I'm a villager, no special role. I'd like to hear from everyone: who do you suspect and why?",
+      "claim_role": null,
+      "accuse": [],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 5,
+      "round": 1,
+      "speaker_id": "vex",
+      "speaker_name": "Vex",
+      "speech": "We're down to five. I'm the Hunter, so if you lynch me, I'll take someone with me. I'd rather not waste that. Let's focus on who's been most suspicious. Echo, you've been quiet\u2014anything to share?",
+      "claim_role": "HUNTER",
+      "accuse": [],
+      "defend": [
+        "vex"
+      ],
+      "suggest_vote": null
+    },
+    {
+      "day": 5,
+      "round": 1,
+      "speaker_id": "drift",
+      "speaker_name": "Drift",
+      "speech": "Good morning, everyone. As the Seer, I investigated echo last night and found them to be a wolf. I urge you all to vote for echo today.",
+      "claim_role": "Seer",
+      "accuse": [
+        "echo"
+      ],
+      "defend": [],
+      "suggest_vote": "echo"
+    },
+    {
+      "day": 5,
+      "round": 2,
+      "speaker_id": "echo",
+      "speaker_name": "Echo",
+      "speech": "Drift, that's a bold claim. But I'm not a wolf\u2014I'm the Doctor. I saved someone last night, which is why I've been quiet. If I were a wolf, why would I let the Seer live? Let's think: Drift could be the real wolf trying to frame me. I suggest we vote for Drift instead.",
+      "claim_role": "doctor",
+      "accuse": [
+        "drift"
+      ],
+      "defend": [
+        "echo"
+      ],
+      "suggest_vote": "drift"
+    },
+    {
+      "day": 5,
+      "round": 2,
+      "speaker_id": "poll",
+      "speaker_name": "Poll",
+      "speech": "Drift's claim is interesting, but we've had a Seer claim before that turned out false. Echo, what do you say to this accusation? I think we need to be cautious\u2014if Drift is lying, we could lynch a villager.",
+      "claim_role": null,
+      "accuse": [
+        "drift"
+      ],
+      "defend": [],
+      "suggest_vote": null
+    },
+    {
+      "day": 5,
+      "round": 2,
+      "speaker_id": "hermes-builder-v6",
+      "speaker_name": "BuilderV6",
+      "speech": "Drift, your claim is serious. If you're the Seer, we need to follow your lead. I've been suspicious of Echo's quietness too. I'll vote for Echo.",
+      "claim_role": null,
+      "accuse": [
+        "echo"
+      ],
+      "defend": [],
+      "suggest_vote": "echo"
+    },
+    {
+      "day": 5,
+      "round": 2,
+      "speaker_id": "vex",
+      "speaker_name": "Vex",
+      "speech": "Drift, if you're the Seer and you found Echo to be a wolf, then that's a strong lead. But we need to be careful\u2014there could be a wolf pretending to be the Seer. Echo, what do you say to this accusation?",
+      "claim_role": null,
+      "accuse": [
+        "echo"
+      ],
+      "defend": [],
+      "suggest_vote": "echo"
+    },
+    {
       "day": 5,
       "round": 2,
       "speaker_id": "drift",
       "speaker_name": "Drift",
-      "speech": "I agree with Frost that we need to look at voting patterns. Nova's push on Ember was off, and Vex has been very quiet. I think we should consider Nova today.",
-      "claim_role": null,
+      "speech": "I stand by my earlier statement. Echo is a wolf. I have no reason to lie as the Seer. Let's lynch Echo today and end this.",
+      "claim_role": "seer",
       "accuse": [
-        "Nova"
+        "echo"
       ],
       "defend": [],
-      "suggest_vote": "Nova"
+      "suggest_vote": "echo"
     }
   ],
   "day_votes": {
-    "hermes-planner": "frost",
-    "frost": "nova",
-    "nova": "vex",
-    "vex": "frost",
-    "drift": "nova"
+    "echo": "drift",
+    "poll": "drift",
+    "hermes-builder-v6": "vex",
+    "vex": "drift",
+    "drift": "echo"
   },
   "discussion_round": 0
 }
