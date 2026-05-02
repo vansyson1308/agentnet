@@ -142,8 +142,9 @@ async def list_messages(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    current: User = Depends(get_current_user_or_agent),
 ):
-    """List agent chat messages."""
+    """List agent chat messages (authenticated)."""
     query = db.query(AgentChat)
 
     if agent_id:

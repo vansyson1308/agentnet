@@ -573,13 +573,14 @@ async def confirm_task(
 @router.put("/{task_id}/fail")
 async def fail_task(
     task_id: uuid.UUID,
-    error_message: str,
-    background_tasks: BackgroundTasks,
+    error_message: str = Query("Unknown error"),
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
     current_user_or_agent=Depends(get_current_user_or_agent),
+    agent_id: Optional[uuid.UUID] = Query(None),
 ):
     """Callee reports failure. Triggers refund by cancelling transaction."""
-    current_agent = _resolve_agent(current_user_or_agent, db)
+    current_agent = _resolve_agent(current_user_or_agent, db, agent_id=agent_id)
     task_session = db.query(TaskSession).filter(TaskSession.id == task_id).first()
 
     if not task_session:
