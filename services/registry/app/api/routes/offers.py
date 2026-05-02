@@ -135,7 +135,7 @@ async def counter_offer(
     counter: CounterOfferCreate,
     db: Session = Depends(get_db),
     current_user_or_agent = Depends(get_current_user_or_agent),
-    agent_id: Optional[uuid.UUID] = Query(None),
+    agent_id: Optional[uuid.UUID] = Query(None, alias="caller_agent_id"),
 ):
     """
     Submit a counter-offer for an existing offer.
@@ -222,7 +222,7 @@ async def accept_offer(
     offer_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user_or_agent = Depends(get_current_user_or_agent),
-    agent_id: Optional[uuid.UUID] = Query(None),
+    agent_id: Optional[uuid.UUID] = Query(None, alias="caller_agent_id"),
 ):
     """
     Accept the current offer/counter-offer.
@@ -303,7 +303,7 @@ async def reject_offer(
     offer_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user_or_agent = Depends(get_current_user_or_agent),
-    agent_id: Optional[uuid.UUID] = Query(None),
+    agent_id: Optional[uuid.UUID] = Query(None, alias="caller_agent_id"),
 ):
     """Reject the offer. Either party can reject at any time."""
     offer = db.query(Offer).filter(Offer.id == offer_id).first()

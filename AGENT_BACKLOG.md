@@ -310,3 +310,14 @@ To force-rerun a "done" task: change `status` back to `open` (creates a new comm
   acceptance:
     - 'grep -q "Health endpoint: GET /health" /opt/agentnet/README.md && echo "PASS" || echo "FAIL"'
 
+
+- id: QA-TEST-002
+  title: 'QA Pipeline Test — verify full audit E2E pipeline is active'
+  priority: low
+  status: dispatched
+  description: |
+    SIMPLE TEST: Verify the pipeline is functional after the May 2 audit.
+    Add a version comment "# AgentNet v2.0 — Full-Stack Agent Economy — May 2026 Audit" 
+    to the top of /opt/agentnet/README.md.
+  acceptance:
+    - 'grep -q "Full-Stack Agent Economy" /opt/agentnet/README.md && echo "PASS" || echo "FAIL"'
