@@ -1,7 +1,7 @@
 """wallet balance non-negative CHECK constraints
 
 Revision ID: 0004_balance_checks
-Revises: 0003_spending_cap_includes_reserved
+Revises: 0003_spending_cap_fix
 Create Date: 2026-05-03
 
 Mirrors ``services/registry/init-db/15-balance-checks.sql``.
@@ -10,7 +10,7 @@ Mirrors ``services/registry/init-db/15-balance-checks.sql``.
 from alembic import op
 
 revision = "0004_balance_checks"
-down_revision = "0003_spending_cap_includes_reserved"
+down_revision = "0003_spending_cap_fix"
 branch_labels = None
 depends_on = None
 

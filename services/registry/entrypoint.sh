@@ -35,6 +35,11 @@ PY
 
 # Stamp alembic baseline if no version recorded yet (first boot after the
 # SQL bundle ran). After that, only `upgrade head` is needed.
+#
+# NOTE: Python exits 10 or 20 intentionally for the case dispatch below.
+# Wrap with set +e / set -e so the shell captures the exit code instead
+# of being killed by errexit.
+set +e
 python - <<'PY'
 import os, sys
 import psycopg2
@@ -52,13 +57,20 @@ schema_present = cur.fetchone()[0] is not None
 conn.close()
 sys.exit(0 if exists else (10 if schema_present else 20))
 PY
-case $? in
+stamp_code=$?
+set -e
+# Fail hard if Python crashed (exception, not intentional exit code)
+if [ $stamp_code -ne 0 ] && [ $stamp_code -ne 10 ] && [ $stamp_code -ne 20 ]; then
+  echo "registry: alembic stamp check failed (exit $stamp_code)"
+  exit 1
+fi
+case $stamp_code in
   0)
     echo "registry: alembic already stamped — running upgrade"
     ;;
   10)
     echo "registry: schema present from init-db, stamping baseline 0003"
-    alembic stamp 0003_spending_cap_includes_reserved
+    alembic stamp 0003_spending_cap_fix
     ;;
   20)
     echo "registry: empty DB, alembic upgrade head will create schema (be sure init-db ran)"

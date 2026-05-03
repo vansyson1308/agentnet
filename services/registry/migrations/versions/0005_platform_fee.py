@@ -1,6 +1,6 @@
 """ensure callee always gets >=1 unit after platform fee
 
-Revision ID: 0005_platform_fee_min_callee
+Revision ID: 0005_platform_fee
 Revises: 0004_balance_checks
 Create Date: 2026-05-03
 
@@ -13,7 +13,7 @@ entirely for ``amount=1`` so callees never work for free.
 
 from alembic import op
 
-revision = "0005_platform_fee_min_callee"
+revision = "0005_platform_fee"
 down_revision = "0004_balance_checks"
 branch_labels = None
 depends_on = None

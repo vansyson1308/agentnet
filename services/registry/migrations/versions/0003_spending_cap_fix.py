@@ -1,6 +1,6 @@
 """tighten check_spending_cap to count reserved + daily_spent
 
-Revision ID: 0003_spending_cap_includes_reserved
+Revision ID: 0003_spending_cap_fix
 Revises: 0002_idempotency_key
 Create Date: 2026-05-03
 
@@ -9,7 +9,7 @@ Mirrors ``services/registry/init-db/14-spending-cap-fix.sql``.
 
 from alembic import op
 
-revision = "0003_spending_cap_includes_reserved"
+revision = "0003_spending_cap_fix"
 down_revision = "0002_idempotency_key"
 branch_labels = None
 depends_on = None

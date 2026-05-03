@@ -79,9 +79,19 @@ def run_migrations_online() -> None:
         finally:
             # Release even if migrations raised; otherwise the next pod
             # in the rolling restart deadlocks on this lock.
-            connection.execute(
-                text("SELECT pg_advisory_unlock(:k)"), {"k": _ALEMBIC_LOCK_ID}
-            )
+            # IMPORTANT: if the transaction is aborted (e.g. migration
+            # failed), pg_advisory_unlock will raise InFailedSqlTransaction.
+            # Rollback first, then unlock.
+            try:
+                connection.execute(text("ROLLBACK"))
+            except Exception:
+                pass
+            try:
+                connection.execute(
+                    text("SELECT pg_advisory_unlock(:k)"), {"k": _ALEMBIC_LOCK_ID}
+                )
+            except Exception:
+                pass
 
 
 if context.is_offline_mode():
