@@ -401,12 +401,32 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title='Agent Society Service', version='1.0.0', lifespan=lifespan)
 
+def _get_society_cors_origins() -> list[str]:
+    """Environment-gated CORS — never wildcard outside dev."""
+    env = os.getenv("ENVIRONMENT", "development").lower()
+    if env == "development":
+        return [
+            "http://localhost:3000",
+            "http://localhost:8000",
+            "http://localhost:8080",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:8000",
+            "http://127.0.0.1:8080",
+        ]
+    raw = os.getenv("CORS_ALLOWED_ORIGINS", "")
+    if not raw:
+        raise RuntimeError(
+            "CORS_ALLOWED_ORIGINS must be set in non-development environments"
+        )
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['*'],
+    allow_origins=_get_society_cors_origins(),
     allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
+    allow_methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allow_headers=['Authorization', 'Content-Type', 'X-Request-ID'],
 )
 
 # ─── REST Endpoints ───

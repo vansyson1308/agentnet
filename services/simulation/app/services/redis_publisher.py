@@ -6,19 +6,14 @@ Publishes to 'simulation_updates' channel for real-time frontend consumption.
 
 import json
 import logging
-import os
 import uuid
 from typing import Optional
 
 import redis.asyncio as aioredis
 
-logger = logging.getLogger(__name__)
+from ..config import REDIS_URL
 
-REDIS_URL = (
-    f"redis://:{os.getenv('REDIS_PASSWORD', 'your_redis_password')}"
-    f"@{os.getenv('REDIS_HOST', 'redis')}"
-    f":{os.getenv('REDIS_PORT', '6379')}/0"
-)
+logger = logging.getLogger(__name__)
 
 CHANNEL = "simulation_updates"
 

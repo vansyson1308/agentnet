@@ -5,7 +5,6 @@ Uses the same JWT shared secret as registry/payment services.
 Supports both user and agent tokens.
 """
 
-import os
 import uuid
 
 from fastapi import Depends, HTTPException, status
@@ -13,9 +12,9 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, ValidationError
 
-# Shared JWT config (same secret across all services)
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your_jwt_secret_key")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+# Shared JWT config (same secret across all services). Loaded from app.config
+# which raises if missing/placeholder in non-development environments.
+from .config import JWT_ALGORITHM, JWT_SECRET_KEY
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/v1/auth/user/login", auto_error=False)
 

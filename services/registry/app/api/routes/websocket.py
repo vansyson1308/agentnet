@@ -91,8 +91,12 @@ async def websocket_endpoint(
                 # Parse the message
                 message = json.loads(data)
 
-                # Handle the message
-                response = await manager.handle_message(message, agent_id, db)
+                # Handle the message — argument order matches the
+                # ConnectionManager.handle_message signature (message, db,
+                # connection_id). Previously this was incorrectly
+                # ``(message, agent_id, db)`` which raised a TypeError on
+                # every WS frame, leaving agents unable to interact.
+                response = await manager.handle_message(message, db, connection_id)
 
                 # Send response back to the sender
                 if response:

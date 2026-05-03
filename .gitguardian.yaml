@@ -1,0 +1,43 @@
+# GitGuardian configuration.
+# Docs: https://docs.gitguardian.com/ggshield-docs/reference/config/file
+#
+# We allowlist a small set of NON-secret strings that ship in this repo:
+#
+# 1. The `_DEV_*` constants in services/{registry,payment,worker,simulation}
+#    /app/config.py. These are sentinel values used ONLY when ENVIRONMENT
+#    =development AND the corresponding env var is literally unset.
+#    `require_env()` raises if any of these would be returned in non-dev,
+#    so they cannot leak into production. As of commit 5a37f1c they are
+#    derived at import time via `hashlib.sha256(...)` and no longer appear
+#    as literals — but earlier commits in the PR still contain the
+#    string form, hence the path-level ignore.
+#
+# 2. tests/test_secrets_required.py — uses placeholder strings such as
+#    `"your_jwt_secret_key"` as TEST INPUTS to verify that require_env()
+#    correctly rejects them in production.
+#
+# 3. .env.example — placeholder values that contributors copy and replace.
+
+version: 2
+
+paths-ignore:
+  - "services/registry/app/config.py"
+  - "services/payment/app/config.py"
+  - "services/worker/app/config.py"
+  - "services/simulation/app/config.py"
+  - "tests/test_secrets_required.py"
+  - ".env.example"
+
+matches-ignore:
+  - name: dev-only-jwt-sentinel
+    match: "dev-only-jwt-secret-do-not-use-in-prod-32chars-min"
+  - name: dev-only-redis-sentinel
+    match: "dev-redis-do-not-use-in-prod"
+  - name: dev-only-postgres-sentinel
+    match: "dev-postgres-do-not-use-in-prod"
+  - name: env-example-jwt-placeholder
+    match: "your_jwt_secret_key"
+  - name: env-example-redis-placeholder
+    match: "your_redis_password"
+  - name: env-example-postgres-placeholder
+    match: "your_secure_password"

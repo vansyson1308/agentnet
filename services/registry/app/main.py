@@ -31,15 +31,10 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# Configure security (CORS and headers)
+# Configure security (CORS and headers). setup_cors() already attaches the
+# Cloudflare-tunnel regex when ENVIRONMENT=development; in prod it sticks
+# strictly to CORS_ALLOWED_ORIGINS.
 setup_cors(app)
-# Add allow_origin_regex for Cloudflare tunnels
-for i, mw in enumerate(app.user_middleware):
-    if mw.cls == CORSMiddleware:
-        options = dict(mw.options)
-        options["allow_origin_regex"] = r"https://.*\.trycloudflare\.com$"
-        app.user_middleware[i] = Middleware(CORSMiddleware, **options)
-        break
 # Mount rate limiter (env-configurable, defaults: 100 req/min users, 300 req/min agents)
 import os as _os
 app.add_middleware(

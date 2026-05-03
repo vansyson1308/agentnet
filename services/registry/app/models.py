@@ -346,6 +346,11 @@ class Transaction(Base):
     platform_fee = Column(Integer, default=0)
     platform_fee_rate = Column(Numeric(5, 4), default=0.025)
     extra_data = Column(JSON, default={})
+    # Idempotency: Idempotency-Key from the inbound HTTP/WS request, scoped
+    # globally across the table via a UNIQUE constraint at the DB level.
+    # A retry with the same key returns the existing row instead of creating
+    # a duplicate transaction (and therefore a duplicate escrow lock).
+    idempotency_key = Column(String(64), unique=True, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
 

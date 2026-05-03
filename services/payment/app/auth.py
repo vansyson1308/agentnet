@@ -18,10 +18,8 @@ from .database import get_db
 from .models import Agent, User
 from .schemas import TokenData
 
-# Environment variables
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your_jwt_secret_key")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-JWT_EXPIRATION = int(os.getenv("JWT_EXPIRATION", "3600"))  # 1 hour
+# Environment variables — loaded from app.config which fails fast in non-dev
+from .config import JWT_ALGORITHM, JWT_EXPIRATION, JWT_SECRET_KEY  # noqa: E402
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

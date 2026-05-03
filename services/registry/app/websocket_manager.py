@@ -59,11 +59,9 @@ class ConnectionManager:
 
     async def init_redis(self):
         """Initialize Redis connection and pubsub."""
-        redis_url = (
-            f"redis://:{os.getenv('REDIS_PASSWORD', 'your_redis_password')}"
-            f"@{os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', '6379')}/0"
-        )
-        self.redis_client = await redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
+        from .config import REDIS_URL
+
+        self.redis_client = await redis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
         self.pubsub = self.redis_client.pubsub()
         await self.pubsub.subscribe("agent_messages")
         asyncio.create_task(self.listen_for_messages())
@@ -199,6 +197,10 @@ class ConnectionManager:
             logger.warning(f"Message from unknown connection {connection_id}")
             return
 
+        # JSON-RPC style task messages — caller initiates work via
+        # method=execute, callee reports outcomes via method=task_*.
+        method = message.get("method")
+
         if msg_type == "plaza_join":
             await self.handle_plaza_join(connection_id, agent_id, db)
         elif msg_type == "plaza_position":
@@ -207,7 +209,166 @@ class ConnectionManager:
             await self.handle_plaza_chat(message, agent_id, db)
         elif msg_type == "plaza_status_request":
             await self.handle_plaza_status_request(connection_id, db)
-        # ... existing task/offer messages would be handled here (preserve)
+        elif method in ("execute", "task_start", "task_confirm", "task_fail", "ping"):
+            return await self._handle_task_method(method, message, agent_id, db)
+        elif msg_type or method:
+            logger.warning(
+                f"Unhandled WS message from agent {agent_id}: type={msg_type!r} method={method!r}"
+            )
+
+    # ---- Task method handlers (parity with REST /tasks) ----
+
+    async def _handle_task_method(
+        self,
+        method: str,
+        message: dict,
+        agent_id: str,
+        db: Session,
+    ) -> Optional[dict]:
+        """Dispatch JSON-RPC style task messages to task_service.
+
+        Mirrors REST /tasks endpoints exactly — same escrow lock, same
+        FOR UPDATE locking, same idempotency, same state machine. The
+        only difference is response framing (JSON-RPC vs HTTP body).
+        """
+        from .task_service import (
+            EscrowError,
+            confirm_task_completion,
+            create_task_with_escrow,
+            fail_task_with_refund,
+            start_task,
+        )
+        from .task_contract import ExecuteParams
+        from .models import Agent as _Agent, TaskStatus as _TaskStatus
+        import uuid as _uuid
+
+        request_id = message.get("id")
+
+        def _err(code: int, msg: str) -> dict:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": code, "message": msg},
+            }
+
+        def _ok(result: dict) -> dict:
+            return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+        agent = db.query(_Agent).filter(_Agent.id == _uuid.UUID(agent_id)).first()
+        if agent is None:
+            return _err(-32001, "Authenticated agent not found")
+
+        if method == "ping":
+            return _ok({"pong": True})
+
+        params = message.get("params") or {}
+        idem_key = message.get("idempotency_key") or params.get("idempotency_key")
+
+        if method == "execute":
+            try:
+                exec_params = ExecuteParams(**params)
+            except Exception as e:  # ValidationError or similar
+                return _err(-32602, f"Invalid execute params: {e}")
+            callee_id = params.get("callee_agent_id") or message.get("to")
+            if not callee_id:
+                return _err(-32602, "Missing callee_agent_id")
+            try:
+                task_session, _tx = create_task_with_escrow(
+                    db=db,
+                    caller_agent=agent,
+                    callee_agent_id=_uuid.UUID(callee_id),
+                    capability_name=exec_params.capability,
+                    input_data=exec_params.input,
+                    max_budget=exec_params.payment.max_budget,
+                    currency=exec_params.payment.currency,
+                    timeout_seconds=exec_params.timeout_seconds or 300,
+                    idempotency_key=idem_key,
+                )
+            except EscrowError as e:
+                return _err(-32000, str(e))
+
+            dispatch = {
+                "jsonrpc": "2.0",
+                "id": str(_uuid.uuid4()),
+                "trace_id": str(task_session.trace_id),
+                "method": "execute",
+                "from": str(agent.id),
+                "params": {
+                    "capability": exec_params.capability,
+                    "input": exec_params.input,
+                    "payment": {
+                        "max_budget": exec_params.payment.max_budget,
+                        "currency": exec_params.payment.currency,
+                        "escrow_session_id": str(task_session.id),
+                    },
+                    "timeout_seconds": exec_params.timeout_seconds or 300,
+                },
+            }
+            await self.send_to_agent(dispatch, str(task_session.callee_agent_id))
+            return _ok(
+                {
+                    "task_session_id": str(task_session.id),
+                    "trace_id": str(task_session.trace_id),
+                    "span_id": str(task_session.span_id),
+                }
+            )
+
+        # All callee-driven task transitions need a task_id.
+        task_id_str = params.get("task_id") or message.get("task_id")
+        if not task_id_str:
+            return _err(-32602, "Missing task_id")
+        try:
+            task_id = _uuid.UUID(task_id_str)
+        except ValueError:
+            return _err(-32602, "task_id is not a valid UUID")
+
+        try:
+            if method == "task_start":
+                start_task(db=db, task_id=task_id, callee_agent=agent)
+                return _ok({"status": "in_progress"})
+            if method == "task_confirm":
+                output = params.get("output") or {}
+                task_session = confirm_task_completion(
+                    db=db,
+                    callee_agent=agent,
+                    task_id=task_id,
+                    output=output,
+                )
+                # Notify caller — same shape as REST.
+                await self.send_to_agent(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": str(_uuid.uuid4()),
+                        "trace_id": str(task_session.trace_id),
+                        "result": output,
+                        "credits_charged": task_session.escrow_amount,
+                    },
+                    str(task_session.caller_agent_id),
+                )
+                return _ok({"status": "completed"})
+            if method == "task_fail":
+                err_msg = params.get("error_message") or "Unknown error"
+                task_session = fail_task_with_refund(
+                    db=db,
+                    task_id=task_id,
+                    error_message=err_msg,
+                    callee_agent_id=agent.id,
+                    new_status=_TaskStatus.FAILED,
+                )
+                await self.send_to_agent(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": str(_uuid.uuid4()),
+                        "trace_id": str(task_session.trace_id),
+                        "error": {"code": -32000, "message": err_msg},
+                    },
+                    str(task_session.caller_agent_id),
+                )
+                return _ok({"status": "failed"})
+        except EscrowError as e:
+            return _err(-32000, str(e))
+
+        return _err(-32601, f"Unsupported method {method!r}")
 
     # ---- Plaza handlers ----
 

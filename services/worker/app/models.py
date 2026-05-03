@@ -163,6 +163,7 @@ class Transaction(Base):
     platform_fee = Column(Integer, default=0)
     platform_fee_rate = Column(Numeric(5, 4), default=0.025)
     extra_data = Column(JSON, default={})
+    idempotency_key = Column(String(64), unique=True, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
 

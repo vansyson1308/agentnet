@@ -51,25 +51,34 @@ def get_cors_origins() -> List[str]:
 
 
 def setup_cors(app: FastAPI):
-    """Setup CORS middleware with environment-based config."""
+    """Setup CORS middleware with environment-based config.
+
+    In dev, additionally accept Cloudflare tunnel hostnames via regex so
+    contributors can expose a local registry to remote agents. In prod the
+    regex is unset — only origins explicitly listed in CORS_ALLOWED_ORIGINS
+    are accepted (combined with allow_credentials=True this is the only
+    safe configuration).
+    """
     try:
         allowed_origins = get_cors_origins()
-    except ValueError as e:
-        # In production without config, deny all
+    except ValueError:
+        # In production without config, deny all (failed-closed).
         if os.getenv("ENVIRONMENT", "").lower() != "development":
             allowed_origins = []
         else:
             allowed_origins = ["http://localhost:3000"]  # Fallback for dev
 
-    app.add_middleware(
-        CORSMiddleware,
+    cors_kwargs: dict = dict(
         allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["*"],
-        expose_headers=["*"],
-        allow_origin_regex=".*",  # Allow all origins in dev; tighten in prod
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key"],
     )
+    # Cloudflare tunnel regex only in dev — never in prod.
+    if is_development():
+        cors_kwargs["allow_origin_regex"] = r"https://.*\.trycloudflare\.com$"
+
+    app.add_middleware(CORSMiddleware, **cors_kwargs)
 
 
 # ============================================================
