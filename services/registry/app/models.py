@@ -18,7 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 
 from .database import Base
 
@@ -175,6 +175,7 @@ class User(Base):
     email = Column(String, unique=True, nullable=False)
     phone = Column(String)
     password_hash = Column(String, nullable=False)
+    is_email_verified = Column(Boolean, default=False, server_default=text('false'))
     kyc_status = _enum_column(KYCStatus, default="pending")
     telegram_id = Column(String)
     notification_settings = Column(JSON, default={})

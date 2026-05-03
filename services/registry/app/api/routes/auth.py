@@ -98,20 +98,56 @@ async def user_register(user_data: UserRegister, db: Session = Depends(get_db)):
     db.add(wallet)
     db.commit()
 
+    # Create email verification token
+    token_value = secrets.token_urlsafe(32)
+    verification = EmailVerificationToken(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        token=token_value,
+        expires_at=datetime.utcnow() + timedelta(hours=24),
+        consumed_at=None,
+    )
+    db.add(verification)
+    db.commit()
+
+    # Log the verification link (SMTP not yet configured)
+    logger.info(f"Verification token for {user.email}: {token_value}")
+    verification_url = f"https://agentnet.io.vn/v1/auth/verify-email?token={token_value}"
+    logger.info(f"Verification URL: {verification_url}")
+
     return UserRegisterResponse(id=str(user.id), email=user.email, message="User registered successfully")
 
 
 @router.post("/user/login", response_model=UserToken)
-async def user_login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    """Login endpoint for users."""
-    # Get the user by email
-    user = db.query(User).filter(User.email == form_data.username).first()
+async def user_login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    json_data: UserLogin | None = None,
+    db: Session = Depends(get_db),
+):
+    """Login endpoint for users. Accepts both form-data (OAuth2) and JSON body."""
+    # Support both form-data (OAuth2) and JSON
+    if json_data:
+        email = json_data.email
+        password = json_data.password
+    else:
+        email = form_data.username
+        password = form_data.password
 
-    if not user or not verify_password(form_data.password, user.password_hash):
+    # Get the user by email
+    user = db.query(User).filter(User.email == email).first()
+
+    if not user or not verify_password(password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Require email verification before login
+    if not getattr(user, "is_email_verified", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email not verified. Please check your email for the verification link.",
         )
 
     # Create a token
