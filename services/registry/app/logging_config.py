@@ -21,7 +21,11 @@ Behavior:
 Middleware:
 - ``RequestIDMiddleware`` — bind ``request_id`` (uuid4) and the
   optional inbound ``X-Request-ID`` to context. Sets the same value on
-  the response header for cross-system correlation.
+  the response header for cross-system correlation. Only available in
+  services that ship Starlette (registry / payment / simulation /
+  dashboard). The worker has no HTTP layer and doesn't need it; we
+  guard the import so the worker container can use the same module
+  without pulling Starlette into its slim image.
 """
 
 from __future__ import annotations
@@ -33,8 +37,19 @@ import uuid
 from typing import Optional
 
 import structlog
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
+
+# Starlette is optional — present for HTTP services, missing on the
+# worker. Module-level guard so `from .logging_config import setup_logging`
+# always succeeds.
+try:
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.requests import Request
+
+    _HAS_STARLETTE = True
+except ImportError:  # pragma: no cover — worker container path
+    _HAS_STARLETTE = False
+    BaseHTTPMiddleware = object  # type: ignore[misc,assignment]
+    Request = None  # type: ignore[assignment]
 
 _IS_DEV = os.getenv("ENVIRONMENT", "development").lower() == "development"
 
@@ -97,29 +112,41 @@ def setup_logging(service_name: str, level: Optional[str] = None) -> None:
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
 
-class RequestIDMiddleware(BaseHTTPMiddleware):
-    """Bind request_id + trace_id to structlog contextvars per request.
+if _HAS_STARLETTE:
 
-    Honours an inbound ``X-Request-ID`` header so an upstream gateway
-    can supply a trace ID and we'll propagate it through logs.
-    """
+    class RequestIDMiddleware(BaseHTTPMiddleware):
+        """Bind request_id + trace_id to structlog contextvars per request.
 
-    async def dispatch(self, request: Request, call_next):
-        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
-        trace_id = request.headers.get("X-Trace-ID")
-        token = structlog.contextvars.bind_contextvars(
-            request_id=request_id,
-            **({"trace_id": trace_id} if trace_id else {}),
-        )
-        try:
-            response = await call_next(request)
-        finally:
-            structlog.contextvars.unbind_contextvars(
-                "request_id", *(["trace_id"] if trace_id else [])
+        Honours an inbound ``X-Request-ID`` header so an upstream gateway
+        can supply a trace ID and we'll propagate it through logs.
+        """
+
+        async def dispatch(self, request: "Request", call_next):
+            request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+            trace_id = request.headers.get("X-Trace-ID")
+            structlog.contextvars.bind_contextvars(
+                request_id=request_id,
+                **({"trace_id": trace_id} if trace_id else {}),
             )
-        response.headers["X-Request-ID"] = request_id
-        return response
+            try:
+                response = await call_next(request)
+            finally:
+                structlog.contextvars.unbind_contextvars(
+                    "request_id", *(["trace_id"] if trace_id else [])
+                )
+            response.headers["X-Request-ID"] = request_id
+            return response
 
+    def install_request_id_middleware(app) -> None:
+        app.add_middleware(RequestIDMiddleware)
 
-def install_request_id_middleware(app) -> None:
-    app.add_middleware(RequestIDMiddleware)
+else:
+
+    class RequestIDMiddleware:  # type: ignore[no-redef]
+        """Stub: starlette not installed in this service."""
+
+    def install_request_id_middleware(app) -> None:  # pragma: no cover
+        raise RuntimeError(
+            "install_request_id_middleware requires Starlette / FastAPI; "
+            "this looks like the worker image which has no HTTP layer."
+        )

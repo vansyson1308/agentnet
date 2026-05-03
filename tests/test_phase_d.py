@@ -204,3 +204,52 @@ def test_e4_dashboard_requires_flask_secret_in_prod():
     assert "FLASK_SECRET_KEY is required in non-development" in text
     assert "ProxyFix" in text
     assert "SESSION_COOKIE_HTTPONLY" in text
+
+
+# ─── Worker logging_config — starlette is optional ──────────
+
+
+def test_worker_logging_config_no_hard_starlette_import():
+    """Regression for the staging-deploy bug where worker container
+    crash-looped because services/worker/app/logging_config.py imported
+    starlette at module top, but the worker image (slim, no FastAPI)
+    doesn't pip-install starlette. Conditional import means
+    ``setup_logging`` is callable in any service regardless of HTTP deps.
+    """
+    text = _read("services/worker/app/logging_config.py")
+    assert "_HAS_STARLETTE" in text
+    assert "try:\n    from starlette" in text or "try:\n\tfrom starlette" in text
+    # The module top must NOT have an unconditional starlette import.
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("from starlette") and not _is_inside_try(lines, i):
+            raise AssertionError(
+                f"line {i+1}: unconditional 'from starlette ...' import "
+                "would break the worker container"
+            )
+
+
+def _is_inside_try(lines: list[str], i: int) -> bool:
+    # Walk backwards looking for a `try:` before any matching `except` /
+    # `else:` / `finally:` at column 0.
+    for j in range(i - 1, max(0, i - 20), -1):
+        s = lines[j].strip()
+        if s.startswith("try:"):
+            return True
+        if s.startswith("except") or s.startswith("else:") or s.startswith("finally:"):
+            return False
+    return False
+
+
+def test_all_logging_configs_consistent():
+    """Worker / registry / payment / simulation should ship the same
+    logging_config so the conditional starlette guard never gets
+    accidentally undone in one of them."""
+    import hashlib
+
+    digests = {}
+    for svc in ("registry", "payment", "simulation", "worker"):
+        path = REPO / f"services/{svc}/app/logging_config.py"
+        digests[svc] = hashlib.sha256(path.read_bytes()).hexdigest()
+    unique = set(digests.values())
+    assert len(unique) == 1, f"logging_config divergence: {digests}"
