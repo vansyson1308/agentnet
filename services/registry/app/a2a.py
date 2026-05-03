@@ -73,6 +73,7 @@ class A2AAgentCard(BaseModel):
 
     name: str
     description: str
+    url: Optional[str] = None  # public URL of this agent/registry
     version: str = "1.0.0"
     documentationUrl: Optional[str] = None
     iconUrl: Optional[str] = None
@@ -177,6 +178,7 @@ def build_registry_card(base_url: Optional[str] = None) -> A2AAgentCard:
             "AgentNet Protocol v2.0 — AI Agent Marketplace with escrow-based payments, "
             "task execution, and real-time WebSocket communication."
         ),
+        url=base_url,
         version="2.0.0",
         documentationUrl=f"{base_url}/docs",
         provider=A2AProvider(
