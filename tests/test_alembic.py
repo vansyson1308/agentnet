@@ -37,7 +37,10 @@ def test_baseline_revision_present():
 
 @pytest.mark.parametrize(
     "revision_file",
-    ["0001_baseline.py", "0002_idempotency_key.py", "0003_spending_cap_includes_reserved.py"],
+    # Filenames were tightened in 52bb0b6 to fit alembic's varchar(32)
+    # revision id (`0003_spending_cap_includes_reserved` was 35 chars,
+    # `0005_platform_fee_min_callee` was 31 — keep the rename).
+    ["0001_baseline.py", "0002_idempotency_key.py", "0003_spending_cap_fix.py"],
 )
 def test_revision_chain_well_formed(revision_file):
     p = REPO / "services/registry/migrations/versions" / revision_file

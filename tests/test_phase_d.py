@@ -138,7 +138,9 @@ def test_e5_balance_check_migration_exists():
 
 
 def test_e6_platform_fee_min_callee_share():
-    p = REPO / "services/registry/migrations/versions/0005_platform_fee_min_callee.py"
+    # Filename was tightened to fit alembic's varchar(32) revision id
+    # in 52bb0b6 (was 0005_platform_fee_min_callee.py).
+    p = REPO / "services/registry/migrations/versions/0005_platform_fee.py"
     assert p.exists()
     text = p.read_text()
     # The new formula caps the fee so net_amount >= 1.
