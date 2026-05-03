@@ -1,10 +1,11 @@
 import base64
+import json
 import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
@@ -120,16 +121,31 @@ async def user_register(user_data: UserRegister, db: Session = Depends(get_db)):
 
 @router.post("/user/login", response_model=UserToken)
 async def user_login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
-    json_data: UserLogin | None = None,
     db: Session = Depends(get_db),
 ):
     """Login endpoint for users. Accepts both form-data (OAuth2) and JSON body."""
-    # Support both form-data (OAuth2) and JSON
-    if json_data:
-        email = json_data.email
-        password = json_data.password
+    content_type = request.headers.get("content-type", "")
+
+    # If JSON content-type, parse JSON body
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            email = body.get("email") or body.get("username")
+            password = body.get("password")
+            if not email or not password:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="email and password are required",
+                )
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON body",
+            )
     else:
+        # Form-data (OAuth2)
         email = form_data.username
         password = form_data.password
 
