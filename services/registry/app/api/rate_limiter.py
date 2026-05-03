@@ -82,52 +82,83 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # For now, heuristic: tokens > 40 chars are likely user JWTs
         return len(auth) < 50
 
+    async def _redis_consume(self, client_key: str, rate: int) -> tuple[bool, int]:
+        """Fixed-window per-minute counter via Redis INCR + EX.
+
+        Returns ``(allowed, remaining)``. Slightly stricter than a token
+        bucket — every minute boundary fully resets the count — but that's
+        the simplest correct behaviour across multiple replicas without
+        needing a Lua script. Falls back to caller's in-memory bucket if
+        Redis is unreachable.
+        """
+        client = await self._get_redis()
+        if client is None:
+            return True, -1  # signal "no redis, do in-memory"
+        bucket = int(time.time() // 60)
+        key = f"agentnet:rl:{client_key}:{bucket}"
+        try:
+            count = await client.incr(key)
+            if count == 1:
+                await client.expire(key, 70)  # slack for clock skew
+            if count > rate:
+                return False, 0
+            return True, max(0, rate - count)
+        except Exception:
+            # Redis hiccup — fail open and let the in-memory bucket take over.
+            return True, -1
+
     async def dispatch(self, request: Request, call_next: Callable):
-        # Skip rate limiting for health checks and docs
-        skip_paths = ["/v1/health", "/docs", "/openapi.json", "/v1/stats"]
+        # Skip rate limiting for health/metrics/docs.
+        skip_paths = [
+            "/v1/health",
+            "/healthz",
+            "/readyz",
+            "/metrics",
+            "/docs",
+            "/openapi.json",
+            "/v1/stats",
+        ]
         if any(request.url.path.startswith(p) for p in skip_paths):
             return await call_next(request)
 
         client_key = self._get_client_key(request)
         is_agent = await self._is_agent(request)
-        
+
         rate = self.agent_rate if is_agent else self.default_rate
         burst = self.agent_burst if is_agent else self.default_burst
-        
-        # Convert rate from per-minute to per-second
-        rate_per_sec = rate / 60.0
-        
-        # In-memory token bucket
-        if client_key not in self._buckets:
-            self._buckets[client_key] = TokenBucket(rate_per_sec, burst)
-        
-        bucket = self._buckets[client_key]
-        
-        if not bucket.consume():
+
+        # Try Redis first (correct under multi-replica). If Redis isn't
+        # configured or is unreachable, fall back to in-memory token bucket.
+        allowed, remaining = await self._redis_consume(client_key, rate)
+        if remaining < 0:  # signal: redis unavailable
+            rate_per_sec = rate / 60.0
+            if client_key not in self._buckets:
+                self._buckets[client_key] = TokenBucket(rate_per_sec, burst)
+            bucket = self._buckets[client_key]
+            allowed = bucket.consume()
+            remaining = max(0, int(bucket.tokens))
+
+        if not allowed:
             retry_after = int(60.0 / rate) if rate > 0 else 60
             return JSONResponse(
                 status_code=429,
                 content={
                     "detail": "Too Many Requests",
                     "retry_after_seconds": retry_after,
-                    "message": f"Rate limit exceeded. Max {rate} requests/minute."
+                    "message": f"Rate limit exceeded. Max {rate} requests/minute.",
                 },
                 headers={
                     "Retry-After": str(retry_after),
                     "X-RateLimit-Limit": str(rate),
                     "X-RateLimit-Remaining": "0",
                     "X-RateLimit-Reset": str(int(time.time() + retry_after)),
-                }
+                },
             )
-        
+
         response = await call_next(request)
-        
-        # Add rate limit headers to response
-        remaining = max(0, int(bucket.tokens))
         response.headers["X-RateLimit-Limit"] = str(rate)
         response.headers["X-RateLimit-Remaining"] = str(remaining)
         response.headers["X-RateLimit-Burst"] = str(burst)
-        
         return response
 
 

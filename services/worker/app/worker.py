@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 import httpx
 import redis.asyncio as redis
+from prometheus_client import Counter, Gauge, start_http_server
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
@@ -25,14 +26,35 @@ from .models import (
     TransactionType,
     Wallet,
 )
+from .logging_config import setup_logging
 from .reflection_loop import convert_proposals_to_backlog, run_reflection_loop
 from .tracing import configure_tracing, get_tracer
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+# ---------------------------------------------------------------------------
+# Prometheus metrics for the worker. Worker has no HTTP framework so we
+# expose them via the prometheus_client built-in server (default port 9100).
+# ---------------------------------------------------------------------------
+worker_loop_iterations_total = Counter(
+    "agentnet_worker_loop_iterations_total",
+    "Number of main-loop iterations the worker has completed.",
 )
+worker_timed_out_tasks_total = Counter(
+    "agentnet_worker_timed_out_tasks_total",
+    "Tasks transitioned to TIMEOUT and refunded.",
+    ["currency"],
+)
+worker_refund_failures_total = Counter(
+    "agentnet_worker_refund_failures_total",
+    "Errors raised inside process_timed_out_tasks.",
+)
+worker_pending_tasks = Gauge(
+    "agentnet_worker_pending_tasks",
+    "Tasks the worker just observed in INITIATED/IN_PROGRESS state past timeout.",
+)
+WORKER_METRICS_PORT = int(os.getenv("WORKER_METRICS_PORT", "9100"))
+
+# Configure structured logging — JSON in prod, console in dev.
+setup_logging("worker")
 logger = logging.getLogger(__name__)
 
 # Configure tracing
@@ -90,6 +112,7 @@ async def process_timed_out_tasks(db: Session, redis_client):
         )
 
         logger.info(f"Found {len(timed_out_tasks)} timed out tasks")
+        worker_pending_tasks.set(len(timed_out_tasks))
 
         for task_preview in timed_out_tasks:
             with tracer.start_as_current_span(
@@ -196,6 +219,11 @@ async def process_timed_out_tasks(db: Session, redis_client):
                             )
 
                     db.commit()
+                    worker_timed_out_tasks_total.labels(
+                        currency=task.currency.value
+                        if hasattr(task.currency, "value")
+                        else str(task.currency)
+                    ).inc()
                     logger.warning(
                         f"Escrow {task.escrow_amount} refunded for timed-out task {task.id}"
                     )
@@ -223,7 +251,8 @@ async def process_timed_out_tasks(db: Session, redis_client):
                     logger.info(f"Processed timed out task {task.id}")
 
                 except Exception as e:
-                    logger.error(f"Error processing timed out task {task.id}: {e}")
+                    logger.error(f"Error processing timed out task {task_preview.id}: {e}")
+                    worker_refund_failures_total.inc()
                     db.rollback()
 
 
@@ -466,6 +495,15 @@ async def process_offline_agents(db: Session):
 async def main():
     """Main worker loop."""
     logger.info("Auto-Refund Worker started")
+
+    # Expose Prometheus metrics on a dedicated port — the worker has no
+    # HTTP framework, so prometheus_client spawns its own daemon thread.
+    try:
+        start_http_server(WORKER_METRICS_PORT)
+        logger.info(f"Prometheus metrics: http://0.0.0.0:{WORKER_METRICS_PORT}/metrics")
+    except OSError as e:
+        # Port already bound (e.g. test rerun) — keep running, just log.
+        logger.warning(f"Could not bind metrics port {WORKER_METRICS_PORT}: {e}")
 
     # Initialize Redis
     redis_client = None

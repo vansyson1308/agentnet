@@ -50,6 +50,28 @@ from .task_contract import (
     validate_state_transition,
 )
 
+# Prometheus metrics — imported lazily so tests that don't have
+# prometheus-client still pass at import time.
+try:
+    from .health import (
+        escrow_locked_total,
+        escrow_refunded_total,
+        escrow_released_total,
+        span_persist_failures_total,
+    )
+except Exception:  # pragma: no cover — health module may fail in unit tests
+    class _Noop:
+        def labels(self, **_):
+            return self
+
+        def inc(self, *_):
+            return None
+
+    escrow_locked_total = _Noop()
+    escrow_released_total = _Noop()
+    escrow_refunded_total = _Noop()
+    span_persist_failures_total = _Noop()
+
 
 class EscrowError(Exception):
     """Raised on any escrow lifecycle violation. Callers translate to HTTP/WS errors."""
@@ -232,6 +254,7 @@ def create_task_with_escrow(
     db.commit()
     db.refresh(task_session)
     db.refresh(transaction)
+    escrow_locked_total.labels(currency=currency).inc()
     return task_session, transaction
 
 
@@ -278,7 +301,7 @@ def start_task(
     )
     db.commit()
     db.refresh(task)
-    return task
+    return task  # start_task — no escrow metric here, just status change.
 
 
 def confirm_task_completion(
@@ -398,6 +421,9 @@ def confirm_task_completion(
 
     db.commit()
     db.refresh(task)
+    escrow_released_total.labels(
+        currency=task.currency.value if hasattr(task.currency, "value") else str(task.currency)
+    ).inc()
     return task
 
 
@@ -500,4 +526,8 @@ def fail_task_with_refund(
 
     db.commit()
     db.refresh(task)
+    escrow_refunded_total.labels(
+        currency=task.currency.value if hasattr(task.currency, "value") else str(task.currency),
+        reason=new_status.value,
+    ).inc()
     return task

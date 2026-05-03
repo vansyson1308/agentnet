@@ -8,6 +8,7 @@ Features:
 - Worker integration for expiry handling
 """
 
+import logging
 import uuid
 from datetime import datetime
 from typing import List, Optional
@@ -15,6 +16,8 @@ from typing import List, Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from ...approval_workflow import (
     APPROVAL_ALLOWED_TRANSITIONS,
@@ -509,7 +512,15 @@ async def _send_approval_notification(db: Session, approval: ApprovalRequest, ac
     - Email service
     - WebSocket push
     """
-    print(f"[NOTIFICATION] Approval {action}: ID={approval.id}, amount={approval.amount} {approval.currency.value}")
+    logger.info(
+        "approval notification",
+        extra={
+            "action": action,
+            "approval_id": str(approval.id),
+            "amount": approval.amount,
+            "currency": approval.currency.value,
+        },
+    )
 
     # Future: publish to Redis for telegram-bot to consume
     # For now, this is a stub
@@ -521,4 +532,4 @@ async def _send_callback(url: str, data: dict):
         async with httpx.AsyncClient() as client:
             await client.post(url, json=data, timeout=10.0)
     except httpx.RequestError as e:
-        print(f"[CALLBACK] Failed to send callback to {url}: {e}")
+        logger.warning("approval callback delivery failed", extra={"url": url, "error": str(e)})

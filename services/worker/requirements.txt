@@ -9,3 +9,5 @@ opentelemetry-exporter-jaeger==1.21.0
 opentelemetry-instrumentation-sqlalchemy==0.42b0
 python-ulid==1.1.0
 httpx==0.25.2
+prometheus-client==0.20.0
+structlog==24.1.0

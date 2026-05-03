@@ -3,11 +3,14 @@
 Run once: python -m app.seed_catalog
 """
 
+import logging
 import sys
 from datetime import datetime, timezone
 
 from app.database import SessionLocal
 from app.models import ProvisioningProvider, ProvisioningService
+
+logger = logging.getLogger(__name__)
 
 
 PROVIDERS = [
@@ -86,7 +89,7 @@ def seed():
     try:
         # Check if already seeded
         if db.query(ProvisioningProvider).count() > 0:
-            print("Catalog already seeded — skipping")
+            logger.info("Catalog already seeded — skipping")
             return
 
         # Create providers
@@ -116,11 +119,17 @@ def seed():
                 db.add(obj)
 
         db.commit()
-        print(f"✅ Seeded {len(PROVIDERS)} providers, {sum(len(v) for v in SERVICES.values())} services")
+        logger.info(
+            "Catalog seeded",
+            extra={
+                "providers": len(PROVIDERS),
+                "services": sum(len(v) for v in SERVICES.values()),
+            },
+        )
 
     except Exception as e:
         db.rollback()
-        print(f"❌ Seed failed: {e}")
+        logger.exception("Catalog seed failed: %s", e)
         raise
     finally:
         db.close()

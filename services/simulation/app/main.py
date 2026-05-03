@@ -13,14 +13,12 @@ from fastapi.responses import JSONResponse
 from .api import router as api_router
 from .config import SimulationConfig
 from .database import engine
+from .health import install_health_and_metrics
+from .logging_config import install_request_id_middleware, setup_logging
 from .security import setup_cors, setup_security_headers
 from .tracing import configure_tracing
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+setup_logging("simulation")
 logger = logging.getLogger(__name__)
 
 # Create FastAPI app
@@ -30,9 +28,15 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Bind a request_id to every log line.
+install_request_id_middleware(app)
+
 # Configure security
 setup_cors(app)
 setup_security_headers(app)
+
+# /healthz, /readyz, /metrics + per-request metrics middleware
+install_health_and_metrics(app, service_name="simulation")
 
 # Configure tracing
 tracer_provider = configure_tracing(app, engine)

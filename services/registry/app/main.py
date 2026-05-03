@@ -11,17 +11,18 @@ from starlette.middleware import Middleware
 from .a2a import build_registry_card
 from .api import router as api_router
 from .database import Base, engine
+from .health import install_health_and_metrics
+from .logging_config import install_request_id_middleware, setup_logging
 from .security import setup_cors, setup_security_headers
 from .tracing import configure_tracing
 from .websocket_manager import manager
 from .api.rate_limiter import add_rate_limiter, RateLimitMiddleware
 from .auto_scaler import start_auto_scaler, stop_auto_scaler
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Configure structured logging — JSON in prod, console in dev. Must run
+# before any module-level logger is instantiated below so the formatter
+# applies uniformly.
+setup_logging("registry")
 logger = logging.getLogger(__name__)
 
 # Create FastAPI app
@@ -31,21 +32,30 @@ app = FastAPI(
     version="2.0.0",
 )
 
+# Bind a request_id (uuid4 or honour inbound X-Request-ID) to every
+# log line emitted while the request is in flight.
+install_request_id_middleware(app)
+
 # Configure security (CORS and headers). setup_cors() already attaches the
 # Cloudflare-tunnel regex when ENVIRONMENT=development; in prod it sticks
 # strictly to CORS_ALLOWED_ORIGINS.
 setup_cors(app)
-# Mount rate limiter (env-configurable, defaults: 100 req/min users, 300 req/min agents)
+# Mount rate limiter (Redis-backed when available, in-memory fallback).
 import os as _os
+from .config import REDIS_URL as _REDIS_URL
 app.add_middleware(
     RateLimitMiddleware,
     default_rate=int(_os.getenv("RATE_LIMIT_USER_PER_MIN", "100")),
     default_burst=int(_os.getenv("RATE_LIMIT_USER_BURST", "150")),
     agent_rate=int(_os.getenv("RATE_LIMIT_AGENT_PER_MIN", "300")),
     agent_burst=int(_os.getenv("RATE_LIMIT_AGENT_BURST", "450")),
-    redis_url=_os.getenv("REDIS_URL", None),  # None = in-memory mode
+    redis_url=_os.getenv("REDIS_URL_RATE_LIMIT") or _REDIS_URL,
 )
 setup_security_headers(app)
+
+# Health, readiness, Prometheus metrics — mount BEFORE the API router
+# so the /metrics middleware sees every request.
+install_health_and_metrics(app, service_name="registry")
 
 # Configure tracing
 tracer_provider = configure_tracing(app, engine)
@@ -82,9 +92,10 @@ async def shutdown_event():
     logger.info("Registry service shutdown")
 
 
-# Health check endpoint
+# Legacy /health alias — keeps existing dashboards working. New
+# /healthz, /readyz, /metrics are installed by install_health_and_metrics.
 @app.get("/health")
-async def health_check():
+async def health_check_legacy():
     return {"status": "ok"}
 
 

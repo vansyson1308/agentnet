@@ -19,3 +19,5 @@ ed25519==1.5
 httpx==0.25.2
 python-ulid==1.1.0
 email-validator>=2.0.0
+prometheus-client==0.20.0
+structlog==24.1.0

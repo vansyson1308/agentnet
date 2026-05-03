@@ -8,14 +8,12 @@ from fastapi.responses import JSONResponse
 from .api import router as api_router
 from .api.rate_limiter import RateLimitMiddleware
 from .database import Base, engine
+from .health import install_health_and_metrics
+from .logging_config import install_request_id_middleware, setup_logging
 from .security import setup_cors, setup_security_headers
 from .tracing import configure_tracing
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+setup_logging("payment")
 logger = logging.getLogger(__name__)
 
 # Create FastAPI app
@@ -25,12 +23,24 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# Mount rate limiting middleware (60 req/min/IP)
-app.add_middleware(RateLimitMiddleware, max_requests=60, window_seconds=60)
+# Bind a request_id to every log line emitted while the request is in flight.
+install_request_id_middleware(app)
+
+# Mount rate limiting middleware (60 req/min/IP, Redis-backed for replicas).
+from .config import REDIS_URL as _REDIS_URL  # noqa: E402
+app.add_middleware(
+    RateLimitMiddleware,
+    max_requests=60,
+    window_seconds=60,
+    redis_url=_REDIS_URL,
+)
 
 # Configure security (CORS and headers)
 setup_cors(app)
 setup_security_headers(app)
+
+# /healthz, /readyz, /metrics + per-request metrics middleware
+install_health_and_metrics(app, service_name="payment")
 
 # Configure tracing
 tracer_provider = configure_tracing(app, engine)
@@ -54,9 +64,9 @@ async def shutdown_event():
     logger.info("Payment service shutdown")
 
 
-# Health check endpoint
+# Legacy /health alias — keeps existing dashboards working.
 @app.get("/health")
-async def health_check():
+async def health_check_legacy():
     return {"status": "ok"}
 
 
