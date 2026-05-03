@@ -133,9 +133,23 @@ def create_task_with_escrow(
     if currency not in ("credits", "usdc"):
         raise EscrowError(f"Unsupported currency: {currency!r}")
 
-    # Idempotency: short-circuit if this key already exists. The UNIQUE
-    # index on transactions.idempotency_key is the ultimate guard against
-    # racing inserts (we still need the early-out so the client gets 200).
+    # Compute a request fingerprint for the idempotency check. Reusing
+    # the same Idempotency-Key with a DIFFERENT payload is almost
+    # always a bug or replay-attack — we reject it instead of silently
+    # returning the original task.
+    request_hash = compute_input_hash(
+        {
+            "callee_agent_id": str(callee_agent_id),
+            "capability": capability_name,
+            "max_budget": int(max_budget),
+            "currency": currency,
+            "input": input_data,
+        }
+    )
+
+    # Idempotency: short-circuit if this key already exists with the same
+    # payload. The UNIQUE index on transactions.idempotency_key is the
+    # ultimate guard against racing inserts.
     if idempotency_key:
         existing_tx = (
             db.query(Transaction)
@@ -143,6 +157,12 @@ def create_task_with_escrow(
             .first()
         )
         if existing_tx is not None:
+            stored_hash = (existing_tx.extra_data or {}).get("request_hash")
+            if stored_hash and stored_hash != request_hash:
+                raise EscrowError(
+                    "Idempotency-Key reused with a different request payload — "
+                    "refusing to return the cached task"
+                )
             existing_task = (
                 db.query(TaskSession)
                 .filter(TaskSession.id == existing_tx.task_session_id)
@@ -231,7 +251,7 @@ def create_task_with_escrow(
         type=TransactionType.PAYMENT,
         task_session_id=task_session.id,
         idempotency_key=idempotency_key,
-        extra_data={"input_hash": input_hash},
+        extra_data={"input_hash": input_hash, "request_hash": request_hash},
     )
     db.add(transaction)
 

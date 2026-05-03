@@ -43,15 +43,24 @@ DECLARE
 BEGIN
     -- Only process completed transactions
     IF NEW.status = 'completed' AND OLD.status != 'completed' THEN
-        -- Calculate platform fee (only for PAYMENT transactions)
-        IF NEW.type = 'payment' AND NEW.platform_fee_rate > 0 THEN
-            fee_amount := GREATEST(1, FLOOR(NEW.amount * NEW.platform_fee_rate));
+        -- Calculate platform fee (only for PAYMENT transactions).
+        -- Old formula: GREATEST(1, FLOOR(amount * rate)) — for tiny tasks
+        -- (amount=1) it yielded fee=1, net=0, leaving the callee with
+        -- nothing for their work. New formula caps the fee at amount-1
+        -- so the callee always receives at least 1 unit of currency.
+        IF NEW.type = 'payment' AND NEW.platform_fee_rate > 0 AND NEW.amount > 1 THEN
+            fee_amount := LEAST(
+                NEW.amount - 1,
+                GREATEST(1, FLOOR(NEW.amount * NEW.platform_fee_rate))
+            );
             net_amount := NEW.amount - fee_amount;
-            -- Store the computed fee on the transaction
             NEW.platform_fee := fee_amount;
         ELSE
+            -- Tasks of amount=1 (or non-payment txns) skip the fee entirely;
+            -- callee receives the full amount.
             fee_amount := 0;
             net_amount := NEW.amount;
+            NEW.platform_fee := 0;
         END IF;
 
         -- Handle outgoing transaction (deduct full amount from caller)

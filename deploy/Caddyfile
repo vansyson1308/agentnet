@@ -1,50 +1,99 @@
 # AgentNet Production Reverse Proxy
-# Caddy auto-provisions Let's Encrypt SSL certificates
+# Caddy auto-provisions Let's Encrypt SSL certificates.
 #
-# Replace {$DOMAIN} with your actual domain, or set DOMAIN env var
-# If no domain, use the server's public IP (Caddy will use self-signed cert)
+# Subdomains (DNS A records all point at this server):
+#   agentnet.io.vn            → main + dashboard catch-all
+#   dashboard.agentnet.io.vn  → alias for the main site
+#   payment.agentnet.io.vn    → narrow proxy: only payment endpoints
+#   staging.agentnet.io.vn    → staging stack (ports 8100/8101/8180)
 
-{$DOMAIN:localhost} {
-    # Registry API (agent registration, auth, tasks, WebSocket)
-    handle /api/v1/auth/* {
-        reverse_proxy localhost:8000
-    }
-    handle /api/v1/agents/* {
-        reverse_proxy localhost:8000
-    }
-    handle /api/v1/tasks/* {
-        reverse_proxy localhost:8000
-    }
-    handle /api/v1/ws {
+# ---------------------------------------------------------------------------
+# Production main site + dashboard alias
+# ---------------------------------------------------------------------------
+agentnet.io.vn, dashboard.agentnet.io.vn, www.agentnet.io.vn {
+    encode gzip zstd
+
+    # A2A discovery (registry)
+    handle /.well-known/agent-card.json {
         reverse_proxy localhost:8000
     }
     handle /.well-known/agent.json {
         reverse_proxy localhost:8000
     }
 
-    # Payment API (wallets, transactions, approvals)
-    handle /api/v1/wallets/* {
-        reverse_proxy localhost:8001
-    }
-    handle /api/v1/transactions/* {
-        reverse_proxy localhost:8001
-    }
-    handle /api/v1/approval_requests/* {
-        reverse_proxy localhost:8001
-    }
+    # Registry API + WebSocket
+    handle /api/v1/auth/* { reverse_proxy localhost:8000 }
+    handle /api/v1/agents/* { reverse_proxy localhost:8000 }
+    handle /api/v1/tasks/* { reverse_proxy localhost:8000 }
+    handle /api/v1/ws { reverse_proxy localhost:8000 }
+    handle /api/v1/ws/* { reverse_proxy localhost:8000 }
+    handle /api/v1/healthz { reverse_proxy localhost:8000 }
+    handle /api/v1/readyz { reverse_proxy localhost:8000 }
+    handle /api/v1/metrics { reverse_proxy localhost:8000 }
+
+    # Payment API
+    handle /api/v1/wallets/* { reverse_proxy localhost:8001 }
+    handle /api/v1/transactions/* { reverse_proxy localhost:8001 }
+    handle /api/v1/approval_requests/* { reverse_proxy localhost:8001 }
 
     # Simulation API
-    handle /api/v1/simulations/* {
-        reverse_proxy localhost:8002
-    }
+    handle /api/v1/simulations/* { reverse_proxy localhost:8002 }
 
-    # Health check (registry as primary)
-    handle /health {
-        reverse_proxy localhost:8000
-    }
+    # Top-level health passthrough — pinned to dashboard so /healthz on
+    # the public domain answers immediately without depending on the
+    # registry being up.
+    handle /healthz { reverse_proxy localhost:8080 }
+    handle /readyz  { reverse_proxy localhost:8080 }
 
-    # Dashboard (default)
+    # Catch-all to Flask dashboard (login, /metaverse, /marketplace, etc.)
     handle /* {
         reverse_proxy localhost:8080
     }
+}
+
+# ---------------------------------------------------------------------------
+# Payment subdomain — exposes only the payment service surface.
+# Anything else 308-redirects to the main site so we don't accidentally
+# leak registry endpoints behind a misleading hostname.
+# ---------------------------------------------------------------------------
+payment.agentnet.io.vn {
+    encode gzip zstd
+
+    handle /api/v1/wallets/* { reverse_proxy localhost:8001 }
+    handle /api/v1/transactions/* { reverse_proxy localhost:8001 }
+    handle /api/v1/approval_requests/* { reverse_proxy localhost:8001 }
+    handle /healthz { reverse_proxy localhost:8001 }
+    handle /readyz  { reverse_proxy localhost:8001 }
+    handle /metrics { reverse_proxy localhost:8001 }
+
+    handle /* {
+        redir https://agentnet.io.vn{uri} permanent
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Staging — mirrors prod routing but at ports 8100/8101/8180.
+# ---------------------------------------------------------------------------
+staging.agentnet.io.vn {
+    encode gzip zstd
+
+    handle /.well-known/agent-card.json { reverse_proxy localhost:8100 }
+
+    handle /api/v1/auth/* { reverse_proxy localhost:8100 }
+    handle /api/v1/agents/* { reverse_proxy localhost:8100 }
+    handle /api/v1/tasks/* { reverse_proxy localhost:8100 }
+    handle /api/v1/ws { reverse_proxy localhost:8100 }
+    handle /api/v1/ws/* { reverse_proxy localhost:8100 }
+    handle /api/v1/healthz { reverse_proxy localhost:8100 }
+    handle /api/v1/readyz { reverse_proxy localhost:8100 }
+    handle /api/v1/metrics { reverse_proxy localhost:8100 }
+
+    handle /api/v1/wallets/* { reverse_proxy localhost:8101 }
+    handle /api/v1/transactions/* { reverse_proxy localhost:8101 }
+    handle /api/v1/approval_requests/* { reverse_proxy localhost:8101 }
+
+    handle /healthz { reverse_proxy localhost:8180 }
+    handle /readyz  { reverse_proxy localhost:8180 }
+
+    handle /* { reverse_proxy localhost:8180 }
 }

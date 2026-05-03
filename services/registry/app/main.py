@@ -116,11 +116,19 @@ async def get_registry_agent_card(request: Request):
     """
     Serve the A2A Agent Card for the AgentNet Registry.
 
-    Any A2A-compatible system can GET this endpoint to discover
-    what this registry offers and how to interact with it.
+    Behind a reverse proxy (Caddy), ``request.base_url`` resolves to
+    the internal hostname (``http://127.0.0.1:8000``), which is useless
+    to remote callers. Honour the X-Forwarded-* headers populated by
+    the proxy so the advertised URL matches what callers actually used.
+    Falls back to ``request.base_url`` when running standalone.
     """
-    base_url = str(request.base_url).rstrip("/")
-    card = build_registry_card(base_url=base_url)
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    if forwarded_proto and forwarded_host:
+        base_url = f"{forwarded_proto}://{forwarded_host}"
+    else:
+        base_url = str(request.base_url).rstrip("/")
+    card = build_registry_card(base_url=base_url.rstrip("/"))
     return card.model_dump(by_alias=True, exclude_none=True)
 
 

@@ -3,12 +3,44 @@ import json
 import uuid
 import time
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, Response, stream_with_context
+from werkzeug.middleware.proxy_fix import ProxyFix
 from .api_client import api_client, APIError, AuthRequiredError
 import pathlib
 import typing as _typing
 
+_ENV = os.getenv("ENVIRONMENT", "development").lower()
+_IS_DEV = _ENV == "development"
+
+
+def _resolve_flask_secret() -> str:
+    """FLASK_SECRET_KEY is required in non-dev. In dev, fall back to a
+    per-process random key (sessions reset on restart — fine locally)."""
+    val = os.getenv("FLASK_SECRET_KEY", "")
+    if val:
+        return val
+    if _IS_DEV:
+        return "dev_secret_key_" + str(uuid.uuid4())
+    raise RuntimeError(
+        "FLASK_SECRET_KEY is required in non-development environments. "
+        "Generate via `openssl rand -hex 32`."
+    )
+
+
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev_secret_key_" + str(uuid.uuid4()))
+app.secret_key = _resolve_flask_secret()
+
+# Behind Caddy / nginx the X-Forwarded-* headers tell us the real scheme
+# and host. Without ProxyFix, url_for() generates http:// links and
+# session cookies' Secure flag would be wrong.
+if os.getenv("BEHIND_PROXY", "").lower() == "true":
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+# Cookie hardening — Secure cookies require HTTPS, so only set in non-dev.
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=not _IS_DEV,
+)
 
 
 # --- Liveness / readiness probes for orchestrators ---

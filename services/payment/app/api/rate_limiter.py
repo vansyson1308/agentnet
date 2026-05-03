@@ -1,3 +1,4 @@
+import asyncio
 import time
 from collections import defaultdict
 from typing import Optional
@@ -29,12 +30,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.window_seconds = window_seconds
         self.redis_url = redis_url
         self._redis: Optional[aioredis.Redis] = None
+        self._redis_init_lock: Optional[asyncio.Lock] = None
         self.records: dict = defaultdict(lambda: {"count": 0, "reset_time": 0.0})
 
     async def _get_redis(self) -> Optional[aioredis.Redis]:
-        if self.redis_url and self._redis is None:
+        if self._redis is not None or not self.redis_url:
+            return self._redis
+        if self._redis_init_lock is None:
+            self._redis_init_lock = asyncio.Lock()
+        async with self._redis_init_lock:
+            if self._redis is not None:
+                return self._redis
             try:
-                self._redis = await aioredis.from_url(self.redis_url)
+                self._redis = await asyncio.wait_for(
+                    aioredis.from_url(self.redis_url), timeout=5.0
+                )
             except Exception:
                 self._redis = None
         return self._redis

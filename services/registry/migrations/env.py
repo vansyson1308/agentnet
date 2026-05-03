@@ -17,8 +17,14 @@ from __future__ import annotations
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import pool, text
 from sqlalchemy.engine import create_engine
+
+# Postgres advisory-lock id used to serialise concurrent
+# `alembic upgrade head` calls (e.g. multi-replica startup). 32-bit int
+# constant, not derived from anything; just needs to be stable so every
+# replica picks the same lock.
+_ALEMBIC_LOCK_ID = 7654321
 
 # Make sure the application is importable.
 import os
@@ -52,15 +58,30 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations with a live DB connection."""
+    """Run migrations with a live DB connection.
+
+    Wraps the run with a Postgres session-level advisory lock so two
+    replicas booting simultaneously (e.g. ``docker compose up`` of two
+    registry pods) cannot race and corrupt the schema. The second pod
+    blocks on ``pg_advisory_lock`` until the first commits, then sees
+    ``alembic upgrade head`` is a no-op.
+    """
     connectable = create_engine(DATABASE_URL, poolclass=pool.NullPool)
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-        )
-        with context.begin_transaction():
-            context.run_migrations()
+        connection.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _ALEMBIC_LOCK_ID})
+        try:
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+            )
+            with context.begin_transaction():
+                context.run_migrations()
+        finally:
+            # Release even if migrations raised; otherwise the next pod
+            # in the rolling restart deadlocks on this lock.
+            connection.execute(
+                text("SELECT pg_advisory_unlock(:k)"), {"k": _ALEMBIC_LOCK_ID}
+            )
 
 
 if context.is_offline_mode():

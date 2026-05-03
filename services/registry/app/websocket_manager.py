@@ -230,7 +230,15 @@ class ConnectionManager:
         Mirrors REST /tasks endpoints exactly — same escrow lock, same
         FOR UPDATE locking, same idempotency, same state machine. The
         only difference is response framing (JSON-RPC vs HTTP body).
+
+        Uses a FRESH ``SessionLocal()`` per message rather than the
+        long-lived FastAPI-injected session. WebSocket connections are
+        a single FastAPI request whose dependency-scoped session would
+        otherwise hold a connection from the pool for the entire
+        connection lifetime — we'd exhaust the pool after ~30 idle
+        agents.
         """
+        from .database import SessionLocal
         from .task_service import (
             EscrowError,
             confirm_task_completion,
@@ -243,6 +251,60 @@ class ConnectionManager:
         import uuid as _uuid
 
         request_id = message.get("id")
+        # Replace the dependency-scoped db with a fresh, short-lived one
+        # that is guaranteed to close at the end of THIS message regardless
+        # of exit path. The wrapper below preserves all the existing
+        # `return _err(...)` / `return _ok(...)` semantics.
+        owned_db = SessionLocal()
+        try:
+            return await self._dispatch_task_method(
+                method=method,
+                message=message,
+                agent=None,  # populated inside
+                agent_id=agent_id,
+                db=owned_db,
+                request_id=request_id,
+                exec_params_cls=ExecuteParams,
+                agent_model=_Agent,
+                task_status_enum=_TaskStatus,
+                uuid_mod=_uuid,
+                create_fn=create_task_with_escrow,
+                start_fn=start_task,
+                confirm_fn=confirm_task_completion,
+                fail_fn=fail_task_with_refund,
+                escrow_err=EscrowError,
+            )
+        finally:
+            owned_db.close()
+
+    async def _dispatch_task_method(
+        self,
+        *,
+        method,
+        message,
+        agent,  # ignored — re-fetched here from the owned db
+        agent_id,
+        db,
+        request_id,
+        exec_params_cls,
+        agent_model,
+        task_status_enum,
+        uuid_mod,
+        create_fn,
+        start_fn,
+        confirm_fn,
+        fail_fn,
+        escrow_err,
+    ) -> Optional[dict]:
+        _uuid = uuid_mod
+        _Agent = agent_model
+        _TaskStatus = task_status_enum
+        ExecuteParams = exec_params_cls
+        EscrowError = escrow_err
+        create_task_with_escrow = create_fn
+        start_task = start_fn
+        confirm_task_completion = confirm_fn
+        fail_task_with_refund = fail_fn
 
         def _err(code: int, msg: str) -> dict:
             return {
@@ -254,7 +316,11 @@ class ConnectionManager:
         def _ok(result: dict) -> dict:
             return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
-        agent = db.query(_Agent).filter(_Agent.id == _uuid.UUID(agent_id)).first()
+        try:
+            agent_uuid = _uuid.UUID(agent_id)
+        except (ValueError, TypeError):
+            return _err(-32001, "Invalid agent_id format on this connection")
+        agent = db.query(_Agent).filter(_Agent.id == agent_uuid).first()
         if agent is None:
             return _err(-32001, "Authenticated agent not found")
 

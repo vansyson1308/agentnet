@@ -3,6 +3,7 @@ Rate Limiter — Redis-based token bucket middleware
 Dùng token bucket algorithm với Redis để rate limit requests.
 Config: rate_limiter.py
 """
+import asyncio
 import time
 import hashlib
 from typing import Optional, Callable, Any
@@ -54,24 +55,56 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.redis_url = redis_url
         self._buckets: dict[str, TokenBucket] = {}
         self._redis = None
+        # Serialise concurrent first-call init so we don't spawn N redis
+        # connections in the few-ms window before the first one resolves.
+        self._redis_init_lock: Optional[asyncio.Lock] = None
 
     async def _get_redis(self):
-        if self.redis_url and self._redis is None:
+        if self._redis is not None or not self.redis_url:
+            return self._redis
+        if self._redis_init_lock is None:
+            self._redis_init_lock = asyncio.Lock()
+        async with self._redis_init_lock:
+            if self._redis is not None:
+                return self._redis
             try:
-                self._redis = await aioredis.from_url(self.redis_url)
+                self._redis = await asyncio.wait_for(
+                    aioredis.from_url(self.redis_url), timeout=5.0
+                )
             except Exception:
                 self._redis = None
         return self._redis
 
     def _get_client_key(self, request: Request) -> str:
-        """Unique key for client — use token subject or IP."""
+        """Unique key per caller — token subject if present, otherwise the
+        real client IP. Behind Caddy, ``request.client.host`` is the proxy
+        IP, so we MUST trust X-Forwarded-For first; uvicorn's
+        --proxy-headers is what populates it. We pick the leftmost
+        non-private IP from the comma-separated list per RFC 7239."""
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
-            # Hash token để không leak sensitive info
             return hashlib.sha256(auth.encode()).hexdigest()[:16]
-        # Fallback to IP
+
         forwarded = request.headers.get("X-Forwarded-For", "")
-        return forwarded.split(",")[0].strip() or request.client.host or "unknown"
+        if forwarded:
+            for raw in forwarded.split(","):
+                ip = raw.strip()
+                if not ip:
+                    continue
+                # Skip private / loopback that some proxies prepend.
+                if ip.startswith(("10.", "192.168.", "127.", "::1", "fc", "fd")):
+                    continue
+                if ip.startswith("172."):
+                    try:
+                        second = int(ip.split(".")[1])
+                        if 16 <= second <= 31:
+                            continue
+                    except (IndexError, ValueError):
+                        pass
+                return ip
+            # Every entry was private — fall back to the leftmost.
+            return forwarded.split(",")[0].strip()
+        return (request.client.host if request.client else None) or "unknown"
 
     async def _is_agent(self, request: Request) -> bool:
         """Check if request comes from an agent token."""

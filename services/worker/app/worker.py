@@ -498,12 +498,19 @@ async def main():
 
     # Expose Prometheus metrics on a dedicated port — the worker has no
     # HTTP framework, so prometheus_client spawns its own daemon thread.
+    # Fail hard if the port is taken: it almost always means an old
+    # worker process is still alive (e.g. botched rolling redeploy)
+    # and continuing would publish stale metrics. Letting the process
+    # exit lets the orchestrator restart us and keeps metrics correct.
     try:
         start_http_server(WORKER_METRICS_PORT)
         logger.info(f"Prometheus metrics: http://0.0.0.0:{WORKER_METRICS_PORT}/metrics")
     except OSError as e:
-        # Port already bound (e.g. test rerun) — keep running, just log.
-        logger.warning(f"Could not bind metrics port {WORKER_METRICS_PORT}: {e}")
+        logger.error(
+            f"Could not bind metrics port {WORKER_METRICS_PORT}: {e}. "
+            f"Refusing to start — old worker process likely still alive."
+        )
+        raise
 
     # Initialize Redis
     redis_client = None

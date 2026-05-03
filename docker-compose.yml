@@ -211,11 +211,8 @@ services:
       PAYMENT_URL: http://payment:8001
       DASHBOARD_PORT: 8080
       AGENTNET_ADMIN_TOKEN: ${AGENTNET_USER_PASSWORD:-}
-      WEREWOLF_STATE_FILE: /app/werewolf_data/werewolf_state.json
-      WEREWOLF_STATS_FILE: /app/werewolf_data/werewolf_stats.json
-      WEREWOLF_DATA_DIR: /app/werewolf_data
-    volumes:
-      - /opt/agentnet/werewolf_data:/app/werewolf_data
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:-dev-flask-secret-do-not-use-in-prod}
+      ENVIRONMENT: development
     ports:
       - "8080:8080"
     depends_on:

@@ -57,7 +57,12 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=2).status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
     networks:
       - agentnet-network
@@ -85,7 +90,12 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8001
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/healthz', timeout=2).status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     networks:
       - agentnet-network
@@ -137,7 +147,12 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8002
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8002/healthz', timeout=2).status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     networks:
       - agentnet-network
@@ -149,15 +164,20 @@ services:
       REGISTRY_URL: http://registry:8000
       PAYMENT_URL: http://payment:8001
       DASHBOARD_PORT: 8080
-      WEREWOLF_STATE_FILE: /app/werewolf_data/werewolf_state.json
-      WEREWOLF_STATS_FILE: /app/werewolf_data/werewolf_stats.json
-    volumes:
-      - /opt/agentnet/werewolf_data:/app/werewolf_data
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY}
+      BEHIND_PROXY: "true"
+      ENVIRONMENT: ${ENVIRONMENT:-production}
     ports:
       - "8080:8080"
     depends_on:
       - registry
       - payment
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz', timeout=2).status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     networks:
       - agentnet-network
