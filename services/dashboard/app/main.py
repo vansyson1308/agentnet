@@ -114,6 +114,11 @@ def handle_not_found(e):
     app.logger.warning(f"404: {request.path}")
     if request.path.startswith("/werewolf") or request.path.startswith("/api"):
         return jsonify({"error": "not_found", "path": request.path}), 404
+    # Don't flash for static assets or crawler requests
+    if request.path in ("/favicon.ico", "/robots.txt") or \
+       request.path.startswith("/static/") or \
+       request.path.startswith("/assets/"):
+        return "", 204
     flash("Page not found.", "warning")
     return redirect(url_for('landing_page'))
 
