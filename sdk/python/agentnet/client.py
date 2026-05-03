@@ -395,6 +395,7 @@ class AgentNetClient:
         max_budget: int,
         currency: str = "credits",
         timeout_seconds: int = 300,
+        idempotency_key: Optional[str] = None,
     ) -> TaskSession:
         """
         Create a task session.
@@ -407,10 +408,16 @@ class AgentNetClient:
             max_budget: Maximum budget
             currency: Currency (credits or usdc)
             timeout_seconds: Task timeout
+            idempotency_key: Optional client-supplied key. If omitted the
+                SDK generates a uuid4 and uses it as the Idempotency-Key
+                header so a network retry never produces duplicate escrow.
 
         Returns:
             TaskSession object
         """
+        headers = dict(self.get_auth_headers())
+        headers["Idempotency-Key"] = idempotency_key or str(uuid.uuid4())
+
         response = self._client.post(
             f"{self.registry_url}/v1/tasks/",
             json={
@@ -422,7 +429,7 @@ class AgentNetClient:
                 "currency": currency,
                 "timeout_seconds": timeout_seconds,
             },
-            headers=self.get_auth_headers(),
+            headers=headers,
         )
 
         if response.status_code != 201:
@@ -488,6 +495,111 @@ class AgentNetClient:
             raise AgentNetError(f"Failed to get trace: {response.status_code}")
 
         return response.json()
+
+    # ─────────────────────────────────────────────────────────
+    # Dev-Only: Fund Wallet (only in development mode)
+    # ─────────────────────────────────────────────────────────
+
+    # ─────────────────────────────────────────────────────────
+    # Approval Workflow (payment service)
+    # ─────────────────────────────────────────────────────────
+
+    def list_approvals(self, status_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List approval requests for the authenticated user.
+
+        Args:
+            status_filter: Optional ``pending`` / ``approved`` / ``denied``.
+        """
+        params = {}
+        if status_filter:
+            params["status"] = status_filter
+        response = self._client.get(
+            f"{self.payment_url}/v1/approval_requests/",
+            params=params,
+            headers=self.get_auth_headers(),
+        )
+        if response.status_code != 200:
+            raise AgentNetError(
+                f"Failed to list approvals: {response.status_code} {response.text}"
+            )
+        return response.json()
+
+    def get_approval(self, approval_id: str) -> Dict[str, Any]:
+        response = self._client.get(
+            f"{self.payment_url}/v1/approval_requests/{approval_id}",
+            headers=self.get_auth_headers(),
+        )
+        if response.status_code != 200:
+            raise AgentNetError(
+                f"Failed to get approval: {response.status_code} {response.text}"
+            )
+        return response.json()
+
+    def create_approval(
+        self,
+        agent_id: str,
+        amount: int,
+        currency: str = "credits",
+        description: str = "",
+        callback_url: Optional[str] = None,
+        task_session_id: Optional[str] = None,
+        expires_in_seconds: int = 300,
+    ) -> Dict[str, Any]:
+        body = {
+            "agent_id": agent_id,
+            "amount": amount,
+            "currency": currency,
+            "description": description,
+            "expires_in_seconds": expires_in_seconds,
+        }
+        if callback_url:
+            body["callback_url"] = callback_url
+        if task_session_id:
+            body["task_session_id"] = task_session_id
+        response = self._client.post(
+            f"{self.payment_url}/v1/approval_requests/",
+            json=body,
+            headers=self.get_auth_headers(),
+        )
+        if response.status_code not in (200, 201):
+            raise AgentNetError(
+                f"Failed to create approval: {response.status_code} {response.text}"
+            )
+        return response.json()
+
+    def approve(self, approval_id: str) -> Dict[str, Any]:
+        return self._approval_action(approval_id, "approve")
+
+    def deny(self, approval_id: str) -> Dict[str, Any]:
+        return self._approval_action(approval_id, "deny")
+
+    def _approval_action(self, approval_id: str, action: str) -> Dict[str, Any]:
+        response = self._client.post(
+            f"{self.payment_url}/v1/approval_requests/{approval_id}/{action}",
+            headers=self.get_auth_headers(),
+        )
+        if response.status_code != 200:
+            raise AgentNetError(
+                f"Approval {action} failed: {response.status_code} {response.text}"
+            )
+        return response.json()
+
+    # ─────────────────────────────────────────────────────────
+    # Health probes — handy for orchestration / smoke tests.
+    # ─────────────────────────────────────────────────────────
+
+    def health(self, service: str = "registry") -> Dict[str, Any]:
+        url = self.registry_url if service == "registry" else self.payment_url
+        response = self._client.get(f"{url}/healthz")
+        response.raise_for_status()
+        return response.json()
+
+    def ready(self, service: str = "registry") -> bool:
+        url = self.registry_url if service == "registry" else self.payment_url
+        try:
+            return self._client.get(f"{url}/readyz").status_code == 200
+        except httpx.HTTPError:
+            return False
 
     # ─────────────────────────────────────────────────────────
     # Dev-Only: Fund Wallet (only in development mode)

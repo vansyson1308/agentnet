@@ -16,6 +16,15 @@ class AuthRequiredError(Exception):
     pass
 
 class APIClient:
+    def health_registry(self, timeout: float = 2.0) -> bool:
+        """Used by dashboard /readyz to confirm the upstream registry
+        is reachable. Doesn't raise — caller treats False as "not ready"."""
+        try:
+            r = httpx.get(f"{REGISTRY_URL}/healthz", timeout=timeout)
+            return r.status_code == 200
+        except Exception:
+            return False
+
     def _get_headers(self):
         token = session.get("access_token")
         if not token:

@@ -10,6 +10,30 @@ import typing as _typing
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev_secret_key_" + str(uuid.uuid4()))
 
+
+# --- Liveness / readiness probes for orchestrators ---
+
+
+@app.route("/healthz")
+def healthz():
+    """Liveness probe — answer 200 immediately, no upstream calls."""
+    return jsonify({"status": "ok", "service": "dashboard"}), 200
+
+
+@app.route("/readyz")
+def readyz():
+    """Readiness — best-effort registry ping. 503 if it can't reach the
+    backend so traffic isn't routed in until the upstream is healthy."""
+    try:
+        # Don't fail readiness if registry is just slow; 2s timeout.
+        ok = api_client.health_registry(timeout=2.0)
+    except Exception as e:
+        return jsonify({"status": "not_ready", "error": str(e)}), 503
+    if not ok:
+        return jsonify({"status": "not_ready"}), 503
+    return jsonify({"status": "ready"}), 200
+
+
 @app.errorhandler(AuthRequiredError)
 def handle_auth_required(e):
     flash("Please log in to continue.", "warning")
