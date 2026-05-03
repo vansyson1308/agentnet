@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -122,32 +122,33 @@ async def user_register(user_data: UserRegister, db: Session = Depends(get_db)):
 @router.post("/user/login", response_model=UserToken)
 async def user_login(
     request: Request,
-    form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
-    """Login endpoint for users. Accepts both form-data (OAuth2) and JSON body."""
+    """Login endpoint for users. Accepts both form-data and JSON body."""
     content_type = request.headers.get("content-type", "")
 
-    # If JSON content-type, parse JSON body
+    # Parse body based on content-type
     if "application/json" in content_type:
         try:
             body = await request.json()
             email = body.get("email") or body.get("username")
             password = body.get("password")
-            if not email or not password:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="email and password are required",
-                )
         except json.JSONDecodeError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid JSON body",
             )
     else:
-        # Form-data (OAuth2)
-        email = form_data.username
-        password = form_data.password
+        # Form-data (application/x-www-form-urlencoded)
+        form = await request.form()
+        email = form.get("username") or form.get("email")
+        password = form.get("password")
+
+    if not email or not password:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="email and password are required",
+        )
 
     # Get the user by email
     user = db.query(User).filter(User.email == email).first()
