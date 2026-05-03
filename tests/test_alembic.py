@@ -37,7 +37,7 @@ def test_baseline_revision_present():
 
 @pytest.mark.parametrize(
     "revision_file",
-    ["0001_baseline.py", "0002_idempotency_key.py", "0003_spending_cap_includes_reserved.py"],
+    ["0001_baseline.py", "0002_idempotency_key.py", "0003_spending_cap_fix.py"],
 )
 def test_revision_chain_well_formed(revision_file):
     p = REPO / "services/registry/migrations/versions" / revision_file
