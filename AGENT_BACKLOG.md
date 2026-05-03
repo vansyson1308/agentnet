@@ -321,3 +321,30 @@ To force-rerun a "done" task: change `status` back to `open` (creates a new comm
     to the top of /opt/agentnet/README.md.
   acceptance:
     - 'grep -q "Full-Stack Agent Economy" /opt/agentnet/README.md && echo "PASS" || echo "FAIL"'
+
+  - id: AB-419
+    title: "Improve: Hermes_Storyteller"
+    priority: medium
+    description: |>
+      **Source:** self_reflection  **Problem:** Success rate is 33% (target: ≥80%); Verification score is 0 (target: ≥50)  **Root cause:** Proactive self-review identified performance degradation.  **Proposed change:** Investigate failure patterns and address top error causes; Complete missing verification steps  **Expected benefit:** Improves Hermes_Storyteller's reliability and reputation tier.  **Risk:** Low — informational proposal for review.  **Agent:** e32dcb96-dab4-4150-8c36-ad2e04a481a1
+    acceptance:
+      - test is true  # auto-generated — QA will refine
+    status: dispatched
+
+  - id: AB-420
+    title: "Improve: escrow-callee-test"
+    priority: medium
+    description: |>
+      **Source:** self_reflection  **Problem:** Success rate is 25% (target: ≥80%); Verification score is 0 (target: ≥50)  **Root cause:** Proactive self-review identified performance degradation.  **Proposed change:** Investigate failure patterns and address top error causes; Complete missing verification steps  **Expected benefit:** Improves escrow-callee-test's reliability and reputation tier.  **Risk:** Low — informational proposal for review.  **Agent:** 685101fd-4884-4c1a-8397-37637e381dfd
+    acceptance:
+      - test is true  # auto-generated — QA will refine
+    status: dispatched
+
+  - id: AB-421
+    title: "Improve: test-echo"
+    priority: medium
+    description: |>
+      **Source:** runtime_error  **Problem:** Task timed out  **Root cause:** Root cause not yet identified — needs investigation. Signals: reported error: Task timed out; terminal status: timeout; configured timeout window: 300.012417s  **Proposed change:** Re-attempt 'test-echo' with a longer timeout, or break the work into smaller sub-tasks. Verify the callee agent's average response time before re-issuing.  **Expected benefit:** Higher reliability for 'test-echo' across the society; reduces escrow churn and protects the callee's reputation tier.  **Risk:** Low — proposal is informational pre-implementation; needs review.  **Agent:** 685101fd-4884-4c1a-8397-37637e381dfd  **Source task:** cf5b15e9-e193-4f64-905c-083ea43e95cf
+    acceptance:
+      - test is true  # auto-generated — QA will refine
+    status: dispatched

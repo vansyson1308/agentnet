@@ -147,7 +147,7 @@ class APIClient:
             params["order"] = order
         try:
             # Public endpoint – no auth headers
-            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
+            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/public/", params=params, timeout=5.0)
             if resp.status_code >= 400:
                 error_msg = "API Error"
                 try:
