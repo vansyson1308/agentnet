@@ -1,49 +1,54 @@
 {% extends "base.html" %}
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
+
 {% block content %}
-<div class="metaverse-dashboard">
-    <div style="text-align:center;margin-bottom:2rem;">
-        <h1 style="font-size:2rem;font-weight:800;color:#fff;">Command Center</h1>
-        <p style="color:var(--text-secondary);font-size:0.9rem;">Manage your agents, monitor tasks, and explore the network.</p>
-    </div>
-    <!-- Agents Section -->
-    <div class="card" style="margin-bottom:2rem;">
-        <h2>Your Agents</h2>
-        {% if agents %}
-        <div class="agent-grid">
-            {% for agent in agents %}
-            <div class="agent-card">
-                <h3>{{ agent.name }}</h3>
-                <p>{{ agent.description | truncate(100) }}</p>
-                <span class="badge">{{ agent.status }}</span>
-            </div>
-            {% endfor %}
+<div style="text-align:center;margin-bottom:1.5rem;">
+    <h1 style="font-size:1.6rem;font-weight:800;color:#fff;">Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.85rem;">Your agents and tasks at a glance</p>
+</div>
+
+<div class="card" style="margin-bottom:1.5rem;">
+    <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:0.5rem;">Your Agents</h2>
+    {% if agents %}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1rem;">
+        {% for agent in agents %}
+        <div style="background:var(--glass-bg);backdrop-filter:blur(8px);border:1px solid var(--border-glow);border-radius:10px;padding:1rem;">
+            <h3 style="font-size:0.95rem;font-weight:600;">{{ agent.name }}</h3>
+            <p style="font-size:0.8rem;color:var(--text-secondary);">{{ agent.description|truncate(80) }}</p>
+            <span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:0.75rem;font-weight:600;background:#10b98120;color:#10b981;border:1px solid #10b981;">{{ agent.status or 'active' }}</span>
         </div>
-        {% else %}
-        <p>No agents registered yet. <a href="{{ url_for('register_agent_page') }}">Register one</a>.</p>
-        {% endif %}
+        {% endfor %}
     </div>
-    <!-- Tasks Section -->
-    <div class="card" style="margin-bottom:2rem;">
-        <h2>Recent Tasks</h2>
-        {% if tasks %}
-        <table class="table">
-            <thead>
-                <tr><th>ID</th><th>Status</th><th>Created</th></tr>
-            </thead>
-            <tbody>
-                {% for task in tasks %}
-                <tr>
-                    <td>{{ task.id[:8] }}...</td>
-                    <td>{{ task.status }}</td>
-                    <td>{{ task.created_at }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <p>No tasks yet.</p>
-        {% endif %}
-    </div>
+    {% else %}
+    <p style="color:var(--text-muted);">No agents registered yet. <a href="{{ url_for('register_agent_page') }}" style="color:var(--jarvis-accent);">Register one now</a>.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:0.5rem;">Recent Tasks</h2>
+    {% if tasks %}
+    <table style="width:100%;border-collapse:collapse;">
+        <thead>
+            <tr style="border-bottom:1px solid var(--border-glow);">
+                <th style="padding:0.5rem;text-align:left;">ID</th>
+                <th style="padding:0.5rem;text-align:left;">Agent</th>
+                <th style="padding:0.5rem;text-align:left;">Status</th>
+                <th style="padding:0.5rem;text-align:left;">Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for task in tasks %}
+            <tr style="border-bottom:1px solid var(--border-glow);">
+                <td style="padding:0.5rem;">{{ task.id }}</td>
+                <td style="padding:0.5rem;">{{ task.agent_name or 'N/A' }}</td>
+                <td style="padding:0.5rem;"><span style="display:inline-block;padding:2px 8px;border-radius:6px;font-size:0.75rem;font-weight:600;background:#3b82f620;color:#3b82f6;border:1px solid #3b82f6;">{{ task.status }}</span></td>
+                <td style="padding:0.5rem;">{{ task.created_at[:10] if task.created_at else 'N/A' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:var(--text-muted);">No tasks yet.</p>
+    {% endif %}
 </div>
 {% endblock %}
