@@ -2,56 +2,85 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="text-align:center;margin-bottom:2rem;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">⚡ Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;">Monitor agents, tasks, and network activity</p>
+<div class="metaverse-dashboard">
+    <header style="margin-bottom:2rem;">
+        <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">⚡ Command Center</h1>
+        <p style="color:var(--text-secondary);">Monitor your agents and tasks in real-time.</p>
+    </header>
+
+    <section style="margin-bottom:2.5rem;">
+        <h2 style="font-size:1.2rem;font-weight:600;color:#e2e8f0;margin-bottom:1rem;">🤖 Agents</h2>
+        {% if agents %}
+        <div class="agent-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.25rem;">
+            {% for agent in agents %}
+            {% set ctx = agent|trust_context %}
+            <div class="card agent-card" style="padding:1.25rem;border-radius:12px;background:var(--glass-bg);border:1px solid var(--border-glow);backdrop-filter:blur(var(--glass-blur));transition:transform 0.2s,box-shadow 0.2s;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.75rem;">
+                    <div>
+                        <h3 style="font-size:1rem;font-weight:600;color:#fff;margin:0;">{{ agent.name | default('Unnamed') }}</h3>
+                        <span style="display:inline-block;font-size:0.7rem;font-weight:600;padding:2px 8px;border-radius:20px;background:{{ ctx.color }}22;color:{{ ctx.color }};margin-top:4px;">{{ ctx.label }}</span>
+                    </div>
+                    <span style="font-size:0.7rem;font-weight:500;color:var(--text-muted);background:rgba(255,255,255,0.05);padding:2px 8px;border-radius:12px;">{{ ctx.tier }}</span>
+                </div>
+                <div style="display:flex;gap:1rem;font-size:0.75rem;color:var(--text-secondary);">
+                    <span>✅ {{ ctx.success_percent }}</span>
+                    <span>⏱️ {{ ctx.timeouts }} timeouts</span>
+                    <span>📊 {{ ctx.total }} tasks</span>
+                </div>
+                <div style="margin-top:0.75rem;">
+                    <span style="font-size:0.7rem;color:var(--text-muted);">Capabilities:</span>
+                    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">
+                        {% for cap in agent.capabilities | default([]) %}
+                        <span style="font-size:0.65rem;padding:2px 8px;border-radius:10px;background:rgba(59,130,246,0.15);color:#60a5fa;">{{ cap }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="card" style="padding:2rem;text-align:center;color:var(--text-muted);">
+            {% if session.access_token %}
+            <p>No agents registered yet. <a href="{{ url_for('register_agent_page') }}" style="color:var(--accent);">Create one</a>.</p>
+            {% else %}
+            <p>Sign in to view your agents.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+    </section>
+
+    <section>
+        <h2 style="font-size:1.2rem;font-weight:600;color:#e2e8f0;margin-bottom:1rem;">📋 Recent Tasks</h2>
+        {% if tasks %}
+        <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border-glow);color:var(--text-muted);font-weight:600;">
+                        <th style="padding:0.6rem 0.75rem;text-align:left;">ID</th>
+                        <th style="padding:0.6rem 0.75rem;text-align:left;">Agent</th>
+                        <th style="padding:0.6rem 0.75rem;text-align:left;">Status</th>
+                        <th style="padding:0.6rem 0.75rem;text-align:left;">Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for task in tasks %}
+                    <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                        <td style="padding:0.6rem 0.75rem;color:var(--text-secondary);font-family:monospace;">{{ task.id | truncate(12,true) }}</td>
+                        <td style="padding:0.6rem 0.75rem;color:#e2e8f0;">{{ task.agent_name | default('—') }}</td>
+                        <td style="padding:0.6rem 0.75rem;">
+                            <span style="display:inline-block;padding:2px 10px;border-radius:10px;font-size:0.7rem;font-weight:500;background:{% if task.status == 'completed' %}#10b98122;color:#10b981{% elif task.status == 'failed' %}#ef444422;color:#ef4444{% else %}#f59e0b22;color:#f59e0b{% endif %}">{{ task.status }}</span>
+                        </td>
+                        <td style="padding:0.6rem 0.75rem;color:var(--text-muted);">{{ task.created_at | default('—') }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="card" style="padding:2rem;text-align:center;color:var(--text-muted);">
+            <p>No tasks yet. Assign a task to an agent to get started.</p>
+        </div>
+        {% endif %}
+    </section>
 </div>
-
-{% if session.access_token %}
-    <!-- Agents Overview -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
-        <div class="card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                <h2 style="font-size:1.1rem;font-weight:600;">🤖 Agents</h2>
-                <span class="badge">{{ agents|length }}</span>
-            </div>
-            {% if agents %}
-                <ul style="list-style:none;padding:0;margin:0;">
-                {% for agent in agents %}
-                    <li style="padding:0.5rem 0;border-bottom:1px solid var(--border-glow);display:flex;justify-content:space-between;">
-                        <span>{{ agent.get('name', 'Unnamed') }}</span>
-                        <span style="color:var(--text-muted);font-size:0.8rem;">{{ agent.get('capability', '-') }}</span>
-                    </li>
-                {% endfor %}
-                </ul>
-            {% else %}
-                <p style="color:var(--text-muted);font-size:0.85rem;">No agents discovered yet.</p>
-            {% endif %}
-        </div>
-
-        <div class="card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-                <h2 style="font-size:1.1rem;font-weight:600;">📋 Tasks</h2>
-                <span class="badge">{{ tasks|length }}</span>
-            </div>
-            {% if tasks %}
-                <ul style="list-style:none;padding:0;margin:0;">
-                {% for task in tasks %}
-                    <li style="padding:0.5rem 0;border-bottom:1px solid var(--border-glow);display:flex;justify-content:space-between;">
-                        <span>{{ task.get('description', 'Task') }}</span>
-                        <span style="color:var(--text-muted);font-size:0.8rem;">{{ task.get('status', 'unknown') }}</span>
-                    </li>
-                {% endfor %}
-                </ul>
-            {% else %}
-                <p style="color:var(--text-muted);font-size:0.85rem;">No active tasks.</p>
-            {% endif %}
-        </div>
-    </div>
-{% else %}
-    <div class="card" style="text-align:center;padding:3rem;">
-        <p style="color:var(--text-secondary);margin-bottom:1rem;">Sign in to view agents and tasks.</p>
-        <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
-    </div>
-{% endif %}
 {% endblock %}
