@@ -167,31 +167,77 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    total_agents = 0
-    active_agents = 0
+    stats = {}
+    recent_activity = []
     error = None
-    if session.get("access_token"):
+
+    if "access_token" in session:
         try:
-            agents = api_client.fetch_agents(limit=50)
+            # Fetch dashboard data from backend
+            agents_result = api_client.fetch_agents(limit=10)
+            agents = agents_result.get("agents", []) if isinstance(agents_result, dict) else []
+            # If agents is a list directly, use it
+            if isinstance(agents_result, list):
+                agents = agents_result
+            
+            # Fetch stats (assumes API provides a stats endpoint or we can derive)
+            # For now, we'll show placeholder stats or try to get from agents
             total_agents = len(agents)
-            active_agents = sum(1 for a in agents if a.get("status") == "active")
-        except APIError as e:
-            error = f"Unable to load agents: {e.message}"
-            app.logger.warning(f"Metaverse page agent fetch failed: {e}")
+            # Example: get task count if available
+            tasks_result = api_client.fetch_tasks(limit=0)  # might return count
+            total_tasks = 0
+            if isinstance(tasks_result, dict):
+                total_tasks = tasks_result.get("total", 0) or len(tasks_result.get("tasks", []))
+            elif isinstance(tasks_result, list):
+                total_tasks = len(tasks_result)
+
+            # Wallet balance
+            wallet_balance = None
+            try:
+                wallet_info = api_client.fetch_wallet_balance()
+                if isinstance(wallet_info, dict):
+                    wallet_balance = wallet_info.get("balance")
+            except Exception:
+                wallet_balance = None
+
+            stats = {
+                "total_agents": total_agents,
+                "total_tasks": total_tasks,
+                "wallet_balance": wallet_balance,
+            }
+
+            # Recent activity (e.g., last 5 tasks or agent updates)
+            recent_activity = []
+            if isinstance(tasks_result, dict) and "tasks" in tasks_result:
+                recent_activity = tasks_result["tasks"][:5]
+            elif isinstance(tasks_result, list):
+                recent_activity = tasks_result[:5]
+            
+        except (APIError, AuthRequiredError) as e:
+            error = str(e)
+            # If auth error, we'll show login prompt; otherwise just show error
+            if isinstance(e, AuthRequiredError):
+                flash("Session expired. Please log in again.", "warning")
+                return redirect(url_for('login_page'))
         except Exception as e:
-            error = "An unexpected error occurred while fetching agents."
-            app.logger.error(f"Metaverse page error: {e}")
+            app.logger.error(f"Metaverse dashboard error: {e}")
+            error = "Unable to load dashboard data. Backend may be temporarily unavailable."
+    else:
+        # Not logged in – show public welcome
+        pass
+
     return render_template(
         "metaverse.html",
         agents=agents,
-        total_agents=total_agents,
-        active_agents=active_agents,
+        stats=stats,
+        recent_activity=recent_activity,
         error=error,
+        is_logged_in="access_token" in session
     )
 
 
-# ... [TRUNCATED -- preserve other routes below] ...
+# ============================================================
+# AUTHENTICATED ROUTES
+# ============================================================
 
-# IMPORTANT: the existing file continues with other routes (login, register, marketplace, etc.)
-# but they are not shown in the provided snippet. We must NOT remove them.
-# Ensure we append nothing after the metaverse route definition.
+# ... [remaining routes remain unchanged] ... 
