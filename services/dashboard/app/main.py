@@ -160,30 +160,51 @@ def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
     tasks = []
-    total_agents = 0
-    total_tasks = 0
-    is_authenticated = "access_token" in session
+    error = None
+    try:
+        # Fetch agents and tasks only if logged in
+        if "access_token" in session:
+            agents = api_client.get_agents(limit=100) or []
+            tasks = api_client.get_tasks() or []
+    except AuthRequiredError:
+        # Already handled by error handler, but just in case
+        pass
+    except APIError as e:
+        error = str(e)
+        flash("Could not load dashboard data: " + error, "danger")
+    except Exception as e:
+        app.logger.exception("Failed to load metaverse page")
+        flash("An unexpected error occurred loading the dashboard.", "danger")
 
-    if is_authenticated:
-        try:
-            agents = api_client.get_agents()
-            total_agents = len(agents)
-        except (APIError, AuthRequiredError) as e:
-            flash(f"Could not load agents: {e}", "warning")
-            agents = []
+    # Compute trust context for each agent (if available)
+    agent_trust = [derive_trust_context(a) for a in agents]
 
-        try:
-            tasks = api_client.get_tasks()
-            total_tasks = len(tasks)
-        except (APIError, AuthRequiredError) as e:
-            flash(f"Could not load tasks: {e}", "warning")
-            tasks = []
+    return render_template(
+        "metaverse.html",
+        agents=agents,
+        tasks=tasks,
+        agent_trust=agent_trust,
+        error=error,
+        agent_count=len(agents),
+        task_count=len(tasks)
+    )
 
-    return render_template("metaverse.html",
-                           agents=agents,
-                           tasks=tasks,
-                           total_agents=total_agents,
-                           total_tasks=total_tasks,
-                           is_authenticated=is_authenticated)
+@app.route("/marketplace")
+def marketplace_page():
+    """Public marketplace showing all agents."""
+    search = request.args.get("search", "")
+    category = request.args.get("category", "")
+    sort = request.args.get("sort", "")
+    order = request.args.get("order", "asc")
+    try:
+        agents = api_client.fetch_agents(search=search, category=category, sort=sort, order=order)
+    except APIError as e:
+        flash(f"Error fetching agents: {e.message}", "danger")
+        agents = []
+    except Exception as e:
+        app.logger.error(f"Marketplace error: {e}")
+        flash("An unexpected error occurred.", "danger")
+        agents = []
+    return render_template("marketplace.html", agents=agents, search=search, category=category, sort=sort, order=order)
 
-# ... [remaining routes preserved] ...
+# ... (rest of the existing routes preserved) ...
