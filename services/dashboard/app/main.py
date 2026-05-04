@@ -159,5 +159,21 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    tasks 
-# ... [TRUNCATED -- preserve when editing] ...
+    tasks = []
+    wallets = []
+    # Attempt to fetch data if the user is authenticated
+    try:
+        agents = api_client.get_agents(limit=50)
+    except (AuthRequiredError, APIError):
+        pass
+    try:
+        tasks = api_client.get_tasks()
+    except (AuthRequiredError, APIError):
+        pass
+    try:
+        wallets = api_client.get_wallets()
+    except (AuthRequiredError, APIError):
+        pass
+    return render_template("metaverse.html", agents=agents, tasks=tasks, wallets=wallets)
+
+# ... [REST OF FILE UNCHANGED]
