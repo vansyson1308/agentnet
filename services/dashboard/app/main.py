@@ -167,42 +167,178 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     try:
-        # Fetch a list of agents (public endpoint)
-        agents = api_client.fetch_agents(limit=12)
-        # Enrich with trust context
-        enriched = []
-        for agent in agents:
-            ctx = derive_trust_context(agent)
-            agent['trust'] = ctx
-            enriched.append(agent)
-        return render_template("metaverse.html", agents=enriched)
-    except APIError as e:
-        flash(f"Could not load agents: {e.message}", "warning")
-        return render_template("metaverse.html", agents=[])
-    except Exception as e:
-        app.logger.error(f"metaverse_page error: {e}")
-        flash("An error occurred loading the command center.", "danger")
-        return render_template("metaverse.html", agents=[])
+        agents = api_client.fetch_agents(limit=50) if "access_token" in session else []
+    except APIError:
+        agents = []
+        flash("Could not load agents. API unavailable.", "warning")
+
+    categories = set()
+    for a in agents:
+        for cap in a.get("capabilities", []):
+            categories.add(cap)
+    categories = sorted(categories)
+
+    return render_template(
+        "metaverse.html",
+        agents=agents,
+        categories=categories,
+        current_search=request.args.get("search", ""),
+        current_sort=request.args.get("sort", "name"),
+        current_order=request.args.get("order", "asc"),
+    )
+
+
+@app.route("/marketplace")
+def marketplace_page():
+    """Marketplace – browse public agents. No auth required."""
+    try:
+        search = request.args.get("search", "")
+        category = request.args.get("category", "")
+        sort = request.args.get("sort", "name")
+        order = request.args.get("order", "asc")
+        agents = api_client.fetch_agents(search=search, category=category, sort=sort, order=order)
+    except APIError:
+        agents = []
+        flash("Could not load marketplace. API unavailable.", "warning")
+    return render_template("marketplace.html", agents=agents)
+
+
+@app.route("/about")
+def about_page():
+    return render_template("about.html")
 
 
 # ============================================================
-# AUTHENTICATED ROUTES (require logged-in user)
+# AUTH ROUTES
 # ============================================================
 
-def login_required(f):
-    """Decorator to redirect unauthenticated users to login."""
-    from functools import wraps
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if "access_token" not in session:
-            flash("Please sign in to access this page.", "warning")
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+        if not username or not password:
+            flash("Username and password required.", "danger")
+            return render_template("login.html")
+        try:
+            result = api_client.login(username, password)
+            session["access_token"] = result.get("access_token")
+            session["user"] = {"username": username, "id": result.get("user_id")}
+            flash("Logged in successfully.", "success")
+            return redirect(url_for('metaverse_page'))
+        except APIError as e:
+            flash(f"Login failed: {e.message}", "danger")
+            return render_template("login.html")
+    return render_template("login.html")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register_page():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        email = request.form.get("email", "").strip()
+        password = request.form.get("password", "").strip()
+        if not username or not email or not password:
+            flash("All fields required.", "danger")
+            return render_template("register.html")
+        try:
+            api_client.register(username, email, password)
+            flash("Registration successful. Please log in.", "success")
             return redirect(url_for('login_page'))
-        return f(*args, **kwargs)
-    return decorated
+        except APIError as e:
+            flash(f"Registration failed: {e.message}", "danger")
+            return render_template("register.html")
+    return render_template("register.html")
 
 
-# Placeholder for other routes (marketplace, wallet, tasks, etc.)
-# They will be added in separate backlog items.
+@app.route("/logout")
+def logout_page():
+    session.clear()
+    flash("You have been logged out.", "info")
+    return redirect(url_for('metaverse_page'))
 
-# If you plan to add more routes, place them here.
-# For now, the metaverse_page above is the only public route.
+
+# ============================================================
+# PROTECTED ROUTES (auth required)
+# ============================================================
+
+@app.route("/directory")
+def directory_page():
+    return render_template("directory.html")
+
+
+@app.route("/wallet")
+def wallet_page():
+    try:
+        wallet = api_client.fetch_wallet()
+    except APIError:
+        wallet = None
+        flash("Could not load wallet.", "warning")
+    return render_template("wallet.html", wallet=wallet)
+
+
+@app.route("/tasks")
+def tasks_page():
+    try:
+        tasks = api_client.fetch_tasks()
+    except APIError:
+        tasks = []
+        flash("Could not load tasks.", "warning")
+    return render_template("tasks.html", tasks=tasks)
+
+
+@app.route("/collaboration")
+def collaboration_page():
+    try:
+        conversations = api_client.fetch_conversations()
+    except APIError:
+        conversations = []
+        flash("Could not load conversations.", "warning")
+    return render_template("collaboration.html", conversations=conversations)
+
+
+@app.route("/notifications")
+def notifications_page():
+    try:
+        notifications = api_client.fetch_notifications()
+    except APIError:
+        notifications = []
+        flash("Could not load notifications.", "warning")
+    return render_template("notifications.html", notifications=notifications)
+
+
+@app.route("/agents/register", methods=["GET", "POST"])
+def register_agent_page():
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        description = request.form.get("description", "").strip()
+        endpoint = request.form.get("endpoint", "").strip()
+        capabilities = request.form.get("capabilities", "").strip()
+        if not name:
+            flash("Agent name is required.", "danger")
+            return render_template("new_agent.html")
+        try:
+            caps_list = [c.strip() for c in capabilities.split(",") if c.strip()] if capabilities else []
+            api_client.register_agent(name=name, description=description, endpoint=endpoint, capabilities=caps_list)
+            flash("Agent registered successfully.", "success")
+            return redirect(url_for('my_agents_page'))
+        except APIError as e:
+            flash(f"Registration failed: {e.message}", "danger")
+            return render_template("new_agent.html")
+    return render_template("new_agent.html")
+
+
+@app.route("/my-agents")
+def my_agents_page():
+    try:
+        agents = api_client.fetch_my_agents()
+    except APIError:
+        agents = []
+        flash("Could not load your agents.", "warning")
+    return render_template("my_agents.html", agents=agents)
+
+
+@app.route("/offers/create", methods=["GET", "POST"])
+def create_offer_page():
+    # simplified stub; you can expand later
+    return render_template("create_offer.html")

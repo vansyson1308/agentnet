@@ -1,50 +1,94 @@
 {% extends "base.html" %}
-{% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
+{% block title %}J.A.R.V.I.S. — Metaverse Command Center{% endblock %}
 
 {% block content %}
-<div style="max-width:1000px;margin:2rem auto;">
-    <div style="text-align:center;margin-bottom:2rem;">
-        <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">🚀 Command Center</h1>
-        <p style="color:var(--text-secondary);font-size:0.9rem;">Overview of registered agents performance and trust</p>
+<div style="max-width:1100px;margin:2rem auto;">
+    <div style="text-align:center;margin-bottom:1.5rem;">
+        <h1 style="font-size:1.6rem;font-weight:800;color:#fff;">🌐 Metaverse Command Center</h1>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">Monitor and manage the agent network</p>
     </div>
 
-    <div class="grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.2rem;">
-        {% for agent in agents %}
-        <div class="card" style="padding:1.2rem;position:relative;">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.5rem;">
-                <h3 style="margin:0;font-size:1rem;font-weight:700;color:#fff;">{{ agent.name }}</h3>
-                <span class="badge" style="background:{{ agent.trust.color }}22;color:{{ agent.trust.color }};padding:2px 8px;border-radius:12px;font-size:0.7rem;font-weight:600;">
-                    {{ agent.trust.tier }}
-                </span>
-            </div>
-            <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:0.8rem;">
-                {{ agent.description or 'No description provided.' }}
-            </p>
-            <div style="display:flex;gap:1.2rem;font-size:0.78rem;">
-                <div>
-                    <span style="color:var(--text-muted);">Success</span>
-                    <span style="color:{{ agent.trust.color }};font-weight:600;">{{ agent.trust.success_percent }}</span>
+    {% if not session.access_token %}
+    <div class="card" style="text-align:center;padding:2rem;">
+        <p style="color:var(--text-muted);font-size:0.95rem;">Sign in to see your agents, tasks, and wallet.</p>
+        <a href="{{ url_for('login_page') }}" class="btn btn-primary" style="margin-top:0.5rem;">Sign In</a>
+    </div>
+    {% else %}
+    <div class="card" style="padding:1.5rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem;">
+            <h2 style="font-size:1.1rem;margin:0;">Registered Agents ({{ agents|length }})</h2>
+            <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm" style="font-size:0.78rem;padding:6px 14px;">+ New Agent</a>
+        </div>
+
+        <!-- Search & Sort (optional) -->
+        <form method="get" action="{{ url_for('metaverse_page') }}" style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+            <input type="text" name="search" placeholder="Search agents..." value="{{ current_search }}" style="flex:1;min-width:200px;">
+            <select name="sort">
+                <option value="name" {% if current_sort == 'name' %}selected{% endif %}>Name</option>
+                <option value="created_at" {% if current_sort == 'created_at' %}selected{% endif %}>Newest</option>
+            </select>
+            <select name="order">
+                <option value="asc" {% if current_order == 'asc' %}selected{% endif %}>Ascending</option>
+                <option value="desc" {% if current_order == 'desc' %}selected{% endif %}>Descending</option>
+            </select>
+            <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+        </form>
+
+        {% if agents %}
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
+            {% for agent in agents %}
+            {% set tc = agent|trust_context %}
+            <div class="card" style="padding:1rem;border:1px solid var(--border-glow);">
+                <div style="display:flex;justify-content:space-between;align-items:start;">
+                    <div>
+                        <strong style="color:#fff;font-size:0.95rem;">{{ agent.name }}</strong>
+                        <span style="display:inline-block;margin-left:0.4rem;padding:0.1rem 0.4rem;border-radius:4px;font-size:0.65rem;background:{{ tc.color }};color:#fff;">{{ tc.label }}</span>
+                    </div>
+                    <span style="font-size:0.68rem;color:var(--text-muted);">Tier: {{ tc.tier }}</span>
                 </div>
-                <div>
-                    <span style="color:var(--text-muted);">Timeouts</span>
-                    <span style="color:{% if agent.trust.timeouts %}#ef4444{% else %}#10b981{% endif %};font-weight:600;">{{ agent.trust.timeouts }}</span>
+                <p style="color:var(--text-secondary);font-size:0.8rem;margin-top:0.4rem;">{{ agent.description or 'No description' }}</p>
+                <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-muted);margin-top:0.5rem;border-top:1px solid var(--border-glow);padding-top:0.4rem;">
+                    <span>✅ {{ agent.total_tasks_completed or 0 }} tasks</span>
+                    <span>⏱ {{ tc.timeouts }} timeouts</span>
+                    <span>📈 {{ tc.success_percent }}</span>
                 </div>
-                <div>
-                    <span style="color:var(--text-muted);">Tasks</span>
-                    <span style="color:#fff;font-weight:600;">{{ agent.trust.total }}</span>
+                {% if agent.capabilities %}
+                <div style="display:flex;flex-wrap:wrap;gap:0.25rem;margin-top:0.4rem;">
+                    {% for cap in agent.capabilities[:3] %}
+                    <span style="padding:0.1rem 0.4rem;border-radius:4px;background:rgba(255,255,255,0.05);font-size:0.65rem;color:var(--text-muted);">{{ cap }}</span>
+                    {% endfor %}
+                    {% if agent.capabilities|length > 3 %}
+                    <span style="font-size:0.65rem;color:var(--text-muted);">+{{ agent.capabilities|length - 3 }} more</span>
+                    {% endif %}
                 </div>
+                {% endif %}
             </div>
-            <div style="margin-top:0.8rem;padding-top:0.8rem;border-top:1px solid var(--border-glow);">
-                <span style="font-size:0.7rem;color:var(--text-muted);">Trust: </span>
-                <span style="font-size:0.75rem;color:{{ agent.trust.color }};font-weight:500;">{{ agent.trust.label }}</span>
-            </div>
+            {% endfor %}
         </div>
         {% else %}
-        <div style="grid-column:1/-1;text-align:center;padding:3rem 0;">
+        <div style="text-align:center;padding:2rem 0;">
             <div style="font-size:3rem;margin-bottom:0.5rem;">🤖</div>
-            <p style="color:var(--text-muted);font-size:0.9rem;">No agents available yet. Register one to get started.</p>
+            <p style="color:var(--text-muted);">No agents found. Register your first agent to get started.</p>
+            <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:0.5rem;">Register Agent</a>
         </div>
-        {% endfor %}
+        {% endif %}
     </div>
+
+    <!-- Quick stats / actions -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-top:1.5rem;">
+        <div class="card" style="text-align:center;padding:1rem;">
+            <h3 style="font-size:1.5rem;color:#10b981;margin:0;">{{ agents|length }}</h3>
+            <p style="color:var(--text-muted);font-size:0.78rem;">Agents</p>
+        </div>
+        <div class="card" style="text-align:center;padding:1rem;">
+            <h3 style="font-size:1.5rem;color:#3b82f6;margin:0;">--</h3>
+            <p style="color:var(--text-muted);font-size:0.78rem;">Active Tasks</p>
+        </div>
+        <div class="card" style="text-align:center;padding:1rem;">
+            <h3 style="font-size:1.5rem;color:#8b5cf6;margin:0;">--</h3>
+            <p style="color:var(--text-muted);font-size:0.78rem;">Wallet Balance</p>
+        </div>
+    </div>
+    {% endif %}
 </div>
 {% endblock %}
