@@ -2,68 +2,39 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div class="command-center">
-    <div style="text-align:center;margin-bottom:2rem;">
-        <h1 style="font-size:2rem;font-weight:900;color:#fff;letter-spacing:-0.5px;">⚡ Command Center</h1>
-        <p style="color:var(--text-secondary);font-size:0.9rem;">Monitor your agents and task activity in real time.</p>
-    </div>
+<div style="text-align:center;margin-bottom:2rem;">
+    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">🌐 Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.9rem;">Monitor your agents and tasks in real-time</p>
+</div>
 
-    <!-- Agents Section -->
-    <section style="margin-bottom:3rem;">
-        <h2 style="font-size:1.2rem;font-weight:700;color:var(--text-primary);margin-bottom:1rem;">🔧 Active Agents</h2>
+<div class="row" style="display:flex;gap:1.5rem;flex-wrap:wrap;">
+    <div class="card" style="flex:1;min-width:300px;">
+        <h2 style="font-size:1.2rem;margin-bottom:1rem;">Agents ({{ agents|length }})</h2>
         {% if agents %}
-        <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:1rem;">
+        <ul style="list-style:none;padding:0;">
             {% for agent in agents %}
-            {% set ctx = agent|trust_context %}
-            <div class="card" style="padding:1.2rem;position:relative;overflow:hidden;">
-                <div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:0.3rem;">{{ agent.get('name','Unnamed') }}</div>
-                <div style="font-weight:600;font-size:1.1rem;color:var(--accent);">{{ agent.get('capability','general')|capitalize }}</div>
-                <div style="margin-top:0.8rem;display:flex;align-items:center;gap:0.5rem;">
-                    <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{{ ctx.color }};"></span>
-                    <span style="font-size:0.8rem;color:{{ ctx.color }};">{{ ctx.label }}</span>
-                </div>
-                <div style="margin-top:0.5rem;font-size:0.72rem;color:var(--text-muted);display:flex;gap:0.8rem;flex-wrap:wrap;">
-                    <span>✅ {{ ctx.success_percent }}</span>
-                    <span>⏱️ {{ ctx.timeouts }} timeouts</span>
-                    <span>🏅 {{ ctx.tier }}</span>
-                </div>
-                <div style="margin-top:0.8rem;display:flex;gap:0.5rem;flex-wrap:wrap;">
-                    {% for cap in (agent.get('capabilities') or [])[:3] %}
-                    <span style="background:var(--glass-bg);padding:2px 10px;border-radius:12px;font-size:0.68rem;border:1px solid var(--border-glow);">{{ cap }}</span>
-                    {% endfor %}
-                </div>
-            </div>
+            <li style="padding:0.5rem 0;border-bottom:1px solid var(--border-color);">
+                <strong>{{ agent.name }}</strong> — {{ agent.capabilities|join(', ') if agent.capabilities else 'No capabilities' }}
+            </li>
             {% endfor %}
-        </div>
+        </ul>
         {% else %}
-        <div class="card" style="text-align:center;padding:2rem;color:var(--text-muted);">
-            <p>No agents found. <a href="{{ url_for('register_agent_page') }}" style="color:var(--accent);text-decoration:underline;">Deploy your first agent</a></p>
-        </div>
+        <p style="color:var(--text-muted);">No agents found. Sign in to see your agents.</p>
         {% endif %}
-    </section>
-
-    <!-- Tasks Section -->
-    <section>
-        <h2 style="font-size:1.2rem;font-weight:700;color:var(--text-primary);margin-bottom:1rem;">📋 Recent Tasks</h2>
+    </div>
+    <div class="card" style="flex:1;min-width:300px;">
+        <h2 style="font-size:1.2rem;margin-bottom:1rem;">Tasks ({{ tasks|length }})</h2>
         {% if tasks %}
-        <div style="display:grid;grid-template-columns:1fr;gap:0.6rem;">
+        <ul style="list-style:none;padding:0;">
             {% for task in tasks %}
-            <div class="card" style="padding:0.9rem 1.2rem;display:flex;justify-content:space-between;align-items:center;">
-                <div>
-                    <span style="font-weight:500;color:var(--text-primary);">{{ task.get('name','Task') }}</span>
-                    <span style="font-size:0.75rem;color:var(--text-muted);margin-left:0.8rem;">{{ task.get('status','unknown') }}</span>
-                </div>
-                <div style="font-size:0.72rem;color:var(--text-secondary);">
-                    {{ task.get('created_at','')[:19]|replace('T',' ') }}
-                </div>
-            </div>
+            <li style="padding:0.5rem 0;border-bottom:1px solid var(--border-color);">
+                <strong>{{ task.description or task.id }}</strong> — Status: {{ task.status }}
+            </li>
             {% endfor %}
-        </div>
+        </ul>
         {% else %}
-        <div class="card" style="text-align:center;padding:2rem;color:var(--text-muted);">
-            <p>No tasks yet. Agents will appear here when they execute.</p>
-        </div>
+        <p style="color:var(--text-muted);">No tasks yet.</p>
         {% endif %}
-    </section>
+    </div>
 </div>
 {% endblock %}
