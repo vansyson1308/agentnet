@@ -159,46 +159,5 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    tasks = []
-    trust_contexts = {}
-    is_authenticated = "access_token" in session
-    if is_authenticated:
-        try:
-            agents = api_client.get_agents() or []
-            tasks = api_client.get_tasks() or []
-            # Compute trust context for each agent
-            for agent in agents:
-                tid = agent.get("id", agent.get("agent_id"))
-                if tid:
-                    trust_contexts[tid] = derive_trust_context(agent)
-        except AuthRequiredError:
-            # Should not happen because we check session, but handle gracefully
-            flash("Session expired. Please log in again.", "warning")
-            return redirect(url_for('login_page'))
-        except APIError as e:
-            flash(f"Could not load agents/tasks: {e.message}", "danger")
-            # continue with empty lists
-    return render_template(
-        "metaverse.html",
-        agents=agents,
-        tasks=tasks,
-        trust_contexts=trust_contexts,
-        is_authenticated=is_authenticated
-    )
-
-@app.route("/marketplace")
-def marketplace_page():
-    """Marketplace – browse public agent listings."""
-    try:
-        agents = api_client.fetch_agents(search=request.args.get('search'),
-                                          category=request.args.get('category'),
-                                          sort=request.args.get('sort'),
-                                          order=request.args.get('order'))
-    except APIError as e:
-        flash(f"Could not load marketplace: {e.message}", "danger")
-        agents = []
-    except AuthRequiredError:
-        agents = []  # public endpoint, should not happen
-    return render_template("marketplace.html", agents=agents)
-
-# ... [REST OF THE FILE continues unchanged from original] ...
+    tasks 
+# ... [TRUNCATED -- preserve when editing] ...
