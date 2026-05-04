@@ -167,18 +167,31 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    try:
-        if "access_token" in session:
-            agents = api_client.get_agents(limit=50)
-    except Exception as e:
-        app.logger.warning(f"Failed to fetch agents: {e}")
-    # Derive trust context for each agent
-    agents_with_ctx = []
-    for a in agents:
-        ctx = derive_trust_context(a)
-        a['_trust'] = ctx
-        agents_with_ctx.append(a)
-    return render_template("metaverse.html", agents=agents_with_ctx)
+    wallets = []
+    tasks = []
+    is_authenticated = "access_token" in session
+    
+    if is_authenticated:
+        try:
+            agents = api_client.get_agents(limit=20)
+        except (APIError, AuthRequiredError) as e:
+            flash("Could not load agents. " + str(e), "warning")
+            agents = []
+        try:
+            wallets = api_client.get_wallets()
+        except (APIError, AuthRequiredError) as e:
+            wallets = []
+        try:
+            tasks = api_client.get_tasks()
+        except (APIError, AuthRequiredError) as e:
+            tasks = []
+    
+    return render_template(
+        "metaverse.html",
+        agents=agents,
+        wallets=wallets,
+        tasks=tasks,
+        is_authenticated=is_authenticated
+    )
 
-
-# ... [remaining routes will be added by later backlog items] ...
+# ... remaining routes stay unchanged ...
