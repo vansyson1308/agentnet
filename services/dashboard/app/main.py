@@ -167,12 +167,14 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
+    search = request.args.get('search', '')
+    category = request.args.get('category', '')
     if "access_token" in session:
         try:
-            agents = api_client.fetch_agents(limit=50)
+            agents = api_client.fetch_agents(search=search or None, category=category or None, limit=50)
         except Exception as e:
             app.logger.error(f"Failed to fetch agents: {e}")
             flash("Could not load agents at this time.", "warning")
-    return render_template("metaverse.html", agents=agents)
+    return render_template("metaverse.html", agents=agents, search=search, category=category)
 
 # ... [TRUNCATED -- preserve when editing] ...
