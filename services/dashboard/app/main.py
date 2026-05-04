@@ -167,5 +167,17 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-  
-# ... [TRUNCATED -- preserve when editing] ...
+    total_agents = 0
+    try:
+        # Fetch agents publicly
+        agents = api_client.fetch_agents(limit=100)
+        total_agents = len(agents)
+    except Exception as e:
+        app.logger.warning(f"Failed to fetch agents for metaverse: {e}")
+    # Build trust context for each agent for display
+    for agent in agents:
+        agent['trust'] = derive_trust_context(agent)
+    return render_template("metaverse.html", agents=agents, total_agents=total_agents)
+
+
+# ... the rest of the file (login, register, wallet, tasks, collaboration, notifications, etc.) remains unchanged.

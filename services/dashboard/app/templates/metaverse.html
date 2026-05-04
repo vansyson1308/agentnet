@@ -2,64 +2,47 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="margin-bottom:1.5rem;">
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
-        <div>
-            <h1 style="font-size:1.6rem;font-weight:800;color:#fff;margin:0;">⚡ Command Center</h1>
-            <p style="color:var(--text-secondary);font-size:0.85rem;margin:4px 0 0 0;">Your agent network overview</p>
+<div class="metaverse-hero" style="text-align:center;padding:3rem 1rem 2rem;">
+    <h1 style="font-size:2.2rem;font-weight:900;color:#fff;margin-bottom:0.5rem;">Welcome to the Metaverse</h1>
+    <p style="color:var(--text-secondary);font-size:1rem;max-width:600px;margin:0 auto 2rem;">
+        Your AI agent command center. Browse, deploy, and interact with intelligent agents.
+    </p>
+    <div class="stats-grid" style="display:flex;gap:1.5rem;justify-content:center;flex-wrap:wrap;">
+        <div class="card" style="min-width:180px;text-align:center;padding:1.5rem;">
+            <div style="font-size:2.5rem;font-weight:800;color:var(--accent);">{{ total_agents }}</div>
+            <div style="color:var(--text-secondary);font-size:0.85rem;">Registered Agents</div>
         </div>
-        {% if is_authenticated %}
-        <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm" style="font-size:0.78rem;padding:6px 14px;">+ Register Agent</a>
-        {% endif %}
+        <div class="card" style="min-width:180px;text-align:center;padding:1.5rem;">
+            <div style="font-size:2.5rem;font-weight:800;color:var(--accent);">{{ agents|selectattr('trust.tier', 'equalto', 'Legendary')|list|length }}</div>
+            <div style="color:var(--text-secondary);font-size:0.85rem;">Legendary Tiers</div>
+        </div>
+        <div class="card" style="min-width:180px;text-align:center;padding:1.5rem;">
+            <div style="font-size:2.5rem;font-weight:800;color:var(--accent);">{{ agents|selectattr('trust.label', 'equalto', 'Highly Reliable')|list|length }}</div>
+            <div style="color:var(--text-secondary);font-size:0.85rem;">Highly Reliable</div>
+        </div>
     </div>
 </div>
 
-{% if agents %}
-<div class="agent-grid">
-    {% for agent in agents %}
-    <div class="card agent-card" style="padding:1.2rem;border-left:4px solid {{ derive_trust_context(agent).color if derive_trust_context else '#3b82f6' }};">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.5rem;">
-            <h3 style="margin:0;font-size:1rem;color:#fff;">{{ agent.name }}</h3>
-            <span style="font-size:0.7rem;padding:2px 8px;border-radius:4px;background:{{ derive_trust_context(agent).color }}20;color:{{ derive_trust_context(agent).color }};border:1px solid {{ derive_trust_context(agent).color }}40;">
-                {{ derive_trust_context(agent).tier }}
-            </span>
+<div class="agent-grid" style="margin-top:2rem;">
+    <h2 style="font-size:1.2rem;font-weight:700;color:#fff;margin-bottom:1rem;">Featured Agents</h2>
+    {% if agents %}
+    <div class="grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
+        {% for agent in agents[:6] %}
+        <div class="card" style="padding:1rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <h3 style="font-size:1rem;font-weight:700;color:#fff;margin:0;">{{ agent.name }}</h3>
+                <span class="badge" style="background:{{ agent.trust.color }};color:#fff;font-size:0.7rem;padding:2px 8px;border-radius:4px;">{{ agent.trust.tier }}</span>
+            </div>
+            <p style="color:var(--text-secondary);font-size:0.78rem;margin:0.5rem 0;">{{ agent.description[:100] or 'No description' }}</p>
+            <div style="display:flex;gap:0.5rem;margin-top:0.5rem;font-size:0.7rem;color:var(--text-muted);">
+                <span>✅ {{ agent.trust.success_percent }}</span>
+                <span>⏱ {{ agent.trust.timeouts }} timeouts</span>
+            </div>
         </div>
-        {% if agent.description %}
-        <p style="font-size:0.8rem;color:var(--text-muted);margin:0 0 0.6rem 0;">{{ agent.description }}</p>
-        {% endif %}
-        <div style="display:flex;gap:1rem;font-size:0.75rem;color:var(--text-secondary);">
-            <span>⬆️ {{ derive_trust_context(agent).success_percent }}</span>
-            <span>⏱️ {{ derive_trust_context(agent).timeouts }} timeouts</span>
-        </div>
+        {% endfor %}
     </div>
-    {% endfor %}
-</div>
-{% else %}
-<div class="empty-state" style="text-align:center;padding:4rem 1rem;">
-    <div style="font-size:3rem;margin-bottom:1rem;">📡</div>
-    <h2 style="color:#fff;font-size:1.2rem;">No agents deployed yet</h2>
-    {% if is_authenticated %}
-    <p style="color:var(--text-secondary);font-size:0.85rem;">Register your first agent to get started.</p>
-    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">Register Agent</a>
     {% else %}
-    <p style="color:var(--text-secondary);font-size:0.85rem;">Sign in to view your agents and manage the network.</p>
-    <a href="{{ url_for('login_page') }}" class="btn btn-secondary" style="margin-top:1rem;">Sign In</a>
+    <p style="color:var(--text-secondary);text-align:center;padding:3rem;">No agents found in the metaverse yet. Check back later.</p>
     {% endif %}
 </div>
-{% endif %}
-
-<style>
-.agent-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 1rem;
-}
-.agent-card {
-    transition: transform 0.2s, box-shadow 0.2s;
-}
-.agent-card:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--jarvis-glow);
-}
-</style>
 {% endblock %}
