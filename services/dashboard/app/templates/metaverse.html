@@ -2,84 +2,99 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="text-align:center;margin-bottom:1.5rem;">
-    <h1 style="font-size:1.6rem;font-weight:800;color:#fff;">⚡ Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.85rem;">
-        {{ agents|length }} agent{{ 's' if agents|length != 1 }} registered in the network
+<div style="text-align:center;margin-bottom:2rem;">
+    <h1 style="font-size:2rem;font-weight:900;color:#fff;letter-spacing:-0.5px;">⚡ Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.9rem;max-width:600px;margin:0 auto;">
+        Monitor, deploy, and orchestrate AI agents across the AgentNet metaverse.
     </p>
-    {% if is_logged_in %}
-    <a href="{{ url_for('directory_page') }}" class="btn btn-secondary btn-sm" style="margin-top:0.5rem;">Manage Agents</a>
-    {% endif %}
 </div>
 
+{% if not agents %}
+<div class="card" style="text-align:center;padding:3rem;">
+    <p style="color:var(--text-secondary);font-size:1.1rem;">No agents registered yet. Be the first to deploy one.</p>
+    {% if is_logged_in %}
+    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">Register Agent</a>
+    {% endif %}
+</div>
+{% else %}
 <div class="agent-grid">
     {% for agent in agents %}
-    <a href="{{ url_for('agent_detail_page', agent_id=agent.id) }}" class="agent-card card" style="display:block;text-decoration:none;">
-        <div class="agent-card-header">
-            <h3 style="margin:0;font-weight:700;color:#fff;">{{ agent.name }}</h3>
-            {% if agent.status %}
-            <span class="badge badge-{{ 'success' if agent.status == 'active' else 'secondary' }}"
-                  style="font-size:0.7rem;">{{ agent.status }}</span>
+    <div class="card agent-card">
+        <div class="agent-header">
+            <h3>{{ agent.name }}</h3>
+            <span class="trust-badge" style="background:{{ agent.trust.color }};">{{ agent.trust.label }}</span>
+        </div>
+        <p class="agent-description">{{ agent.description or 'No description' }}</p>
+        <div class="agent-meta">
+            <span>🔄 {{ agent.trust.total }} tasks</span>
+            <span>✅ {{ agent.trust.success_percent }}</span>
+            {% if agent.trust.timeouts > 0 %}
+            <span>⏱️ {{ agent.trust.timeouts }} timeouts</span>
             {% endif %}
         </div>
-        <p style="font-size:0.82rem;color:var(--text-secondary);margin:0.3rem 0 0.5rem;">
-            {{ agent.description[:120] }}{% if agent.description|length > 120 %}…{% endif %}
-        </p>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem;">
-            {% for cap in (agent.capabilities or [])[:3] %}
-            <span class="tag">{{ cap }}</span>
-            {% endfor %}
+        <div class="agent-actions">
+            <a href="{{ url_for('agent_detail_page', agent_id=agent.id) }}" class="btn btn-secondary btn-sm">View</a>
         </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.78rem;">
-            <span style="color:var(--text-muted);">
-                {% if agent.total_tasks_completed is defined %}
-                📊 {{ agent.total_tasks_completed }} tasks
-                {% else %}
-                🆕 New
-                {% endif %}
-            </span>
-            {% if agent.trust %}
-            <span style="color:{{ agent.trust.color }};font-weight:600;">{{ agent.trust.label }}</span>
-            {% endif %}
-        </div>
-    </a>
-    {% else %}
-    <div style="grid-column:1/-1;text-align:center;padding:3rem 0;color:var(--text-muted);">
-        <p style="font-size:1.1rem;">No agents found yet.</p>
-        <p style="font-size:0.85rem;">
-            {% if is_logged_in %}
-            <a href="{{ url_for('register_agent_page') }}">Register the first agent</a>
-            {% else %}
-            Sign in to register an agent.
-            {% endif %}
-        </p>
     </div>
     {% endfor %}
 </div>
+{% endif %}
+{% endblock %}
 
+{% block extra_scripts %}
 <style>
-    .agent-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 1rem;
-    }
-    .agent-card {
-        padding: 1rem;
-        border-radius: 12px;
-        transition: transform 0.2s, box-shadow 0.2s;
-    }
-    .agent-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 30px rgba(0,0,0,0.3);
-    }
-    .tag {
-        display: inline-block;
-        background: rgba(99,102,241,0.15);
-        color: #818cf8;
-        font-size: 0.72rem;
-        padding: 2px 8px;
-        border-radius: 6px;
-        border: 1px solid rgba(99,102,241,0.25);
-    }
+.agent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.5rem;
+    margin-top: 1rem;
+}
+.agent-card {
+    padding: 1.25rem;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--border-glow);
+    border-radius: 12px;
+    transition: box-shadow 0.3s;
+}
+.agent-card:hover {
+    box-shadow: var(--jarvis-glow);
+}
+.agent-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+.agent-header h3 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #fff;
+    margin: 0;
+}
+.trust-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 6px;
+    color: #fff;
+    white-space: nowrap;
+}
+.agent-description {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    margin-bottom: 0.75rem;
+    line-height: 1.4;
+}
+.agent-meta {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+}
+.agent-actions {
+    text-align: right;
+}
 </style>
 {% endblock %}
