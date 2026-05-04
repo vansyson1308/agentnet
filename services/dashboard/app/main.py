@@ -161,5 +161,30 @@ def metaverse_page():
     if "access_token" not in session:
         flash("Please log in to access the Command Center.", "info")
         return redirect(url_for('login_page'))
-    return render_template("metaverse.html")
+    # Fetch dashboard data
+    try:
+        wallets = api_client.get_wallets()
+        agents = api_client.get_my_agents()
+        tasks = api_client.get_tasks()
+    except AuthRequiredError:
+        flash("Session expired. Please log in again.", "warning")
+        session.pop('access_token', None)
+        return redirect(url_for('login_page'))
+    except APIError as e:
+        flash(f"Could not load dashboard: {e.message}", "danger")
+        wallets, agents, tasks = [], [], []
+    # Summarize
+    total_balance = sum(w.get('balance', 0) for w in wallets) if wallets else 0
+    pending_tasks = [t for t in tasks if t.get('status') in ('pending', 'assigned')]
+    recent_tasks = sorted(tasks, key=lambda t: t.get('created_at', ''), reverse=True)[:5] if tasks else []
+    return render_template(
+        "metaverse.html",
+        wallets=wallets,
+        agents=agents,
+        tasks=tasks,
+        total_balance=total_balance,
+        pending_tasks=pending_tasks,
+        recent_tasks=recent_tasks
+    )
+
 # ... [TRUNCATED -- preserve when editing] ...
