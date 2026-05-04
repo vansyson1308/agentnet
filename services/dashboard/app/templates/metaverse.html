@@ -1,71 +1,48 @@
 {% extends "base.html" %}
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
-
 {% block content %}
-<div style="max-width:960px;margin:0 auto;">
+<div class="metaverse-dashboard">
     <div style="text-align:center;margin-bottom:2rem;">
-        <h1 style="font-size:2rem;font-weight:800;">🌌 Command Center</h1>
-        <p style="color:var(--text-secondary);">Your central hub to manage agents, tasks, and the network.</p>
+        <h1 style="font-size:2rem;font-weight:800;color:#fff;">Command Center</h1>
+        <p style="color:var(--text-secondary);font-size:0.9rem;">Manage your agents, monitor tasks, and explore the network.</p>
     </div>
-
-    <!-- Quick stats -->
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:2rem;">
-        <div class="card" style="text-align:center;padding:1.5rem;">
-            <div style="font-size:2rem;font-weight:700;">{{ agents|length }}</div>
-            <div style="color:var(--text-secondary);font-size:0.85rem;">Your Agents</div>
-        </div>
-        <div class="card" style="text-align:center;padding:1.5rem;">
-            <div style="font-size:2rem;font-weight:700;">{{ tasks|length }}</div>
-            <div style="color:var(--text-secondary);font-size:0.85rem;">Active Tasks</div>
-        </div>
-        <div class="card" style="text-align:center;padding:1.5rem;">
-            <div style="font-size:2rem;font-weight:700;">⏱️</div>
-            <div style="color:var(--text-secondary);font-size:0.85rem;">Network Latency</div>
-        </div>
-    </div>
-
-    <!-- Quick actions -->
-    <div style="display:flex;flex-wrap:wrap;gap:0.75rem;justify-content:center;margin-bottom:2rem;">
-        <a href="{{ url_for('wallet_page') }}" class="btn btn-primary">💰 Wallet</a>
-        <a href="{{ url_for('tasks_page') }}" class="btn btn-primary">📋 Tasks</a>
-        <a href="{{ url_for('marketplace_page') }}" class="btn btn-primary">🏪 Marketplace</a>
-        <a href="{{ url_for('directory_page') }}" class="btn btn-primary">📇 Directory</a>
-        <a href="{{ url_for('collaboration_page') }}" class="btn btn-primary">💬 Chat</a>
-        <a href="{{ url_for('notifications_page') }}" class="btn btn-primary">🔔 Notifications</a>
-        <a href="{{ url_for('register_agent_page') }}" class="btn btn-secondary">➕ New Agent</a>
-    </div>
-
-    <!-- Recent agents -->
-    <div class="card" style="margin-bottom:1.5rem;">
-        <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:0.75rem;">Your Agents</h2>
+    <!-- Agents Section -->
+    <div class="card" style="margin-bottom:2rem;">
+        <h2>Your Agents</h2>
         {% if agents %}
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0.75rem;">
-            {% for agent in agents[:6] %}
-            <div style="background:var(--glass-bg);border-radius:10px;padding:0.75rem;border:1px solid var(--border-glow);">
-                <strong>{{ agent.get('name','Unnamed') }}</strong><br>
-                <span style="font-size:0.75rem;color:var(--text-secondary);">{{ agent.get('capabilities',[])|join(', ') }}</span>
+        <div class="agent-grid">
+            {% for agent in agents %}
+            <div class="agent-card">
+                <h3>{{ agent.name }}</h3>
+                <p>{{ agent.description | truncate(100) }}</p>
+                <span class="badge">{{ agent.status }}</span>
             </div>
             {% endfor %}
         </div>
         {% else %}
-        <p style="color:var(--text-muted);">No agents registered yet. <a href="{{ url_for('register_agent_page') }}">Create one</a>.</p>
+        <p>No agents registered yet. <a href="{{ url_for('register_agent_page') }}">Register one</a>.</p>
         {% endif %}
     </div>
-
-    <!-- Recent tasks -->
-    <div class="card">
-        <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:0.75rem;">Recent Tasks</h2>
+    <!-- Tasks Section -->
+    <div class="card" style="margin-bottom:2rem;">
+        <h2>Recent Tasks</h2>
         {% if tasks %}
-        <ul style="list-style:none;padding:0;">
-            {% for task in tasks[:5] %}
-            <li style="padding:0.5rem 0;border-bottom:1px solid var(--border-subtle);display:flex;justify-content:space-between;">
-                <span>{{ task.get('description','No description') }}</span>
-                <span style="font-size:0.75rem;color:var(--text-muted);">{{ task.get('status','unknown') }}</span>
-            </li>
-            {% endfor %}
-        </ul>
+        <table class="table">
+            <thead>
+                <tr><th>ID</th><th>Status</th><th>Created</th></tr>
+            </thead>
+            <tbody>
+                {% for task in tasks %}
+                <tr>
+                    <td>{{ task.id[:8] }}...</td>
+                    <td>{{ task.status }}</td>
+                    <td>{{ task.created_at }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
         {% else %}
-        <p style="color:var(--text-muted);">No tasks assigned.</p>
+        <p>No tasks yet.</p>
         {% endif %}
     </div>
 </div>
