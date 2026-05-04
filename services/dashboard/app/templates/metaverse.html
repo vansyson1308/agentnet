@@ -2,63 +2,60 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="margin: 1.5rem 0;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-        <div>
-            <h1 style="font-size: 1.8rem; font-weight: 800; color: #fff; margin: 0;">Command Center</h1>
-            <p style="color: var(--text-secondary); margin-top: 0.3rem;">Overview of the agent ecosystem</p>
-        </div>
-        {% if is_logged_in %}
-        <a href="{{ url_for('new_agent_page') }}" class="btn btn-primary">+ Register Agent</a>
+<div style="max-width:1280px;margin:2rem auto;">
+    <div style="text-align:center;margin-bottom:2rem;">
+        <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">⚡ Command Center</h1>
+        <p style="color:var(--text-secondary);font-size:0.9rem;">Browse the agent network — reputation and trust at a glance</p>
+        {% if not is_logged_in %}
+        <p style="color:var(--text-muted);font-size:0.78rem;margin-top:0.5rem;">
+            <a href="{{ url_for('login_page') }}" style="color:var(--accent);">Sign in</a> to manage your own agents.
+        </p>
         {% endif %}
     </div>
 
-    <div class="card" style="padding: 1.5rem;">
-        {% if agents %}
-        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem;">
-            {% for agent in agents %}
-            <div class="card" style="padding: 1rem; border: 1px solid var(--border-glow); background: var(--glass-bg); backdrop-filter: blur(8px);">
-                <div style="display: flex; justify-content: space-between; align-items: start;">
-                    <div>
-                        <h3 style="margin: 0 0 0.3rem; font-size: 1rem; color: #fff;">{{ agent.name }}</h3>
-                        <p style="margin: 0; color: var(--text-muted); font-size: 0.78rem;">
-                            {{ agent.description | truncate(80) }}
-                        </p>
-                    </div>
-                    <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: {{ agent.trust.color }};" title="{{ agent.trust.label }}"></span>
-                </div>
-                <div style="margin-top: 0.75rem; display: flex; gap: 0.6rem; flex-wrap: wrap; font-size: 0.72rem; color: var(--text-secondary);">
-                    <span>{{ agent.trust.tier }}</span>
-                    <span>{{ agent.trust.success_percent }} success</span>
-                    {% if agent.trust.total > 0 %}
-                    <span>{{ agent.trust.total }} tasks</span>
-                    {% else %}
-                    <span>No tasks yet</span>
-                    {% endif %}
-                </div>
-                {% if agent.capabilities %}
-                <div style="margin-top: 0.5rem; display: flex; gap: 0.4rem; flex-wrap: wrap;">
-                    {% for cap in agent.capabilities[:3] %}
-                    <span class="badge badge-secondary">{{ cap }}</span>
-                    {% endfor %}
-                    {% if agent.capabilities | length > 3 %}
-                    <span class="badge badge-secondary">+{{ agent.capabilities | length - 3 }}</span>
-                    {% endif %}
-                </div>
-                {% endif %}
-                <a href="{{ url_for('agent_detail', agent_id=agent.id) }}" style="display: inline-block; margin-top: 0.75rem; font-size: 0.78rem; color: var(--color-accent);">View Details →</a>
+    {% if agents %}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.25rem;">
+        {% for agent in agents %}
+        <div class="card" style="padding:1.25rem;position:relative;overflow:hidden;">
+            <!-- trust badge -->
+            <div style="position:absolute;top:12px;right:12px;background:{{ agent.trust.color }};color:#fff;border-radius:20px;padding:2px 10px;font-size:0.7rem;font-weight:600;letter-spacing:0.3px;">
+                {{ agent.trust.label }}
             </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <div style="text-align: center; padding: 3rem 0;">
-            <div style="font-size: 3rem; margin-bottom: 0.5rem;">🤖</div>
-            <p style="color: var(--text-muted);">No agents registered yet. The ecosystem is growing.</p>
-            {% if is_logged_in %}
-            <a href="{{ url_for('new_agent_page') }}" class="btn btn-primary" style="margin-top: 0.5rem;">Register the First Agent</a>
+
+            <div style="margin-bottom:0.75rem;">
+                <h3 style="font-size:1rem;font-weight:700;color:#fff;margin:0;">{{ agent.name }}</h3>
+                <span style="font-size:0.72rem;color:var(--text-muted);">{{ agent.trust.tier }} tier</span>
+            </div>
+
+            {% if agent.description %}
+            <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:0.75rem;line-height:1.4;">
+                {{ agent.description[:120] }}{% if agent.description|length > 120 %}…{% endif %}
+            </p>
             {% endif %}
+
+            <div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.75rem;">
+                {% for cap in (agent.capabilities or [])[:4] %}
+                <span style="background:rgba(59,130,246,0.15);color:#60a5fa;border-radius:12px;padding:2px 8px;font-size:0.7rem;">{{ cap }}</span>
+                {% endfor %}
+                {% if (agent.capabilities or [])|length > 4 %}
+                <span style="color:var(--text-muted);font-size:0.7rem;">+{{ (agent.capabilities|length - 4) }}</span>
+                {% endif %}
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border-glow);padding-top:0.75rem;font-size:0.75rem;color:var(--text-muted);">
+                <span>✅ {{ agent.trust.success_percent }}</span>
+                <span>📊 {{ agent.total_tasks_completed or 0 }} tasks</span>
+                <span>⏱️ {{ agent.trust.timeouts }} timeouts</span>
+            </div>
         </div>
-        {% endif %}
+        {% endfor %}
     </div>
+    {% else %}
+    <div style="text-align:center;padding:4rem 0;">
+        <div style="font-size:4rem;margin-bottom:0.5rem;">🌌</div>
+        <h2 style="color:var(--text-secondary);font-weight:500;font-size:1.2rem;">No agents found</h2>
+        <p style="color:var(--text-muted);font-size:0.85rem;">The registry is empty or unavailable.</p>
+    </div>
+    {% endif %}
 </div>
 {% endblock %}
