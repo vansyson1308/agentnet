@@ -1,237 +1,169 @@
 {% extends "base.html" %}
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
-{% block content %}
-<div class="metaverse-container">
-    <header class="metaverse-header">
-        <h1>🌐 Command Center</h1>
-        <p class="text-secondary">Monitor your network, agents, and tasks in real time.</p>
-    </header>
-
-    <div class="metaverse-grid">
-        <!-- Agents Overview -->
-        <div class="card metaverse-card">
-            <div class="card-header">
-                <h2>🤖 Agents</h2>
-                <span class="badge badge-info">{{ agents|length }} total</span>
-            </div>
-            <div class="card-body">
-                {% if agents %}
-                <div class="agent-list">
-                    {% for agent in agents %}
-                    <div class="agent-item">
-                        <div class="agent-info">
-                            <strong>{{ agent.name }}</strong>
-                            <span class="text-muted">{{ agent.capabilities|join(', ') }}</span>
-                        </div>
-                        <div class="agent-reputation">
-                            {% if agent|trust_context %}
-                            <span class="reputation-badge" style="background:{{ agent|trust_context['color'] }};">
-                                {{ agent|trust_context['label'] }}
-                            </span>
-                            {% endif %}
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <p class="text-muted">No agents registered yet. Create one from the <a href="{{ url_for('register_agent_page') }}">New Agent</a> page.</p>
-                {% endif %}
-            </div>
-        </div>
-
-        <!-- Tasks Overview -->
-        <div class="card metaverse-card">
-            <div class="card-header">
-                <h2>📋 Recent Tasks</h2>
-                <span class="badge badge-info">{{ tasks|length }} total</span>
-            </div>
-            <div class="card-body">
-                {% if tasks %}
-                <div class="task-list">
-                    {% for task in tasks[:10] %}
-                    <div class="task-item">
-                        <span class="task-status status-{{ task.status|lower }}">{{ task.status }}</span>
-                        <span class="task-name">{{ task.name or 'Unnamed Task' }}</span>
-                        <span class="task-agent">{{ task.agent_name or 'Unknown Agent' }}</span>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <p class="text-muted">No tasks yet. Start by assigning a task to an agent.</p>
-                {% endif %}
-            </div>
-        </div>
-
-        <!-- Quick Actions -->
-        <div class="card metaverse-card">
-            <div class="card-header">
-                <h2>⚡ Quick Actions</h2>
-            </div>
-            <div class="card-body">
-                <ul class="quick-actions">
-                    <li><a href="{{ url_for('marketplace_page') }}">🏪 Browse Marketplace</a></li>
-                    <li><a href="{{ url_for('wallet_page') }}">💰 Manage Wallet</a></li>
-                    <li><a href="{{ url_for('tasks_page') }}">📋 View All Tasks</a></li>
-                    <li><a href="{{ url_for('register_agent_page') }}">🤖 Register New Agent</a></li>
-                </ul>
-            </div>
-        </div>
-    </div>
-</div>
-
+{% block extra_head %}
 <style>
-.metaverse-container {
-    animation: fadeIn 0.4s ease;
-}
-
-.metaverse-header h1 {
-    font-size: 1.8rem;
-    font-weight: 800;
-    color: var(--text-primary);
-    margin-bottom: 0.25rem;
-}
-
-.metaverse-grid {
+  .metaverse-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    grid-template-columns: 1fr 1fr;
     gap: 1.5rem;
-    margin-top: 1.5rem;
-}
-
-.metaverse-card {
-    transition: transform 0.2s, box-shadow 0.2s;
-}
-
-.metaverse-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-}
-
-.card-header {
+  }
+  .metaverse-grid .full-width {
+    grid-column: 1 / -1;
+  }
+  @media (max-width: 720px) {
+    .metaverse-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .agent-card {
+    background: var(--glass-bg);
+    border: 1px solid var(--border-glow);
+    border-radius: 12px;
+    padding: 1rem;
+    transition: box-shadow 0.2s;
+  }
+  .agent-card:hover {
+    box-shadow: var(--jarvis-glow);
+  }
+  .agent-card .header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid var(--border-muted);
-}
-
-.card-header h2 {
-    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+  }
+  .agent-card .name {
     font-weight: 700;
     color: var(--text-primary);
-    margin: 0;
-}
-
-.card-body {
-    padding-top: 0.75rem;
-}
-
-.agent-list, .task-list {
+  }
+  .agent-card .trust-badge {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 8px;
+    background: var(--glass-bg);
+    border: 1px solid var(--border-glow);
+  }
+  .agent-card .capabilities {
     display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.agent-item, .task-item {
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin: 0.5rem 0;
+  }
+  .capability-tag {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--glass-bg);
+    border: 1px solid var(--border-glow);
+    color: var(--text-secondary);
+  }
+  .agent-card .stats {
+    display: flex;
+    gap: 0.8rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 0.5rem;
+  }
+  .task-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem 0.75rem;
-    background: var(--glass-bg);
-    border-radius: 8px;
-    border: 1px solid var(--border-glow);
-    transition: background 0.2s;
-}
-
-.agent-item:hover, .task-item:hover {
-    background: rgba(255,255,255,0.05);
-}
-
-.agent-info {
-    display: flex;
-    flex-direction: column;
-}
-
-.agent-info strong {
-    font-size: 0.9rem;
-    color: var(--text-primary);
-}
-
-.agent-info .text-muted {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-}
-
-.reputation-badge {
-    display: inline-block;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border-glow);
+  }
+  .task-item:last-child {
+    border-bottom: none;
+  }
+  .task-status {
     padding: 2px 8px;
-    border-radius: 4px;
+    border-radius: 6px;
     font-size: 0.7rem;
-    font-weight: 600;
-    color: #fff;
-}
-
-.task-item {
-    display: grid;
-    grid-template-columns: 80px 1fr 1fr;
-    gap: 0.5rem;
-    align-items: center;
-}
-
-.task-status {
-    display: inline-block;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: uppercase;
-}
-
-.status-pending { background: #f59e0b; color: #000; }
-.status-running { background: #3b82f6; color: #fff; }
-.status-completed { background: #10b981; color: #fff; }
-.status-failed { background: #ef4444; color: #fff; }
-
-.task-name {
-    font-size: 0.85rem;
-    color: var(--text-primary);
     font-weight: 500;
-}
-
-.task-agent {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    text-align: right;
-}
-
-.quick-actions {
-    list-style: none;
-    padding: 0;
-    margin: 0;
+  }
+  .task-status.completed { background: #10b98133; color: #10b981; }
+  .task-status.running { background: #3b82f633; color: #3b82f6; }
+  .task-status.pending { background: #f59e0b33; color: #f59e0b; }
+  .task-status.failed { background: #ef444433; color: #ef4444; }
+  .card-header {
     display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.quick-actions li a {
-    display: block;
-    padding: 0.5rem 0.75rem;
-    background: var(--glass-bg);
-    border-radius: 8px;
-    color: var(--text-primary);
-    text-decoration: none;
-    border: 1px solid var(--border-glow);
-    transition: background 0.2s;
-}
-
-.quick-actions li a:hover {
-    background: rgba(255,255,255,0.08);
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+  .card-header h2 {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 700;
+  }
 </style>
+{% endblock %}
+
+{% block content %}
+<div class="metaverse-grid">
+  <!-- Welcome / Stats -->
+  <div class="card full-width" style="text-align:center; padding:2rem;">
+    <h1 style="font-size:1.8rem;font-weight:900;margin-bottom:0.3rem;">Command Center</h1>
+    <p style="color:var(--text-secondary);">Monitor your agents and ongoing tasks</p>
+  </div>
+
+  <!-- Agents Panel -->
+  <div class="card">
+    <div class="card-header">
+      <h2>🤖 Agents</h2>
+      {% if agents %}
+      <span style="font-size:0.8rem;color:var(--text-secondary);">{{ agents|length }} active</span>
+      {% endif %}
+    </div>
+    {% if agents %}
+    <div style="display:flex;flex-direction:column;gap:0.8rem;">
+      {% for agent in agents %}
+      <div class="agent-card">
+        <div class="header">
+          <span class="name">{{ agent.name }}</span>
+          {% set ctx = agent|trust_context %}
+          <span class="trust-badge" style="color:{{ ctx.color }};">{{ ctx.label }}</span>
+        </div>
+        <div class="capabilities">
+          {% for cap in agent.capabilities[:5] %}
+          <span class="capability-tag">{{ cap }}</span>
+          {% endfor %}
+        </div>
+        <div class="stats">
+          <span>⬆ {{ agent.total_tasks_completed or 0 }}</span>
+          <span>⬇ {{ agent.total_tasks_failed or 0 }}</span>
+          <span>⏱ {{ agent.total_tasks_timeout or 0 }}</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted); text-align:center;">No agents registered.</p>
+    {% endif %}
+  </div>
+
+  <!-- Tasks Panel -->
+  <div class="card">
+    <div class="card-header">
+      <h2>📋 Recent Tasks</h2>
+      {% if tasks %}
+      <span style="font-size:0.8rem;color:var(--text-secondary);">{{ tasks|length }} total</span>
+      {% endif %}
+    </div>
+    {% if tasks %}
+    <div>
+      {% for task in tasks[:10] %}
+      <div class="task-item">
+        <div>
+          <div style="font-weight:600;font-size:0.85rem;">{{ task.description[:60] }}{% if task.description|length > 60 %}…{% endif %}</div>
+          <div style="font-size:0.7rem;color:var(--text-muted);">{{ task.created_at[:10] if task.created_at else '' }}</div>
+        </div>
+        <span class="task-status {{ task.status }}">{{ task.status }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted); text-align:center;">No tasks yet.</p>
+    {% endif %}
+  </div>
+</div>
 {% endblock %}
