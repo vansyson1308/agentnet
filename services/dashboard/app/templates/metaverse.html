@@ -1,62 +1,99 @@
 {% extends "base.html" %}
-{% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
+{% block title %}J.A.R.V.I.S. — Metaverse Command Center{% endblock %}
 
 {% block content %}
-<div style="text-align:center;margin:2rem 0 1.5rem;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.85rem;">
-        Browse the active agents on the network.
-    </p>
+<div class="metaverse-header" style="margin-bottom:1.5rem;">
+    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin-bottom:0.25rem;">🌐 Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.85rem;">Explore and manage AI agents in the network</p>
 </div>
 
-{% if agents %}
-<div class="agent-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.25rem;">
+<div class="search-bar" style="margin-bottom:1.5rem;display:flex;gap:0.75rem;flex-wrap:wrap;">
+    <input type="text" id="agent-search" placeholder="Search agents by name or capability..." style="flex:1;min-width:200px;padding:0.6rem 1rem;border:1px solid var(--border);border-radius:8px;background:var(--input-bg);color:#fff;font-size:0.85rem;">
+    <select id="category-filter" style="padding:0.6rem 1rem;border:1px solid var(--border);border-radius:8px;background:var(--input-bg);color:#fff;font-size:0.85rem;">
+        <option value="">All Categories</option>
+        <option value="data-analysis">Data Analysis</option>
+        <option value="text-generation">Text Generation</option>
+        <option value="translation">Translation</option>
+        <option value="code">Code</option>
+        <option value="image">Image</option>
+        <option value="audio">Audio</option>
+        <option value="other">Other</option>
+    </select>
+    <button id="clear-filters" class="btn btn-secondary btn-sm" style="padding:0.6rem 1rem;font-size:0.85rem;">Clear</button>
+</div>
+
+<div class="agent-grid" id="agent-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
     {% for agent in agents %}
-    <a href="{{ url_for('agent_detail_page', agent_id=agent.id) }}" class="card-link" style="text-decoration:none;">
-        <div class="card" style="height:100%;display:flex;flex-direction:column;">
-            <div class="card-header" style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.75rem;">
-                <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--accent-primary),var(--accent-secondary));display:flex;align-items:center;justify-content:center;font-size:1.1rem;">
-                    {{ agent.name[:2] | upper }}
-                </div>
-                <div>
-                    <h3 style="margin:0;font-size:0.95rem;color:#fff;">{{ agent.name }}</h3>
-                    <span style="font-size:0.72rem;color:var(--text-muted);">{{ agent.category or 'General' }}</span>
-                </div>
+    <div class="card agent-card" data-agent-id="{{ agent.id }}" data-name="{{ agent.name|lower }}" data-category="{{ agent.category|lower if agent.category else '' }}" style="position:relative;overflow:hidden;">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:0.5rem;margin-bottom:0.5rem;">
+            <h3 style="font-size:1rem;font-weight:600;color:#fff;margin:0;">{{ agent.name }}</h3>
+            <span class="reputation-badge" style="display:inline-block;padding:0.15rem 0.5rem;border-radius:999px;font-size:0.7rem;font-weight:600;background:{{ agent.trust.color if agent.trust else '#64748b' }};color:#fff;">{{ agent.trust.label if agent.trust else 'Unknown' }}</span>
+        </div>
+        <div class="card-body" style="font-size:0.8rem;color:var(--text-secondary);">
+            {% if agent.description %}
+            <p style="margin:0 0 0.5rem;">{{ agent.description[:120] }}{% if agent.description|length > 120 %}…{% endif %}</p>
+            {% endif %}
+            {% if agent.capabilities %}
+            <div style="display:flex;flex-wrap:wrap;gap:0.25rem;margin-bottom:0.5rem;">
+                {% for cap in agent.capabilities %}
+                <span class="capability-tag" style="background:var(--accent-bg);color:var(--accent);padding:0.1rem 0.4rem;border-radius:4px;font-size:0.7rem;">{{ cap }}</span>
+                {% endfor %}
             </div>
-            <div style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.5rem;flex-grow:1;">
-                {{ agent.description or 'No description provided.' | truncate(120) }}
-            </div>
-            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem;">
-                {% if agent.capabilities %}
-                    {% for cap in agent.capabilities[:3] %}
-                    <span class="badge" style="background:var(--glass-bg);color:var(--accent-primary);font-size:0.65rem;">{{ cap }}</span>
-                    {% endfor %}
-                {% endif %}
-            </div>
-            <div style="margin-top:auto;display:flex;justify-content:space-between;align-items:center;">
+            {% endif %}
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.75rem;">
                 <span style="font-size:0.7rem;color:var(--text-muted);">
-                    {% if agent.trust %}
-                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{{ agent.trust.color }};margin-right:4px;"></span>
-                    {{ agent.trust.tier }} · {{ agent.trust.success_percent }}
+                    {% if agent.total_tasks_completed is defined %}
+                    {{ agent.total_tasks_completed }} tasks completed
                     {% else %}
-                    Unknown
+                    No task data
                     {% endif %}
                 </span>
-                <span style="font-size:0.7rem;color:var(--text-muted);">
-                    {{ agent.total_tasks_completed or 0 }} tasks
-                </span>
+                <a href="{{ url_for('agent_detail_page', agent_id=agent.id) }}" class="btn btn-primary btn-sm" style="padding:0.3rem 0.8rem;font-size:0.7rem;">View</a>
             </div>
         </div>
-    </a>
+    </div>
+    {% else %}
+    <div style="grid-column:1/-1;text-align:center;padding:2rem;color:var(--text-muted);">
+        <p style="font-size:1rem;">No agents found.</p>
+        {% if is_logged_in %}
+        <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">Register your first agent</a>
+        {% endif %}
+    </div>
     {% endfor %}
 </div>
-{% else %}
-<div class="card" style="text-align:center;padding:3rem 1.5rem;">
-    <div style="font-size:3rem;margin-bottom:1rem;">🌐</div>
-    <h3 style="color:#fff;margin-bottom:0.5rem;">No agents found</h3>
-    <p style="color:var(--text-secondary);font-size:0.85rem;">
-        The network is currently empty. Check back later or register a new agent.
-    </p>
-</div>
-{% endif %}
+
+<script>
+(function() {
+    // client-side search & filter
+    var searchInput = document.getElementById('agent-search');
+    var categoryFilter = document.getElementById('category-filter');
+    var clearBtn = document.getElementById('clear-filters');
+    var grid = document.getElementById('agent-grid');
+    var cards = grid.querySelectorAll('.agent-card');
+
+    function filterAgents() {
+        var q = searchInput.value.toLowerCase().trim();
+        var cat = categoryFilter.value.toLowerCase();
+        cards.forEach(function(card) {
+            var name = card.dataset.name || '';
+            var category = card.dataset.category || '';
+            var matchName = !q || name.indexOf(q) !== -1;
+            var matchCat = !cat || category === cat || (category.indexOf(cat) !== -1);
+            if (matchName && matchCat) {
+                card.style.display = '';
+            } else {
+                card.style.display = 'none';
+            }
+        });
+    }
+
+    searchInput.addEventListener('input', filterAgents);
+    categoryFilter.addEventListener('change', filterAgents);
+    clearBtn.addEventListener('click', function() {
+        searchInput.value = '';
+        categoryFilter.value = '';
+        filterAgents();
+    });
+})();
+</script>
 {% endblock %}
