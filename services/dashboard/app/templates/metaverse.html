@@ -2,67 +2,71 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="text-align:center;margin-bottom:2rem;">
-    <h1 style="font-size:2rem;font-weight:900;color:#fff;">⚡ Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.95rem;max-width:600px;margin:0 auto;">
-        Monitor and control your AgentNet fleet. View active agents, task statuses, and network health.
-    </p>
+<div style="margin-bottom:2rem;">
+    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin-bottom:0.25rem;">Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.9rem;">Monitor your agents and tasks across the network</p>
 </div>
 
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.5rem;">
-    <!-- Agents Card -->
-    <div class="card">
-        <div class="card-header" style="display:flex;align-items:center;gap:0.75rem;">
-            <span style="font-size:1.5rem;">🤖</span>
-            <h2 style="margin:0;font-size:1.2rem;">Agents</h2>
-        </div>
-        <div class="card-body">
-            {% if agents %}
-            <ul style="list-style:none;padding:0;margin:0;">
-                {% for agent in agents[:10] %}
-                <li style="padding:0.5rem 0;border-bottom:1px solid var(--border-glow);display:flex;justify-content:space-between;align-items:center;">
+<div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+    <!-- Agents Panel -->
+    <div class="card" style="grid-column:1/2;">
+        <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;display:flex;align-items:center;gap:0.5rem;">
+            🤖 Agents ({{ agents|length }})
+        </h2>
+        {% if agents %}
+        <div style="display:flex;flex-direction:column;gap:0.75rem;">
+            {% for agent in agents[:10] %}
+            <div style="padding:0.75rem;background:var(--glass-bg);border-radius:8px;border:1px solid var(--border-glow);">
+                <div style="display:flex;align-items:center;justify-content:space-between;">
                     <div>
-                        <span style="font-weight:600;">{{ agent.name }}</span>
-                        <span style="font-size:0.75rem;color:var(--text-muted);display:block;">{{ agent.capability[:30] if agent.capability else 'No capabilities' }}</span>
+                        <span style="font-weight:600;color:#fff;">{{ agent.name }}</span>
+                        <span style="color:var(--text-muted);font-size:0.75rem;margin-left:0.5rem;">{{ agent.agent_id[:8] }}…</span>
                     </div>
-                    <span style="font-size:0.75rem;color:var(--text-secondary);">{{ agent.last_seen | default('N/A') }}</span>
-                </li>
-                {% endfor %}
-            </ul>
-            {% else %}
-            <p style="color:var(--text-muted);">No agents found. <a href="{{ url_for('register_agent_page') }}" style="color:var(--accent);">Register one</a>.</p>
-            {% endif %}
+                    <span class="badge" style="background:{{ agent|trust_context({'label':'Unrated','color':'#64748b','tier':'','total':0,'success_percent':'','timeouts':0})['color'] }};">
+                        {{ agent|trust_context({'label':'Unrated','color':'#64748b','tier':'','total':0,'success_percent':'','timeouts':0})['label'] }}
+                    </span>
+                </div>
+                <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:4px;">
+                    {{ agent.capabilities|join(', ') if agent.capabilities else 'No capabilities listed' }}
+                </div>
+            </div>
+            {% endfor %}
         </div>
+        {% else %}
+        <p style="color:var(--text-muted);font-size:0.85rem;">No agents found. <a href="{{ url_for('register_agent_page') }}" style="color:var(--accent);">Register one now</a>.</p>
+        {% endif %}
     </div>
 
-    <!-- Tasks Card -->
-    <div class="card">
-        <div class="card-header" style="display:flex;align-items:center;gap:0.75rem;">
-            <span style="font-size:1.5rem;">📋</span>
-            <h2 style="margin:0;font-size:1.2rem;">Recent Tasks</h2>
+    <!-- Tasks Panel -->
+    <div class="card" style="grid-column:2/3;">
+        <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;display:flex;align-items:center;gap:0.5rem;">
+            📋 Tasks ({{ tasks|length }})
+        </h2>
+        {% if tasks %}
+        <div style="display:flex;flex-direction:column;gap:0.5rem;">
+            {% for task in tasks[:10] %}
+            <div style="padding:0.6rem;background:var(--glass-bg);border-radius:6px;border-left:3px solid 
+                {%- if task.status == 'completed' %}var(--success)
+                {%- elif task.status == 'failed' %}var(--danger)
+                {%- elif task.status == 'running' %}var(--warning)
+                {%- else %}var(--border-glow){% endif %};">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span style="font-weight:500;color:#fff;font-size:0.85rem;">{{ task.task_id[:8] }}</span>
+                    <span class="badge" style="background:
+                        {%- if task.status == 'completed' %}#10b981
+                        {%- elif task.status == 'failed' %}#ef4444
+                        {%- elif task.status == 'running' %}#f59e0b
+                        {%- else %}#64748b{% endif %};">
+                        {{ task.status }}
+                    </span>
+                </div>
+                <div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">Agent: {{ task.agent_id[:8] if task.agent_id else 'N/A' }}</div>
+            </div>
+            {% endfor %}
         </div>
-        <div class="card-body">
-            {% if tasks %}
-            <ul style="list-style:none;padding:0;margin:0;">
-                {% for task in tasks[:10] %}
-                <li style="padding:0.5rem 0;border-bottom:1px solid var(--border-glow);display:flex;justify-content:space-between;align-items:center;">
-                    <div>
-                        <span style="font-weight:600;">{{ task.name }}</span>
-                        <span style="font-size:0.75rem;color:var(--text-muted);display:block;">{{ task.status }}</span>
-                    </div>
-                    <span style="font-size:0.75rem;color:var(--text-secondary);">{{ task.created_at | default('N/A') }}</span>
-                </li>
-                {% endfor %}
-            </ul>
-            {% else %}
-            <p style="color:var(--text-muted);">No tasks yet. <a href="{{ url_for('tasks_page') }}" style="color:var(--accent);">View tasks</a>.</p>
-            {% endif %}
-        </div>
+        {% else %}
+        <p style="color:var(--text-muted);font-size:0.85rem;">No tasks yet. Assign one via the <a href="{{ url_for('tasks_page') }}" style="color:var(--accent);">Tasks page</a>.</p>
+        {% endif %}
     </div>
-</div>
-
-<div style="margin-top:2rem;text-align:center;">
-    <a href="/marketplace" class="btn btn-primary" style="padding:0.75rem 2rem;">Browse Marketplace</a>
-    <a href="{{ url_for('register_agent_page') }}" class="btn btn-secondary" style="padding:0.75rem 2rem;margin-left:1rem;">Register New Agent</a>
 </div>
 {% endblock %}
