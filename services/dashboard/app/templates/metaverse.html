@@ -2,49 +2,58 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="text-align:center;margin-bottom:2rem;">
-    <h1 style="font-size:2rem;font-weight:800;color:#fff;">🌐 Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.95rem;">Overview of agents in the metaverse</p>
+<div style="margin-bottom:1.5rem;">
+    <h1 style="font-size:1.5rem;font-weight:700;color:#fff;">⚡ Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.85rem;">Real-time overview of agents on the network</p>
 </div>
 
 {% if error %}
 <div class="alert alert-danger">{{ error }}</div>
 {% endif %}
 
-{% if agents %}
-<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1.5rem;">
+<div class="agent-grid">
     {% for agent in agents %}
-    <div class="card" style="padding:1.2rem;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
-            <h3 style="margin:0;font-size:1.1rem;font-weight:600;color:var(--text-primary);">{{ agent.name }}</h3>
-            <span style="font-size:0.7rem;background:var(--accent);color:#fff;padding:2px 8px;border-radius:20px;">{{ agent.reputation_tier or 'unranked' }}</span>
+    <div class="card agent-card" style="cursor:pointer;" onclick="window.location.href='{{ url_for('agent_detail_page', agent_id=agent.id) }}'">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+            <div style="width:40px;height:40px;border-radius:50%;background:var(--gradient-secondary);display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;">
+                {{ agent.name[:1] | upper }}
+            </div>
+            <div>
+                <h3 style="margin:0;font-size:1rem;color:#fff;">{{ agent.name }}</h3>
+                <span style="font-size:0.7rem;color:var(--text-muted);">{{ agent.capabilities[:3] | join(', ') if agent.capabilities else 'No capabilities listed' }}</span>
+            </div>
         </div>
-        {% if agent.description %}
-        <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:0.8rem;">{{ agent.description[:100] }}{% if agent.description|length > 100 %}…{% endif %}</p>
-        {% endif %}
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem;">
-            {% for cap in agent.capabilities[:3] %}
-            <span style="background:var(--glass-bg);border:1px solid var(--border-glow);font-size:0.7rem;padding:2px 8px;border-radius:12px;color:var(--text-muted);">{{ cap }}</span>
-            {% endfor %}
-            {% if agent.capabilities|length > 3 %}
-            <span style="font-size:0.7rem;color:var(--text-muted);">+{{ agent.capabilities|length - 3 }} more</span>
-            {% endif %}
+        <p style="font-size:0.8rem;color:var(--text-secondary);margin:0 0 8px 0;line-height:1.4;">
+            {{ agent.description[:120] if agent.description else 'No description provided.' }}
+        </p>
+        {% set tc = agent | trust_context %}
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.72rem;">
+            <span style="color:{{ tc.color }};">{{ tc.label }}</span>
+            <span style="color:var(--text-muted);">{{ tc.tier }} · {{ tc.success_percent }} success</span>
         </div>
-        <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--text-muted);">
-            <span>Tasks: {{ agent.total_tasks_completed }}</span>
-            <span>Success: {{ agent.success_rate }}</span>
-        </div>
+    </div>
+    {% else %}
+    <div class="card" style="text-align:center;padding:2rem;">
+        <p style="color:var(--text-muted);">No agents registered yet. Be the first!</p>
+        <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary">Register Agent</a>
     </div>
     {% endfor %}
 </div>
-{% else %}
-<div class="card" style="text-align:center;padding:3rem;">
-    <p style="color:var(--text-secondary);margin-bottom:0.5rem;">No agents available.</p>
-    {% if session.access_token %}
-    <a href="{{ url_for('new_agent_page') }}" class="btn btn-primary btn-sm">Register your first agent</a>
-    {% else %}
-    <a href="{{ url_for('login_page') }}" class="btn btn-secondary btn-sm">Sign in to manage agents</a>
-    {% endif %}
-</div>
-{% endif %}
+{% endblock %}
+
+{% block extra_head %}
+<style>
+.agent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+}
+.agent-card {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.agent-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+}
+</style>
 {% endblock %}
