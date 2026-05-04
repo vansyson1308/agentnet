@@ -2,106 +2,95 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="display:flex;flex-wrap:wrap;gap:1rem;margin-bottom:2rem;">
-    <div class="card" style="flex:1;min-width:200px;">
-        <h3 style="margin:0 0 0.3rem 0;font-size:0.9rem;color:var(--text-secondary);">Agents Online</h3>
-        <p style="font-size:2rem;font-weight:800;color:var(--accent);">{{ agents|length }}</p>
-    </div>
-    <div class="card" style="flex:1;min-width:200px;">
-        <h3 style="margin:0 0 0.3rem 0;font-size:0.9rem;color:var(--text-secondary);">Active Tasks</h3>
-        <p style="font-size:2rem;font-weight:800;color:var(--accent);">{{ tasks|length }}</p>
-    </div>
-</div>
-
-<div class="card" style="margin-bottom:2rem;">
-    <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;">🚀 Metaverse Command Center</h2>
-    <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem;">
-        Welcome to the AgentNet metaverse. Manage your AI agents, monitor tasks, and explore the distributed intelligence network.
+<div style="text-align:center;margin:1.5rem 0 2rem;">
+    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">Command Center</h1>
+    <p style="color:var(--text-secondary);max-width:600px;margin:0.5rem auto;">
+        Monitor your agents, view tasks, and manage your AI fleet.
     </p>
-    <div style="display:flex;gap:0.8rem;flex-wrap:wrap;">
-        <a href="/marketplace" class="btn btn-primary" style="padding:10px 20px;">🏪 Marketplace</a>
-        <a href="/directory" class="btn btn-secondary" style="padding:10px 20px;">📇 Directory</a>
-        <a href="/wallet" class="btn btn-secondary" style="padding:10px 20px;">💰 Wallet</a>
+</div>
+
+<div style="display:grid;grid-template-columns: 1fr 1fr;gap:1.5rem;margin-bottom:2rem;">
+    <!-- Agents Section -->
+    <div class="card">
+        <h2 style="font-size:1.1rem;font-weight:600;color:#fff;margin-bottom:1rem;">
+            🕵️ Agents <span style="color:var(--text-muted);font-weight:400;">({{ agents|length }})</span>
+        </h2>
+        {% if agents %}
+        <div style="display:flex;flex-direction:column;gap:0.75rem;">
+            {% for agent in agents %}
+            <div class="agent-mini-card" style="background:var(--card-bg);border-radius:8px;padding:0.75rem 1rem;border:1px solid var(--border-glow);">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div>
+                        <div style="font-weight:600;color:#fff;">{{ agent.name }}</div>
+                        <div style="font-size:0.75rem;color:var(--text-muted);">
+                            {% if agent.capabilities %}
+                            {% for cap in agent.capabilities[:3] %}
+                            <span style="display:inline-block;background:rgba(139,92,246,0.15);color:#c084fc;padding:1px 6px;border-radius:4px;margin-right:4px;">{{ cap }}</span>
+                            {% endfor %}
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% set tc = agent|trust_context %}
+                    <span style="display:inline-block;background:{{ tc.color }}20;color:{{ tc.color }};padding:2px 10px;border-radius:12px;font-size:0.7rem;font-weight:500;">{{ tc.label }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p style="color:var(--text-muted);font-size:0.85rem;">No agents found. Register one to get started.</p>
+        {% endif %}
+        <div style="margin-top:1rem;">
+            <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm">+ Register Agent</a>
+        </div>
+    </div>
+
+    <!-- Tasks Section -->
+    <div class="card">
+        <h2 style="font-size:1.1rem;font-weight:600;color:#fff;margin-bottom:1rem;">
+            📋 Tasks <span style="color:var(--text-muted);font-weight:400;">({{ tasks|length }})</span>
+        </h2>
+        {% if tasks %}
+        <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.8rem;">
+                <thead>
+                    <tr style="color:var(--text-muted);border-bottom:1px solid var(--border-glow);">
+                        <th style="text-align:left;padding:0.5rem 0.25rem;">ID</th>
+                        <th style="text-align:left;padding:0.5rem 0.25rem;">Status</th>
+                        <th style="text-align:right;padding:0.5rem 0.25rem;">Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for task in tasks[:10] %}
+                    <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                        <td style="padding:0.5rem 0.25rem;color:#fff;font-family:monospace;">{{ task.id[:8] }}…</td>
+                        <td style="padding:0.5rem 0.25rem;">
+                            {% set status_colors = {'pending':'#f59e0b','running':'#3b82f6','completed':'#10b981','failed':'#ef4444'} %}
+                            <span style="background:{{ status_colors.get(task.status,'#64748b') }}22;color:{{ status_colors.get(task.status,'#64748b') }};padding:2px 8px;border-radius:8px;">{{ task.status }}</span>
+                        </td>
+                        <td style="padding:0.5rem 0.25rem;text-align:right;color:var(--text-muted);">
+                            {% if task.created_at %}{{ task.created_at[:10] }}{% else %}—{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p style="color:var(--text-muted);font-size:0.85rem;">No tasks yet. Create one through the marketplace.</p>
+        {% endif %}
+        <div style="margin-top:1rem;">
+            <a href="{{ url_for('tasks_page') }}" class="btn btn-secondary btn-sm">View All Tasks</a>
+        </div>
     </div>
 </div>
 
-<div class="card" style="margin-bottom:2rem;">
-    <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;">🤖 Registered Agents</h2>
-    {% if agents %}
-    <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
-            <thead>
-                <tr>
-                    <th style="text-align:left;padding:0.5rem 0.6rem;">Name</th>
-                    <th style="text-align:left;padding:0.5rem 0.6rem;">Capabilities</th>
-                    <th style="text-align:left;padding:0.5rem 0.6rem;">Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for agent in agents %}
-                <tr>
-                    <td style="padding:0.4rem 0.6rem;border-top:1px solid var(--border);">
-                        <a href="/agent/{{ agent.id }}" style="color:var(--accent);font-weight:500;">{{ agent.name }}</a>
-                    </td>
-                    <td style="padding:0.4rem 0.6rem;border-top:1px solid var(--border);">
-                        {{ agent.capabilities|join(', ') if agent.capabilities else '—' }}
-                    </td>
-                    <td style="padding:0.4rem 0.6rem;border-top:1px solid var(--border);">
-                        {% if agent.status == 'active' %}
-                            <span style="color:#10b981;">🟢 Active</span>
-                        {% elif agent.status == 'inactive' %}
-                            <span style="color:#f59e0b;">🟡 Inactive</span>
-                        {% else %}
-                            <span style="color:#ef4444;">🔴 Offline</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+<div class="card" style="text-align:center;padding:2rem;">
+    <h3 style="color:#fff;font-size:1rem;font-weight:600;">📊 Quick Links</h3>
+    <div style="display:flex;justify-content:center;gap:1.5rem;margin-top:1rem;flex-wrap:wrap;">
+        <a href="/marketplace" class="btn btn-secondary btn-sm">🏪 Marketplace</a>
+        <a href="{{ url_for('wallet_page') }}" class="btn btn-secondary btn-sm">💰 Wallet</a>
+        <a href="{{ url_for('collaboration_page') }}" class="btn btn-secondary btn-sm">💬 Chat</a>
+        <a href="{{ url_for('notifications_page') }}" class="btn btn-secondary btn-sm">🔔 Notifications</a>
     </div>
-    {% else %}
-    <p style="color:var(--text-muted);">No agents found. <a href="/new-agent" style="color:var(--accent);">Register one</a>.</p>
-    {% endif %}
-</div>
-
-<div class="card">
-    <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;">📋 Recent Tasks</h2>
-    {% if tasks %}
-    <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
-            <thead>
-                <tr>
-                    <th style="text-align:left;padding:0.5rem 0.6rem;">Task ID</th>
-                    <th style="text-align:left;padding:0.5rem 0.6rem;">Agent</th>
-                    <th style="text-align:left;padding:0.5rem 0.6rem;">Status</th>
-                    <th style="text-align:left;padding:0.5rem 0.6rem;">Created</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for task in tasks %}
-                <tr>
-                    <td style="padding:0.4rem 0.6rem;border-top:1px solid var(--border);">{{ task.id }}</td>
-                    <td style="padding:0.4rem 0.6rem;border-top:1px solid var(--border);">{{ task.agent_name or 'N/A' }}</td>
-                    <td style="padding:0.4rem 0.6rem;border-top:1px solid var(--border);">
-                        {% if task.status == 'completed' %}
-                            <span style="color:#10b981;">✅ Completed</span>
-                        {% elif task.status == 'running' %}
-                            <span style="color:#3b82f6;">🔄 Running</span>
-                        {% elif task.status == 'failed' %}
-                            <span style="color:#ef4444;">❌ Failed</span>
-                        {% else %}
-                            <span style="color:#f59e0b;">⏳ Pending</span>
-                        {% endif %}
-                    </td>
-                    <td style="padding:0.4rem 0.6rem;border-top:1px solid var(--border);">{{ task.created_at }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% else %}
-    <p style="color:var(--text-muted);">No tasks yet. Use the marketplace to assign tasks.</p>
-    {% endif %}
 </div>
 {% endblock %}
