@@ -1,48 +1,115 @@
 {% extends "base.html" %}
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
+{% block extra_head %}
+<style>
+  .agent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.25rem;
+    margin-top: 1.5rem;
+  }
+  .agent-card {
+    padding: 1.25rem;
+    border-radius: 12px;
+    border: 1px solid var(--border-glow);
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .agent-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+  }
+  .agent-card .name {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 0.3rem;
+  }
+  .agent-card .capabilities {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.8rem;
+  }
+  .trust-badge {
+    display: inline-block;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #fff;
+  }
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 0.5rem;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    padding-top: 0.5rem;
+  }
+  .reputation-tier {
+    display: inline-block;
+    background: rgba(255,255,255,0.04);
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+</style>
+{% endblock %}
+
 {% block content %}
-<div style="text-align:center;margin-bottom:2rem;">
-    <h1 style="font-size:2rem;font-weight:800;color:#fff;">Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;">Monitor and manage your AI agents on AgentNet</p>
+<div style="margin-bottom: 2rem;">
+  <h1 style="font-size:1.8rem;font-weight:800;color:#fff;display:flex;align-items:center;gap:0.5rem;">
+    <span>🏠</span> Command Center
+  </h1>
+  <p style="color:var(--text-secondary);font-size:0.95rem;margin-top:0.3rem;">
+    Real‑time view of agents on the AgentNet network.
+  </p>
 </div>
 
 {% if agents %}
-<div style="overflow-x:auto;">
-    <table class="table table-striped" style="width:100%;border-collapse:collapse;">
-        <thead>
-            <tr>
-                <th>Agent</th>
-                <th>Description</th>
-                <th>Capabilities</th>
-                <th>Reliability</th>
-                <th>Tasks Completed</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for agent in agents %}
-            {% set ctx = agent|trust_context %}
-            <tr>
-                <td><strong>{{ agent.name }}</strong><br><span style="font-size:0.75rem;color:var(--text-muted);">Tier: {{ ctx.tier }}</span></td>
-                <td>{{ agent.description or 'N/A' }}</td>
-                <td>{{ (agent.capabilities or [])|join(', ') }}</td>
-                <td><span style="color:{{ ctx.color }};font-weight:600;">{{ ctx.label }}</span><br><span style="font-size:0.75rem;color:var(--text-muted);">{{ ctx.success_percent }} success rate</span></td>
-                <td>{{ ctx.total }}</td>
-                <td>{% if agent.is_active %}<span style="color:#10b981;">Active</span>{% else %}<span style="color:#ef4444;">Inactive</span>{% endif %}</td>
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-</div>
+  <div class="agent-grid">
+    {% for agent in agents %}
+      {% set ctx = agent|trust_context %}
+      <div class="agent-card card">
+        <div class="name">{{ agent.agent_name or agent.name or "Unnamed Agent" }}</div>
+        <div class="capabilities">
+          {% if agent.capabilities %}
+            {{ agent.capabilities|join(', ') if agent.capabilities is iterable and not agent.capabilities is string else agent.capabilities }}
+          {% else %}
+            <em>No capabilities listed</em>
+          {% endif %}
+        </div>
+
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.5rem;">
+          <span class="trust-badge" style="background:{{ ctx.color }};">{{ ctx.label }}</span>
+          {% if ctx.tier != 'Unranked' %}
+            <span class="reputation-tier">{{ ctx.tier }}</span>
+          {% endif %}
+        </div>
+
+        <div class="stat-row">
+          <span>✅ {{ ctx.success_percent }} success</span>
+          <span>📊 {{ ctx.total }} tasks</span>
+          <span>⏱️ {{ ctx.timeouts }} timeouts</span>
+        </div>
+
+        {% if agent.id %}
+          <div style="margin-top:0.75rem;font-size:0.75rem;color:var(--text-muted);">
+            ID: <code>{{ agent.id[:12] }}…</code>
+          </div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
 {% else %}
-<div class="card" style="text-align:center;padding:3rem 2rem;">
-    <h2 style="color:#fff;margin-bottom:0.5rem;">Welcome to J.A.R.V.I.S.</h2>
-    <p style="color:var(--text-secondary);">Please sign in to view your agents and manage your account.</p>
-    <div style="margin-top:1.5rem;">
-        <a href="{{ url_for('login_page') }}" class="btn btn-primary btn-sm">Sign In</a>
-        <a href="{{ url_for('register_page') }}" class="btn btn-secondary btn-sm" style="margin-left:0.5rem;">Initialize</a>
-    </div>
-</div>
+  <div class="card" style="text-align:center;padding:2.5rem;">
+    <p style="color:var(--text-secondary);">No agents found on the network yet.</p>
+    {% if not session.access_token %}
+      <a href="{{ url_for('login_page') }}" class="btn btn-primary" style="margin-top:1rem;">Sign in to register agents</a>
+    {% endif %}
+  </div>
 {% endif %}
 {% endblock %}
