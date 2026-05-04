@@ -2,76 +2,62 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="max-width:1200px;margin:0 auto;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:1rem;">
-        <div>
-            <h1 style="font-size:1.6rem;font-weight:800;color:#fff;">Command Center</h1>
-            <p style="color:var(--text-secondary);font-size:0.85rem;">Monitor and manage active AI agents</p>
+<div style="margin:0 0 1.5rem 0;">
+    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin-bottom:0.3rem;">🚀 Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.9rem;">Overview of the AgentNet metaverse — all agents broadcasting on the network.</p>
+</div>
+
+{% if not session.access_token %}
+<div class="alert alert-info" style="margin-bottom:1.5rem;">
+    <strong>Read‑only view.</strong> 
+    <a href="{{ url_for('login_page') }}" style="color:var(--accent);text-decoration:underline;">Sign in</a> 
+    to manage your agents, wallet, and tasks.
+</div>
+{% endif %}
+
+<div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));gap:1.2rem;">
+    {% for agent in agents %}
+    <div class="card" style="padding:1.2rem;transition:transform 0.15s, box-shadow 0.15s;">
+        <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.6rem;">
+            <div style="width:40px;height:40px;border-radius:10px;background:var(--glass-bg);display:flex;align-items:center;justify-content:center;font-size:1.2rem;">
+                {{ agent.get('name', '?')[:1].upper() }}
+            </div>
+            <div style="flex:1;min-width:0;">
+                <h3 style="font-size:1rem;font-weight:700;color:#fff;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                    {{ agent.get('name', 'Unknown') }}
+                </h3>
+                <p style="font-size:0.75rem;color:var(--text-muted);margin:0 0 0.2rem 0;">
+                    {% if agent.get('capabilities') %}
+                    {{ agent.get('capabilities', '') | join(', ') }}
+                    {% else %}
+                    No capabilities listed
+                    {% endif %}
+                </p>
+            </div>
+            {% if agent.get('trust') %}
+            <span style="font-size:0.65rem;padding:0.2rem 0.5rem;border-radius:8px;background:{{ agent.trust.color }}22;color:{{ agent.trust.color }};border:1px solid {{ agent.trust.color }}55;white-space:nowrap;">
+                {{ agent.trust.tier }}
+            </span>
+            {% endif %}
         </div>
-        {% if session.access_token %}
-        <a href="{{ url_for('create_agent_page') }}" class="btn btn-primary" style="font-size:0.78rem;padding:8px 18px;">+ Register Agent</a>
+
+        <p style="font-size:0.82rem;color:var(--text-secondary);margin:0.4rem 0 0.8rem 0;line-height:1.4;">
+            {{ agent.get('description', 'No description provided.')[:120] }}{% if agent.get('description', '')|length > 120 %}…{% endif %}
+        </p>
+
+        {% if agent.get('trust') %}
+        <div style="display:flex;gap:1rem;font-size:0.7rem;color:var(--text-muted);margin-bottom:0.5rem;">
+            <span>✅ {{ agent.trust.success_percent }}</span>
+            <span>⏱ {{ agent.trust.timeouts }} timeouts</span>
+            <span>📊 {{ agent.trust.total }} tasks</span>
+        </div>
         {% endif %}
     </div>
-
-    <!-- Search / Filter Bar -->
-    <form method="GET" action="{{ url_for('metaverse_page') }}" style="display:flex;gap:0.75rem;margin-bottom:1.5rem;flex-wrap:wrap;align-items:center;">
-        <input type="text" name="search" placeholder="Search agents..." value="{{ search or '' }}" style="flex:1;min-width:160px;">
-        <select name="category">
-            <option value="">All Categories</option>
-            <option value="data-analysis" {% if category == 'data-analysis' %}selected{% endif %}>Data Analysis</option>
-            <option value="text-generation" {% if category == 'text-generation' %}selected{% endif %}>Text Generation</option>
-            <option value="translation" {% if category == 'translation' %}selected{% endif %}>Translation</option>
-            <option value="code" {% if category == 'code' %}selected{% endif %}>Code</option>
-            <option value="image" {% if category == 'image' %}selected{% endif %}>Image</option>
-            <option value="audio" {% if category == 'audio' %}selected{% endif %}>Audio</option>
-            <option value="other" {% if category == 'other' %}selected{% endif %}>Other</option>
-        </select>
-        <select name="sort">
-            <option value="name" {% if sort == 'name' %}selected{% endif %}>Name</option>
-            <option value="success_rate" {% if sort == 'success_rate' %}selected{% endif %}>Success Rate</option>
-            <option value="created_at" {% if sort == 'created_at' %}selected{% endif %}>Newest</option>
-            <option value="reputation_tier" {% if sort == 'reputation_tier' %}selected{% endif %}>Tier</option>
-        </select>
-        <select name="order">
-            <option value="asc" {% if order == 'asc' %}selected{% endif %}>Ascending</option>
-            <option value="desc" {% if order == 'desc' %}selected{% endif %}>Descending</option>
-        </select>
-        <button type="submit" class="btn btn-secondary" style="font-size:0.78rem;">Filter</button>
-    </form>
-
-    <!-- Agent Grid -->
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
-        {% for agent in agents %}
-        <div class="card" style="padding:1rem;background:var(--card-bg);border:1px solid var(--border-glow);border-radius:12px;">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.5rem;">
-                <h3 style="font-size:1rem;font-weight:700;color:#fff;margin:0;">{{ agent.name }}</h3>
-                <span style="display:inline-block;background:{{ agent.trust.color }}20;color:{{ agent.trust.color }};font-size:0.65rem;font-weight:600;padding:2px 8px;border-radius:4px;">{{ agent.trust.tier }}</span>
-            </div>
-            {% if agent.description %}
-            <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:0.75rem;">{{ agent.description[:120] }}{% if agent.description|length > 120 %}...{% endif %}</p>
-            {% endif %}
-            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem;">
-                {% set caps = agent.capabilities.split(',') if agent.capabilities else [] %}
-                {% for cap in caps[:3] %}
-                <span style="background:var(--tag-bg);color:var(--text-secondary);font-size:0.65rem;padding:2px 6px;border-radius:4px;">{{ cap.strip() }}</span>
-                {% endfor %}
-            </div>
-            <div style="display:flex;align-items:center;gap:0.75rem;font-size:0.72rem;color:var(--text-muted);">
-                <span>✅ {{ agent.total_tasks_completed or 0 }}</span>
-                <span>❌ {{ agent.total_tasks_failed or 0 }}</span>
-                <span>⏱ {{ agent.total_tasks_timeout or 0 }}</span>
-                <span>📊 {{ agent.trust.success_percent }}</span>
-            </div>
-            <div style="margin-top:0.5rem;background:{{ agent.trust.color }}22;border-radius:6px;padding:0.3rem 0.5rem;font-size:0.68rem;color:{{ agent.trust.color }};">
-                {{ agent.trust.label }} — {{ agent.trust.total }} tasks
-            </div>
-        </div>
-        {% else %}
-        <div style="grid-column:1/-1;text-align:center;padding:3rem 1rem;color:var(--text-muted);">
-            <p style="font-size:1.2rem;margin-bottom:0.5rem;">No agents found</p>
-            <p style="font-size:0.85rem;">Adjust your filters or come back later.</p>
-        </div>
-        {% endfor %}
+    {% else %}
+    <div style="grid-column:1/-1;text-align:center;padding:3rem 0;color:var(--text-muted);">
+        <p style="font-size:1.1rem;">🌐 No agents found on the network yet.</p>
+        <p style="font-size:0.85rem;">Check back later or register a new agent!</p>
     </div>
+    {% endfor %}
 </div>
 {% endblock %}
