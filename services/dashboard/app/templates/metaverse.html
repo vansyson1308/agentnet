@@ -1,151 +1,80 @@
 {% extends "base.html" %}
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
-{% block extra_head %}
-<style>
-    .agent-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-        gap: 1.2rem;
-        margin: 1.5rem 0;
-    }
-    .agent-card {
-        background: var(--glass-bg);
-        backdrop-filter: blur(var(--glass-blur));
-        border: 1px solid var(--border-glow);
-        border-radius: 12px;
-        padding: 1.2rem;
-        transition: transform 0.2s;
-    }
-    .agent-card:hover {
-        transform: translateY(-2px);
-    }
-    .agent-card h3 {
-        margin: 0 0 0.3rem 0;
-        font-size: 1.1rem;
-    }
-    .agent-card .reliability-badge {
-        display: inline-block;
-        font-size: 0.7rem;
-        padding: 2px 8px;
-        border-radius: 4px;
-        color: #fff;
-        margin-left: 0.5rem;
-    }
-    .task-list {
-        list-style: none;
-        padding: 0;
-    }
-    .task-list li {
-        background: var(--glass-bg);
-        backdrop-filter: blur(var(--glass-blur));
-        border: 1px solid var(--border-glow);
-        border-radius: 8px;
-        padding: 0.8rem 1rem;
-        margin-bottom: 0.6rem;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    .task-status {
-        font-size: 0.75rem;
-        padding: 2px 10px;
-        border-radius: 10px;
-        background: rgba(16, 185, 129, 0.2);
-        color: #10b981;
-    }
-    .task-status.failed { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-    .task-status.pending { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
-    .section-title {
-        font-size: 1.2rem;
-        font-weight: 700;
-        margin-top: 2rem;
-        margin-bottom: 0.8rem;
-        color: #e2e8f0;
-        border-bottom: 1px solid var(--border-glow);
-        padding-bottom: 0.4rem;
-    }
-    .welcome-message {
-        text-align: center;
-        padding: 4rem 1rem;
-        color: var(--text-secondary);
-    }
-    .welcome-message h1 {
-        font-size: 2rem;
-        margin-bottom: 0.5rem;
-        color: #e2e8f0;
-    }
-    .welcome-message p {
-        max-width: 480px;
-        margin: 0 auto 1.5rem;
-    }
-</style>
-{% endblock %}
-{% block content %}
-{% if is_authenticated %}
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
-        <h1 style="font-size:1.5rem; font-weight:700;">🚀 Command Center</h1>
-        <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm">+ New Agent</a>
-    </div>
 
-    <div class="section-title">Your Agents</div>
-    {% if agents %}
-    <div class="agent-grid">
-        {% for agent in agents %}
-        {% set aid = agent.get('id') or agent.get('agent_id') %}
-        <div class="agent-card">
-            <div style="display:flex; justify-content:space-between; align-items:start;">
-                <div>
-                    <h3>{{ agent.get('name', 'Unnamed Agent') }}</h3>
-                    <p style="font-size:0.8rem; color:var(--text-secondary); margin-top:0.2rem;">
-                        {{ agent.get('description', 'No description')[:100] }}
-                    </p>
+{% block content %}
+<div style="text-align:center;margin-bottom:2rem;">
+    <h1 style="font-size:2rem;font-weight:800;color:#fff;">🌐 Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.9rem;">Your AI agent network at a glance</p>
+</div>
+
+<div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:2rem;">
+    <div class="card" style="text-align:center;padding:1.5rem;">
+        <div style="font-size:1.2rem;font-weight:700;color:var(--primary);">{{ total_agents }}</div>
+        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.25rem;">Agents Online</div>
+    </div>
+    {% if is_logged_in %}
+    <div class="card" style="text-align:center;padding:1.5rem;">
+        <div style="font-size:1.2rem;font-weight:700;color:var(--primary);">{{ total_tasks }}</div>
+        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.25rem;">Active Tasks</div>
+    </div>
+    <div class="card" style="text-align:center;padding:1.5rem;">
+        <div style="font-size:1.2rem;font-weight:700;color:var(--primary);">{{ wallets|length }}</div>
+        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:0.25rem;">Wallets</div>
+    </div>
+    {% endif %}
+</div>
+
+<div class="section">
+    <h2 style="font-size:1.3rem;font-weight:600;color:#fff;margin-bottom:1rem;">🤖 Featured Agents</h2>
+    <div class="agent-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.5rem;">
+        {% for agent in agents[:12] %}
+        <div class="card agent-card" style="position:relative;overflow:hidden;">
+            <div style="display:flex;align-items:center;gap:1rem;margin-bottom:0.75rem;">
+                <div class="avatar" style="width:48px;height:48px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;font-size:1.2rem;font-weight:700;color:#fff;">
+                    {{ agent.name[:2]|upper }}
                 </div>
-                {% if trust_contexts.get(aid) %}
-                <span class="reliability-badge" style="background:{{ trust_contexts[aid]['color'] }};">
-                    {{ trust_contexts[aid]['label'] }}
-                </span>
-                {% endif %}
+                <div>
+                    <div style="font-weight:600;color:#fff;">{{ agent.name }}</div>
+                    <div style="font-size:0.78rem;color:var(--text-secondary);">{{ agent.capabilities[:3]|join(', ') if agent.capabilities else 'General AI' }}</div>
+                </div>
             </div>
-            <div style="margin-top:0.6rem; font-size:0.75rem; color:var(--text-muted);">
-                {% if trust_contexts.get(aid) %}
-                Tier: {{ trust_contexts[aid]['tier'] }} &middot; Success: {{ trust_contexts[aid]['success_percent'] }}
-                {% else %}
-                No reliability data yet
-                {% endif %}
+            <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:0.75rem;">{{ agent.description[:120] ~ '...' if agent.description and agent.description|length > 120 else agent.description }}</p>
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:0.75rem;color:var(--text-secondary);">Reliability: {{ agent|trust_context }}</span>
+                <a href="{{ url_for('agent_detail_page', agent_id=agent.id) if is_logged_in else '#' }}" class="btn btn-sm btn-primary" style="padding:4px 12px;font-size:0.75rem;">View</a>
             </div>
         </div>
+        {% else %}
+        <p style="color:var(--text-muted);">No agents found. Try a different search or check back later.</p>
         {% endfor %}
     </div>
-    {% else %}
-    <p style="color:var(--text-secondary);">No agents registered yet. <a href="{{ url_for('register_agent_page') }}">Create one</a>.</p>
-    {% endif %}
+</div>
 
-    <div class="section-title">Recent Tasks</div>
-    {% if tasks %}
-    <ul class="task-list">
-        {% for task in tasks[:10] %}
-        <li>
-            <div>
-                <strong>{{ task.get('name', 'Unnamed Task') }}</strong>
-                <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.8rem;">
-                    {{ task.get('agent_name', '') }}
-                </span>
-            </div>
-            <span class="task-status {% if task.get('status') == 'failed' %}failed{% elif task.get('status') == 'pending' or task.get('status') == 'running' %}pending{% endif %}">
-                {{ (task.get('status') or 'unknown').upper() }}
-            </span>
-        </li>
-        {% endfor %}
-    </ul>
-    {% else %}
-    <p style="color:var(--text-secondary);">No tasks yet.</p>
-    {% endif %}
-{% else %}
-    <div class="welcome-message">
-        <h1>Welcome to J.A.R.V.I.S.</h1>
-        <p>Your command center for the AgentNet marketplace. Sign in to manage agents, tasks, and wallets.</p>
-        <a href="{{ url_for('login_page') }}" class="btn btn-primary" style="margin-right:0.5rem;">Sign In</a>
-        <a href="{{ url_for('register_page') }}" class="btn btn-secondary">Initialize</a>
+{% if is_logged_in and tasks %}
+<div class="section" style="margin-top:2rem;">
+    <h2 style="font-size:1.3rem;font-weight:600;color:#fff;margin-bottom:1rem;">📋 Recent Tasks</h2>
+    <div style="overflow-x:auto;">
+        <table class="table" style="width:100%;border-collapse:collapse;">
+            <thead>
+                <tr style="background:var(--glass-bg);">
+                    <th style="padding:0.75rem;text-align:left;font-size:0.8rem;color:var(--text-muted);">ID</th>
+                    <th style="padding:0.75rem;text-align:left;font-size:0.8rem;color:var(--text-muted);">Description</th>
+                    <th style="padding:0.75rem;text-align:left;font-size:0.8rem;color:var(--text-muted);">Status</th>
+                    <th style="padding:0.75rem;text-align:left;font-size:0.8rem;color:var(--text-muted);">Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in tasks[:10] %}
+                <tr style="border-bottom:1px solid var(--border-glow);">
+                    <td style="padding:0.75rem;font-size:0.82rem;color:#fff;">{{ task.id[:8] }}...</td>
+                    <td style="padding:0.75rem;font-size:0.82rem;color:var(--text-secondary);">{{ task.description[:60] }}</td>
+                    <td style="padding:0.75rem;"><span class="badge badge-{{ task.status }}">{{ task.status }}</span></td>
+                    <td style="padding:0.75rem;font-size:0.78rem;color:var(--text-muted);">{{ task.created_at[:10] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
+</div>
 {% endif %}
 {% endblock %}

@@ -159,5 +159,35 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    tasks 
-# ... [TRUNCATED -- preserve when editing] ...
+    tasks = []
+    wallets = []
+    is_authenticated = "access_token" in session
+    
+    try:
+        # Always fetch public agents (no auth needed)
+        agents = api_client.fetch_agents(search=request.args.get("search"),
+                                          category=request.args.get("category"),
+                                          sort=request.args.get("sort"),
+                                          order=request.args.get("order"))
+        if not isinstance(agents, list):
+            agents = []
+    except Exception as e:
+        app.logger.warning(f"Failed to fetch agents for metaverse: {e}")
+        agents = []
+
+    if is_authenticated:
+        try:
+            wallets = api_client.get_wallets()
+            tasks = api_client.get_tasks()
+        except Exception as e:
+            app.logger.warning(f"Failed to fetch authenticated data: {e}")
+            # Don't fail the page, just show empty sections
+
+    return render_template("metaverse.html",
+                           agents=agents,
+                           tasks=tasks,
+                           wallets=wallets,
+                           total_agents=len(agents),
+                           total_tasks=len(tasks))
+
+# ... rest of routes (login, register, etc.) are unchanged and truncated
