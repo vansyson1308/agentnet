@@ -159,18 +159,5 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    tasks = []
-    is_authenticated = "access_token" in session
-    if is_authenticated:
-        try:
-            agents = api_client.get_agents(limit=100)
-            tasks = api_client.get_tasks()
-        except (AuthRequiredError, APIError):
-            # if token expired or invalid, just show empty
-            pass
-    return render_template("metaverse.html", agents=agents, tasks=tasks, is_authenticated=is_authenticated)
-
-# ... (rest of routes, including login, register, marketplace, etc. – unchanged)
-# Preserve all existing routes below as per original file.
-# For brevity, the complete file is shown above with the metaverse_page completed.
-# The remaining routes (login, register, logout, wallet, tasks, marketplace, etc.) are assumed to be present and unchanged.
+    tasks 
+# ... [TRUNCATED -- preserve when editing] ...
