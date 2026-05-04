@@ -2,50 +2,47 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="margin-bottom:2rem;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">⚡ Command Center</h1>
-    <p style="color:var(--text-secondary);">Monitor and manage your AI agents across the metaverse.</p>
+<div style="text-align:center;margin-bottom:2rem;">
+    <h1 style="font-size:2rem;font-weight:800;color:#fff;">Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.9rem;">Monitor and manage your AI agents on AgentNet</p>
 </div>
 
 {% if agents %}
-<div class="agent-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.2rem;">
-    {% for agent in agents %}
-    {% set ctx = agent|trust_context %}
-    <div class="card agent-card" style="display:flex;flex-direction:column;gap:0.5rem;">
-        <div style="display:flex;align-items:center;gap:0.5rem;">
-            <div style="width:10px;height:10px;border-radius:50%;background:{{ ctx.color }};"></div>
-            <h3 style="margin:0;font-size:1rem;font-weight:600;color:#fff;">{{ agent.name }}</h3>
-            {% if agent.reputation_tier %}
-            <span style="margin-left:auto;font-size:0.7rem;padding:2px 8px;border-radius:12px;background:rgba(255,255,255,0.1);color:var(--text-muted);">{{ ctx.tier }}</span>
-            {% endif %}
-        </div>
-        <p style="color:var(--text-secondary);font-size:0.85rem;margin:0;">{{ agent.description or 'No description' }}</p>
-        <div style="display:flex;flex-wrap:wrap;gap:0.4rem;font-size:0.75rem;color:var(--text-muted);">
-            <span>🔢 Tasks: {{ ctx.total }}</span>
-            <span>✅ Success: {{ ctx.success_percent }}</span>
-            {% if ctx.timeouts > 0 %}
-            <span>⚠️ Timeouts: {{ ctx.timeouts }}</span>
-            {% endif %}
-        </div>
-        <div style="margin-top:auto;font-size:0.72rem;color:{{ ctx.color }};font-weight:500;">
-            {{ ctx.label }}
-        </div>
-    </div>
-    {% endfor %}
+<div style="overflow-x:auto;">
+    <table class="table table-striped" style="width:100%;border-collapse:collapse;">
+        <thead>
+            <tr>
+                <th>Agent</th>
+                <th>Description</th>
+                <th>Capabilities</th>
+                <th>Reliability</th>
+                <th>Tasks Completed</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for agent in agents %}
+            {% set ctx = agent|trust_context %}
+            <tr>
+                <td><strong>{{ agent.name }}</strong><br><span style="font-size:0.75rem;color:var(--text-muted);">Tier: {{ ctx.tier }}</span></td>
+                <td>{{ agent.description or 'N/A' }}</td>
+                <td>{{ (agent.capabilities or [])|join(', ') }}</td>
+                <td><span style="color:{{ ctx.color }};font-weight:600;">{{ ctx.label }}</span><br><span style="font-size:0.75rem;color:var(--text-muted);">{{ ctx.success_percent }} success rate</span></td>
+                <td>{{ ctx.total }}</td>
+                <td>{% if agent.is_active %}<span style="color:#10b981;">Active</span>{% else %}<span style="color:#ef4444;">Inactive</span>{% endif %}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
 </div>
 {% else %}
-<div class="empty-state" style="text-align:center;padding:3rem 1rem;color:var(--text-muted);">
-    <p style="font-size:1.2rem;font-weight:600;color:#fff;">No agents registered yet</p>
-    <p style="font-size:0.85rem;">Deploy your first agent to see it here.</p>
-    {% if session.access_token %}
-    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">➕ Register Agent</a>
-    {% endif %}
+<div class="card" style="text-align:center;padding:3rem 2rem;">
+    <h2 style="color:#fff;margin-bottom:0.5rem;">Welcome to J.A.R.V.I.S.</h2>
+    <p style="color:var(--text-secondary);">Please sign in to view your agents and manage your account.</p>
+    <div style="margin-top:1.5rem;">
+        <a href="{{ url_for('login_page') }}" class="btn btn-primary btn-sm">Sign In</a>
+        <a href="{{ url_for('register_page') }}" class="btn btn-secondary btn-sm" style="margin-left:0.5rem;">Initialize</a>
+    </div>
 </div>
 {% endif %}
-{% endblock %}
-
-{% block extra_scripts %}
-<script>
-// Optional: Add live polling or real-time updates later
-</script>
 {% endblock %}
