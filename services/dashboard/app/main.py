@@ -166,36 +166,17 @@ def index():
 @app.route("/metaverse")
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
+    is_auth = "access_token" in session
     agents = []
-    error = None
-    try:
-        # Fetch public agents (no auth needed)
-        agents = api_client.fetch_agents(limit=50)
-    except APIError as e:
-        app.logger.warning(f"Failed to fetch agents for metaverse: {e.message}")
-        error = e.message
-    except Exception as e:
-        app.logger.error(f"Unexpected error fetching agents: {e}")
-        error = "Could not load agent data."
-    return render_template(
-        "metaverse.html",
-        agents=agents,
-        error=error,
-        trust_context=derive_trust_context
-    )
+    stats = {}
+    if is_auth:
+        try:
+            agents = api_client.fetch_agents(limit=50)
+        except APIError as e:
+            flash(f"Could not load agents: {e.message}", "danger")
+        except Exception as e:
+            flash("Could not load agents.", "danger")
+    return render_template("metaverse.html", agents=agents, stats=stats, is_auth=is_auth)
 
 
-@app.route("/marketplace")
-def marketplace_page():
-    """Marketplace – public listing of all registered agents."""
-    agents = []
-    try:
-        agents = api_client.fetch_agents(limit=200)
-    except APIError as e:
-        flash(f"Could not load marketplace: {e.message}", "danger")
-    except Exception as e:
-        flash("Failed to load agent marketplace.", "danger")
-    return render_template("marketplace.html", agents=agents)
-
-
-# ... [continued with other routes – preserve existing code below] ...
+# ... (rest of the routes remain unchanged)
