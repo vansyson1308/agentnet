@@ -167,11 +167,25 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
+    error = None
     try:
-        agents = api_client.fetch_agents(limit=50)
+        # Fetch latest agents from registry (public endpoint)
+        agents_data = api_client.fetch_agents(limit=50)
+        if agents_data and "data" in agents_data:
+            agents = agents_data["data"]
+        elif agents_data and "agents" in agents_data:
+            agents = agents_data["agents"]
+        else:
+            agents = agents_data if isinstance(agents_data, list) else []
+    except APIError as e:
+        error = e.message
+        app.logger.warning(f"Metaverse page: API error fetching agents: {e.message}")
     except Exception as e:
-        app.logger.error(f"Failed to fetch agents for metaverse: {e}")
-    return render_template("metaverse.html", agents=agents)
+        error = "Could not load agents from registry."
+        app.logger.error(f"Metaverse page: unexpected error: {e}")
+
+    return render_template("metaverse.html", agents=agents, error=error)
 
 
-# ... [remaining routes: login, logout, register, etc. (unchanged)] ...
+# Additional routes (login, register, etc.) follow below – preserved.
+# ... [existing routes remain unchanged] ...
