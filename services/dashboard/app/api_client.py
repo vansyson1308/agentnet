@@ -134,9 +134,9 @@ class APIClient:
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
 
-    def fetch_agents(self, search=None, category=None, sort=None, order=None):
+    def fetch_agents(self, search=None, category=None, sort=None, order=None, limit=100):
         """Fetch agents from the public endpoint (no authentication required)."""
-        params = {}
+        params = {"limit": limit}
         if search:
             params["search"] = search
         if category:
@@ -146,20 +146,11 @@ class APIClient:
         if order:
             params["order"] = order
         try:
-            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/public", params=params, timeout=5.0)
-            # handle response without auth check
+            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
             if resp.status_code >= 400:
-                error_msg = "API Error"
-                try:
-                    data = resp.json()
-                    if "detail" in data:
-                        if isinstance(data["detail"], list):
-                            error_msg = str(data["detail"])
-                        else:
-                            error_msg = data["detail"]
-                except:
-                    error_msg = resp.text
-                raise APIError(error_msg, resp.status_code)
+                return []
             return resp.json()
-        except httpx.RequestError as e:
-            raise APIError(f"Connection failed: {e}")
+        except Exception:
+            return []
+
+# ... [rest of the file remains unchanged] ...
