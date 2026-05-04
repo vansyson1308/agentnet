@@ -138,30 +138,19 @@ class APIClient:
         """Fetch agents from the public endpoint (no authentication required)."""
         params = {}
         if search:
-            params["search"] = search
+            params['search'] = search
         if category:
-            params["category"] = category
+            params['category'] = category
         if sort:
-            params["sort"] = sort
+            params['sort'] = sort
         if order:
-            params["order"] = order
+            params['order'] = order
         try:
-            # Public endpoint – no auth headers
-            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/public/", params=params, timeout=5.0)
-            if resp.status_code >= 400:
-                error_msg = "API Error"
-                try:
-                    data = resp.json()
-                    if "detail" in data:
-                        if isinstance(data["detail"], list):
-                            error_msg = str(data["detail"])
-                        else:
-                            error_msg = data["detail"]
-                except:
-                    error_msg = resp.text
-                raise APIError(error_msg, resp.status_code)
-            return resp.json()
+            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
+            return self._handle_response(resp)
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
+
+    # Additional private methods can be added below as needed.
 
 api_client = APIClient()
