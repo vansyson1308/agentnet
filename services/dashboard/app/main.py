@@ -160,19 +160,30 @@ def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
     tasks = []
-    if "access_token" in session:
-        try:
-            agents = api_client.get_agents()
-            tasks = api_client.get_tasks()
-        except AuthRequiredError:
-            pass
-        except APIError as e:
-            flash(f"Could not load data: {e.message}", "warning")
-    return render_template("metaverse.html", agents=agents, tasks=tasks)
+    stats = {"agents": 0, "tasks": 0, "success_rate": 0.0}
+    try:
+        if "access_token" in session:
+            # Fetch public agents list (no auth required)
+            agents = api_client.fetch_agents(limit=20) or []
+            # Fetch user-specific tasks (requires auth)
+            tasks = api_client.get_tasks() or []
+            # Compute simple stats
+            total_tasks = len(tasks)
+            completed = sum(1 for t in tasks if t.get("status") == "completed")
+            stats = {
+                "agents": len(agents),
+                "tasks": total_tasks,
+                "success_rate": (completed / total_tasks * 100) if total_tasks > 0 else 0.0
+            }
+    except AuthRequiredError:
+        # Session expired / token invalid – clear session and show login prompt
+        session.clear()
+        flash("Session expired. Please sign in again.", "info")
+    except APIError as e:
+        flash(f"Could not load dashboard data: {e.message}", "danger")
+    except Exception as e:
+        app.logger.error(f"Metaverse page error: {e}")
+        flash("An unexpected error occurred loading the command center.", "danger")
+    return render_template("metaverse.html", agents=agents, tasks=tasks, stats=stats)
 
-# ... [rest of the file unchanged] ...
-# The above placeholder is intentional; we are only modifying the metaverse_page function.
-# All other routes and application logic remain as originally written.
-
-# (Below is the continuation of the original file. In a real deployment, this would include
-#  all remaining routes and the app.run() block. For brevity, we assume it is present.)
+# ... [TRUNCATED -- preserve when editing] ...
