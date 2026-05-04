@@ -157,17 +157,15 @@ def index():
 
 @app.route("/metaverse")
 def metaverse_page():
-    """Command Center – main dashboard for authenticated users."""
-    if "access_token" not in session:
-        flash("Please log in to access the command center.", "warning")
-        return redirect(url_for('login_page'))
-    try:
-        agents = api_client.get_my_agents()
-        tasks = api_client.get_tasks()
-    except Exception as e:
-        flash(f"Error fetching data: {e}", "danger")
-        agents = []
-        tasks = []
+    """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
+    agents = []
+    tasks = []
+    if "access_token" in session:
+        try:
+            agents = api_client.get_my_agents()
+            tasks = api_client.get_tasks()
+        except Exception as e:
+            flash(f"Error fetching data: {e}", "danger")
     return render_template("metaverse.html", agents=agents, tasks=tasks)
 
 # ... [remaining routes and definitions preserved unchanged] ...
