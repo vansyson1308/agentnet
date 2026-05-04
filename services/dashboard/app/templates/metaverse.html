@@ -2,58 +2,106 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="max-width:960px;margin:0 auto;">
-    <div style="text-align:center;margin-bottom:2rem;">
-        <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">🪐 Command Center</h1>
-        <p style="color:var(--text-secondary);font-size:0.9rem;">Your central hub for managing agents and tasks</p>
+<div style="display:flex;flex-wrap:wrap;gap:1rem;margin-bottom:2rem;">
+    <div class="card" style="flex:1;min-width:200px;">
+        <h3 style="margin:0 0 0.3rem 0;font-size:0.9rem;color:var(--text-secondary);">Agents Online</h3>
+        <p style="font-size:2rem;font-weight:800;color:var(--accent);">{{ agents|length }}</p>
     </div>
+    <div class="card" style="flex:1;min-width:200px;">
+        <h3 style="margin:0 0 0.3rem 0;font-size:0.9rem;color:var(--text-secondary);">Active Tasks</h3>
+        <p style="font-size:2rem;font-weight:800;color:var(--accent);">{{ tasks|length }}</p>
+    </div>
+</div>
 
-    {% if not session.access_token %}
-    <div class="card" style="text-align:center;padding:3rem 2rem;">
-        <p style="font-size:1rem;margin-bottom:1.5rem;">Connect to unlock the full AgentNet experience.</p>
-        <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
-        <a href="{{ url_for('register_page') }}" class="btn btn-secondary" style="margin-left:0.5rem;">Register</a>
+<div class="card" style="margin-bottom:2rem;">
+    <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;">🚀 Metaverse Command Center</h2>
+    <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem;">
+        Welcome to the AgentNet metaverse. Manage your AI agents, monitor tasks, and explore the distributed intelligence network.
+    </p>
+    <div style="display:flex;gap:0.8rem;flex-wrap:wrap;">
+        <a href="/marketplace" class="btn btn-primary" style="padding:10px 20px;">🏪 Marketplace</a>
+        <a href="/directory" class="btn btn-secondary" style="padding:10px 20px;">📇 Directory</a>
+        <a href="/wallet" class="btn btn-secondary" style="padding:10px 20px;">💰 Wallet</a>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:2rem;">
+    <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;">🤖 Registered Agents</h2>
+    {% if agents %}
+    <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+            <thead>
+                <tr>
+                    <th style="text-align:left;padding:0.5rem 0.6rem;">Name</th>
+                    <th style="text-align:left;padding:0.5rem 0.6rem;">Capabilities</th>
+                    <th style="text-align:left;padding:0.5rem 0.6rem;">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for agent in agents %}
+                <tr>
+                    <td style="padding:0.4rem 0.6rem;border-top:1px solid var(--border);">
+                        <a href="/agent/{{ agent.id }}" style="color:var(--accent);font-weight:500;">{{ agent.name }}</a>
+                    </td>
+                    <td style="padding:0.4rem 0.6rem;border-top:1px solid var(--border);">
+                        {{ agent.capabilities|join(', ') if agent.capabilities else '—' }}
+                    </td>
+                    <td style="padding:0.4rem 0.6rem;border-top:1px solid var(--border);">
+                        {% if agent.status == 'active' %}
+                            <span style="color:#10b981;">🟢 Active</span>
+                        {% elif agent.status == 'inactive' %}
+                            <span style="color:#f59e0b;">🟡 Inactive</span>
+                        {% else %}
+                            <span style="color:#ef4444;">🔴 Offline</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
     {% else %}
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
-        <div class="card">
-            <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;">Your Agents</h2>
-            {% if agents %}
-            <div style="display:flex;flex-direction:column;gap:0.75rem;">
-                {% for agent in agents[:5] %}
-                <div style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0;border-bottom:1px solid var(--border-color);">
-                    <span style="font-weight:500;">{{ agent.get('name', 'Unnamed') }}</span>
-                    <span style="font-size:0.8rem;color:var(--text-muted);">{{ agent.get('capabilities', [])|join(', ') }}</span>
-                </div>
-                {% endfor %}
-            </div>
-            {% if agents|length > 5 %}
-            <a href="{{ url_for('my_agents_page') }}" style="display:block;margin-top:0.75rem;text-align:center;font-size:0.85rem;">View all {{ agents|length }} agents →</a>
-            {% endif %}
-            {% else %}
-            <p style="color:var(--text-muted);">No agents yet. <a href="{{ url_for('register_agent_page') }}">Create one</a>.</p>
-            {% endif %}
-        </div>
+    <p style="color:var(--text-muted);">No agents found. <a href="/new-agent" style="color:var(--accent);">Register one</a>.</p>
+    {% endif %}
+</div>
 
-        <div class="card">
-            <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;">Recent Tasks</h2>
-            {% if tasks %}
-            <div style="display:flex;flex-direction:column;gap:0.75rem;">
-                {% for task in tasks[:5] %}
-                <div style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0;border-bottom:1px solid var(--border-color);">
-                    <span style="font-weight:500;">{{ task.get('description', 'Task') }}</span>
-                    <span style="font-size:0.8rem;color:var(--text-muted);">{{ task.get('status', 'unknown') }}</span>
-                </div>
+<div class="card">
+    <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;">📋 Recent Tasks</h2>
+    {% if tasks %}
+    <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+            <thead>
+                <tr>
+                    <th style="text-align:left;padding:0.5rem 0.6rem;">Task ID</th>
+                    <th style="text-align:left;padding:0.5rem 0.6rem;">Agent</th>
+                    <th style="text-align:left;padding:0.5rem 0.6rem;">Status</th>
+                    <th style="text-align:left;padding:0.5rem 0.6rem;">Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in tasks %}
+                <tr>
+                    <td style="padding:0.4rem 0.6rem;border-top:1px solid var(--border);">{{ task.id }}</td>
+                    <td style="padding:0.4rem 0.6rem;border-top:1px solid var(--border);">{{ task.agent_name or 'N/A' }}</td>
+                    <td style="padding:0.4rem 0.6rem;border-top:1px solid var(--border);">
+                        {% if task.status == 'completed' %}
+                            <span style="color:#10b981;">✅ Completed</span>
+                        {% elif task.status == 'running' %}
+                            <span style="color:#3b82f6;">🔄 Running</span>
+                        {% elif task.status == 'failed' %}
+                            <span style="color:#ef4444;">❌ Failed</span>
+                        {% else %}
+                            <span style="color:#f59e0b;">⏳ Pending</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:0.4rem 0.6rem;border-top:1px solid var(--border);">{{ task.created_at }}</td>
+                </tr>
                 {% endfor %}
-            </div>
-            {% if tasks|length > 5 %}
-            <a href="{{ url_for('tasks_page') }}" style="display:block;margin-top:0.75rem;text-align:center;font-size:0.85rem;">View all tasks →</a>
-            {% endif %}
-            {% else %}
-            <p style="color:var(--text-muted);">No tasks yet.</p>
-            {% endif %}
-        </div>
+            </tbody>
+        </table>
     </div>
+    {% else %}
+    <p style="color:var(--text-muted);">No tasks yet. Use the marketplace to assign tasks.</p>
     {% endif %}
 </div>
 {% endblock %}
