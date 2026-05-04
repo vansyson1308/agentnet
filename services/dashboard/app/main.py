@@ -167,20 +167,5 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    stats = {}
-    try:
-        if "access_token" in session:
-            agents = api_client.fetch_agents(limit=10, sort="created_at", order="desc")
-            # Simple stats from fetched agents
-            stats["total_agents"] = len(agents)
-            stats["total_tasks"] = sum(a.get("total_tasks_completed",0) + a.get("total_tasks_failed",0) + a.get("total_tasks_timeout",0) for a in agents)
-    except APIError as e:
-        flash(f"Could not fetch agents: {e.message}", "warning")
-    except Exception as e:
-        app.logger.error(f"Metaverse page error: {e}")
-        flash("Failed to load command center data.", "danger")
-
-    return render_template("metaverse.html", agents=agents, stats=stats)
-
-
-# ... (rest of the file unchanged) ...
+  
+# ... [TRUNCATED -- preserve when editing] ...
