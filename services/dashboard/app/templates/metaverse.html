@@ -1,178 +1,147 @@
 {% extends "base.html" %}
-{% block title %}J.A.R.V.I.S. — Metaverse Command Center{% endblock %}
+{% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="text-align:center;margin-bottom:2rem;">
-    <h1 style="font-size:2rem;font-weight:900;background:linear-gradient(135deg,#00d4ff,#7b61ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">🌐 Metaverse Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.95rem;">Your central hub for managing AI agents, tasks, and virtual assets.</p>
+<div class="metaverse-header">
+    <h1>⚡ Command Center</h1>
+    <p class="text-secondary">Your meta‑view of the AgentNet</p>
 </div>
 
-{% if is_logged_in %}
-<div class="grid grid-3" style="margin-bottom:2rem;">
-    <div class="card stat-card">
-        <div class="stat-icon">🤖</div>
-        <div class="stat-value">{{ agents|length }}</div>
-        <div class="stat-label">Active Agents</div>
+{% if agents %}
+<div class="agent-grid">
+    {% for agent in agents %}
+    <div class="agent-card card">
+        <div class="agent-card-header">
+            <span class="agent-name">{{ agent.name }}</span>
+            {% if agent.status %}
+            <span class="badge badge-{{ 'online' if agent.status == 'active' else 'offline' }}">{{ agent.status }}</span>
+            {% endif %}
+        </div>
+        <div class="agent-card-body">
+            {% if agent.description %}
+            <p class="agent-description">{{ agent.description[:120] }}{% if agent.description|length > 120 %}...{% endif %}</p>
+            {% endif %}
+            {% if agent.capabilities %}
+            <div class="agent-capabilities">
+                {% for cap in agent.capabilities[:3] %}
+                <span class="tag">{{ cap }}</span>
+                {% endfor %}
+                {% if agent.capabilities|length > 3 %}
+                <span class="tag tag-more">+{{ agent.capabilities|length - 3 }}</span>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        <div class="agent-card-footer">
+            <span class="trust-context">{{ agent|trust_context }}</span>
+            <a href="{{ url_for('agent_detail_page', agent_id=agent.id) }}" class="btn btn-sm btn-outline">View</a>
+        </div>
     </div>
-    <div class="card stat-card">
-        <div class="stat-icon">📋</div>
-        <div class="stat-value">{{ tasks|length }}</div>
-        <div class="stat-label">Tasks</div>
-    </div>
-    <div class="card stat-card">
-        <div class="stat-icon">💰</div>
-        <div class="stat-value">{{ "%.2f"|format(total_balance) }} credits</div>
-        <div class="stat-label">Total Wallet Balance</div>
-    </div>
+    {% endfor %}
 </div>
-
-<div style="margin-bottom:2rem;">
-    <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:0.5rem;">Your Agents</h2>
-    {% if agents %}
-    <div class="table-scroll">
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Capabilities</th>
-                    <th>Reputation</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-            {% for agent in agents[:10] %}
-                {% set tc = trust_context_fn(agent) %}
-                <tr>
-                    <td><a href="{{ url_for('agent_detail_page', agent_id=agent.id) if 'agent_detail_page' in url_for(request.endpoint) else '#' }}">{{ agent.name }}</a></td>
-                    <td>{{ agent.capabilities[:3]|join(', ') }}{% if agent.capabilities|length > 3 %}+{{ agent.capabilities|length - 3 }} more{% endif %}</td>
-                    <td><span style="color:{{ tc.color }};">{{ tc.tier }}</span></td>
-                    <td><span class="badge badge-{{ 'success' if agent.is_online else 'secondary' }}">{{ "Online" if agent.is_online else "Offline" }}</span></td>
-                </tr>
-            {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% else %}
-    <p style="color:var(--text-muted);">No agents registered yet. <a href="{{ url_for('register_agent_page') }}">Register one</a>.</p>
-    {% endif %}
-</div>
-
-<div style="margin-bottom:2rem;">
-    <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:0.5rem;">Recent Tasks</h2>
-    {% if tasks %}
-    <div class="table-scroll">
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Task ID</th>
-                    <th>Status</th>
-                    <th>Created</th>
-                </tr>
-            </thead>
-            <tbody>
-            {% for task in tasks[:5] %}
-                <tr>
-                    <td><code>{{ task.id[:12] }}...</code></td>
-                    <td><span class="badge badge-{{ task.status }}">{{ task.status }}</span></td>
-                    <td>{{ task.created_at[:10] }}</td>
-                </tr>
-            {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% else %}
-    <p style="color:var(--text-muted);">No tasks yet.</p>
-    {% endif %}
-</div>
-
-<div>
-    <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:0.5rem;">Wallet Balances</h2>
-    {% if wallets %}
-    <div class="table-scroll">
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Wallet ID</th>
-                    <th>Balance</th>
-                    <th>Currency</th>
-                </tr>
-            </thead>
-            <tbody>
-            {% for wallet in wallets[:5] %}
-                <tr>
-                    <td><code>{{ wallet.id[:12] }}...</code></td>
-                    <td>{{ "%.2f"|format(wallet.balance) }}</td>
-                    <td>{{ wallet.currency }}</td>
-                </tr>
-            {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% else %}
-    <p style="color:var(--text-muted);">No wallets found.</p>
-    {% endif %}
-</div>
-
 {% else %}
-<div class="card" style="text-align:center;padding:4rem 2rem;">
-    <h2 style="font-size:1.5rem;font-weight:700;margin-bottom:1rem;">Welcome to the Metaverse</h2>
-    <p style="color:var(--text-secondary);margin-bottom:1.5rem;">Sign in to manage your agents, tasks, and virtual assets.</p>
-    <div class="flex gap-1 justify-center">
-        <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
-        <a href="{{ url_for('register_page') }}" class="btn btn-secondary">Initialize</a>
-    </div>
+<div class="empty-state">
+    <p>No agents found in the network yet.</p>
+    {% if is_logged_in %}
+    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary">Register an Agent</a>
+    {% endif %}
 </div>
 {% endif %}
+{% endblock %}
 
+{% block extra_head %}
 <style>
-.grid-3 {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 1rem;
-}
-.stat-card {
-    text-align: center;
-    padding: 1.5rem 1rem;
-}
-.stat-icon {
-    font-size: 2.5rem;
-    margin-bottom: 0.5rem;
-}
-.stat-value {
-    font-size: 1.8rem;
-    font-weight: 800;
-    color: var(--text-primary);
-}
-.stat-label {
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    margin-top: 0.2rem;
-}
-.table-scroll {
-    overflow-x: auto;
-}
-.data-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.85rem;
-}
-.data-table th, .data-table td {
-    padding: 0.6rem 0.8rem;
-    text-align: left;
-    border-bottom: 1px solid var(--border-color);
-}
-.data-table th {
-    font-weight: 600;
-    color: var(--text-secondary);
-}
-.flex {
-    display: flex;
-}
-.gap-1 {
-    gap: 0.5rem;
-}
-.justify-center {
-    justify-content: center;
-}
+    .metaverse-header {
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .metaverse-header h1 {
+        font-size: 2rem;
+        font-weight: 800;
+        color: var(--text-primary);
+    }
+    .agent-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1.5rem;
+    }
+    .agent-card {
+        background: var(--glass-bg);
+        backdrop-filter: blur(var(--glass-blur));
+        border: 1px solid var(--border-glow);
+        border-radius: 12px;
+        padding: 1.25rem;
+        transition: box-shadow 0.2s;
+    }
+    .agent-card:hover {
+        box-shadow: 0 0 20px rgba(0, 180, 255, 0.15);
+    }
+    .agent-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.75rem;
+    }
+    .agent-name {
+        font-weight: 600;
+        font-size: 1rem;
+        color: var(--text-primary);
+    }
+    .badge {
+        font-size: 0.7rem;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-weight: 500;
+    }
+    .badge-online {
+        background: rgba(16, 185, 129, 0.2);
+        color: #10b981;
+    }
+    .badge-offline {
+        background: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
+    }
+    .agent-card-body {
+        margin-bottom: 1rem;
+    }
+    .agent-description {
+        color: var(--text-secondary);
+        font-size: 0.85rem;
+        line-height: 1.4;
+        margin: 0 0 0.75rem;
+    }
+    .agent-capabilities {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+    .tag {
+        background: rgba(99, 102, 241, 0.15);
+        color: #818cf8;
+        font-size: 0.7rem;
+        padding: 2px 8px;
+        border-radius: 8px;
+    }
+    .tag-more {
+        background: rgba(100, 116, 139, 0.2);
+        color: var(--text-muted);
+    }
+    .agent-card-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .trust-context {
+        font-size: 0.7rem;
+        color: var(--text-muted);
+    }
+    .empty-state {
+        text-align: center;
+        padding: 4rem 1rem;
+        color: var(--text-muted);
+    }
+    .empty-state .btn {
+        margin-top: 1rem;
+    }
 </style>
 {% endblock %}
