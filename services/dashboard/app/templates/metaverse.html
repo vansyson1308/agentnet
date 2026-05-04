@@ -1,48 +1,168 @@
 {% extends "base.html" %}
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
+{% block extra_head %}
+<style>
+    .agent-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 1.25rem;
+        margin-top: 1.5rem;
+    }
+    .agent-card {
+        background: var(--glass-bg);
+        backdrop-filter: blur(var(--glass-blur));
+        border: 1px solid var(--border-glow);
+        border-radius: 12px;
+        padding: 1.25rem;
+        transition: transform 0.2s, box-shadow 0.2s;
+        cursor: pointer;
+    }
+    .agent-card:hover {
+        transform: translateY(-4px);
+        box-shadow: var(--jarvis-glow);
+    }
+    .agent-card h3 {
+        margin: 0 0 0.5rem;
+        font-weight: 700;
+        color: #fff;
+    }
+    .agent-card .capabilities {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        margin-top: 0.6rem;
+    }
+    .agent-card .capability-tag {
+        background: rgba(99, 102, 241, 0.2);
+        border: 1px solid rgba(99, 102, 241, 0.3);
+        border-radius: 20px;
+        padding: 2px 10px;
+        font-size: 0.72rem;
+        color: #a5b4fc;
+    }
+    .trust-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        margin-top: 0.5rem;
+    }
+    .trust-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+    .empty-state {
+        text-align: center;
+        padding: 3rem 1rem;
+        color: var(--text-secondary);
+    }
+    .empty-state h2 {
+        font-size: 1.5rem;
+        color: #fff;
+        margin-bottom: 0.5rem;
+    }
+    .header-actions {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+    .stats-row {
+        display: flex;
+        gap: 1.5rem;
+        margin-top: 0.5rem;
+    }
+    .stat-item {
+        background: var(--card-bg);
+        border: 1px solid var(--border-glow);
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+        text-align: center;
+    }
+    .stat-item .value {
+        font-size: 1.4rem;
+        font-weight: 800;
+        color: #fff;
+    }
+    .stat-item .label {
+        font-size: 0.72rem;
+        color: var(--text-muted);
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="metaverse-hero" style="text-align:center;padding:3rem 1rem 2rem;">
-    <h1 style="font-size:2.2rem;font-weight:900;color:#fff;margin-bottom:0.5rem;">Welcome to the Metaverse</h1>
-    <p style="color:var(--text-secondary);font-size:1rem;max-width:600px;margin:0 auto 2rem;">
-        Your AI agent command center. Browse, deploy, and interact with intelligent agents.
-    </p>
-    <div class="stats-grid" style="display:flex;gap:1.5rem;justify-content:center;flex-wrap:wrap;">
-        <div class="card" style="min-width:180px;text-align:center;padding:1.5rem;">
-            <div style="font-size:2.5rem;font-weight:800;color:var(--accent);">{{ total_agents }}</div>
-            <div style="color:var(--text-secondary);font-size:0.85rem;">Registered Agents</div>
-        </div>
-        <div class="card" style="min-width:180px;text-align:center;padding:1.5rem;">
-            <div style="font-size:2.5rem;font-weight:800;color:var(--accent);">{{ agents|selectattr('trust.tier', 'equalto', 'Legendary')|list|length }}</div>
-            <div style="color:var(--text-secondary);font-size:0.85rem;">Legendary Tiers</div>
-        </div>
-        <div class="card" style="min-width:180px;text-align:center;padding:1.5rem;">
-            <div style="font-size:2.5rem;font-weight:800;color:var(--accent);">{{ agents|selectattr('trust.label', 'equalto', 'Highly Reliable')|list|length }}</div>
-            <div style="color:var(--text-secondary);font-size:0.85rem;">Highly Reliable</div>
-        </div>
+<div class="header-actions">
+    <div>
+        <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin:0;">⚡ Command Center</h1>
+        <p style="color:var(--text-secondary);font-size:0.9rem;">Browse and interact with AI agents across the network</p>
     </div>
 </div>
 
-<div class="agent-grid" style="margin-top:2rem;">
-    <h2 style="font-size:1.2rem;font-weight:700;color:#fff;margin-bottom:1rem;">Featured Agents</h2>
-    {% if agents %}
-    <div class="grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
-        {% for agent in agents[:6] %}
-        <div class="card" style="padding:1rem;">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <h3 style="font-size:1rem;font-weight:700;color:#fff;margin:0;">{{ agent.name }}</h3>
-                <span class="badge" style="background:{{ agent.trust.color }};color:#fff;font-size:0.7rem;padding:2px 8px;border-radius:4px;">{{ agent.trust.tier }}</span>
-            </div>
-            <p style="color:var(--text-secondary);font-size:0.78rem;margin:0.5rem 0;">{{ agent.description[:100] or 'No description' }}</p>
-            <div style="display:flex;gap:0.5rem;margin-top:0.5rem;font-size:0.7rem;color:var(--text-muted);">
-                <span>✅ {{ agent.trust.success_percent }}</span>
-                <span>⏱ {{ agent.trust.timeouts }} timeouts</span>
-            </div>
-        </div>
-        {% endfor %}
+<div class="stats-row">
+    <div class="stat-item">
+        <div class="value">{{ agents|length }}</div>
+        <div class="label">Agents Online</div>
     </div>
-    {% else %}
-    <p style="color:var(--text-secondary);text-align:center;padding:3rem;">No agents found in the metaverse yet. Check back later.</p>
-    {% endif %}
+    <div class="stat-item">
+        <div class="value">{{ agents|selectattr('trust')|list|length }}</div>
+        <div class="label">Trusted Agents</div>
+    </div>
+    <div class="stat-item">
+        <div class="value">{{ agents|sum(attribute='total_tasks_completed')|default(0) }}</div>
+        <div class="label">Total Tasks Completed</div>
+    </div>
 </div>
+
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+
+{% if agents %}
+<div class="agent-grid">
+    {% for agent in agents %}
+    <div class="agent-card">
+        <h3>{{ agent.name }}</h3>
+        {% if agent.description %}
+        <p style="color:var(--text-secondary);font-size:0.82rem;margin-bottom:0.5rem;">{{ agent.description[:120] }}{% if agent.description|length > 120 %}…{% endif %}</p>
+        {% endif %}
+        <div class="capabilities">
+            {% if agent.capabilities %}
+                {% for cap in agent.capabilities[:4] %}
+                <span class="capability-tag">{{ cap }}</span>
+                {% endfor %}
+                {% if agent.capabilities|length > 4 %}
+                <span class="capability-tag">+{{ agent.capabilities|length - 4 }} more</span>
+                {% endif %}
+            {% else %}
+                <span class="capability-tag" style="opacity:0.5;">No capabilities listed</span>
+            {% endif %}
+        </div>
+        {% if agent.trust %}
+        <div class="trust-badge">
+            <span class="trust-dot" style="background:{{ agent.trust.color }};"></span>
+            <span>{{ agent.trust.label }}</span>
+            <span style="color:var(--text-muted);font-weight:400;">· {{ agent.trust.success_percent }} success</span>
+        </div>
+        {% endif %}
+        <div style="margin-top:0.75rem;display:flex;gap:0.5rem;flex-wrap:wrap;">
+            {% if agent.id %}
+            <a href="#" class="btn btn-primary btn-sm" style="font-size:0.75rem;padding:4px 12px;">View</a>
+            <a href="#" class="btn btn-secondary btn-sm" style="font-size:0.75rem;padding:4px 12px;">Collaborate</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <h2>No Agents Yet</h2>
+    <p>The network is still being populated. Check back later or register your own agent.</p>
+</div>
+{% endif %}
 {% endblock %}
