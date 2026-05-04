@@ -1,281 +1,77 @@
 {% extends "base.html" %}
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
-{% block extra_head %}
-<style>
-    .metaverse-hero {
-        text-align: center;
-        padding: 2rem 0 1.5rem;
-    }
-    .metaverse-hero h1 {
-        font-size: 1.8rem;
-        font-weight: 800;
-        color: #fff;
-        margin-bottom: 0.3rem;
-        letter-spacing: -0.02em;
-    }
-    .metaverse-hero p {
-        color: var(--text-secondary);
-        font-size: 0.9rem;
-        max-width: 480px;
-        margin: 0 auto;
-    }
-
-    .agent-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 1.2rem;
-        margin-top: 1.5rem;
-    }
-    .agent-card {
-        background: var(--glass-bg);
-        backdrop-filter: blur(var(--glass-blur));
-        border: 1px solid var(--border-glow);
-        border-radius: 12px;
-        padding: 1.2rem 1.1rem;
-        transition: transform 0.15s, box-shadow 0.15s;
-        cursor: pointer;
-    }
-    .agent-card:hover {
-        transform: translateY(-3px);
-        box-shadow: var(--jarvis-glow);
-    }
-    .agent-card-header {
-        display: flex;
-        align-items: center;
-        gap: 0.7rem;
-        margin-bottom: 0.6rem;
-    }
-    .agent-avatar {
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        background: linear-gradient(135deg, var(--primary), #6366f1);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 700;
-        font-size: 0.9rem;
-        color: #fff;
-        flex-shrink: 0;
-    }
-    .agent-card-header h3 {
-        font-size: 1rem;
-        font-weight: 600;
-        color: #fff;
-        margin: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-    .agent-category {
-        font-size: 0.72rem;
-        color: var(--text-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        margin-bottom: 0.5rem;
-    }
-    .agent-description {
-        color: var(--text-secondary);
-        font-size: 0.82rem;
-        line-height: 1.45;
-        min-height: 2.6em;
-    }
-    .agent-trust {
-        margin-top: 0.7rem;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        flex-wrap: wrap;
-    }
-    .trust-badge {
-        padding: 0.18rem 0.55rem;
-        border-radius: 999px;
-        font-size: 0.7rem;
-        font-weight: 600;
-        color: #fff;
-        white-space: nowrap;
-    }
-    .trust-stats {
-        font-size: 0.7rem;
-        color: var(--text-muted);
-        display: flex;
-        gap: 0.5rem;
-    }
-    .trust-stats span {
-        white-space: nowrap;
-    }
-
-    .empty-state {
-        text-align: center;
-        padding: 4rem 1rem;
-        color: var(--text-muted);
-    }
-    .empty-state svg {
-        opacity: 0.3;
-        margin-bottom: 1rem;
-    }
-    .empty-state h3 {
-        color: var(--text-secondary);
-        font-size: 1.1rem;
-        margin-bottom: 0.4rem;
-    }
-    .empty-state p {
-        font-size: 0.85rem;
-    }
-
-    .filter-bar {
-        display: flex;
-        justify-content: center;
-        gap: 0.8rem;
-        flex-wrap: wrap;
-        margin: 1rem 0 0.5rem;
-    }
-    .filter-bar input,
-    .filter-bar select {
-        background: rgba(255,255,255,0.05);
-        border: 1px solid var(--border-glow);
-        border-radius: 8px;
-        padding: 0.5rem 0.8rem;
-        color: #fff;
-        font-size: 0.82rem;
-        outline: none;
-    }
-    .filter-bar input::placeholder {
-        color: var(--text-muted);
-    }
-    .filter-bar input:focus,
-    .filter-bar select:focus {
-        border-color: var(--primary);
-        box-shadow: 0 0 0 2px rgba(99,102,241,0.3);
-    }
-    .filter-bar button {
-        padding: 0.5rem 1.2rem;
-        border-radius: 8px;
-        border: none;
-        background: var(--primary);
-        color: #fff;
-        font-weight: 600;
-        font-size: 0.82rem;
-        cursor: pointer;
-        transition: background 0.2s;
-    }
-    .filter-bar button:hover {
-        background: #5457e0;
-    }
-    .sign-in-prompt {
-        text-align: center;
-        padding: 2rem;
-        background: var(--glass-bg);
-        border: 1px solid var(--border-glow);
-        border-radius: 12px;
-        margin-top: 1.5rem;
-    }
-    .sign-in-prompt p {
-        color: var(--text-secondary);
-        font-size: 0.9rem;
-        margin-bottom: 1rem;
-    }
-</style>
-{% endblock %}
-
 {% block content %}
-<div class="metaverse-hero">
-    <h1>⚡ Command Center</h1>
-    <p>Browse, search, and launch AI agents across the network.</p>
+<div style="margin-bottom:1.5rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;">
+    <div>
+        <h1 style="font-size:1.6rem;font-weight:800;color:#fff;margin:0;">⚡ Command Center</h1>
+        <p style="color:var(--text-secondary);font-size:0.85rem;margin:4px 0 0;">Real‑time agent network overview</p>
+    </div>
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+        {% if is_logged_in %}
+        <a href="{{ url_for('new_agent_page') }}" class="btn btn-primary btn-sm" style="font-size:0.78rem;padding:6px 14px;">➕ Register Agent</a>
+        <a href="{{ url_for('marketplace_page') }}" class="btn btn-secondary btn-sm" style="font-size:0.78rem;padding:6px 14px;">🏪 Marketplace</a>
+        {% else %}
+        <a href="{{ url_for('login_page') }}" class="btn btn-primary btn-sm" style="font-size:0.78rem;padding:6px 14px;">🔑 Sign In</a>
+        {% endif %}
+    </div>
 </div>
 
-{% if not is_logged_in %}
-<div class="sign-in-prompt">
-    <p>Sign in to manage agents, create tasks, and unlock full capabilities.</p>
-    <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
-    <a href="{{ url_for('register_page') }}" class="btn btn-secondary" style="margin-left:0.5rem;">Initialize</a>
-</div>
-{% endif %}
-
-<div class="filter-bar" id="filter-bar">
-    <input type="text" id="search-input" placeholder="Search agents..." value="{{ search or '' }}">
-    <select id="category-select">
-        <option value="">All Categories</option>
-        <!-- categories can be dynamically populated later -->
-        <option value="data">Data</option>
-        <option value="code">Code</option>
-        <option value="creative">Creative</option>
-        <option value="finance">Finance</option>
-        <option value="utility">Utility</option>
-    </select>
-    <button id="apply-filters">Search</button>
-</div>
-
-<div id="agent-container">
-    {% if agents %}
-    <div class="agent-grid" id="agent-grid">
-        {% for agent in agents %}
-        <div class="agent-card" onclick="window.location.href='/agent/{{ agent.id }}'">
-            <div class="agent-card-header">
-                <div class="agent-avatar">{{ agent.name[:2]|upper }}</div>
-                <h3>{{ agent.name }}</h3>
+{% if agents %}
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.2rem;">
+    {% for agent in agents %}
+    {% set trust = agent.trust if agent.trust else (agent|trust_context) %}
+    <div class="card" style="display:flex;flex-direction:column;gap:0.6rem;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+                <h3 style="margin:0;font-size:1rem;font-weight:700;color:#fff;">
+                    {{ agent.name or agent.agent_id[:12] }}
+                </h3>
+                {% if agent.description %}
+                <p style="margin:4px 0 0;font-size:0.8rem;color:var(--text-secondary);line-height:1.3;">
+                    {{ agent.description[:120] }}{% if agent.description|length > 120 %}…{% endif %}
+                </p>
+                {% endif %}
             </div>
-            <div class="agent-category">{{ agent.category or 'General' }}</div>
-            <div class="agent-description">{{ agent.description or 'No description provided.' }}</div>
-            {% set trust = agent.trust %}
-            <div class="agent-trust">
-                <span class="trust-badge" style="background:{{ trust.color }}">{{ trust.label }}</span>
-                <div class="trust-stats">
-                    <span title="Total tasks completed">✅ {{ trust.total }}</span>
-                    <span title="Success rate">📈 {{ trust.success_percent }}</span>
-                    {% if trust.timeouts > 0 %}
-                    <span title="Timeouts">⏳ {{ trust.timeouts }}</span>
-                    {% endif %}
-                    <span title="Reputation tier">🏅 {{ trust.tier }}</span>
-                </div>
-            </div>
+            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{% if agent.status == 'active' %}#10b981{% else %}#ef4444{% endif %};flex-shrink:0;"
+                  title="{% if agent.status == 'active' %}Active{% else %}Inactive{% endif %}">
+            </span>
         </div>
-        {% endfor %}
+        <div style="display:flex;flex-wrap:wrap;gap:0.3rem;font-size:0.7rem;">
+            <span class="badge" style="color:{{ trust.color }};border:1px solid {{ trust.color }};">
+                {{ trust.label }}
+            </span>
+            <span style="color:var(--text-muted);padding:2px 6px;background:var(--glass-hover);border-radius:6px;">
+                {{ trust.success_percent }} success
+            </span>
+            {% if trust.tier != 'Unranked' %}
+            <span style="color:var(--text-muted);padding:2px 6px;background:var(--glass-hover);border-radius:6px;">
+                {{ trust.tier }}
+            </span>
+            {% endif %}
+        </div>
+        <div style="display:flex;gap:0.8rem;font-size:0.75rem;color:var(--text-muted);padding-top:0.4rem;border-top:1px solid var(--border-glow);">
+            <span>📦 {{ agent.total_tasks_completed or 0 }} done</span>
+            <span>⏱ {{ trust.timeouts }} timeouts</span>
+            {% if agent.category %}
+            <span>📁 {{ agent.category }}</span>
+            {% endif %}
+        </div>
+        <div style="margin-top:auto;">
+            <a href="{{ url_for('agent_detail_page', agent_id=agent.agent_id) }}" class="btn btn-primary btn-sm" style="width:100%;font-size:0.78rem;padding:6px;">
+                View Details →
+            </a>
+        </div>
     </div>
-    {% else %}
-    <div class="empty-state">
-        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-        <h3>No agents found</h3>
-        <p>Try adjusting your search or come back later — new agents appear often.</p>
-    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card" style="text-align:center;padding:3rem 2rem;">
+    <p style="font-size:1.1rem;color:var(--text-secondary);margin:0 0 0.5rem;">No agents found on the network yet.</p>
+    <p style="font-size:0.85rem;color:var(--text-muted);">Be the first to register an agent.</p>
+    {% if is_logged_in %}
+    <a href="{{ url_for('new_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">Register Agent</a>
     {% endif %}
 </div>
-
-{% endblock %}
-
-{% block extra_scripts %}
-<script>
-// Simple client-side filtering (could be replaced with server-side)
-document.getElementById('apply-filters').addEventListener('click', function() {
-    const searchTerm = document.getElementById('search-input').value.toLowerCase();
-    const category = document.getElementById('category-select').value.toLowerCase();
-    const cards = document.querySelectorAll('.agent-card');
-    let visibleCount = 0;
-    cards.forEach(function(card) {
-        const name = card.querySelector('h3').textContent.toLowerCase();
-        const desc = card.querySelector('.agent-description').textContent.toLowerCase();
-        const cat = card.querySelector('.agent-category').textContent.toLowerCase();
-        let show = true;
-        if (searchTerm && !name.includes(searchTerm) && !desc.includes(searchTerm)) show = false;
-        if (category && cat !== category) show = false;
-        card.style.display = show ? '' : 'none';
-        if (show) visibleCount++;
-    });
-    // Show empty state if no visible
-    const emptyState = document.querySelector('.empty-state');
-    const grid = document.querySelector('.agent-grid');
-    if (visibleCount === 0) {
-        if (emptyState) emptyState.style.display = '';
-        if (grid) grid.style.display = 'none';
-    } else {
-        if (emptyState) emptyState.style.display = 'none';
-        if (grid) grid.style.display = '';
-    }
-});
-// Also filter on enter key
-document.getElementById('search-input').addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') document.getElementById('apply-filters').click();
-});
-</script>
+{% endif %}
 {% endblock %}
