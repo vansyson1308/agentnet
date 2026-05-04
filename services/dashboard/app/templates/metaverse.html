@@ -3,55 +3,86 @@
 
 {% block content %}
 <div style="text-align:center;margin-bottom:2rem;">
-    <h1 style="font-size:2rem;font-weight:800;color:#fff;letter-spacing:0.5px;">🔷 Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:1rem;max-width:600px;margin:0 auto;">Monitor agents, tasks, and network activity in real-time.</p>
+    <h1 style="font-size:2rem;font-weight:800;color:#fff;letter-spacing:-0.02em;">
+        🛸 Command Center
+    </h1>
+    <p style="color:var(--text-secondary);font-size:0.95rem;max-width:600px;margin:0.5rem auto;">
+        Manage your AI fleet, monitor live tasks, and explore the AgentNet metaverse.
+    </p>
 </div>
 
-<div class="card-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.5rem;margin-top:1.5rem;">
+<!-- Stats cards -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:2.5rem;">
     <div class="card" style="text-align:center;">
-        <div style="font-size:2.5rem;font-weight:700;color:var(--accent);">{{ agents|length }}</div>
-        <div style="color:var(--text-secondary);font-size:0.9rem;margin-top:0.3rem;">Active Agents</div>
+        <div style="font-size:2rem;font-weight:800;color:var(--accent);">{{ agents|length }}</div>
+        <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.2rem;">Active Agents</div>
     </div>
     <div class="card" style="text-align:center;">
-        <div style="font-size:2.5rem;font-weight:700;color:var(--accent);">{{ tasks|length }}</div>
-        <div style="color:var(--text-secondary);font-size:0.9rem;margin-top:0.3rem;">Tasks Assigned</div>
+        <div style="font-size:2rem;font-weight:800;color:var(--accent);">{{ tasks|length }}</div>
+        <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.2rem;">Open Tasks</div>
+    </div>
+    <div class="card" style="text-align:center;">
+        <div style="font-size:2rem;font-weight:800;color:#10b981;">{{ agents|selectattr('success_rate','defined')|list|length }}</div>
+        <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.2rem;">Rated Agents</div>
     </div>
 </div>
 
-<div style="margin-top:2rem;">
-    <div class="card">
-        <h3 style="margin-bottom:0.75rem;">🤖 Recent Agents</h3>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+    <!-- Agent grid -->
+    <div>
+        <h2 style="color:#fff;font-size:1.1rem;font-weight:600;margin-bottom:1rem;">🧠 Agent Fleet</h2>
         {% if agents %}
-        <div style="display:flex;flex-wrap:wrap;gap:0.75rem;">
-            {% for agent in agents[:8] %}
-            <span style="background:var(--glass-bg);padding:0.3rem 0.8rem;border-radius:20px;font-size:0.82rem;border:1px solid var(--border-glow);">{{ agent.get('name','Unknown') }}</span>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1rem;">
+            {% for agent in agents %}
+            <div class="card" style="padding:1rem;cursor:default;">
+                <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem;">
+                    <span style="font-size:1.4rem;">{{ agent.get('emoji','🤖') }}</span>
+                    <div style="flex:1;">
+                        <div style="font-weight:600;color:#fff;font-size:0.9rem;">{{ agent.get('name','Unnamed') }}</div>
+                        <div style="font-size:0.7rem;color:var(--text-muted);">{{ agent.get('capabilities','')|join(', ') }}</div>
+                    </div>
+                </div>
+                {% set ctx = agent|trust_context %}
+                <div style="font-size:0.72rem;color:{{ ctx.color }};background:{{ ctx.color }}15;padding:2px 8px;border-radius:10px;display:inline-block;font-weight:500;">{{ ctx.label }}</div>
+                <div style="margin-top:0.4rem;font-size:0.72rem;color:var(--text-secondary);">Tier: {{ ctx.tier }}</div>
+                <div style="margin-top:0.3rem;">
+                    <span style="font-size:0.72rem;color:var(--text-muted);">{{ ctx.success_percent }} success</span>
+                    {% if ctx.timeouts > 0 %}
+                    <span style="font-size:0.72rem;color:#f59e0b;margin-left:0.3rem;">⚠ {{ ctx.timeouts }} timeouts</span>
+                    {% endif %}
+                </div>
+            </div>
             {% endfor %}
-            {% if agents|length > 8 %}<span style="color:var(--text-muted);font-size:0.82rem;">+{{ agents|length - 8 }} more</span>{% endif %}
         </div>
         {% else %}
-        <p style="color:var(--text-muted);font-size:0.85rem;">No agents found. <a href="{{ url_for('register_agent_page') }}" style="color:var(--accent);">Register one</a> to get started.</p>
+        <div class="card" style="text-align:center;padding:2rem;color:var(--text-muted);">
+            <p>No agents found. Deploy one from the <a href="{{ url_for('register_agent_page') }}" style="color:var(--accent);">New Agent</a> page.</p>
+        </div>
         {% endif %}
     </div>
-    <div class="card" style="margin-top:1.5rem;">
-        <h3 style="margin-bottom:0.75rem;">📋 Recent Tasks</h3>
+
+    <!-- Task feed -->
+    <div>
+        <h2 style="color:#fff;font-size:1.1rem;font-weight:600;margin-bottom:1rem;">📋 Recent Tasks</h2>
         {% if tasks %}
-        <ul style="list-style:none;padding:0;">
-            {% for task in tasks[:5] %}
-            <li style="padding:0.5rem 0;border-bottom:1px solid var(--border-glow);display:flex;justify-content:space-between;">
-                <span>{{ task.get('description','Task #'+loop.index|string) }}</span>
-                <span class="badge badge-{{ task.get('status','unknown') }}">{{ task.get('status','unknown') }}</span>
-            </li>
+        <div style="display:flex;flex-direction:column;gap:0.6rem;">
+            {% for task in tasks[:10] %}
+            <div class="card" style="padding:0.8rem 1rem;display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                    <div style="font-weight:500;font-size:0.85rem;color:#fff;">{{ task.get('description','Task')[:50] }}{% if task.get('description','')|length > 50 %}…{% endif %}</div>
+                    <div style="font-size:0.7rem;color:var(--text-muted);">
+                        {{ task.get('status','unknown') }} · {{ task.get('created_at','')[:10] }}
+                    </div>
+                </div>
+                <span style="font-size:0.8rem;color:var(--accent);">{{ task.get('reward','') }}</span>
+            </div>
             {% endfor %}
-        </ul>
+        </div>
         {% else %}
-        <p style="color:var(--text-muted);font-size:0.85rem;">No tasks yet.</p>
+        <div class="card" style="text-align:center;padding:2rem;color:var(--text-muted);">
+            <p>No tasks available. Create one from the <a href="{{ url_for('tasks_page') }}" style="color:var(--accent);">Tasks</a> page.</p>
+        </div>
         {% endif %}
     </div>
 </div>
-{% endblock %}
-
-{% block extra_scripts %}
-<script>
-    // Optional: add polling later
-</script>
 {% endblock %}
