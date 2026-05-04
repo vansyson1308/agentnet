@@ -1,62 +1,114 @@
 {% extends "base.html" %}
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
+{% block extra_head %}
+<style>
+    .agent-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1.2rem;
+        margin-top: 1.5rem;
+    }
+    .agent-card {
+        background: var(--glass-bg);
+        backdrop-filter: blur(var(--glass-blur));
+        border: 1px solid var(--border-glow);
+        border-radius: 14px;
+        padding: 1.2rem;
+        transition: transform 0.2s, box-shadow 0.2s;
+        cursor: default;
+    }
+    .agent-card:hover {
+        transform: translateY(-3px);
+        box-shadow: var(--jarvis-glow);
+    }
+    .agent-card h3 {
+        margin: 0 0 0.4rem;
+        font-size: 1.05rem;
+        color: #fff;
+    }
+    .agent-card .meta {
+        color: var(--text-secondary);
+        font-size: 0.78rem;
+        margin-bottom: 0.6rem;
+    }
+    .agent-card .status-badge {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 20px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    .trust-indicator {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 5px;
+        vertical-align: middle;
+    }
+    .empty-state {
+        text-align: center;
+        padding: 3rem 1rem;
+        color: var(--text-muted);
+    }
+    .empty-state h2 {
+        color: #fff;
+        margin-bottom: 0.5rem;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<div style="margin-bottom:2rem;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin-bottom:0.3rem;">🪐 Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;">Overview of agents in the network</p>
+<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+    <div>
+        <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin:0;">🚀 Command Center</h1>
+        <p style="color:var(--text-secondary);margin:0.25rem 0 0;">Monitor your agent fleet and network activity.</p>
+    </div>
+    {% if authenticated %}
+    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary">+ Register Agent</a>
+    {% endif %}
 </div>
 
 {% if error %}
 <div class="alert alert-danger">{{ error }}</div>
 {% endif %}
 
-<div class="card" style="overflow-x:auto;">
-    {% if agents %}
-    <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
-        <thead>
-            <tr style="border-bottom:1px solid var(--border-glow);">
-                <th style="text-align:left;padding:0.75rem 0.5rem;">Agent</th>
-                <th style="text-align:left;padding:0.75rem 0.5rem;">Capabilities</th>
-                <th style="text-align:center;padding:0.75rem 0.5rem;">Reputation</th>
-                <th style="text-align:center;padding:0.75rem 0.5rem;">Trust</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for agent in agents %}
-            {% set ctx = agent|trust_context %}
-            <tr style="border-bottom:1px solid var(--border-glow);">
-                <td style="padding:0.75rem 0.5rem;">
-                    <strong style="color:#fff;">{{ agent.name }}</strong>
-                    <div style="color:var(--text-muted);font-size:0.75rem;">{{ agent.description[:80] }}{% if agent.description and agent.description|length > 80 %}…{% endif %}</div>
-                </td>
-                <td style="padding:0.75rem 0.5rem;color:var(--text-secondary);">
-                    {{ agent.capabilities | join(', ') if agent.capabilities else '—' }}
-                </td>
-                <td style="padding:0.75rem 0.5rem;text-align:center;">
-                    <span style="display:inline-block;padding:2px 10px;border-radius:20px;font-size:0.75rem;font-weight:600;background:var(--glass-bg);border:1px solid var(--border-glow);">{{ ctx.tier }}</span>
-                </td>
-                <td style="padding:0.75rem 0.5rem;text-align:center;">
-                    <div style="display:flex;align-items:center;justify-content:center;gap:0.5rem;">
-                        <span style="width:10px;height:10px;border-radius:50%;background:{{ ctx.color }};display:inline-block;"></span>
-                        <span style="color:var(--text-secondary);font-size:0.8rem;">{{ ctx.label }}</span>
-                    </div>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p style="color:var(--text-muted);text-align:center;padding:2rem;">No agents registered yet. <a href="{{ url_for('register_agent_page') }}" style="color:var(--accent);">Register one</a>.</p>
-    {% endif %}
+{% if not authenticated %}
+<div class="empty-state">
+    <h2>🔒 Dashboard Locked</h2>
+    <p>Sign in to view your agents and manage tasks.</p>
+    <a href="{{ url_for('login_page') }}" class="btn btn-primary" style="margin-top:1rem;">Sign In</a>
 </div>
-
-<div style="margin-top:2rem;display:flex;gap:1rem;flex-wrap:wrap;">
-    <a href="{{ url_for('marketplace_page') }}" class="btn btn-secondary">🛒 Marketplace</a>
-    {% if session.access_token %}
-    <a href="{{ url_for('directory_page') }}" class="btn btn-secondary">📇 Directory</a>
-    <a href="{{ url_for('tasks_page') }}" class="btn btn-secondary">📋 Tasks</a>
-    <a href="{{ url_for('collaboration_page') }}" class="btn btn-secondary">💬 Chat</a>
-    {% endif %}
+{% elif agents|length == 0 %}
+<div class="empty-state">
+    <h2>🤖 No Agents Yet</h2>
+    <p>Register your first agent to get started.</p>
+    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">Register Agent</a>
 </div>
+{% else %}
+<div class="agent-grid">
+    {% for agent in agents %}
+    <div class="agent-card">
+        <h3>{{ agent.name or 'Unnamed Agent' }}</h3>
+        <div class="meta">
+            {% if agent.category %}{{ agent.category }} · {% endif %}
+            Agent ID: {{ agent.id[:8] }}...
+        </div>
+        {% if agent.description %}
+        <p style="color:var(--text-secondary);font-size:0.8rem;margin:0.4rem 0;">{{ agent.description[:100] }}{% if agent.description|length > 100 %}…{% endif %}</p>
+        {% endif %}
+        <div style="margin-top:0.6rem;display:flex;align-items:center;gap:0.8rem;">
+            {% set tc = agent|trust_context %}
+            <span>
+                <span class="trust-indicator" style="background:{{ tc.color }};"></span>
+                <span style="font-size:0.72rem;color:var(--text-secondary);" title="{{ tc.label }}">{{ tc.tier }}</span>
+            </span>
+            <span style="font-size:0.7rem;color:var(--text-muted);">{{ tc.success_percent }} success</span>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
 {% endblock %}
