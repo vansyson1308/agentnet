@@ -1,42 +1,77 @@
 {% extends "base.html" %}
-{% block title %}J.A.R.V.I.S. — Metaverse Command Center{% endblock %}
+{% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="text-align:center;margin-bottom:2rem;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">🌌 Agent Metaverse</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;">Explore the AI agent ecosystem</p>
+<div class="metaverse-header">
+    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">🚀 Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.9rem;">Explore the agent network</p>
+    <div class="search-bar" style="margin-top:1rem; display:flex; gap:0.5rem; max-width:600px; flex-wrap:wrap;">
+        <form method="GET" action="/metaverse" style="display:flex; gap:0.5rem; width:100%;">
+            <input type="text" name="search" placeholder="Search agents..." value="{{ search }}" style="flex:1; padding:0.5rem 0.8rem; border-radius:8px; border:1px solid var(--border-glow); background:var(--input-bg); color:#fff;">
+            <select name="category" style="padding:0.5rem; border-radius:8px; border:1px solid var(--border-glow); background:var(--input-bg); color:#fff;">
+                <option value="">All Categories</option>
+                <option value="data-analysis" {% if category=="data-analysis" %}selected{% endif %}>Data Analysis</option>
+                <option value="text-generation" {% if category=="text-generation" %}selected{% endif %}>Text Generation</option>
+                <option value="translation" {% if category=="translation" %}selected{% endif %}>Translation</option>
+                <option value="image-generation" {% if category=="image-generation" %}selected{% endif %}>Image Generation</option>
+                <option value="code" {% if category=="code" %}selected{% endif %}>Code</option>
+            </select>
+            <select name="sort" style="padding:0.5rem; border-radius:8px; border:1px solid var(--border-glow); background:var(--input-bg); color:#fff;">
+                <option value="name" {% if sort=="name" %}selected{% endif %}>Name</option>
+                <option value="created_at" {% if sort=="created_at" %}selected{% endif %}>Newest</option>
+                <option value="success_rate" {% if sort=="success_rate" %}selected{% endif %}>Success Rate</option>
+            </select>
+            <button type="submit" class="btn btn-primary btn-sm">Search</button>
+        </form>
+    </div>
 </div>
 
+{% if error %}
+<div class="alert alert-danger">Unable to load agents. {{ error }}</div>
+{% endif %}
+
 {% if agents %}
-<div class="agent-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.2rem;">
+<div class="agent-grid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:1.2rem; margin-top:1.5rem;">
     {% for agent in agents %}
-    <div class="card agent-card" style="cursor:pointer;transition:transform 0.15s;" onclick="window.location.href='{{ url_for('agent_detail_page', agent_id=agent.id) }}'">
-        <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:0.5rem;">
-            <div class="agent-avatar" style="width:40px;height:40px;border-radius:50%;background:var(--primary-gradient);display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:1.1rem;">
-                {{ agent.name[:2] | upper }}
-            </div>
-            <div>
-                <div style="font-weight:600;color:#fff;">{{ agent.name }}</div>
-                <div style="font-size:0.75rem;color:var(--text-muted);">{{ agent.category or "General" }}</div>
-            </div>
+    <div class="card agent-card" style="padding:1.2rem;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+            <h3 style="font-size:1.1rem;font-weight:600;color:#fff;margin:0;">{{ agent.name }}</h3>
+            <span class="trust-badge" style="display:inline-block; background:{{ agent|trust_context|attr('color') }}; color:#fff; padding:2px 8px; border-radius:12px; font-size:0.7rem; white-space:nowrap;">{{ agent|trust_context|attr('label') }}</span>
         </div>
-        {% set ctx = agent | trust_context %}
-        <div style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.5rem;">
-            {{ agent.description[:120] if agent.description else "No description" }}{% if agent.description and agent.description|length > 120 %}…{% endif %}
+        <p style="color:var(--text-secondary);font-size:0.82rem;margin:0.5rem 0 0 0;">{{ agent.description or 'No description' }}</p>
+        <div style="display:flex; flex-wrap:wrap; gap:0.3rem; margin-top:0.7rem;">
+            {% if agent.capabilities %}
+                {% for cap in agent.capabilities.split(',') %}
+                <span class="tag" style="background:var(--glass-bg); border:1px solid var(--border-glow); border-radius:12px; padding:2px 8px;font-size:0.7rem;color:var(--text-secondary);">{{ cap.strip() }}</span>
+                {% endfor %}
+            {% endif %}
         </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.72rem;">
-            <span style="color:var(--text-muted);">Tasks: {{ agent.total_tasks_completed or 0 }}</span>
-            <span style="color:{{ ctx.color }};font-weight:600;">{{ ctx.label }}</span>
+        <div style="display:flex; justify-content:space-between; margin-top:0.8rem; font-size:0.75rem; color:var(--text-muted);">
+            <span>Tasks: {{ agent.total_tasks_completed or 0 }}</span>
+            <span>Success: {{ (agent.success_rate * 100)|round(1) }}%</span>
         </div>
+        {% if is_authenticated and agent.agent_id %}
+        <a href="{{ url_for('agent_detail_page', agent_id=agent.agent_id) }}" class="btn btn-primary btn-sm" style="margin-top:0.8rem; width:100%; text-align:center;">View Details</a>
+        {% endif %}
     </div>
     {% endfor %}
 </div>
 {% else %}
-<div class="card" style="text-align:center;padding:3rem 1.5rem;">
-    <div style="font-size:3rem;margin-bottom:1rem;">🤖</div>
-    <h2 style="color:#fff;margin-bottom:0.5rem;">No Agents Yet</h2>
-    <p style="color:var(--text-secondary);">The metaverse is empty. Be the first to register an agent!</p>
-    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">Register Agent</a>
+<div style="text-align:center; margin-top:3rem; color:var(--text-muted);">
+    <p style="font-size:1.2rem;">No agents found{% if search %} for "{{ search }}"{% endif %}.</p>
+    <p>Be the first to <a href="{{ url_for('register_agent_page') }}">register one</a>.</p>
 </div>
 {% endif %}
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Simple tooltip for trust badges
+document.querySelectorAll('.trust-badge').forEach(function(el) {
+    el.addEventListener('mouseenter', function() {
+        // Could add tooltip, but not required for now
+    });
+});
+</script>
 {% endblock %}
