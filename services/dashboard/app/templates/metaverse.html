@@ -2,40 +2,55 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="text-align:center;margin-bottom:2rem;">
-    <h1 style="font-size:2rem;font-weight:900;color:#fff;">🚀 Command Center</h1>
-    <p style="color:var(--text-secondary);">Monitor agents, tasks, and network activity.</p>
+<div style="margin-bottom:2rem;">
+    <h1 style="font-size:1.6rem;font-weight:800;color:#fff;">⚡ Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.85rem;">Overview of agents and tasks</p>
 </div>
 
-{% if is_logged_in %}
-<div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:2rem;">
-    <div class="card">
-        <h3>🤖 Agents ({{ agents|length }})</h3>
-        <ul style="list-style:none;padding:0;margin:0;">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:2rem;">
+    <!-- Agents summary -->
+    <div class="card" style="padding:1.2rem;">
+        <h2 style="font-size:1.1rem;font-weight:700;color:#fff;margin-bottom:1rem;">🤖 Agents</h2>
+        {% if agents %}
+        <ul style="list-style:none;padding:0;">
             {% for agent in agents %}
-            <li style="padding:8px 0;border-bottom:1px solid var(--border-color);">
-                <strong>{{ agent.name }}</strong>
-                <span style="color:var(--text-secondary);font-size:0.8rem;"> — {{ agent.capabilities|join(', ') }}</span>
+            {% set tc = agent|trust_context %}
+            <li style="display:flex;align-items:center;justify-content:space-between;padding:0.6rem 0;border-bottom:1px solid var(--border-glow);">
+                <div>
+                    <strong style="color:#fff;">{{ agent.name }}</strong>
+                    <span style="color:var(--text-secondary);font-size:0.8rem;margin-left:0.5rem;">{{ agent.capabilities }}</span>
+                </div>
+                <span style="color:{{ tc.color }};font-size:0.8rem;font-weight:600;">{{ tc.label }}</span>
             </li>
             {% endfor %}
         </ul>
+        {% else %}
+        <p style="color:var(--text-muted);">No agents registered.</p>
+        {% endif %}
     </div>
-    <div class="card">
-        <h3>📋 Recent Tasks ({{ tasks|length }})</h3>
-        <ul style="list-style:none;padding:0;margin:0;">
-            {% for task in tasks[:10] %}
-            <li style="padding:8px 0;border-bottom:1px solid var(--border-color);">
-                <strong>{{ task.title }}</strong>
-                <span style="color:var(--text-secondary);font-size:0.8rem;"> — {{ task.status }}</span>
+
+    <!-- Tasks summary -->
+    <div class="card" style="padding:1.2rem;">
+        <h2 style="font-size:1.1rem;font-weight:700;color:#fff;margin-bottom:1rem;">📋 Tasks</h2>
+        {% if tasks %}
+        <ul style="list-style:none;padding:0;">
+            {% for task in tasks %}
+            <li style="display:flex;align-items:center;justify-content:space-between;padding:0.6rem 0;border-bottom:1px solid var(--border-glow);">
+                <div>
+                    <strong style="color:#fff;">{{ task.description }}</strong>
+                    <span style="color:var(--text-secondary);font-size:0.8rem;margin-left:0.5rem;">{{ task.status }}</span>
+                </div>
             </li>
             {% endfor %}
         </ul>
+        {% else %}
+        <p style="color:var(--text-muted);">No tasks running.</p>
+        {% endif %}
     </div>
 </div>
-{% else %}
-<div class="card" style="text-align:center;padding:2rem;">
-    <p style="font-size:1.1rem;">Sign in to see your agents and tasks.</p>
-    <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
+
+<div style="text-align:center;margin-top:2rem;">
+    <a href="{{ url_for('marketplace_page') }}" class="btn btn-primary btn-sm" style="font-size:0.85rem;">🏪 Browse Marketplace</a>
+    <a href="{{ url_for('wallet_page') }}" class="btn btn-secondary btn-sm" style="font-size:0.85rem;margin-left:0.5rem;">💰 Wallet</a>
 </div>
-{% endif %}
 {% endblock %}
