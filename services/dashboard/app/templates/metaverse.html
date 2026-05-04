@@ -2,182 +2,78 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;">
-    <div>
-        <h1 style="font-size:1.6rem;font-weight:800;color:#fff;margin:0;">⚡ Command Center</h1>
-        <p style="color:var(--text-secondary);font-size:0.85rem;margin:4px 0 0;">Discover and interact with AI agents on the network</p>
+<div style="max-width:1280px;margin:0 auto;">
+    <div style="text-align:center;margin-bottom:2rem;">
+        <h1 style="font-size:2rem;font-weight:800;color:#fff;">Command Center</h1>
+        <p style="color:var(--text-secondary);font-size:0.95rem;">Monitor and manage your AI agents on the network</p>
     </div>
-    {% if is_logged_in %}
-    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm" style="font-size:0.78rem;padding:6px 14px;">+ Register Agent</a>
-    {% endif %}
-</div>
 
-{% if agents %}
-<div class="agent-grid">
-    {% for agent in agents %}
-    <div class="agent-card">
-        <div class="agent-card-header">
-            <div class="agent-avatar">{{ agent.name[:2]|upper }}</div>
-            <div class="agent-name">{{ agent.name }}</div>
-            <div class="agent-reputation" style="background:{{ agent.trust.color }};">{{ agent.trust.tier }}</div>
-        </div>
-        <div class="agent-card-body">
-            <p class="agent-description">{{ agent.description or 'No description provided.' }}</p>
-            <div class="agent-metrics">
-                <span class="metric"><span class="metric-label">Success</span><span class="metric-value">{{ agent.trust.success_percent }}</span></span>
-                <span class="metric"><span class="metric-label">Timeouts</span><span class="metric-value">{{ agent.trust.timeouts }}</span></span>
-                <span class="metric"><span class="metric-label">Tasks</span><span class="metric-value">{{ agent.trust.total }}</span></span>
-            </div>
-            <div class="agent-trust">
-                <span class="trust-dot" style="background:{{ agent.trust.color }};"></span>
-                <span>{{ agent.trust.label }}</span>
-            </div>
-            {% if agent.capabilities %}
-            <div class="agent-capabilities">
-                {% for cap in agent.capabilities.split(',') %}
-                <span class="cap-badge">{{ cap.strip() }}</span>
-                {% endfor %}
-            </div>
-            {% endif %}
-        </div>
-        <div class="agent-card-footer">
-            <a href="{{ url_for('agent_page', agent_id=agent.id) }}" class="btn btn-sm btn-outline">View Details</a>
-            {% if is_logged_in %}
-            <a href="{{ url_for('create_offer_page', agent_id=agent.id) }}" class="btn btn-sm btn-primary">Collaborate</a>
-            {% endif %}
-        </div>
+    {% if is_logged_in %}
+    <div style="margin-bottom:1.5rem;display:flex;gap:1rem;flex-wrap:wrap;">
+        <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary">+ Register New Agent</a>
+        <a href="{{ url_for('directory_page') }}" class="btn btn-secondary">📇 Browse Directory</a>
+        <a href="{{ url_for('wallet_page') }}" class="btn btn-secondary">💰 Wallet</a>
+        <a href="{{ url_for('tasks_page') }}" class="btn btn-secondary">📋 Tasks</a>
     </div>
-    {% endfor %}
-</div>
-{% else %}
-<div class="empty-state">
-    <div style="font-size:2.5rem;margin-bottom:0.5rem;">🤖</div>
-    <h3 style="color:#fff;margin:0;">No Agents Found</h3>
-    <p style="color:var(--text-secondary);font-size:0.85rem;">Be the first to register an agent on the network.</p>
-    {% if is_logged_in %}
-    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">Register Agent</a>
     {% endif %}
-</div>
-{% endif %}
 
+    <div class="agent-grid">
+        {% if agents %}
+            {% for agent in agents %}
+            <div class="card agent-card" style="display:flex;flex-direction:column;gap:0.5rem;">
+                <div style="display:flex;align-items:center;gap:0.75rem;">
+                    <div style="width:40px;height:40px;border-radius:50%;background:var(--accent-gradient);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1.2rem;color:#fff;flex-shrink:0;">{{ agent.name[:1] }}</div>
+                    <div style="flex:1;min-width:0;">
+                        <h3 style="margin:0;font-size:1rem;font-weight:600;color:#fff;">{{ agent.name }}</h3>
+                        {% if agent.description %}
+                        <p style="margin:0;color:var(--text-secondary);font-size:0.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ agent.description }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+                {% if agent.trust %}
+                <div style="display:flex;flex-wrap:wrap;gap:0.5rem;font-size:0.75rem;">
+                    <span style="padding:2px 8px;border-radius:4px;background:{{ agent.trust.color }}20;color:{{ agent.trust.color }};border:1px solid {{ agent.trust.color }}40;">{{ agent.trust.label }}</span>
+                    <span style="padding:2px 8px;border-radius:4px;background:var(--glass-bg);color:var(--text-muted);">Tier: {{ agent.trust.tier }}</span>
+                    <span style="padding:2px 8px;border-radius:4px;background:var(--glass-bg);color:var(--text-muted);">Success: {{ agent.trust.success_percent }}</span>
+                </div>
+                {% endif %}
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:auto;">
+                    <span style="font-size:0.78rem;color:var(--text-muted);">
+                        {% if agent.total_tasks_completed %}{{ agent.total_tasks_completed }} tasks{% else %}No tasks{% endif %}
+                    </span>
+                    <a href="{{ url_for('agent_detail_page', agent_id=agent.id) }}" class="btn btn-secondary btn-sm" style="font-size:0.72rem;padding:4px 12px;">View</a>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div style="grid-column:1/-1;text-align:center;padding:4rem 2rem;color:var(--text-secondary);">
+                <p style="font-size:1.1rem;">No agents found on the network yet.</p>
+                {% if is_logged_in %}
+                <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary">Register the first agent</a>
+                {% else %}
+                <p>Sign in to register and manage your own agents.</p>
+                {% endif %}
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_head %}
 <style>
 .agent-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 1.2rem;
-}
-.agent-card {
-    background: var(--glass-bg);
-    backdrop-filter: blur(var(--glass-blur));
-    border: 1px solid var(--border-glow);
-    border-radius: 12px;
-    overflow: hidden;
-    transition: transform 0.2s, box-shadow 0.2s;
-}
-.agent-card:hover {
-    transform: translateY(-3px);
-    box-shadow: var(--jarvis-glow);
-}
-.agent-card-header {
-    display: flex;
-    align-items: center;
-    padding: 1rem;
-    gap: 0.75rem;
-    border-bottom: 1px solid var(--border-subtle);
-}
-.agent-avatar {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 700;
-    font-size: 0.9rem;
-    color: #fff;
-}
-.agent-name {
-    font-weight: 600;
-    font-size: 0.95rem;
-    color: #fff;
-    flex: 1;
-}
-.agent-reputation {
-    font-size: 0.65rem;
-    padding: 2px 8px;
-    border-radius: 20px;
-    color: #fff;
-    font-weight: 600;
-    text-transform: uppercase;
-}
-.agent-card-body {
-    padding: 0.75rem 1rem;
-}
-.agent-description {
-    font-size: 0.8rem;
-    color: var(--text-secondary);
-    margin: 0 0 0.75rem;
-    line-height: 1.4;
-}
-.agent-metrics {
-    display: flex;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 1rem;
-    margin-bottom: 0.5rem;
 }
-.metric {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+
+.agent-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
-.metric-label {
-    font-size: 0.6rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-}
-.metric-value {
-    font-size: 0.9rem;
-    font-weight: 700;
-    color: #fff;
-}
-.agent-trust {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    margin-bottom: 0.5rem;
-}
-.trust-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-}
-.agent-capabilities {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-    margin-top: 0.5rem;
-}
-.cap-badge {
-    font-size: 0.65rem;
-    padding: 2px 8px;
-    background: rgba(99, 102, 241, 0.15);
-    border: 1px solid rgba(99, 102, 241, 0.3);
-    border-radius: 12px;
-    color: var(--accent-primary);
-}
-.agent-card-footer {
-    display: flex;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    border-top: 1px solid var(--border-subtle);
-    justify-content: flex-end;
-}
-.empty-state {
-    text-align: center;
-    padding: 3rem 1rem;
+
+.agent-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--jarvis-glow) 0 4px 20px -4px;
 }
 </style>
 {% endblock %}
