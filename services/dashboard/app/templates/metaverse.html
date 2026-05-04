@@ -2,76 +2,95 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div class="metaverse-header">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">🚀 Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;">Explore the agent network</p>
-    <div class="search-bar" style="margin-top:1rem; display:flex; gap:0.5rem; max-width:600px; flex-wrap:wrap;">
-        <form method="GET" action="/metaverse" style="display:flex; gap:0.5rem; width:100%;">
-            <input type="text" name="search" placeholder="Search agents..." value="{{ search }}" style="flex:1; padding:0.5rem 0.8rem; border-radius:8px; border:1px solid var(--border-glow); background:var(--input-bg); color:#fff;">
-            <select name="category" style="padding:0.5rem; border-radius:8px; border:1px solid var(--border-glow); background:var(--input-bg); color:#fff;">
-                <option value="">All Categories</option>
-                <option value="data-analysis" {% if category=="data-analysis" %}selected{% endif %}>Data Analysis</option>
-                <option value="text-generation" {% if category=="text-generation" %}selected{% endif %}>Text Generation</option>
-                <option value="translation" {% if category=="translation" %}selected{% endif %}>Translation</option>
-                <option value="image-generation" {% if category=="image-generation" %}selected{% endif %}>Image Generation</option>
-                <option value="code" {% if category=="code" %}selected{% endif %}>Code</option>
-            </select>
-            <select name="sort" style="padding:0.5rem; border-radius:8px; border:1px solid var(--border-glow); background:var(--input-bg); color:#fff;">
-                <option value="name" {% if sort=="name" %}selected{% endif %}>Name</option>
-                <option value="created_at" {% if sort=="created_at" %}selected{% endif %}>Newest</option>
-                <option value="success_rate" {% if sort=="success_rate" %}selected{% endif %}>Success Rate</option>
-            </select>
-            <button type="submit" class="btn btn-primary btn-sm">Search</button>
-        </form>
+<div style="margin-bottom:2rem;">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
+        <div>
+            <h1 style="font-size:1.6rem;font-weight:800;color:#fff;margin:0;">Command Center</h1>
+            <p style="color:var(--text-secondary);font-size:0.85rem;margin-top:4px;">AgentNet network overview</p>
+        </div>
+        {% if session.access_token %}
+        <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary">+ Deploy Agent</a>
+        {% endif %}
     </div>
 </div>
 
-{% if error %}
-<div class="alert alert-danger">Unable to load agents. {{ error }}</div>
+<!-- Stats cards (if user logged in) -->
+{% if user %}
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:2rem;">
+    <div class="card" style="padding:1.2rem;">
+        <div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Wallet Balance</div>
+        <div style="font-size:1.5rem;font-weight:700;color:var(--accent);margin-top:4px;">{{ "%.2f"|format(user.get('balance',0)) }} ETH</div>
+    </div>
+    <div class="card" style="padding:1.2rem;">
+        <div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Active Tasks</div>
+        <div style="font-size:1.5rem;font-weight:700;color:#fff;margin-top:4px;">{{ user.get('active_tasks',0) }}</div>
+    </div>
+    <div class="card" style="padding:1.2rem;">
+        <div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Agents Owned</div>
+        <div style="font-size:1.5rem;font-weight:700;color:#fff;margin-top:4px;">{{ user.get('agents_count',0) }}</div>
+    </div>
+</div>
 {% endif %}
 
+<!-- Agent grid -->
+<div style="margin-bottom:1rem;">
+    <h2 style="font-size:1.1rem;font-weight:600;color:#fff;margin:0 0 0.5rem 0;">Featured Agents</h2>
+    <p style="color:var(--text-secondary);font-size:0.8rem;margin:0;">Browse available agents on the network</p>
+</div>
+
 {% if agents %}
-<div class="agent-grid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:1.2rem; margin-top:1.5rem;">
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:1.2rem;">
     {% for agent in agents %}
-    <div class="card agent-card" style="padding:1.2rem;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-            <h3 style="font-size:1.1rem;font-weight:600;color:#fff;margin:0;">{{ agent.name }}</h3>
-            <span class="trust-badge" style="display:inline-block; background:{{ agent|trust_context|attr('color') }}; color:#fff; padding:2px 8px; border-radius:12px; font-size:0.7rem; white-space:nowrap;">{{ agent|trust_context|attr('label') }}</span>
-        </div>
-        <p style="color:var(--text-secondary);font-size:0.82rem;margin:0.5rem 0 0 0;">{{ agent.description or 'No description' }}</p>
-        <div style="display:flex; flex-wrap:wrap; gap:0.3rem; margin-top:0.7rem;">
+    <div class="card agent-card" style="padding:1.2rem;display:flex;flex-direction:column;justify-content:space-between;">
+        <div>
+            <div style="display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem;">
+                <div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-secondary));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:0.9rem;flex-shrink:0;">
+                    {{ agent.name[:2]|upper }}
+                </div>
+                <div style="min-width:0;">
+                    <h3 style="margin:0;font-size:0.95rem;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ agent.name }}</h3>
+                    {% if agent.category %}
+                    <span style="font-size:0.7rem;color:var(--text-muted);">{{ agent.category }}</span>
+                    {% endif %}
+                </div>
+            </div>
+            <p style="font-size:0.8rem;color:var(--text-secondary);margin:0.4rem 0;line-height:1.4;">
+                {{ agent.description[:120] }}{% if agent.description|length > 120 %}…{% endif %}
+            </p>
             {% if agent.capabilities %}
-                {% for cap in agent.capabilities.split(',') %}
-                <span class="tag" style="background:var(--glass-bg); border:1px solid var(--border-glow); border-radius:12px; padding:2px 8px;font-size:0.7rem;color:var(--text-secondary);">{{ cap.strip() }}</span>
+            <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:0.5rem;">
+                {% for cap in agent.capabilities[:3] %}
+                <span class="badge badge-secondary" style="font-size:0.65rem;">{{ cap }}</span>
                 {% endfor %}
+                {% if agent.capabilities|length > 3 %}
+                <span class="badge badge-secondary" style="font-size:0.65rem;">+{{ agent.capabilities|length - 3 }}</span>
+                {% endif %}
+            </div>
             {% endif %}
         </div>
-        <div style="display:flex; justify-content:space-between; margin-top:0.8rem; font-size:0.75rem; color:var(--text-muted);">
-            <span>Tasks: {{ agent.total_tasks_completed or 0 }}</span>
-            <span>Success: {{ (agent.success_rate * 100)|round(1) }}%</span>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:1rem;border-top:1px solid var(--border-glow);padding-top:0.8rem;">
+            <div style="font-size:0.72rem;color:var(--text-muted);">
+                {% set tc = agent|trust_context %}
+                <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{{ tc.color }};margin-right:4px;"></span>
+                {{ tc.label }}
+            </div>
+            <a href="{{ url_for('agent_detail_page', agent_id=agent.id) if 'agent_detail_page' in url_for.__globals__ else '#' }}" class="btn btn-sm" style="font-size:0.75rem;">View →</a>
         </div>
-        {% if is_authenticated and agent.agent_id %}
-        <a href="{{ url_for('agent_detail_page', agent_id=agent.agent_id) }}" class="btn btn-primary btn-sm" style="margin-top:0.8rem; width:100%; text-align:center;">View Details</a>
-        {% endif %}
     </div>
     {% endfor %}
 </div>
 {% else %}
-<div style="text-align:center; margin-top:3rem; color:var(--text-muted);">
-    <p style="font-size:1.2rem;">No agents found{% if search %} for "{{ search }}"{% endif %}.</p>
-    <p>Be the first to <a href="{{ url_for('register_agent_page') }}">register one</a>.</p>
+<div class="card" style="text-align:center;padding:2rem;">
+    <p style="color:var(--text-muted);margin:0;">No agents available at the moment.</p>
+    {% if session.access_token %}
+    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">Register the first agent</a>
+    {% endif %}
 </div>
 {% endif %}
-
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-// Simple tooltip for trust badges
-document.querySelectorAll('.trust-badge').forEach(function(el) {
-    el.addEventListener('mouseenter', function() {
-        // Could add tooltip, but not required for now
-    });
-});
+// Optional: Add any client-side interactivity here
 </script>
 {% endblock %}
