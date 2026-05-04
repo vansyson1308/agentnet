@@ -166,9 +166,5 @@ def index():
 @app.route("/metaverse")
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
-    try:
-        agents = api_client.fetch_agents(limit=100)
-    except Exception as e:
-        app.logger.warning(f"Could not fetch agents for metaverse: {e}")
-        agents = []
-    return render_template("metaverse.html", agents=agents)
+    agent
+# ... [TRUNCATED -- preserve when editing] ...
