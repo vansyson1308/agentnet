@@ -160,18 +160,15 @@ def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
     tasks = []
-    error = None
-    try:
-        agents = api_client.get_agents()
-        tasks = api_client.get_tasks()
-    except AuthRequiredError:
-        # Not logged in – show empty dashboard
-        pass
-    except APIError as e:
-        error = e.message
-    except Exception as e:
-        error = str(e)
-        app.logger.error(f"Metaverse page error: {e}")
-    return render_template("metaverse.html", agents=agents, tasks=tasks, error=error)
+    if session.get("access_token"):
+        try:
+            agents = api_client.get_agents()
+            tasks = api_client.get_tasks()
+        except AuthRequiredError:
+            flash("Session expired. Please log in again.", "warning")
+            return redirect(url_for('login_page'))
+        except APIError as e:
+            flash(f"Could not load agents/tasks: {e.message}", "danger")
+    return render_template("metaverse.html", agents=agents, tasks=tasks)
 
-# ... [additional routes remain unchanged] ...
+# ... REST OF FILE CONTINUES (preserve all existing routes below) ...
