@@ -2,37 +2,32 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="text-align:center;margin:2rem auto;max-width:800px;">
-    <h1 style="font-size:2rem;font-weight:800;color:#fff;margin-bottom:0.5rem;">🪐 Metaverse Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:1rem;">Your central hub for agent management, network health, and system insights.</p>
-</div>
-
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.5rem;margin-top:2rem;">
-    <div class="card" style="text-align:center;padding:2rem;">
-        <div style="font-size:2.5rem;margin-bottom:0.75rem;">🤖</div>
-        <h3 style="color:#fff;margin-bottom:0.5rem;">Active Agents</h3>
-        <p style="font-size:2rem;font-weight:700;color:var(--accent);">{{ agents|length if agents else 0 }}</p>
+<div style="max-width:900px;margin:2rem auto;">
+    <div style="text-align:center;margin-bottom:2rem;">
+        <h1 style="font-size:2rem;font-weight:800;color:#fff;">Command Center</h1>
+        <p style="color:var(--text-secondary);font-size:0.9rem;">Welcome back, Commander. Manage your agents, tasks, and wallets.</p>
     </div>
-    <div class="card" style="text-align:center;padding:2rem;">
-        <div style="font-size:2.5rem;margin-bottom:0.75rem;">📡</div>
-        <h3 style="color:#fff;margin-bottom:0.5rem;">Network Status</h3>
-        <p style="font-size:1.2rem;font-weight:500;color:#10b981;">Online</p>
-    </div>
-    <div class="card" style="text-align:center;padding:2rem;">
-        <div style="font-size:2.5rem;margin-bottom:0.75rem;">⚡</div>
-        <h3 style="color:#fff;margin-bottom:0.5rem;">System Load</h3>
-        <p style="font-size:1.2rem;font-weight:500;color:var(--warning);">Normal</p>
-    </div>
-</div>
-
-<div style="margin-top:2.5rem;">
-    <div class="card" style="padding:2rem;">
-        <h2 style="color:#fff;margin-bottom:1rem;">Quick Actions</h2>
-        <div style="display:flex;flex-wrap:wrap;gap:1rem;">
-            <a href="{{ url_for('marketplace_page') }}" class="btn btn-primary">Explore Marketplace</a>
-            <a href="{{ url_for('register_agent_page') }}" class="btn btn-secondary">Register Agent</a>
-            <a href="{{ url_for('wallet_page') }}" class="btn btn-secondary">View Wallet</a>
-        </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px,1fr));gap:1.5rem;">
+        <a href="{{ url_for('directory_page') }}" class="card" style="text-decoration:none;text-align:center;padding:2rem;">
+            <div style="font-size:2.5rem;margin-bottom:0.5rem;">📇</div>
+            <h3 style="margin:0 0 0.3rem;font-size:1rem;color:#fff;">Agent Directory</h3>
+            <p style="font-size:0.78rem;color:var(--text-muted);margin:0;">Discover and deploy agents</p>
+        </a>
+        <a href="{{ url_for('wallet_page') }}" class="card" style="text-decoration:none;text-align:center;padding:2rem;">
+            <div style="font-size:2.5rem;margin-bottom:0.5rem;">💰</div>
+            <h3 style="margin:0 0 0.3rem;font-size:1rem;color:#fff;">Wallet</h3>
+            <p style="font-size:0.78rem;color:var(--text-muted);margin:0;">View balances and transactions</p>
+        </a>
+        <a href="{{ url_for('tasks_page') }}" class="card" style="text-decoration:none;text-align:center;padding:2rem;">
+            <div style="font-size:2.5rem;margin-bottom:0.5rem;">📋</div>
+            <h3 style="margin:0 0 0.3rem;font-size:1rem;color:#fff;">Tasks</h3>
+            <p style="font-size:0.78rem;color:var(--text-muted);margin:0;">Monitor and manage task runs</p>
+        </a>
+        <a href="{{ url_for('collaboration_page') }}" class="card" style="text-decoration:none;text-align:center;padding:2rem;">
+            <div style="font-size:2.5rem;margin-bottom:0.5rem;">💬</div>
+            <h3 style="margin:0 0 0.3rem;font-size:1rem;color:#fff;">Collaboration</h3>
+            <p style="font-size:0.78rem;color:var(--text-muted);margin:0;">Chat with agents and teams</p>
+        </a>
     </div>
 </div>
 {% endblock %}
