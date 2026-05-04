@@ -2,107 +2,44 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div class="metaverse-header" style="text-align:center;margin-bottom:2rem;">
-    <h1 style="font-size:2rem;font-weight:800;color:#fff;">Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;">Monitor your AI agents and tasks at a glance.</p>
+<div style="margin-bottom:2rem;">
+    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">🌐 Command Center</h1>
+    <p style="color:var(--text-secondary);">Your central hub for monitoring agents and tasks.</p>
 </div>
 
-<div class="metaverse-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
-    <!-- Agents Section -->
-    <div class="card" style="grid-column:1;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-            <h2 style="font-size:1.1rem;font-weight:700;color:#fff;margin:0;">🦾 Agents</h2>
-            <span class="badge" style="background:var(--accent);padding:2px 10px;border-radius:20px;font-size:0.75rem;">{{ agents|length }}</span>
-        </div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+    <div class="card">
+        <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;">🤖 Agents</h2>
         {% if agents %}
-        <div style="display:flex;flex-direction:column;gap:0.6rem;">
+        <ul style="list-style:none;padding:0;">
             {% for agent in agents %}
-            <div class="agent-row" style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0.8rem;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid var(--border-glow);">
-                <div>
-                    <strong style="color:#fff;font-size:0.85rem;">{{ agent.name }}</strong>
-                    <div style="color:var(--text-secondary);font-size:0.7rem;margin-top:2px;">
-                        {% if agent.capabilities %}
-                        {{ agent.capabilities[:3]|join(', ') }}{% if agent.capabilities|length > 3 %} …{% endif %}
-                        {% else %}
-                        <span style="font-style:italic;">no capabilities listed</span>
-                        {% endif %}
-                    </div>
-                </div>
-                <div style="text-align:right;">
-                    {% set tc = agent|trust_context %}
-                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{{ tc.color }};margin-right:4px;"></span>
-                    <span style="color:{{ tc.color }};font-size:0.75rem;font-weight:600;">{{ tc.label }}</span>
-                </div>
-            </div>
+            <li style="padding:0.5rem 0;border-bottom:1px solid var(--border-glow);">
+                <strong>{{ agent.name }}</strong> — <span style="font-size:0.85rem;color:var(--text-secondary);">{{ agent.capabilities[:3]|join(', ') }}{% if agent.capabilities|length > 3 %}…{% endif %}</span>
+            </li>
             {% endfor %}
-        </div>
+        </ul>
+        {% elif "access_token" not in session %}
+        <p style="color:var(--text-muted);font-size:0.9rem;">🔒 <a href="{{ url_for('login_page') }}">Sign in</a> to see your agents.</p>
         {% else %}
-        <p style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:2rem 0;">
-            {% if session.access_token %}
-            No agents found. <a href="{{ url_for('register_agent_page') }}" style="color:var(--accent);">Register one</a>.
-            {% else %}
-            Sign in to see your agents.
-            {% endif %}
-        </p>
+        <p style="color:var(--text-muted);font-size:0.9rem;">No agents registered yet. <a href="{{ url_for('register_agent_page') }}">Create one</a>.</p>
         {% endif %}
     </div>
 
-    <!-- Tasks Section -->
-    <div class="card" style="grid-column:2;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-            <h2 style="font-size:1.1rem;font-weight:700;color:#fff;margin:0;">📋 Tasks</h2>
-            <span class="badge" style="background:var(--accent);padding:2px 10px;border-radius:20px;font-size:0.75rem;">{{ tasks|length }}</span>
-        </div>
+    <div class="card">
+        <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;">📋 Tasks</h2>
         {% if tasks %}
-        <div style="display:flex;flex-direction:column;gap:0.6rem;">
+        <ul style="list-style:none;padding:0;">
             {% for task in tasks %}
-            <div class="task-row" style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0.8rem;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid var(--border-glow);">
-                <div>
-                    <strong style="color:#fff;font-size:0.85rem;">{{ task.name }}</strong>
-                    <div style="color:var(--text-secondary);font-size:0.7rem;margin-top:2px;">
-                        {% if task.description %}
-                        {{ task.description[:60] }}{% if task.description|length > 60 %}…{% endif %}
-                        {% else %}
-                        <span style="font-style:italic;">no description</span>
-                        {% endif %}
-                    </div>
-                </div>
-                <div style="text-align:right;">
-                    <span style="font-size:0.7rem;padding:2px 8px;border-radius:20px;
-                        {% if task.status == 'completed' %}background:#10b98120;color:#10b981;
-                        {% elif task.status == 'running' %}background:#3b82f620;color:#3b82f6;
-                        {% elif task.status == 'failed' %}background:#ef444420;color:#ef4444;
-                        {% else %}background:#64748b20;color:#64748b;
-                        {% endif %}">
-                        {{ task.status|default('unknown') }}
-                    </span>
-                </div>
-            </div>
+            <li style="padding:0.5rem 0;border-bottom:1px solid var(--border-glow);">
+                {{ task.description or task.id }} <span style="font-size:0.8rem;color:var(--text-muted);">[{{ task.status }}]</span>
+            </li>
             {% endfor %}
-        </div>
+        </ul>
+        {% elif "access_token" not in session %}
+        <p style="color:var(--text-muted);font-size:0.9rem;">🔒 <a href="{{ url_for('login_page') }}">Sign in</a> to see your tasks.</p>
         {% else %}
-        <p style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:2rem 0;">
-            {% if session.access_token %}
-            No tasks yet.
-            {% else %}
-            Sign in to view tasks.
-            {% endif %}
-        </p>
+        <p style="color:var(--text-muted);font-size:0.9rem;">No tasks yet.</p>
         {% endif %}
     </div>
 </div>
-
-<style>
-    .card {
-        background: var(--glass-bg);
-        backdrop-filter: blur(var(--glass-blur));
-        border: 1px solid var(--border-glow);
-        border-radius: 12px;
-        padding: 1.2rem;
-    }
-    .agent-row:hover, .task-row:hover {
-        background: rgba(255,255,255,0.06);
-        transition: background 0.2s;
-    }
-</style>
 {% endblock %}
