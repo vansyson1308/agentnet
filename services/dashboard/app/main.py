@@ -167,5 +167,136 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-  
-# ... [TRUNCATED -- preserve when editing] ...
+    error = None
+    if session.get("access_token"):
+        try:
+            agents = api_client.fetch_agents(limit=50)
+        except APIError as e:
+            error = e.message
+            flash(f"Could not load agents: {error}", "danger")
+        except Exception as e:
+            error = str(e)
+            flash("Failed to fetch agent data.", "danger")
+    return render_template("metaverse.html", agents=agents, error=error)
+
+
+@app.route("/marketplace")
+def marketplace():
+    return render_template("marketplace.html")
+
+
+@app.route("/login")
+def login_page():
+    return render_template("login.html")
+
+
+@app.route("/register")
+def register_page():
+    return render_template("register.html")
+
+
+@app.route("/logout")
+def logout_page():
+    session.clear()
+    flash("You have been signed out.", "info")
+    return redirect(url_for('landing_page'))
+
+
+# ============================================================
+# AUTHENTICATED ROUTES
+# ============================================================
+
+@app.route("/directory")
+def directory_page():
+    if "access_token" not in session:
+        flash("Please sign in to view the directory.", "warning")
+        return redirect(url_for('login_page'))
+    try:
+        agents = api_client.fetch_agents(limit=100)
+    except APIError as e:
+        flash(f"Error loading directory: {e.message}", "danger")
+        agents = []
+    return render_template("directory.html", agents=agents)
+
+
+@app.route("/wallet")
+def wallet_page():
+    if "access_token" not in session:
+        flash("Please sign in to view your wallet.", "warning")
+        return redirect(url_for('login_page'))
+    return render_template("wallet.html")
+
+
+@app.route("/tasks")
+def tasks_page():
+    if "access_token" not in session:
+        flash("Please sign in to view tasks.", "warning")
+        return redirect(url_for('login_page'))
+    return render_template("tasks.html")
+
+
+@app.route("/collaboration")
+def collaboration_page():
+    if "access_token" not in session:
+        flash("Please sign in to access collaboration.", "warning")
+        return redirect(url_for('login_page'))
+    return render_template("collaboration.html")
+
+
+@app.route("/notifications")
+def notifications_page():
+    if "access_token" not in session:
+        flash("Please sign in to view notifications.", "warning")
+        return redirect(url_for('login_page'))
+    return render_template("notifications.html")
+
+
+@app.route("/my-agents")
+def my_agents_page():
+    if "access_token" not in session:
+        flash("Please sign in to manage your agents.", "warning")
+        return redirect(url_for('login_page'))
+    return render_template("my_agents.html")
+
+
+@app.route("/create-offer")
+def create_offer_page():
+    if "access_token" not in session:
+        flash("Please sign in to create an offer.", "warning")
+        return redirect(url_for('login_page'))
+    return render_template("create_offer.html")
+
+
+@app.route("/new-agent")
+def new_agent_page():
+    if "access_token" not in session:
+        flash("Please sign in to register a new agent.", "warning")
+        return redirect(url_for('login_page'))
+    return render_template("new_agent.html")
+
+
+@app.route("/register-agent", methods=["POST"])
+def register_agent_page():
+    if "access_token" not in session:
+        flash("Please sign in first.", "warning")
+        return redirect(url_for('login_page'))
+    name = request.form.get("name", "").strip()
+    description = request.form.get("description", "").strip()
+    endpoint = request.form.get("endpoint", "").strip()
+    capabilities = request.form.get("capabilities", "").strip()
+    if not name:
+        flash("Agent name is required.", "danger")
+        return redirect(url_for('new_agent_page'))
+    try:
+        api_client.register_agent(
+            name=name,
+            description=description,
+            endpoint=endpoint or None,
+            capabilities=capabilities.split(",") if capabilities else []
+        )
+        flash("Agent registered successfully!", "success")
+    except APIError as e:
+        flash(f"Registration failed: {e.message}", "danger")
+    except Exception as e:
+        flash("An unexpected error occurred while registering the agent.", "danger")
+    return redirect(url_for('my_agents_page'))
