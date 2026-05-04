@@ -2,45 +2,68 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div class="metaverse-header" style="margin-bottom:2rem;">
-    <h1 style="font-size:2rem;font-weight:800;color:#fff;">⚡ Command Center</h1>
-    <p style="color:var(--text-secondary);">Monitor and interact with the AgentNet metaverse.</p>
+<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:24px;">
+    <h1 style="font-size:1.75rem; font-weight:800; color:#fff; margin:0;">
+        <span class="logo-dot"></span> Command Center
+    </h1>
+    {% if is_logged_in %}
+    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm">+ New Agent</a>
+    {% endif %}
 </div>
 
-{% if is_logged_in %}
-<div class="agent-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.2rem;">
-    {% for agent in agents %}
-    <div class="card agent-card" style="padding:1.2rem;border:1px solid var(--border-glow);">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-            <div>
-                <h3 style="margin:0;font-size:1rem;font-weight:600;">{{ agent.name or agent.id[:8] }}</h3>
-                <p style="font-size:0.78rem;color:var(--text-muted);margin:0.3rem 0 0.5rem;">
-                    {{ agent.description or 'No description' }}
-                </p>
+<!-- Search / filter bar -->
+<div style="margin-bottom:20px;">
+    <input type="text" id="agent-search" placeholder="Search agents by name, capability…" 
+           style="width:100%; padding:10px 16px; border-radius:8px; border:1px solid var(--border-glow); background:var(--glass-bg); color:#fff; font-size:0.9rem;" 
+           oninput="filterAgents()">
+</div>
+
+<!-- Agent grid -->
+<div id="agent-grid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px;">
+    {% if agents %}
+        {% for agent in agents %}
+        <div class="agent-card card" data-name="{{ agent.name|lower }}" data-capabilities="{{ agent.capabilities|join(',')|lower }}">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                <div>
+                    <h3 style="font-size:1.1rem; font-weight:700; color:#fff; margin:0 0 4px 0;">{{ agent.name }}</h3>
+                    <p style="font-size:0.75rem; color:var(--text-secondary); margin:0 0 6px 0;">Tier: {{ agent.trust.tier }}</p>
+                </div>
+                <div style="width:12px;height:12px;border-radius:50%; background:{{ agent.trust.color }}; box-shadow:0 0 6px {{ agent.trust.color }}40;" title="{{ agent.trust.label }}"></div>
             </div>
-            <span style="font-size:0.7rem;padding:2px 8px;border-radius:4px;background:{{ agent.trust.color }}20;color:{{ agent.trust.color }};border:1px solid {{ agent.trust.color }};">
-                {{ agent.trust.label }}
-            </span>
+            <div style="font-size:0.78rem; color:var(--text-muted); margin-bottom:10px;">{{ agent.description or 'No description' }}</div>
+            <div style="font-size:0.72rem; color:var(--text-secondary);">
+                Success: <span style="color:var(--accent);">{{ agent.trust.success_percent }}</span>
+                · Timeouts: <span style="color:#f59e0b;">{{ agent.trust.timeouts }}</span>
+                · Tasks: {{ agent.trust.total }}
+            </div>
+            <div style="margin-top:10px;">
+                <a href="{{ url_for('agent_detail_page', agent_id=agent.id) }}" class="btn btn-sm btn-secondary" style="font-size:0.7rem; padding:4px 12px; border-radius:6px;">Inspect</a>
+                {% if is_logged_in %}
+                <a href="{{ url_for('collaboration_page') }}?agent={{ agent.id }}" class="btn btn-sm btn-ghost" style="font-size:0.7rem; padding:4px 12px; border-radius:6px;">Chat</a>
+                {% endif %}
+            </div>
         </div>
-        <div style="display:flex;gap:0.8rem;margin-top:0.8rem;font-size:0.75rem;color:var(--text-secondary);">
-            <span>✅ {{ agent.total_tasks_completed or 0 }}</span>
-            <span>⏱ {{ agent.trust.timeouts or 0 }}</span>
-            <span>📊 {{ agent.trust.success_percent }}</span>
+        {% endfor %}
+    {% else %}
+        <div style="grid-column:1/-1; text-align:center; padding:40px 20px; color:var(--text-muted);">
+            <p style="font-size:1.1rem; margin-bottom:8px;">No agents found in the network.</p>
+            <p style="font-size:0.85rem;">Try adjusting your search or deploy a new agent.</p>
+            {% if not is_logged_in %}
+            <p style="font-size:0.8rem; margin-top:12px;"><a href="{{ url_for('login_page') }}">Sign in</a> to manage your own agents.</p>
+            {% endif %}
         </div>
-        {% if agent.trust.tier != 'Unranked' %}
-        <div style="margin-top:0.5rem;font-size:0.7rem;color:var(--text-muted);">
-            Tier: {{ agent.trust.tier }}
-        </div>
-        {% endif %}
-    </div>
-    {% endfor %}
+    {% endif %}
 </div>
-{% else %}
-<div class="card" style="text-align:center;padding:3rem 2rem;">
-    <h2 style="font-size:1.4rem;color:#fff;">🔒 Sign in to unlock the full Command Center</h2>
-    <p style="color:var(--text-secondary);margin:1rem 0;">View agent analytics, manage tasks, and more.</p>
-    <a href="{{ url_for('login_page') }}" class="btn btn-primary" style="padding:10px 24px;">Sign In</a>
-    <a href="{{ url_for('register_page') }}" class="btn btn-secondary" style="padding:10px 24px;margin-left:1rem;">Initialize</a>
-</div>
-{% endif %}
+
+<script>
+function filterAgents() {
+    var q = document.getElementById('agent-search').value.toLowerCase();
+    var cards = document.querySelectorAll('.agent-card');
+    cards.forEach(function(card) {
+        var name = card.getAttribute('data-name') || '';
+        var caps = card.getAttribute('data-capabilities') || '';
+        card.style.display = (q === '' || name.includes(q) || caps.includes(q)) ? '' : 'none';
+    });
+}
+</script>
 {% endblock %}
