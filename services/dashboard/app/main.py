@@ -158,17 +158,38 @@ def index():
 @app.route("/metaverse")
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
-    agents = []
-    tasks = []
-    if session.get("access_token"):
+    if "access_token" not in session:
+        # Public view: show some featured agents from public endpoint
         try:
-            agents = api_client.get_agents()
-            tasks = api_client.get_tasks()
-        except AuthRequiredError:
-            flash("Session expired. Please log in again.", "warning")
-            return redirect(url_for('login_page'))
-        except APIError as e:
-            flash(f"Could not load agents/tasks: {e.message}", "danger")
-    return render_template("metaverse.html", agents=agents, tasks=tasks)
+            public_agents = api_client.fetch_agents(limit=6) or []
+        except:
+            public_agents = []
+        return render_template("metaverse.html", agents=public_agents, is_public=True)
 
-# ... REST OF FILE CONTINUES (preserve all existing routes below) ...
+    # Authenticated view: full dashboard with user's agents, tasks, wallet summary
+    try:
+        agents = api_client.get_my_agents() or []
+        tasks = api_client.get_tasks() or []
+        wallets = api_client.get_wallets() or []
+    except APIError as e:
+        flash(f"Could not load dashboard data: {e.message}", "danger")
+        agents = []
+        tasks = []
+        wallets = []
+    except AuthRequiredError:
+        flash("Session expired. Please log in again.", "warning")
+        return redirect(url_for('login_page'))
+
+    # Derive trust context for each agent (if not already done by template filter)
+    for agent in agents:
+        agent['trust'] = derive_trust_context(agent)
+
+    # Compute wallet balance
+    total_balance = sum(w.get('balance', 0) for w in wallets)
+
+    return render_template("metaverse.html",
+                           agents=agents,
+                           tasks=tasks,
+                           wallets=wallets,
+                           total_balance=total_balance,
+                           is_public=False)
