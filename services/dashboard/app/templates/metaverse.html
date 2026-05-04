@@ -2,61 +2,63 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div class="metaverse-hero">
-    <div class="hero-content">
-        <h1>Welcome to the Metaverse</h1>
-        <p>Your agent command center. Manage, deploy, and monitor AI agents across the network.</p>
-        {% if not session.access_token %}
-        <div class="hero-cta">
-            <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In to Manage</a>
-            <a href="{{ url_for('register_page') }}" class="btn btn-secondary">Initialize Account</a>
-        </div>
-        {% endif %}
-    </div>
+<div style="text-align:center;margin-bottom:2rem;">
+    <h1 style="font-size:2rem;font-weight:800;color:#fff;">Metaverse Command Center</h1>
+    <p style="color:var(--text-secondary);">Real-time overview of your agents and tasks</p>
 </div>
 
-{% if error %}
-<div class="alert alert-danger">{{ error }}</div>
-{% endif %}
-
-<div class="dashboard-grid">
-    <div class="card dashboard-card">
-        <h3>🔧 Agents</h3>
-        <p class="stat-number">{{ agents|length }}</p>
-        <span class="stat-label">Registered on network</span>
+<div style="display:grid;grid-template-columns: 1fr 1fr;gap:1.5rem;margin-bottom:2rem;">
+    <div class="card">
+        <h2 style="margin:0 0 1rem;">Active Agents</h2>
         {% if agents %}
-        <a href="{{ url_for('directory_page') }}" class="btn btn-sm btn-outline">View All</a>
+        <ul style="list-style:none;padding:0;">
+            {% for agent in agents[:10] %}
+            <li style="display:flex;justify-content:space-between;padding:0.5rem 0;border-bottom:1px solid var(--border);">
+                <strong>{{ agent.name }}</strong>
+                <span style="color:var(--text-muted);">{{ agent.status }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% if agents|length > 10 %}
+        <p style="text-align:right;color:var(--primary);">+{{ agents|length - 10 }} more</p>
+        {% endif %}
+        {% else %}
+        <p style="color:var(--text-muted);">No agents found. <a href="{{ url_for('register_agent_page') }}">Register one</a>.</p>
         {% endif %}
     </div>
-    <div class="card dashboard-card">
-        <h3>📋 Tasks</h3>
-        <p class="stat-number">{{ tasks|length }}</p>
-        <span class="stat-label">Total tasks submitted</span>
+
+    <div class="card">
+        <h2 style="margin:0 0 1rem;">Recent Tasks</h2>
         {% if tasks %}
-        <a href="{{ url_for('tasks_page') }}" class="btn btn-sm btn-outline">View All</a>
+        <ul style="list-style:none;padding:0;">
+            {% for task in tasks[:10] %}
+            <li style="display:flex;justify-content:space-between;padding:0.5rem 0;border-bottom:1px solid var(--border);">
+                <span>{{ task.description or 'No description' }}</span>
+                <span style="color:var(--text-muted);">{{ task.status }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% if tasks|length > 10 %}
+        <p style="text-align:right;color:var(--primary);">+{{ tasks|length - 10 }} more</p>
         {% endif %}
-    </div>
-    <div class="card dashboard-card">
-        <h3>💰 Wallet</h3>
-        <p class="stat-number">—</p>
-        <span class="stat-label">Balance (sign in to see)</span>
-        <a href="{{ url_for('wallet_page') }}" class="btn btn-sm btn-outline">Manage</a>
+        {% else %}
+        <p style="color:var(--text-muted);">No tasks yet.</p>
+        {% endif %}
     </div>
 </div>
 
-{% if session.access_token and agents %}
-<div class="card" style="margin-top:1.5rem;">
-    <h3>Recent Agents</h3>
-    <div class="agent-list">
-        {% for agent in agents[:6] %}
-        <div class="agent-card-small">
-            <h4>{{ agent.name }}</h4>
-            <p>{{ agent.description[:80] }}{% if agent.description|length > 80 %}…{% endif %}</p>
-            <span class="trust-badge" style="background:{{ agent|trust_context().color }}">{{ agent|trust_context().label }}</span>
-            <span class="tier-badge">{{ agent|trust_context().tier }}</span>
-        </div>
-        {% endfor %}
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;">
+    <div class="card" style="text-align:center;">
+        <h3 style="margin:0;font-size:2rem;color:var(--primary);">{{ agents|length }}</h3>
+        <p style="color:var(--text-muted);">Total Agents</p>
+    </div>
+    <div class="card" style="text-align:center;">
+        <h3 style="margin:0;font-size:2rem;color:var(--primary);">{{ tasks|length }}</h3>
+        <p style="color:var(--text-muted);">Total Tasks</p>
+    </div>
+    <div class="card" style="text-align:center;">
+        <h3 style="margin:0;font-size:2rem;color:var(--primary);">—</h3>
+        <p style="color:var(--text-muted);">System Status</p>
     </div>
 </div>
-{% endif %}
 {% endblock %}

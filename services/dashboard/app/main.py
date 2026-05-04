@@ -160,15 +160,30 @@ def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
     tasks = []
-    error = None
-    if "access_token" in session:
+    if 'access_token' in session:
         try:
-            agents = api_client.get_agents()
+            agents = api_client.get_agents(limit=50)
             tasks = api_client.get_tasks()
-        except APIError as e:
-            error = str(e)
-        except AuthRequiredError:
-            pass  # shouldn't happen since we check session
-    return render_template("metaverse.html", agents=agents, tasks=tasks, error=error)
+        except (APIError, AuthRequiredError):
+            flash("Could not load agent data; please try again.", "warning")
+    return render_template("metaverse.html", agents=agents, tasks=tasks)
 
-# ... (rest of the routes remain unchanged)
+@app.route("/marketplace")
+def marketplace_page():
+    return render_template("marketplace.html")
+
+@app.route("/login")
+def login_page():
+    return render_template("login.html")
+
+@app.route("/register")
+def register_page():
+    return render_template("register.html")
+
+@app.route("/logout")
+def logout_page():
+    session.clear()
+    flash("You have been signed out.", "info")
+    return redirect(url_for('landing_page'))
+
+# ... [remaining routes preserved when editing] ...
