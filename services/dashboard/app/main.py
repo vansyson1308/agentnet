@@ -168,4 +168,147 @@ def metaverse_page():
             app.logger.warning(f"Failed to fetch metaverse data: {e}")
     return render_template("metaverse.html", agents=agents, tasks=tasks)
 
-# ... (remaining routes and app.run() unchanged as per original)
+# ============================================================
+# AUTH ROUTES
+# ============================================================
+
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    if request.method == "POST":
+        username = request.form.get("username")
+        password = request.form.get("password")
+        if not username or not password:
+            flash("Username and password are required.", "danger")
+            return render_template("login.html")
+        try:
+            result = api_client.login(username, password)
+            session["access_token"] = result["access_token"]
+            flash("Logged in successfully.", "success")
+            return redirect(url_for("metaverse_page"))
+        except (APIError, AuthRequiredError) as e:
+            flash(f"Login failed: {e.message}", "danger")
+            return render_template("login.html")
+    return render_template("login.html")
+
+@app.route("/register", methods=["GET", "POST"])
+def register_page():
+    if request.method == "POST":
+        email = request.form.get("email")
+        password = request.form.get("password")
+        if not email or not password:
+            flash("Email and password are required.", "danger")
+            return render_template("register.html")
+        try:
+            result = api_client.register(email, password)
+            flash("Registration successful. Please log in.", "success")
+            return redirect(url_for("login_page"))
+        except (APIError, AuthRequiredError) as e:
+            flash(f"Registration failed: {e.message}", "danger")
+            return render_template("register.html")
+    return render_template("register.html")
+
+@app.route("/logout")
+def logout_page():
+    session.pop("access_token", None)
+    flash("Logged out.", "info")
+    return redirect(url_for("landing_page"))
+
+# ============================================================
+# AUTH-PROTECTED ROUTES
+# ============================================================
+
+@app.route("/marketplace")
+def marketplace_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    agents = []
+    try:
+        agents = api_client.fetch_agents()
+    except (APIError, AuthRequiredError) as e:
+        app.logger.warning(f"Failed to fetch marketplace agents: {e}")
+    return render_template("marketplace.html", agents=agents)
+
+@app.route("/directory")
+def directory_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    agents = []
+    try:
+        agents = api_client.get_agents()
+    except (APIError, AuthRequiredError) as e:
+        app.logger.warning(f"Failed to fetch directory: {e}")
+    return render_template("directory.html", agents=agents)
+
+@app.route("/wallet")
+def wallet_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    wallets = []
+    transactions = []
+    try:
+        wallets = api_client.get_wallets()
+        transactions = api_client.get_transactions()
+    except (APIError, AuthRequiredError) as e:
+        app.logger.warning(f"Failed to fetch wallet data: {e}")
+    return render_template("wallet.html", wallets=wallets, transactions=transactions)
+
+@app.route("/tasks")
+def tasks_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    tasks = []
+    try:
+        tasks = api_client.get_tasks()
+    except (APIError, AuthRequiredError) as e:
+        app.logger.warning(f"Failed to fetch tasks: {e}")
+    return render_template("tasks.html", tasks=tasks)
+
+@app.route("/collaboration")
+def collaboration_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    return render_template("collaboration.html")
+
+@app.route("/notifications")
+def notifications_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    return render_template("notifications.html")
+
+@app.route("/my-agents")
+def my_agents_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    agents = []
+    try:
+        agents = api_client.get_my_agents()
+    except (APIError, AuthRequiredError) as e:
+        app.logger.warning(f"Failed to fetch my agents: {e}")
+    return render_template("my_agents.html", agents=agents)
+
+@app.route("/my-agents/new", methods=["GET", "POST"])
+def register_agent_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    if request.method == "POST":
+        data = {
+            "name": request.form.get("name"),
+            "description": request.form.get("description"),
+            "endpoint": request.form.get("endpoint"),
+            "capabilities": [c.strip() for c in request.form.get("capabilities", "").split(",") if c.strip()]
+        }
+        try:
+            result = api_client.create_agent(data)
+            flash("Agent registered successfully!", "success")
+            return redirect(url_for("my_agents_page"))
+        except (APIError, AuthRequiredError) as e:
+            flash(f"Failed to register agent: {e.message}", "danger")
+            return render_template("new_agent.html")
+    return render_template("new_agent.html")
+
+# ============================================================
+# MAIN ENTRY
+# ============================================================
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5002, debug=True)
