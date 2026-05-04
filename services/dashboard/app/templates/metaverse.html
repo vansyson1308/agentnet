@@ -1,108 +1,178 @@
 {% extends "base.html" %}
-{% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
+{% block title %}J.A.R.V.I.S. — Metaverse Command Center{% endblock %}
 
 {% block content %}
-<div class="metaverse-container">
-    <!-- Header Stats -->
-    <div class="stats-row">
-        <div class="stat-card">
-            <span class="stat-label">Active Agents</span>
-            <span class="stat-value">{{ agents|length }}</span>
-        </div>
-        <div class="stat-card">
-            <span class="stat-label">Pending Tasks</span>
-            <span class="stat-value">{{ tasks|selectattr('status', 'equalto', 'pending')|list|length }}</span>
-        </div>
-        <div class="stat-card">
-            <span class="stat-label">Completed Tasks</span>
-            <span class="stat-value">{{ tasks|selectattr('status', 'equalto', 'completed')|list|length }}</span>
-        </div>
-    </div>
+<div style="text-align:center;margin-bottom:2rem;">
+    <h1 style="font-size:2rem;font-weight:900;background:linear-gradient(135deg,#00d4ff,#7b61ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">🌐 Metaverse Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.95rem;">Your central hub for managing AI agents, tasks, and virtual assets.</p>
+</div>
 
-    <!-- Agents Section -->
-    <div class="section">
-        <h2 class="section-title">Deployed Agents</h2>
-        {% if agents %}
-        <div class="agent-grid">
-            {% for agent in agents %}
-            <div class="agent-card card">
-                <h3>{{ agent.name }}</h3>
-                <p class="agent-capabilities">
-                    {% for cap in agent.capabilities[:3] %}
-                    <span class="badge">{{ cap }}</span>
-                    {% endfor %}
-                </p>
-                <div class="trust-indicator" style="border-left:4px solid {{ agent|trust_context['color'] }}">
-                    <span class="trust-label">{{ agent|trust_context['label'] }}</span>
-                    <span class="trust-tier">{{ agent|trust_context['tier'] }}</span>
-                </div>
-                <div class="agent-meta">
-                    <span>Tasks: {{ agent|trust_context['total'] }}</span>
-                    <span>Success: {{ agent|trust_context['success_percent'] }}</span>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <p class="empty-state">No agents deployed yet. Visit the <a href="/marketplace">Marketplace</a> to find agents or <a href="/new-agent">register your own</a>.</p>
-        {% endif %}
+{% if is_logged_in %}
+<div class="grid grid-3" style="margin-bottom:2rem;">
+    <div class="card stat-card">
+        <div class="stat-icon">🤖</div>
+        <div class="stat-value">{{ agents|length }}</div>
+        <div class="stat-label">Active Agents</div>
     </div>
+    <div class="card stat-card">
+        <div class="stat-icon">📋</div>
+        <div class="stat-value">{{ tasks|length }}</div>
+        <div class="stat-label">Tasks</div>
+    </div>
+    <div class="card stat-card">
+        <div class="stat-icon">💰</div>
+        <div class="stat-value">{{ "%.2f"|format(total_balance) }} credits</div>
+        <div class="stat-label">Total Wallet Balance</div>
+    </div>
+</div>
 
-    <!-- Tasks Section -->
-    <div class="section">
-        <h2 class="section-title">Recent Tasks</h2>
-        {% if tasks %}
-        <table class="task-table">
+<div style="margin-bottom:2rem;">
+    <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:0.5rem;">Your Agents</h2>
+    {% if agents %}
+    <div class="table-scroll">
+        <table class="data-table">
             <thead>
                 <tr>
-                    <th>ID</th>
-                    <th>Agent</th>
+                    <th>Name</th>
+                    <th>Capabilities</th>
+                    <th>Reputation</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for agent in agents[:10] %}
+                {% set tc = trust_context_fn(agent) %}
+                <tr>
+                    <td><a href="{{ url_for('agent_detail_page', agent_id=agent.id) if 'agent_detail_page' in url_for(request.endpoint) else '#' }}">{{ agent.name }}</a></td>
+                    <td>{{ agent.capabilities[:3]|join(', ') }}{% if agent.capabilities|length > 3 %}+{{ agent.capabilities|length - 3 }} more{% endif %}</td>
+                    <td><span style="color:{{ tc.color }};">{{ tc.tier }}</span></td>
+                    <td><span class="badge badge-{{ 'success' if agent.is_online else 'secondary' }}">{{ "Online" if agent.is_online else "Offline" }}</span></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted);">No agents registered yet. <a href="{{ url_for('register_agent_page') }}">Register one</a>.</p>
+    {% endif %}
+</div>
+
+<div style="margin-bottom:2rem;">
+    <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:0.5rem;">Recent Tasks</h2>
+    {% if tasks %}
+    <div class="table-scroll">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Task ID</th>
                     <th>Status</th>
                     <th>Created</th>
                 </tr>
             </thead>
             <tbody>
-                {% for task in tasks[:10] %}
+            {% for task in tasks[:5] %}
                 <tr>
-                    <td><code>{{ task.id[:8] }}…</code></td>
-                    <td>{{ task.agent_name or '—' }}</td>
-                    <td><span class="status-badge status-{{ task.status }}">{{ task.status }}</span></td>
+                    <td><code>{{ task.id[:12] }}...</code></td>
+                    <td><span class="badge badge-{{ task.status }}">{{ task.status }}</span></td>
                     <td>{{ task.created_at[:10] }}</td>
                 </tr>
-                {% endfor %}
+            {% endfor %}
             </tbody>
         </table>
-        {% else %}
-        <p class="empty-state">No tasks yet. Assign a task to an agent to see activity here.</p>
-        {% endif %}
     </div>
+    {% else %}
+    <p style="color:var(--text-muted);">No tasks yet.</p>
+    {% endif %}
 </div>
 
+<div>
+    <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:0.5rem;">Wallet Balances</h2>
+    {% if wallets %}
+    <div class="table-scroll">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Wallet ID</th>
+                    <th>Balance</th>
+                    <th>Currency</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for wallet in wallets[:5] %}
+                <tr>
+                    <td><code>{{ wallet.id[:12] }}...</code></td>
+                    <td>{{ "%.2f"|format(wallet.balance) }}</td>
+                    <td>{{ wallet.currency }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="color:var(--text-muted);">No wallets found.</p>
+    {% endif %}
+</div>
+
+{% else %}
+<div class="card" style="text-align:center;padding:4rem 2rem;">
+    <h2 style="font-size:1.5rem;font-weight:700;margin-bottom:1rem;">Welcome to the Metaverse</h2>
+    <p style="color:var(--text-secondary);margin-bottom:1.5rem;">Sign in to manage your agents, tasks, and virtual assets.</p>
+    <div class="flex gap-1 justify-center">
+        <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
+        <a href="{{ url_for('register_page') }}" class="btn btn-secondary">Initialize</a>
+    </div>
+</div>
+{% endif %}
+
 <style>
-.metaverse-container { max-width: 960px; margin: 0 auto; }
-.stats-row { display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap; }
-.stat-card { flex: 1; min-width: 120px; padding: 1.2rem; background: var(--glass-bg); backdrop-filter: blur(var(--glass-blur)); border: 1px solid var(--border-glow); border-radius: var(--radius); text-align: center; }
-.stat-label { display: block; font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
-.stat-value { font-size: 2rem; font-weight: 800; color: #fff; }
-.section { margin-bottom: 2.5rem; }
-.section-title { font-size: 1.2rem; font-weight: 600; color: #fff; margin-bottom: 1rem; }
-.agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: 1rem; }
-.agent-card { padding: 1.2rem; }
-.agent-capabilities { margin: 0.5rem 0; }
-.badge { display: inline-block; padding: 2px 8px; background: rgba(59,130,246,0.15); color: #60a5fa; border-radius: 4px; font-size: 0.7rem; margin-right: 4px; }
-.trust-indicator { padding-left: 0.8rem; margin: 0.5rem 0; }
-.trust-label { font-weight: 600; }
-.trust-tier { font-size: 0.75rem; color: var(--text-muted); }
-.agent-meta { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); }
-.task-table { width: 100%; border-collapse: collapse; }
-.task-table th, .task-table td { padding: 0.6rem 0.8rem; text-align: left; border-bottom: 1px solid var(--border); }
-.task-table th { font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); }
-.status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; text-transform: capitalize; }
-.status-pending { background: rgba(251,191,36,0.15); color: #fbbf24; }
-.status-running { background: rgba(59,130,246,0.15); color: #60a5fa; }
-.status-completed { background: rgba(16,185,129,0.15); color: #10b981; }
-.status-failed { background: rgba(239,68,68,0.15); color: #ef4444; }
-.empty-state { color: var(--text-muted); text-align: center; padding: 2rem; }
-.empty-state a { color: var(--accent); }
+.grid-3 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+}
+.stat-card {
+    text-align: center;
+    padding: 1.5rem 1rem;
+}
+.stat-icon {
+    font-size: 2.5rem;
+    margin-bottom: 0.5rem;
+}
+.stat-value {
+    font-size: 1.8rem;
+    font-weight: 800;
+    color: var(--text-primary);
+}
+.stat-label {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-top: 0.2rem;
+}
+.table-scroll {
+    overflow-x: auto;
+}
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+.data-table th, .data-table td {
+    padding: 0.6rem 0.8rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+.data-table th {
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.flex {
+    display: flex;
+}
+.gap-1 {
+    gap: 0.5rem;
+}
+.justify-center {
+    justify-content: center;
+}
 </style>
 {% endblock %}
