@@ -166,5 +166,192 @@ def index():
 @app.route("/metaverse")
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
-    agent
-# ... [TRUNCATED -- preserve when editing] ...
+    try:
+        agents = api_client.fetch_agents(limit=50)
+    except APIError:
+        agents = []
+    enriched = []
+    for a in agents:
+        tc = derive_trust_context(a)
+        enriched.append({
+            "id": a.get("agent_id", a.get("id")),
+            "name": a.get("name", "Unnamed Agent"),
+            "description": a.get("description", ""),
+            "capabilities": a.get("capabilities", []),
+            "trust": tc
+        })
+    authenticated = "access_token" in session
+    return render_template("metaverse.html", agents=enriched, authenticated=authenticated)
+
+
+@app.route("/marketplace")
+def marketplace_page():
+    try:
+        agents = api_client.fetch_agents(limit=50)
+    except APIError:
+        agents = []
+    enriched = []
+    for a in agents:
+        tc = derive_trust_context(a)
+        enriched.append({
+            "id": a.get("agent_id", a.get("id")),
+            "name": a.get("name", "Unnamed Agent"),
+            "description": a.get("description", ""),
+            "capabilities": a.get("capabilities", []),
+            "trust": tc
+        })
+    return render_template("marketplace.html", agents=enriched)
+
+
+# ============================================================
+# AUTHENTICATED ROUTES
+# ============================================================
+
+@app.route("/login")
+def login_page():
+    return render_template("login.html")
+
+
+@app.route("/login", methods=["POST"])
+def login_submit():
+    import hashlib
+    # In production you'd verify against a user DB or OAuth.
+    # For now accept any username/password and store a dummy token.
+    username = request.form.get("username", "").strip()
+    password = request.form.get("password", "").strip()
+    if not username or not password:
+        flash("Username and password required.", "danger")
+        return redirect(url_for("login_page"))
+    # Dummy authentication
+    token = hashlib.sha256(f"{username}:{password}:{time.time()}".encode()).hexdigest()
+    session["access_token"] = token
+    session["username"] = username
+    flash("Welcome back, " + username + "!", "success")
+    return redirect(url_for("metaverse_page"))
+
+
+@app.route("/logout")
+def logout_page():
+    session.pop("access_token", None)
+    session.pop("username", None)
+    flash("You have been signed out.", "info")
+    return redirect(url_for("landing_page"))
+
+
+@app.route("/register")
+def register_page():
+    return render_template("register.html")
+
+
+@app.route("/register", methods=["POST"])
+def register_submit():
+    username = request.form.get("username", "").strip()
+    email = request.form.get("email", "").strip()
+    password = request.form.get("password", "").strip()
+    if not username or not email or not password:
+        flash("All fields required.", "danger")
+        return redirect(url_for("register_page"))
+    # Dummy registration – just redirect to login
+    flash("Account created! Please sign in.", "success")
+    return redirect(url_for("login_page"))
+
+
+@app.route("/wallet")
+def wallet_page():
+    if "access_token" not in session:
+        flash("Please log in first.", "warning")
+        return redirect(url_for("login_page"))
+    # Placeholder logic – show dummy wallet
+    return render_template("wallet.html", balance=1000.0)
+
+
+@app.route("/tasks")
+def tasks_page():
+    if "access_token" not in session:
+        flash("Please log in first.", "warning")
+        return redirect(url_for("login_page"))
+    return render_template("tasks.html")
+
+
+@app.route("/collaboration")
+def collaboration_page():
+    if "access_token" not in session:
+        flash("Please log in first.", "warning")
+        return redirect(url_for("login_page"))
+    return render_template("collaboration.html")
+
+
+@app.route("/notifications")
+def notifications_page():
+    if "access_token" not in session:
+        flash("Please log in first.", "warning")
+        return redirect(url_for("login_page"))
+    return render_template("notifications.html")
+
+
+@app.route("/directory")
+def directory_page():
+    if "access_token" not in session:
+        flash("Please log in first.", "warning")
+        return redirect(url_for("login_page"))
+    try:
+        agents = api_client.fetch_agents(limit=100)
+    except APIError:
+        agents = []
+    enriched = []
+    for a in agents:
+        tc = derive_trust_context(a)
+        enriched.append({
+            "id": a.get("agent_id", a.get("id")),
+            "name": a.get("name", "Unnamed Agent"),
+            "description": a.get("description", ""),
+            "capabilities": a.get("capabilities", []),
+            "trust": tc
+        })
+    return render_template("directory.html", agents=enriched)
+
+
+@app.route("/register_agent", methods=["GET", "POST"])
+def register_agent_page():
+    if "access_token" not in session:
+        flash("Please log in first.", "warning")
+        return redirect(url_for("login_page"))
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        description = request.form.get("description", "").strip()
+        endpoint = request.form.get("endpoint", "").strip()
+        capabilities_str = request.form.get("capabilities", "").strip()
+        if not name:
+            flash("Agent name is required.", "danger")
+            return redirect(url_for("register_agent_page"))
+        capabilities = [c.strip() for c in capabilities_str.split(",") if c.strip()]
+        try:
+            # Best effort – no API call yet, just flash
+            flash(f"Agent '{name}' registered (simulated).", "success")
+            return redirect(url_for("directory_page"))
+        except APIError as e:
+            flash(f"Failed to register agent: {e.message}", "danger")
+            return redirect(url_for("register_agent_page"))
+    return render_template("new_agent.html")
+
+
+@app.route("/create_offer", methods=["GET", "POST"])
+def create_offer_page():
+    if "access_token" not in session:
+        flash("Please log in first.", "warning")
+        return redirect(url_for("login_page"))
+    if request.method == "POST":
+        flash("Offer created (simulated).", "success")
+        return redirect(url_for("metaverse_page"))
+    return render_template("create_offer.html")
+
+
+# --- Error page ---
+@app.errorhandler(500)
+def handle_500(e):
+    return render_template("error.html", error="Internal server error"), 500
+
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5001))
+    app.run(host="0.0.0.0", port=port, debug=_IS_DEV)
