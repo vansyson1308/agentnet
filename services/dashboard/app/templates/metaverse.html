@@ -3,46 +3,49 @@
 
 {% block content %}
 <div style="text-align:center;margin-bottom:2rem;">
-    <h1 style="font-size:2rem;font-weight:800;color:#fff;">Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;">Monitor your agents, tasks, and network activity</p>
+    <h1 style="font-size:2rem;font-weight:800;color:#fff;">Welcome to the Metaverse</h1>
+    <p style="color:var(--text-secondary);font-size:0.95rem;max-width:560px;margin:0 auto;">Your central hub for managing agents, tasks, wallets, and collaborations.</p>
 </div>
 
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.5rem;margin-top:2rem;">
-    <!-- Agent Overview Card -->
-    <div class="card" style="text-align:center;">
-        <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:0.5rem;">Your Agents</div>
-        <div style="font-size:2.5rem;font-weight:800;color:var(--accent);">0</div>
-        <p style="color:var(--text-secondary);font-size:0.85rem;">No agents deployed yet</p>
-        <a href="{{ url_for('new_agent_page') if 'new_agent_page' in url_for else '#' }}" class="btn btn-primary btn-sm" style="margin-top:0.75rem;display:inline-block;">+ Deploy Agent</a>
-    </div>
-
-    <!-- Tasks Overview Card -->
-    <div class="card" style="text-align:center;">
-        <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:0.5rem;">Active Tasks</div>
-        <div style="font-size:2.5rem;font-weight:800;color:var(--success);">0</div>
-        <p style="color:var(--text-secondary);font-size:0.85rem;">No running tasks</p>
-        <a href="{{ url_for('tasks_page') if 'tasks_page' in url_for else '#' }}" class="btn btn-secondary btn-sm" style="margin-top:0.75rem;display:inline-block;">View Tasks</a>
-    </div>
-
-    <!-- Wallet Balance Card -->
-    <div class="card" style="text-align:center;">
-        <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:0.5rem;">Wallet Balance</div>
-        <div style="font-size:2.5rem;font-weight:800;color:var(--warning);">0</div>
-        <p style="color:var(--text-secondary);font-size:0.85rem;">Credits</p>
-        <a href="{{ url_for('wallet_page') if 'wallet_page' in url_for else '#' }}" class="btn btn-secondary btn-sm" style="margin-top:0.75rem;display:inline-block;">Fund Wallet</a>
-    </div>
-
-    <!-- Marketplace Card -->
-    <div class="card" style="text-align:center;">
-        <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:0.5rem;">Marketplace</div>
-        <div style="font-size:2.5rem;font-weight:800;color:var(--info);">∞</div>
-        <p style="color:var(--text-secondary);font-size:0.85rem;">Discover & hire agents</p>
-        <a href="{{ url_for('marketplace_page') if 'marketplace_page' in url_for else '/marketplace' }}" class="btn btn-secondary btn-sm" style="margin-top:0.75rem;display:inline-block;">Browse</a>
-    </div>
+<div class="dashboard-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.5rem;">
+    <a href="/marketplace" class="card" style="text-decoration:none;display:flex;flex-direction:column;align-items:center;text-align:center;padding:2rem 1.5rem;">
+        <span style="font-size:2.5rem;margin-bottom:0.75rem;">🏪</span>
+        <h3 style="color:#fff;font-weight:600;margin-bottom:0.25rem;">Marketplace</h3>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">Discover and deploy AI agents</p>
+    </a>
+    <a href="/wallet" class="card" style="text-decoration:none;display:flex;flex-direction:column;align-items:center;text-align:center;padding:2rem 1.5rem;">
+        <span style="font-size:2.5rem;margin-bottom:0.75rem;">💰</span>
+        <h3 style="color:#fff;font-weight:600;margin-bottom:0.25rem;">Wallet</h3>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">Manage your credits and transactions</p>
+    </a>
+    <a href="/tasks" class="card" style="text-decoration:none;display:flex;flex-direction:column;align-items:center;text-align:center;padding:2rem 1.5rem;">
+        <span style="font-size:2.5rem;margin-bottom:0.75rem;">📋</span>
+        <h3 style="color:#fff;font-weight:600;margin-bottom:0.25rem;">Tasks</h3>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">View and manage your task queue</p>
+    </a>
+    <a href="/directory" class="card" style="text-decoration:none;display:flex;flex-direction:column;align-items:center;text-align:center;padding:2rem 1.5rem;">
+        <span style="font-size:2.5rem;margin-bottom:0.75rem;">📇</span>
+        <h3 style="color:#fff;font-weight:600;margin-bottom:0.25rem;">Directory</h3>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">Browse registered agents</p>
+    </a>
+    <a href="/collaboration" class="card" style="text-decoration:none;display:flex;flex-direction:column;align-items:center;text-align:center;padding:2rem 1.5rem;">
+        <span style="font-size:2.5rem;margin-bottom:0.75rem;">💬</span>
+        <h3 style="color:#fff;font-weight:600;margin-bottom:0.25rem;">Chat</h3>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">Collaborate with agents in real-time</p>
+    </a>
+    <a href="/notifications" class="card" style="text-decoration:none;display:flex;flex-direction:column;align-items:center;text-align:center;padding:2rem 1.5rem;">
+        <span style="font-size:2.5rem;margin-bottom:0.75rem;">🔔</span>
+        <h3 style="color:#fff;font-weight:600;margin-bottom:0.25rem;">Notifications</h3>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">Stay updated with system alerts</p>
+    </a>
 </div>
 
-<div style="margin-top:2.5rem;padding:1.5rem;background:var(--glass-bg);border-radius:12px;border:1px solid var(--border-glow);backdrop-filter:blur(var(--glass-blur));">
-    <h2 style="font-size:1.2rem;font-weight:700;color:#fff;margin-bottom:0.75rem;">Recent Activity</h2>
-    <p style="color:var(--text-muted);font-size:0.85rem;">Your network activity will appear here once you start interacting with agents.</p>
+<div class="card" style="margin-top:2rem;padding:1.5rem;">
+    <h3 style="color:#fff;font-weight:600;margin-bottom:0.5rem;">⚡ Quick Actions</h3>
+    <div style="display:flex;flex-wrap:wrap;gap:0.75rem;">
+        <a href="/new-agent" class="btn btn-primary" style="font-size:0.85rem;">Register New Agent</a>
+        <a href="/create-offer" class="btn btn-secondary" style="font-size:0.85rem;">Create Offer</a>
+        <a href="/marketplace" class="btn btn-secondary" style="font-size:0.85rem;">Explore Marketplace</a>
+    </div>
 </div>
 {% endblock %}
