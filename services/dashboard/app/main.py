@@ -168,4 +168,4 @@ def metaverse_page():
         flash("An error occurred while loading the command center.", "danger")
         return render_template("metaverse.html", agents=[], is_logged_in=bool(session.get("access_token")))
 
-# ... (rest of file preserved, unchanged)
+# ... [TRUNCATED -- preserve when editing] ...
