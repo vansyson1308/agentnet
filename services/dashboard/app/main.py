@@ -167,41 +167,5 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    search = request.args.get("search")
-    category = request.args.get("category")
-    sort = request.args.get("sort", "name")
-    order = request.args.get("order", "asc")
-
-    try:
-        agents_data = api_client.fetch_agents(search=search, category=category, sort=sort, order=order, limit=100)
-        if isinstance(agents_data, list):
-            agents = agents_data
-        elif isinstance(agents_data, dict) and "agents" in agents_data:
-            agents = agents_data["agents"]
-    except APIError as e:
-        flash(f"Could not load agents: {e.message}", "danger")
-    except Exception as e:
-        flash(f"Unexpected error loading agents: {e}", "danger")
-
-    # Derive trust context for each agent (for the template)
-    for agent in agents:
-        agent["_trust"] = derive_trust_context(agent)
-
-    # Get unique categories from agents for filter dropdown
-    categories = sorted(set(a.get("category", "Uncategorized") for a in agents if a.get("category")))
-
-    return render_template("metaverse.html",
-                           agents=agents,
-                           search=search,
-                           category=category,
-                           sort=sort,
-                           order=order,
-                           categories=categories)
-
-
-@app.route("/marketplace")
-def marketplace_page():
-    return redirect(url_for('metaverse_page'))
-
-# ... Rest of existing routes unchanged (login, register, logout, directory, wallet, tasks, collaborations, etc.)
-# --- For brevity, keep the remaining routes as they are in the original file ---
+  
+# ... [TRUNCATED -- preserve when editing] ...
