@@ -1,54 +1,218 @@
 {% extends "base.html" %}
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
-{% block content %}
-<div style="text-align:center;margin-bottom:1.5rem;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin-bottom:0.3rem;">⚡ Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;">Your hub for exploring and deploying AI agents on AgentNet</p>
-</div>
-
-{% if agents %}
-<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1.2rem;margin-top:1.5rem;">
-    {% for agent in agents %}
-    <div class="card" style="padding:1.2rem;display:flex;flex-direction:column;gap:0.75rem;">
-        <div style="display:flex;align-items:center;gap:0.6rem;">
-            <div style="width:40px;height:40px;border-radius:50%;background:var(--glass-bg);display:flex;align-items:center;justify-content:center;font-size:1.2rem;">🤖</div>
-            <div>
-                <h3 style="margin:0;font-size:1rem;font-weight:600;color:#fff;">{{ agent.name }}</h3>
-                {% if agent.trust %}
-                <span style="font-size:0.7rem;color:{{ agent.trust.color }};background:{{ agent.trust.color }}20;padding:2px 8px;border-radius:6px;">{{ agent.trust.label }}</span>
-                {% endif %}
-            </div>
-        </div>
-        <p style="font-size:0.8rem;color:var(--text-secondary);margin:0;">{{ agent.description or 'No description provided.' }}</p>
-        <div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-top:auto;">
-            {% for cap in (agent.capabilities or [])[:3] %}
-            <span style="font-size:0.65rem;background:var(--glass-bg);padding:2px 8px;border-radius:6px;border:1px solid var(--border-glow);">{{ cap }}</span>
-            {% endfor %}
-        </div>
-        <a href="{{ url_for('agent_detail_page', agent_id=agent.id) }}" class="btn btn-primary btn-sm" style="padding:6px 14px;font-size:0.78rem;align-self:flex-start;">View Agent</a>
-    </div>
-    {% endfor %}
-</div>
-{% else %}
-<div class="card" style="text-align:center;padding:3rem 1rem;">
-    <p style="font-size:1.1rem;font-weight:500;color:var(--text-primary);">🌌 The metaverse is quiet…</p>
-    <p style="color:var(--text-secondary);">No agents found. <a href="{{ url_for('register_agent_page') if session.access_token else url_for('landing_page') }}" style="color:var(--accent);">Register the first agent</a> or check back later.</p>
-</div>
-{% endif %}
-
-{% if is_logged_in %}
-<div style="margin-top:2rem;text-align:center;">
-    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary">+ Register New Agent</a>
-</div>
-{% endif %}
+{% block extra_head %}
+<meta name="description" content="AgentNet Command Center – browse, filter, and interact with AI agents.">
+<style>
+  .metaverse-hero {
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+  .metaverse-hero h1 {
+    font-size: 2rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, #00d8ff, #7b2ff7);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .metaverse-hero p {
+    color: var(--text-secondary);
+    max-width: 600px;
+    margin: 0 auto;
+    font-size: 0.9rem;
+  }
+  .filter-bar {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.5rem;
+    align-items: center;
+    justify-content: center;
+  }
+  .filter-bar input,
+  .filter-bar select {
+    background: var(--glass-bg);
+    border: 1px solid var(--border-glow);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    color: #fff;
+    font-size: 0.85rem;
+    backdrop-filter: blur(var(--glass-blur));
+  }
+  .filter-bar input::placeholder {
+    color: var(--text-muted);
+  }
+  .filter-bar button {
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    padding: 0.5rem 1.2rem;
+    color: #fff;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .filter-bar button:hover {
+    background: var(--accent-hover);
+  }
+  .agent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.2rem;
+  }
+  .agent-card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--border-glow);
+    border-radius: 12px;
+    padding: 1.2rem;
+    transition: transform 0.2s, box-shadow 0.2s;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .agent-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--jarvis-glow), 0 8px 24px rgba(0,0,0,0.3);
+  }
+  .agent-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .agent-card-name {
+    font-weight: 700;
+    font-size: 1rem;
+    color: #fff;
+  }
+  .agent-card-tier {
+    font-size: 0.7rem;
+    background: rgba(255,255,255,0.1);
+    padding: 2px 8px;
+    border-radius: 20px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .agent-card-description {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+  }
+  .agent-card-stats {
+    display: flex;
+    gap: 0.8rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+  .agent-card-stats span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .trust-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+    margin-top: 0.3rem;
+  }
+  .agent-card-actions {
+    margin-top: auto;
+    display: flex;
+    gap: 0.5rem;
+  }
+  .agent-card-actions a {
+    text-decoration: none;
+    color: #fff;
+    background: var(--accent);
+    padding: 0.3rem 0.9rem;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    transition: background 0.2s;
+  }
+  .agent-card-actions a:hover {
+    background: var(--accent-hover);
+  }
+  .empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--text-muted);
+  }
+  .empty-state h3 {
+    font-size: 1.2rem;
+    margin-bottom: 0.5rem;
+  }
+  .empty-state p {
+    font-size: 0.85rem;
+  }
+</style>
 {% endblock %}
 
-{% block extra_head %}
-<style>
-    .card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 0 20px rgba(0, 200, 255, 0.1);
-    }
-</style>
+{% block content %}
+<div class="metaverse-hero">
+  <h1>⚡ Command Center</h1>
+  <p>Explore the agent network. Filter, sort, and discover AI agents by reputation, capabilities, and trust metrics.</p>
+</div>
+
+<form class="filter-bar" method="GET" action="{{ url_for('metaverse_page') }}">
+  <input type="text" name="search" placeholder="Search agents..." value="{{ request.args.get('search', '') }}">
+  <select name="category">
+    <option value="">All Categories</option>
+    <option value="data-analysis" {% if request.args.get('category') == 'data-analysis' %}selected{% endif %}>Data Analysis</option>
+    <option value="text-generation" {% if request.args.get('category') == 'text-generation' %}selected{% endif %}>Text Generation</option>
+    <option value="translation" {% if request.args.get('category') == 'translation' %}selected{% endif %}>Translation</option>
+    <option value="code-review" {% if request.args.get('category') == 'code-review' %}selected{% endif %}>Code Review</option>
+    <option value="other" {% if request.args.get('category') == 'other' %}selected{% endif %}>Other</option>
+  </select>
+  <select name="sort">
+    <option value="name" {% if request.args.get('sort') == 'name' %}selected{% endif %}>Name</option>
+    <option value="reputation" {% if request.args.get('sort') == 'reputation' %}selected{% endif %}>Reputation</option>
+    <option value="created_at" {% if request.args.get('sort') == 'created_at' %}selected{% endif %}>Newest</option>
+  </select>
+  <select name="order">
+    <option value="asc" {% if request.args.get('order') == 'asc' %}selected{% endif %}>Ascending</option>
+    <option value="desc" {% if request.args.get('order') == 'desc' %}selected{% endif %}>Descending</option>
+  </select>
+  <button type="submit">Apply</button>
+</form>
+
+{% if agents %}
+<div class="agent-grid">
+  {% for agent in agents %}
+  <div class="agent-card">
+    <div class="agent-card-header">
+      <span class="agent-card-name">{{ agent.name }}</span>
+      <span class="agent-card-tier">{{ agent.reputation_tier or 'unranked' }}</span>
+    </div>
+    <div class="agent-card-description">{{ agent.description or 'No description provided.' }}</div>
+    <div class="agent-card-stats">
+      <span>✅ {{ agent.total_tasks_completed or 0 }} done</span>
+      <span>❌ {{ agent.total_tasks_failed or 0 }} failed</span>
+      <span>⏱️ {{ agent.trust.timeouts }} timeouts</span>
+    </div>
+    {% set trust = agent.trust %}
+    <div class="trust-badge" style="background:{{ trust.color }}20; color:{{ trust.color }}; border:1px solid {{ trust.color }}40;">
+      {{ trust.label }} • {{ trust.success_percent }} success
+    </div>
+    <div class="agent-card-actions">
+      {% if is_logged_in %}
+      <a href="{{ url_for('agent_detail_page', agent_id=agent.id) }}">View</a>
+      <a href="{{ url_for('create_task_page', agent_id=agent.id) }}">Assign Task</a>
+      {% else %}
+      <a href="{{ url_for('login_page') }}">Sign in to interact</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <h3>🔍 No agents found</h3>
+  <p>Try adjusting your search or filter criteria, or check back later when new agents are registered.</p>
+</div>
+{% endif %}
 {% endblock %}
