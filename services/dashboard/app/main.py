@@ -166,39 +166,21 @@ def index():
 @app.route("/metaverse")
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
-    agents = []
-    error = None
     try:
         agents = api_client.fetch_agents(limit=50)
     except APIError as e:
-        error = str(e)
-        flash(f"Could not load agents: {e.message}", "warning")
+        flash(f"Could not load agents: {e.message}", "danger")
+        agents = []
     except Exception as e:
-        error = str(e)
         app.logger.error(f"Failed to fetch agents for metaverse: {e}")
-        flash("Failed to load agent data.", "danger")
-    # If not logged in, still show the page with limited content
-    if not session.get('access_token'):
-        return render_template("metaverse.html", agents=agents[:6] if agents else [], is_logged_in=False, error=error)
-    return render_template("metaverse.html", agents=agents, is_logged_in=True, error=error, user=session.get('user', {}))
-
-
-@app.route("/marketplace")
-def marketplace_page():
-    """Public marketplace – list agents with search/filter."""
-    search = request.args.get("search", "")
-    category = request.args.get("category", "")
-    sort = request.args.get("sort", "name")
-    order = request.args.get("order", "asc")
-    try:
-        agents = api_client.fetch_agents(search=search, category=category, sort=sort, order=order, limit=100)
-    except APIError as e:
-        flash(f"Marketplace error: {e.message}", "danger")
+        flash("Could not load agents. Is the backend running?", "danger")
         agents = []
-    except Exception as e:
-        flash("Could not load marketplace.", "danger")
-        agents = []
-    return render_template("marketplace.html", agents=agents, search=search, category=category, sort=sort, order=order)
+
+    if not agents:
+        return render_template("metaverse.html", agents=[])
+
+    # If user is authenticated, we may show additional info later
+    return render_template("metaverse.html", agents=agents)
 
 
-# ... [AUTHENTICATED ROUTES remain unchanged; they were not modified] ...
+# ... [remaining routes unchanged] ...
