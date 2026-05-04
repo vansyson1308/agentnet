@@ -160,13 +160,55 @@ def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
     tasks = []
-    if "access_token" in session:
+    wallets = []
+    total_agents = 0
+    total_tasks = 0
+    total_wallet_balance = 0
+    recent_transactions = []
+    is_authenticated = "access_token" in session
+    if is_authenticated:
         try:
-            agents = api_client.get_agents()
+            agents = api_client.get_agents(limit=5)
             tasks = api_client.get_tasks()
+            wallets = api_client.get_wallets()
+            if isinstance(agents, list):
+                total_agents = len(agents)
+            if isinstance(tasks, list):
+                total_tasks = len(tasks)
+            if isinstance(wallets, list):
+                total_wallet_balance = sum(w.get("balance", 0) for w in wallets)
+            # recent transactions
+            transactions = api_client.get_transactions()
+            if isinstance(transactions, list):
+                recent_transactions = transactions[-5:]
         except (APIError, AuthRequiredError) as e:
-            app.logger.warning(f"Failed to fetch metaverse data: {e}")
-    return render_template("metaverse.html", agents=agents, tasks=tasks)
+            # ignore errors on dashboard, just show what we have
+            pass
+    return render_template(
+        "metaverse.html",
+        agents=agents,
+        tasks=tasks,
+        wallets=wallets,
+        total_agents=total_agents,
+        total_tasks=total_tasks,
+        total_wallet_balance=total_wallet_balance,
+        recent_transactions=recent_transactions,
+        is_authenticated=is_authenticated
+    )
+
+@app.route("/marketplace")
+def marketplace_page():
+    """Agent Marketplace – browse public agents."""
+    search = request.args.get("search", "")
+    category = request.args.get("category", "")
+    sort = request.args.get("sort", "created_at")
+    order = request.args.get("order", "desc")
+    try:
+        agents = api_client.fetch_agents(search=search, category=category, sort=sort, order=order)
+    except APIError as e:
+        flash(f"Could not load marketplace: {e.message}", "danger")
+        agents = []
+    return render_template("marketplace.html", agents=agents, search=search, category=category)
 
 # ============================================================
 # AUTH ROUTES
@@ -175,140 +217,152 @@ def metaverse_page():
 @app.route("/login", methods=["GET", "POST"])
 def login_page():
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
         if not username or not password:
-            flash("Username and password are required.", "danger")
+            flash("Username and password required.", "danger")
             return render_template("login.html")
         try:
             result = api_client.login(username, password)
-            session["access_token"] = result["access_token"]
-            flash("Logged in successfully.", "success")
-            return redirect(url_for("metaverse_page"))
-        except (APIError, AuthRequiredError) as e:
+            session["access_token"] = result.get("access_token")
+            session["user"] = {"username": username, "user_id": result.get("user_id")}
+            flash("Authentication successful.", "success")
+            return redirect(url_for('metaverse_page'))
+        except APIError as e:
             flash(f"Login failed: {e.message}", "danger")
-            return render_template("login.html")
+        except AuthRequiredError:
+            flash("Login failed: invalid credentials.", "danger")
+        return render_template("login.html")
     return render_template("login.html")
 
 @app.route("/register", methods=["GET", "POST"])
 def register_page():
     if request.method == "POST":
-        email = request.form.get("email")
-        password = request.form.get("password")
+        email = request.form.get("email", "").strip()
+        password = request.form.get("password", "").strip()
         if not email or not password:
-            flash("Email and password are required.", "danger")
+            flash("Email and password required.", "danger")
             return render_template("register.html")
         try:
             result = api_client.register(email, password)
-            flash("Registration successful. Please log in.", "success")
-            return redirect(url_for("login_page"))
-        except (APIError, AuthRequiredError) as e:
+            flash("Account created successfully. Please log in.", "success")
+            return redirect(url_for('login_page'))
+        except APIError as e:
             flash(f"Registration failed: {e.message}", "danger")
-            return render_template("register.html")
+        return render_template("register.html")
     return render_template("register.html")
 
 @app.route("/logout")
 def logout_page():
-    session.pop("access_token", None)
-    flash("Logged out.", "info")
-    return redirect(url_for("landing_page"))
+    session.clear()
+    flash("You have been signed out.", "info")
+    return redirect(url_for('metaverse_page'))
 
 # ============================================================
-# AUTH-PROTECTED ROUTES
+# PROTECTED ROUTES (require authentication)
 # ============================================================
-
-@app.route("/marketplace")
-def marketplace_page():
-    if "access_token" not in session:
-        return redirect(url_for("login_page"))
-    agents = []
-    try:
-        agents = api_client.fetch_agents()
-    except (APIError, AuthRequiredError) as e:
-        app.logger.warning(f"Failed to fetch marketplace agents: {e}")
-    return render_template("marketplace.html", agents=agents)
-
-@app.route("/directory")
-def directory_page():
-    if "access_token" not in session:
-        return redirect(url_for("login_page"))
-    agents = []
-    try:
-        agents = api_client.get_agents()
-    except (APIError, AuthRequiredError) as e:
-        app.logger.warning(f"Failed to fetch directory: {e}")
-    return render_template("directory.html", agents=agents)
 
 @app.route("/wallet")
 def wallet_page():
-    if "access_token" not in session:
-        return redirect(url_for("login_page"))
-    wallets = []
-    transactions = []
     try:
         wallets = api_client.get_wallets()
         transactions = api_client.get_transactions()
-    except (APIError, AuthRequiredError) as e:
-        app.logger.warning(f"Failed to fetch wallet data: {e}")
+    except AuthRequiredError:
+        return redirect(url_for('login_page'))
+    except APIError as e:
+        flash(f"Could not load wallet: {e.message}", "danger")
+        wallets = []
+        transactions = []
     return render_template("wallet.html", wallets=wallets, transactions=transactions)
 
 @app.route("/tasks")
 def tasks_page():
-    if "access_token" not in session:
-        return redirect(url_for("login_page"))
-    tasks = []
     try:
         tasks = api_client.get_tasks()
-    except (APIError, AuthRequiredError) as e:
-        app.logger.warning(f"Failed to fetch tasks: {e}")
+    except AuthRequiredError:
+        return redirect(url_for('login_page'))
+    except APIError as e:
+        flash(f"Could not load tasks: {e.message}", "danger")
+        tasks = []
     return render_template("tasks.html", tasks=tasks)
 
 @app.route("/collaboration")
 def collaboration_page():
-    if "access_token" not in session:
-        return redirect(url_for("login_page"))
-    return render_template("collaboration.html")
+    try:
+        agents = api_client.get_my_agents()
+    except AuthRequiredError:
+        return redirect(url_for('login_page'))
+    except APIError as e:
+        flash(f"Could not load agents: {e.message}", "danger")
+        agents = []
+    return render_template("collaboration.html", agents=agents)
 
 @app.route("/notifications")
 def notifications_page():
-    if "access_token" not in session:
-        return redirect(url_for("login_page"))
-    return render_template("notifications.html")
+    # Placeholder: notifications not implemented yet
+    return render_template("notifications.html", notifications=[])
+
+@app.route("/directory")
+def directory_page():
+    try:
+        agents = api_client.get_agents(limit=200)
+    except AuthRequiredError:
+        return redirect(url_for('login_page'))
+    except APIError as e:
+        flash(f"Could not load directory: {e.message}", "danger")
+        agents = []
+    return render_template("directory.html", agents=agents)
 
 @app.route("/my-agents")
 def my_agents_page():
-    if "access_token" not in session:
-        return redirect(url_for("login_page"))
-    agents = []
     try:
         agents = api_client.get_my_agents()
-    except (APIError, AuthRequiredError) as e:
-        app.logger.warning(f"Failed to fetch my agents: {e}")
+    except AuthRequiredError:
+        return redirect(url_for('login_page'))
+    except APIError as e:
+        flash(f"Could not load your agents: {e.message}", "danger")
+        agents = []
     return render_template("my_agents.html", agents=agents)
 
-@app.route("/my-agents/new", methods=["GET", "POST"])
+@app.route("/agents/new", methods=["GET", "POST"])
 def register_agent_page():
-    if "access_token" not in session:
-        return redirect(url_for("login_page"))
     if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        description = request.form.get("description", "").strip()
+        endpoint = request.form.get("endpoint", "").strip()
+        capabilities_raw = request.form.get("capabilities", "").strip()
+        capabilities = [c.strip() for c in capabilities_raw.split(",") if c.strip()]
+        if not name:
+            flash("Agent name is required.", "danger")
+            return render_template("new_agent.html")
         data = {
-            "name": request.form.get("name"),
-            "description": request.form.get("description"),
-            "endpoint": request.form.get("endpoint"),
-            "capabilities": [c.strip() for c in request.form.get("capabilities", "").split(",") if c.strip()]
+            "name": name,
+            "description": description,
+            "endpoint": endpoint,
+            "capabilities": capabilities
         }
         try:
             result = api_client.create_agent(data)
             flash("Agent registered successfully!", "success")
-            return redirect(url_for("my_agents_page"))
-        except (APIError, AuthRequiredError) as e:
+            return redirect(url_for('my_agents_page'))
+        except APIError as e:
             flash(f"Failed to register agent: {e.message}", "danger")
-            return render_template("new_agent.html")
+        except AuthRequiredError:
+            return redirect(url_for('login_page'))
+        return render_template("new_agent.html")
     return render_template("new_agent.html")
 
 # ============================================================
-# MAIN ENTRY
+# STATIC FILES (for development)
+# ============================================================
+
+@app.route("/static/<path:filename>")
+def serve_static(filename):
+    return app.send_static_file(filename)
+
+# ============================================================
+# RUN
 # ============================================================
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5002, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=_IS_DEV)
