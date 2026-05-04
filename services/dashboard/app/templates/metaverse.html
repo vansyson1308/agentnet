@@ -1,46 +1,51 @@
 {% extends "base.html" %}
-{% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
+{% block title %}J.A.R.V.I.S. — Metaverse Command Center{% endblock %}
 
 {% block content %}
-<div style="max-width:1024px;margin:0 auto;">
-    <div style="text-align:center;margin-bottom:2rem;">
-        <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">⚛ Command Center</h1>
-        <p style="color:var(--text-secondary);font-size:0.9rem;">Welcome to the AgentNet metaverse – manage your agents, tasks, and wallet.</p>
-    </div>
+<div style="margin-bottom:1.5rem;">
+    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.9rem;">
+        Explore the agent mesh — all registered agents visible to the network.
+    </p>
+</div>
 
-    {% if not is_auth %}
-    <div class="card" style="text-align:center;padding:2rem;">
-        <p style="color:var(--text-muted);font-size:0.9rem;">Sign in to access your agents and full dashboard.</p>
-        <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
-    </div>
-    {% endif %}
-
-    {% if is_auth and agents %}
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.25rem;">
-        {% for agent in agents %}
-        <div class="card agent-card" style="padding:1.25rem;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
-                <h3 style="margin:0;font-size:1rem;font-weight:600;color:#fff;">{{ agent.name }}</h3>
-                <span style="font-size:0.75rem;padding:2px 8px;border-radius:12px;background:var(--accent-dim);color:var(--accent);">{{ agent.category }}</span>
-            </div>
-            {% set ctx = agent | trust_context %}
-            <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:0.5rem;">
-                <span style="color:{{ ctx.color }};font-weight:600;">●</span> {{ ctx.label }}
-                {% if ctx.tier != 'Unranked' %} · Tier {{ ctx.tier }}{% endif %}
-            </div>
-            <div style="font-size:0.72rem;color:var(--text-secondary);">
-                Success: {{ ctx.success_percent }} · Tasks: {{ ctx.total }}
-            </div>
-            {% if agent.description %}
-            <p style="font-size:0.78rem;color:var(--text-muted);margin-top:0.5rem;">{{ agent.description[:100] }}{% if agent.description|length > 100 %}…{% endif %}</p>
+{% if agents %}
+<div class="grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
+    {% for agent in agents %}
+    <div class="card" style="padding:1rem;display:flex;flex-direction:column;gap:0.5rem;">
+        <div style="display:flex;align-items:center;gap:0.5rem;">
+            <span class="avatar" style="width:28px;height:28px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:700;color:#fff;">
+                {{ agent.name[:1]|upper }}
+            </span>
+            <span style="font-weight:600;color:#fff;">{{ agent.name }}</span>
+            <span class="badge badge-sm badge-{{ agent.status or 'active' }}" style="margin-left:auto;">{{ agent.status or 'active' }}</span>
+        </div>
+        <div style="font-size:0.82rem;color:var(--text-secondary);">
+            {{ agent.description or 'No description'[:80] }}{% if agent.description and agent.description|length > 80 %}…{% endif %}
+        </div>
+        {% if agent.capabilities %}
+        <div style="display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.2rem;">
+            {% for cap in agent.capabilities[:3] %}
+            <span class="badge badge-outline badge-sm">{{ cap }}</span>
+            {% endfor %}
+            {% if agent.capabilities|length > 3 %}
+            <span class="badge badge-outline badge-sm">+{{ agent.capabilities|length - 3 }}</span>
             {% endif %}
         </div>
-        {% endfor %}
+        {% endif %}
+        {% with tc = agent|trust_context %}
+        <div style="font-size:0.75rem;color:var(--text-muted);display:flex;gap:0.8rem;border-top:1px solid var(--border-glow);padding-top:0.5rem;">
+            <span>Rep: <span style="color:{{ tc.color }};">{{ tc.tier }}</span></span>
+            <span>{{ tc.total }} tasks</span>
+        </div>
+        {% endwith %}
     </div>
-    {% elif is_auth %}
-    <div class="card" style="text-align:center;padding:2rem;">
-        <p style="color:var(--text-muted);">No agents registered yet. <a href="{{ url_for('register_agent_page') }}" class="link">Register an agent</a> to get started.</p>
-    </div>
-    {% endif %}
+    {% endfor %}
 </div>
+{% else %}
+<div class="card" style="text-align:center;padding:2rem;">
+    <p style="color:var(--text-muted);">No agents registered yet. Be the first to deploy an agent!</p>
+    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">Register Agent</a>
+</div>
+{% endif %}
 {% endblock %}
