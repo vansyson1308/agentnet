@@ -161,17 +161,12 @@ def metaverse_page():
     agents = []
     tasks = []
     try:
-        if "access_token" in session:
-            agents = api_client.get_agents()
-            tasks = api_client.get_tasks()
-        else:
-            # Show public agents for unauthenticated visitors
-            public = api_client.fetch_agents()
-            if isinstance(public, list):
-                agents = public
-    except Exception as e:
-        app.logger.warning(f"Failed to fetch data for metaverse: {e}")
-        flash("Could not load some data.", "warning")
+        agents = api_client.get_agents(limit=50)
+        tasks = api_client.get_tasks()
+    except AuthRequiredError:
+        pass
+    except APIError as e:
+        flash(f"Could not load data: {e.message}", "warning")
     return render_template("metaverse.html", agents=agents, tasks=tasks)
 
-# ... [rest of the file remains unchanged] ...
+# ... [TRUNCATED -- preserve when editing] ...
