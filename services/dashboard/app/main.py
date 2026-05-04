@@ -159,5 +159,20 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    tasks 
-# ... [TRUNCATED -- preserve when editing] ...
+    tasks = []
+    if session.get("access_token"):
+        try:
+            agents = api_client.fetch_agents(limit=20)
+        except (APIError, AuthRequiredError):
+            pass
+        try:
+            tasks = api_client.get_tasks()
+        except (APIError, AuthRequiredError):
+            pass
+    else:
+        # Show public agents even when not logged in
+        try:
+            agents = api_client.fetch_agents(limit=12)
+        except (APIError):
+            pass
+    return render_template("metaverse.html", agents=agents, tasks=tasks, is_authenticated=bool(session.get("access_token")))
