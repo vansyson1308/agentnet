@@ -2,86 +2,93 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div class="metaverse-dashboard">
-    <div class="dashboard-header" style="margin-bottom:2rem;">
-        <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">Command Center</h1>
-        <p style="color:var(--text-secondary);font-size:0.9rem;">Your agent network at a glance</p>
-    </div>
+<div style="margin-bottom:2rem;">
+    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">🚀 Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.9rem;">Your central hub for managing agents, tasks, and wallet.</p>
+</div>
 
-    {% if not is_logged_in %}
-    <div class="card" style="text-align:center;padding:3rem 2rem;">
-        <h2 style="color:#fff;margin-bottom:1rem;">Welcome to AgentNet</h2>
-        <p style="color:var(--text-secondary);margin-bottom:1.5rem;max-width:480px;margin-left:auto;margin-right:auto;">
-            Manage AI agents, track tasks, and collaborate across the metaverse.
-            Sign in to access your dashboard.
-        </p>
-        <div style="display:flex;gap:1rem;justify-content:center;">
-            <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
-            <a href="{{ url_for('register_page') }}" class="btn btn-secondary">Initialize</a>
-        </div>
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+
+{% if wallet_summary %}
+<section style="margin-bottom:2rem;">
+    <h2 style="font-size:1.2rem;font-weight:600;color:var(--text-heading);margin-bottom:0.75rem;">💰 Wallet</h2>
+    <div class="card" style="display:flex;gap:1rem;flex-wrap:wrap;">
+        <div><strong>Balance:</strong> {{ wallet_summary.get('balance', 'N/A') }}</div>
+        <div><strong>Total received:</strong> {{ wallet_summary.get('total_received', 'N/A') }}</div>
+        <div><strong>Total sent:</strong> {{ wallet_summary.get('total_sent', 'N/A') }}</div>
     </div>
-    {% elif error %}
-    <div class="alert alert-danger">{{ error }}</div>
+</section>
+{% endif %}
+
+<section style="margin-bottom:2rem;">
+    <h2 style="font-size:1.2rem;font-weight:600;color:var(--text-heading);margin-bottom:0.75rem;">🤖 Agents</h2>
+    {% if agents %}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
+        {% for agent in agents %}
+        {% set ctx = trust_context_filter(agent) %}
+        <div class="card agent-card">
+            <h3 style="font-size:1rem;font-weight:700;color:#fff;">{{ agent.name }}</h3>
+            <p style="font-size:0.8rem;color:var(--text-secondary);">{{ agent.description or 'No description' }}</p>
+            <div style="margin-top:0.5rem;font-size:0.75rem;color:var(--text-muted);">
+                <span style="display:inline-block;background:{{ ctx.color }};color:#fff;padding:2px 8px;border-radius:12px;font-weight:500;">{{ ctx.label }}</span>
+                <span style="margin-left:0.5rem;">{{ ctx.success_percent }} success</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
     {% else %}
-    <!-- Stats Cards -->
-    <div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:2rem;">
-        <div class="card stat-card">
-            <div style="font-size:0.75rem;text-transform:uppercase;color:var(--text-secondary);">Agents</div>
-            <div style="font-size:2rem;font-weight:800;color:#fff;">{{ stats.total_agents | default(0) }}</div>
-        </div>
-        <div class="card stat-card">
-            <div style="font-size:0.75rem;text-transform:uppercase;color:var(--text-secondary);">Tasks</div>
-            <div style="font-size:2rem;font-weight:800;color:#fff;">{{ stats.total_tasks | default(0) }}</div>
-        </div>
-        {% if stats.wallet_balance is not none %}
-        <div class="card stat-card">
-            <div style="font-size:0.75rem;text-transform:uppercase;color:var(--text-secondary);">Wallet Balance</div>
-            <div style="font-size:2rem;font-weight:800;color:#10b981;">{{ stats.wallet_balance }} AGNT</div>
-        </div>
+    <p style="color:var(--text-muted);">No agents registered yet.</p>
+    {% endif %}
+    <div style="margin-top:1rem;">
+        <a href="{{ url_for('marketplace_page') }}" class="btn btn-primary btn-sm">Browse Marketplace</a>
+        {% if session.access_token %}
+        <a href="{{ url_for('register_agent_page') }}" class="btn btn-secondary btn-sm">Register New Agent</a>
         {% endif %}
     </div>
+</section>
 
-    <!-- Agent List (Recent) -->
-    <div class="card" style="margin-bottom:2rem;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-            <h3 style="color:#fff;font-size:1rem;font-weight:600;">Recent Agents</h3>
-            <a href="{{ url_for('directory_page') }}" class="btn btn-sm btn-secondary">View All</a>
-        </div>
-        {% if agents %}
-        <div style="display:grid;gap:0.5rem;">
-            {% for agent in agents[:5] %}
-            <div class="agent-row" style="padding:0.75rem;border-bottom:1px solid var(--border-glow);display:flex;justify-content:space-between;align-items:center;">
-                <div>
-                    <strong style="color:#fff;">{{ agent.name }}</strong>
-                    {% if agent.description %}
-                    <span style="color:var(--text-secondary);font-size:0.8rem;margin-left:0.5rem;">{{ agent.description[:60] }}{% if agent.description|length > 60 %}…{% endif %}</span>
-                    {% endif %}
-                </div>
-                <span style="font-size:0.7rem;color:var(--text-muted);">{{ agent.agent_type or agent.capabilities | join(', ') | truncate(30) }}</span>
+<section>
+    <h2 style="font-size:1.2rem;font-weight:600;color:var(--text-heading);margin-bottom:0.75rem;">📋 Recent Tasks</h2>
+    {% if tasks %}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:1rem;">
+        {% for task in tasks %}
+        <div class="card task-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-weight:600;color:#fff;">{{ task.get('title', 'Task') }}</span>
+                <span class="badge badge-{{ task.get('status', 'pending') }}">{{ task.get('status', 'pending') }}</span>
             </div>
-            {% endfor %}
+            <p style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.25rem;">{{ task.get('description', '') }}</p>
+            <div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.25rem;">{{ task.get('created_at', '') }}</div>
         </div>
-        {% else %}
-        <p style="color:var(--text-muted);text-align:center;padding:1rem;">No agents registered yet. <a href="{{ url_for('register_agent_page') }}">Register one</a>.</p>
-        {% endif %}
+        {% endfor %}
     </div>
-
-    <!-- Recent Activity -->
-    <div class="card">
-        <h3 style="color:#fff;font-size:1rem;font-weight:600;margin-bottom:1rem;">Recent Activity</h3>
-        {% if recent_activity %}
-        <div style="display:grid;gap:0.5rem;">
-            {% for item in recent_activity %}
-            <div class="activity-row" style="padding:0.5rem 0.75rem;border-bottom:1px solid var(--border-glow);font-size:0.85rem;">
-                <span style="color:var(--text-secondary);">{{ item.created_at | default('') }} </span>
-                <span style="color:#fff;">{{ item.description or item.name or item.action }}</span>
-            </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <p style="color:var(--text-muted);text-align:center;padding:1rem;">No recent activity to display.</p>
-        {% endif %}
+    {% else %}
+    <p style="color:var(--text-muted);">No recent tasks.</p>
+    {% endif %}
+    {% if session.access_token %}
+    <div style="margin-top:1rem;">
+        <a href="{{ url_for('tasks_page') }}" class="btn btn-secondary btn-sm">View All Tasks</a>
     </div>
     {% endif %}
-</div>
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Animate agent cards on load
+document.addEventListener('DOMContentLoaded', function() {
+    var cards = document.querySelectorAll('.agent-card, .task-card');
+    cards.forEach(function(card, i) {
+        card.style.opacity = '0';
+        card.style.transform = 'translateY(10px)';
+        setTimeout(function() {
+            card.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+            card.style.opacity = '1';
+            card.style.transform = 'translateY(0)';
+        }, i * 100);
+    });
+});
+</script>
 {% endblock %}

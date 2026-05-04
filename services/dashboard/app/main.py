@@ -167,77 +167,25 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    stats = {}
-    recent_activity = []
+    tasks = []
+    wallet_summary = None
     error = None
 
     if "access_token" in session:
         try:
-            # Fetch dashboard data from backend
-            agents_result = api_client.fetch_agents(limit=10)
-            agents = agents_result.get("agents", []) if isinstance(agents_result, dict) else []
-            # If agents is a list directly, use it
-            if isinstance(agents_result, list):
-                agents = agents_result
-            
-            # Fetch stats (assumes API provides a stats endpoint or we can derive)
-            # For now, we'll show placeholder stats or try to get from agents
-            total_agents = len(agents)
-            # Example: get task count if available
-            tasks_result = api_client.fetch_tasks(limit=0)  # might return count
-            total_tasks = 0
-            if isinstance(tasks_result, dict):
-                total_tasks = tasks_result.get("total", 0) or len(tasks_result.get("tasks", []))
-            elif isinstance(tasks_result, list):
-                total_tasks = len(tasks_result)
-
-            # Wallet balance
-            wallet_balance = None
-            try:
-                wallet_info = api_client.fetch_wallet_balance()
-                if isinstance(wallet_info, dict):
-                    wallet_balance = wallet_info.get("balance")
-            except Exception:
-                wallet_balance = None
-
-            stats = {
-                "total_agents": total_agents,
-                "total_tasks": total_tasks,
-                "wallet_balance": wallet_balance,
-            }
-
-            # Recent activity (e.g., last 5 tasks or agent updates)
-            recent_activity = []
-            if isinstance(tasks_result, dict) and "tasks" in tasks_result:
-                recent_activity = tasks_result["tasks"][:5]
-            elif isinstance(tasks_result, list):
-                recent_activity = tasks_result[:5]
-            
-        except (APIError, AuthRequiredError) as e:
-            error = str(e)
-            # If auth error, we'll show login prompt; otherwise just show error
-            if isinstance(e, AuthRequiredError):
-                flash("Session expired. Please log in again.", "warning")
-                return redirect(url_for('login_page'))
+            agents = api_client.fetch_agents(limit=10)
+            tasks = api_client.fetch_tasks(limit=5)
+            wallet_summary = api_client.fetch_wallet_summary()
+        except APIError as e:
+            error = e.message
         except Exception as e:
-            app.logger.error(f"Metaverse dashboard error: {e}")
-            error = "Unable to load dashboard data. Backend may be temporarily unavailable."
-    else:
-        # Not logged in – show public welcome
-        pass
+            error = "Failed to load dashboard data."
 
     return render_template(
         "metaverse.html",
         agents=agents,
-        stats=stats,
-        recent_activity=recent_activity,
+        tasks=tasks,
+        wallet_summary=wallet_summary,
         error=error,
-        is_logged_in="access_token" in session
+        trust_context_filter=derive_trust_context
     )
-
-
-# ============================================================
-# AUTHENTICATED ROUTES
-# ============================================================
-
-# ... [remaining routes remain unchanged] ... 
