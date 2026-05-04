@@ -166,39 +166,5 @@ def index():
 @app.route("/metaverse")
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
-    is_authenticated = "access_token" in session
-    agents = []
-    search = request.args.get("search", "").strip()
-    category = request.args.get("category", "").strip()
-    sort = request.args.get("sort", "name")
-    order = request.args.get("order", "asc")
-    error = None
-
-    try:
-        agents = api_client.fetch_agents(
-            search=search or None,
-            category=category or None,
-            sort=sort,
-            order=order,
-            limit=50
-        )
-    except APIError as e:
-        error = str(e)
-        flash(f"Could not load agents: {error}", "danger")
-    except Exception as e:
-        error = str(e)
-        flash("Failed to connect to the agent registry.", "danger")
-
-    return render_template(
-        "metaverse.html",
-        agents=agents,
-        search=search,
-        category=category,
-        sort=sort,
-        order=order,
-        is_authenticated=is_authenticated,
-        error=error
-    )
-
-
-# ... [remaining routes stay unchanged] ...
+    agent
+# ... [TRUNCATED -- preserve when editing] ...
