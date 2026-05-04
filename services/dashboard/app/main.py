@@ -169,4 +169,3 @@ def metaverse_page():
             agents = []
             tasks = []
     return render_template("metaverse.html", agents=agents, tasks=tasks)
-# ... [TRUNCATED -- preserve when editing] ...
