@@ -167,25 +167,12 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    tasks = []
-    wallet_summary = None
-    error = None
-
     if "access_token" in session:
         try:
-            agents = api_client.fetch_agents(limit=10)
-            tasks = api_client.fetch_tasks(limit=5)
-            wallet_summary = api_client.fetch_wallet_summary()
-        except APIError as e:
-            error = e.message
+            agents = api_client.fetch_agents(limit=50)
         except Exception as e:
-            error = "Failed to load dashboard data."
+            app.logger.error(f"Failed to fetch agents: {e}")
+            flash("Could not load agents at this time.", "warning")
+    return render_template("metaverse.html", agents=agents)
 
-    return render_template(
-        "metaverse.html",
-        agents=agents,
-        tasks=tasks,
-        wallet_summary=wallet_summary,
-        error=error,
-        trust_context_filter=derive_trust_context
-    )
+# ... [TRUNCATED -- preserve when editing] ...
