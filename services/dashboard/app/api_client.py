@@ -138,19 +138,31 @@ class APIClient:
         """Fetch agents from the public endpoint (no authentication required)."""
         params = {}
         if search:
-            params['search'] = search
+            params["search"] = search
         if category:
-            params['category'] = category
+            params["category"] = category
         if sort:
-            params['sort'] = sort
+            params["sort"] = sort
         if order:
-            params['order'] = order
+            params["order"] = order
         try:
             resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
-            return self._handle_response(resp)
-        except httpx.RequestError as e:
-            raise APIError(f"Connection failed: {e}")
+            if resp.status_code == 200:
+                return resp.json()
+            return []
+        except httpx.RequestError:
+            return []
 
-    # Additional private methods can be added below as needed.
+    def get_agent_status(self, agent_id: str) -> dict | None:
+        """Fetch a single agent's details from the registry (unauthenticated)."""
+        try:
+            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/{agent_id}", timeout=5.0)
+            if resp.status_code == 200:
+                return resp.json()
+            app.logger.warning(f"Agent {agent_id} not found (status {resp.status_code})")
+            return None
+        except httpx.RequestError as e:
+            app.logger.error(f"Error fetching agent {agent_id}: {e}")
+            return None
 
 api_client = APIClient()
