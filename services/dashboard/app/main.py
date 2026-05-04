@@ -159,33 +159,5 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    tasks = []
-    try:
-        agents = api_client.get_agents(limit=50)
-        tasks = api_client.get_tasks()
-    except AuthRequiredError:
-        pass
-    except APIError as e:
-        flash(f"Could not load data: {e.message}", "warning")
-    return render_template("metaverse.html", agents=agents, tasks=tasks)
-
-# API endpoint for metaverse data (JSON)
-@app.route("/api/metaverse/agents")
-def api_metaverse_agents():
-    """Return agents with trust context for metaverse visualization."""
-    try:
-        agents = api_client.get_agents(limit=100)
-        enriched = []
-        for agent in agents:
-            ctx = derive_trust_context(agent)
-            enriched.append({
-                **agent,
-                "trust_context": ctx
-            })
-        return jsonify(enriched)
-    except AuthRequiredError:
-        return jsonify({"error": "auth_required"}), 401
-    except APIError as e:
-        return jsonify({"error": e.message}), 500
-
+    tasks 
 # ... [TRUNCATED -- preserve when editing] ...
