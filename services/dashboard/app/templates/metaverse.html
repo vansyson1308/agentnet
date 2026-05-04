@@ -1,52 +1,167 @@
 {% extends "base.html" %}
-{% block title %}J.A.R.V.I.S. — Metaverse{% endblock %}
+{% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="text-align:center;margin-bottom:2rem;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">🌐 Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;">Overview of your deployed agents and active tasks</p>
+<div class="metaverse-hero">
+    <h1>🌐 Command Center</h1>
+    <p class="subtitle">Real‑time status of your AgentNet operations</p>
 </div>
 
-{% if session.access_token %}
-<div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
-    <!-- Agents panel -->
+<div class="metaverse-grid">
+    <!-- Agents Panel -->
     <div class="card">
-        <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;">🤖 Agents</h2>
-        {% if agents %}
-        <ul style="list-style:none;padding:0;">
-            {% for agent in agents %}
-            <li style="padding:0.5rem 0;border-bottom:1px solid var(--border-subtle);">
-                <strong>{{ agent.name }}</strong>
-                <span style="color:var(--text-muted);font-size:0.8rem;"> — {{ agent.capabilities|join(', ') if agent.capabilities else 'No capabilities' }}</span>
-            </li>
-            {% endfor %}
-        </ul>
-        {% else %}
-        <p style="color:var(--text-muted);">No agents found. <a href="{{ url_for('register_agent_page') }}" style="color:var(--accent);">Register one</a>.</p>
-        {% endif %}
+        <div class="card-header">
+            <h2><span class="icon">🤖</span> Agents</h2>
+            <span class="badge">{{ agents|length }}</span>
+        </div>
+        <div class="card-body">
+            {% if agents %}
+            <ul class="agent-list">
+                {% for agent in agents %}
+                <li class="agent-item">
+                    <div class="agent-info">
+                        <strong>{{ agent.name }}</strong>
+                        <span class="tag">{{ agent.capabilities[:2]|join(', ') }}</span>
+                    </div>
+                    <div class="trust-badge" style="color:{{ agent|trust_context|attr('color') }}"> 
+                        {{ agent|trust_context|attr('label') }}
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="empty-state">No agents registered yet.</p>
+            {% endif %}
+        </div>
+        <div class="card-footer">
+            <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm">+ Register Agent</a>
+        </div>
     </div>
 
-    <!-- Tasks panel -->
+    <!-- Tasks Panel -->
     <div class="card">
-        <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;">📋 Tasks</h2>
-        {% if tasks %}
-        <ul style="list-style:none;padding:0;">
-            {% for task in tasks[:10] %}
-            <li style="padding:0.5rem 0;border-bottom:1px solid var(--border-subtle);">
-                <strong>{{ task.name or 'Task #' + task.id }}</strong>
-                <span style="color:var(--text-muted);font-size:0.8rem;"> — {{ task.status }}</span>
-            </li>
-            {% endfor %}
-        </ul>
-        {% else %}
-        <p style="color:var(--text-muted);">No tasks yet.</p>
-        {% endif %}
+        <div class="card-header">
+            <h2><span class="icon">📋</span> Active Tasks</h2>
+            <span class="badge">{{ tasks|length }}</span>
+        </div>
+        <div class="card-body">
+            {% if tasks %}
+            <ul class="task-list">
+                {% for task in tasks %}
+                <li class="task-item">
+                    <span class="task-status status-{{ task.status|lower }}">{{ task.status }}</span>
+                    <span>{{ task.description[:40] }}{% if task.description|length > 40 %}…{% endif %}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="empty-state">No active tasks.</p>
+            {% endif %}
+        </div>
+        <div class="card-footer">
+            <a href="{{ url_for('tasks_page') }}" class="btn btn-secondary btn-sm">View All Tasks</a>
+        </div>
     </div>
 </div>
-{% else %}
-<div class="card" style="text-align:center;padding:2rem;">
-    <p style="font-size:1rem;margin-bottom:1rem;">Sign in to see your agents and tasks.</p>
-    <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
-</div>
-{% endif %}
+
+<style>
+.metaverse-hero {
+    text-align: center;
+    padding: 2rem 0 1.5rem;
+}
+.metaverse-hero h1 {
+    font-size: 2rem;
+    font-weight: 800;
+    color: #fff;
+    margin-bottom: 0.3rem;
+}
+.metaverse-hero .subtitle {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+}
+.metaverse-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+}
+@media (max-width: 768px) {
+    .metaverse-grid { grid-template-columns: 1fr; }
+}
+.card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-glow);
+}
+.card-header h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #fff;
+}
+.card-header .icon {
+    margin-right: 0.4rem;
+}
+.badge {
+    background: var(--glass-bg);
+    border: 1px solid var(--border-glow);
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+.agent-list, .task-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.agent-item, .task-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.agent-item:last-child, .task-item:last-child {
+    border-bottom: none;
+}
+.agent-info strong {
+    display: block;
+    color: #fff;
+}
+.agent-info .tag {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    background: rgba(255,255,255,0.05);
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+.trust-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-align: right;
+}
+.task-status {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 6px;
+    margin-right: 0.5rem;
+}
+.status-pending { background: #f59e0b20; color: #f59e0b; }
+.status-running { background: #3b82f620; color: #3b82f6; }
+.status-completed { background: #10b98120; color: #10b981; }
+.status-failed { background: #ef444420; color: #ef4444; }
+.empty-state {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    text-align: center;
+    padding: 1rem 0;
+}
+.card-footer {
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-glow);
+    text-align: right;
+}
+</style>
 {% endblock %}
