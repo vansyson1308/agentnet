@@ -1,154 +1,70 @@
 {% extends "base.html" %}
-{% block title %}J.A.R.V.I.S. — Metaverse{% endblock %}
-
-{% block extra_head %}
-<style>
-    .metaverse-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 1.2rem;
-        margin-top: 1.5rem;
-    }
-    .agent-card {
-        background: var(--glass-bg);
-        backdrop-filter: blur(var(--glass-blur));
-        border: 1px solid var(--border-glow);
-        border-radius: 12px;
-        padding: 1.2rem;
-        transition: transform 0.2s, box-shadow 0.2s;
-        cursor: pointer;
-        position: relative;
-    }
-    .agent-card:hover {
-        transform: translateY(-4px);
-        box-shadow: var(--jarvis-glow);
-    }
-    .agent-card .agent-name {
-        font-weight: 700;
-        font-size: 1.1rem;
-        color: var(--text-primary);
-        margin-bottom: 0.4rem;
-    }
-    .agent-card .agent-capabilities {
-        font-size: 0.78rem;
-        color: var(--text-secondary);
-        margin-bottom: 0.6rem;
-    }
-    .trust-badge {
-        display: inline-block;
-        padding: 0.2rem 0.6rem;
-        border-radius: 6px;
-        font-size: 0.7rem;
-        font-weight: 600;
-        color: #fff;
-        margin-top: 0.3rem;
-    }
-    .agent-card .card-footer {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-top: 0.6rem;
-        font-size: 0.72rem;
-        color: var(--text-muted);
-    }
-    .filter-bar {
-        display: flex;
-        gap: 0.8rem;
-        align-items: center;
-        margin-bottom: 1.5rem;
-        flex-wrap: wrap;
-    }
-    .filter-bar select, .filter-bar input {
-        padding: 0.4rem 0.8rem;
-        border-radius: 6px;
-        background: var(--glass-bg);
-        border: 1px solid var(--border-glow);
-        color: var(--text-primary);
-        font-size: 0.85rem;
-    }
-    .filter-bar button {
-        padding: 0.4rem 1rem;
-    }
-    .no-agents {
-        text-align: center;
-        padding: 3rem;
-        color: var(--text-muted);
-    }
-</style>
-{% endblock %}
+{% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="display:flex; justify-content:space-between; align-items:center;">
-    <h1 style="font-size:1.5rem; font-weight:800; color:#fff;">🏙️ Agent Metaverse</h1>
-    <span style="color:var(--text-secondary); font-size:0.85rem;">{{ agents|length }} agent(s)</span>
-</div>
+<div style="max-width: 960px; margin: 2rem auto;">
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <h1 style="font-size: 2rem; font-weight: 800; color: #fff;">⚡ Command Center</h1>
+        <p style="color: var(--text-secondary); font-size: 0.9rem;">Your central hub for monitoring agents and tasks</p>
+    </div>
 
-<div class="filter-bar">
-    <select id="capability-filter">
-        <option value="">All Capabilities</option>
-        <option value="data-analysis">Data Analysis</option>
-        <option value="text-generation">Text Generation</option>
-        <option value="image-processing">Image Processing</option>
-        <option value="code-review">Code Review</option>
-        <option value="translation">Translation</option>
-        <option value="chat">Chat</option>
-    </select>
-    <button onclick="filterAgents()" class="btn btn-primary btn-sm">Filter</button>
-</div>
-
-<div class="metaverse-grid" id="agent-grid">
-    {% for agent in agents %}
-    <div class="agent-card" data-capabilities="{{ agent.capabilities | join(',') if agent.capabilities is iterable and not agent.capabilities is string else agent.capabilities }}">
-        <div class="agent-name">{{ agent.name }}</div>
-        <div class="agent-capabilities">
-            {% if agent.capabilities is iterable and not agent.capabilities is string %}
-                {{ agent.capabilities | map('lower') | join(', ') }}
-            {% else %}
-                {{ agent.capabilities or '—' }}
-            {% endif %}
+    {% if not is_logged_in %}
+    <div class="card" style="text-align: center; padding: 2rem;">
+        <h2 style="color: var(--text-primary); margin-bottom: 1rem;">Welcome to AgentNet</h2>
+        <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">Sign in or initialize to manage your agents, view tasks, and explore the marketplace.</p>
+        <div style="display: flex; gap: 1rem; justify-content: center;">
+            <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
+            <a href="{{ url_for('register_page') }}" class="btn btn-secondary">Initialize</a>
         </div>
-        {% with tc = agent | trust_context %}
-        <div>
-            <span class="trust-badge" style="background:{{ tc.color }};">{{ tc.label }}</span>
-        </div>
-        <div class="card-footer">
-            <span>{{ tc.tier }}</span>
-            <span>{{ tc.success_percent }} success</span>
-        </div>
-        {% endwith %}
     </div>
     {% else %}
-    <div class="no-agents" style="grid-column:1/-1;">
-        <p>No agents found in the metaverse.</p>
-        <p>They may be exploring other dimensions.</p>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem;">
+        <div class="card" style="padding: 1.5rem;">
+            <h3 style="color: var(--accent); margin-bottom: 0.5rem;">🤖 Agents</h3>
+            <p style="font-size: 2.5rem; font-weight: 800; color: #fff;">{{ agent_count }}</p>
+            <p style="color: var(--text-secondary); font-size: 0.8rem;">Total registered agents</p>
+            {% if agents %}
+            <ul style="margin-top: 1rem; list-style: none; padding: 0;">
+                {% for agent in agents[:5] %}
+                <li style="padding: 0.3rem 0; border-bottom: 1px solid var(--border-subtle); font-size: 0.85rem;">
+                    <span style="color: var(--text-primary);">{{ agent.get('name', 'Unnamed') }}</span>
+                    {% set ctx = agent|trust_context %}
+                    <span style="color: {{ ctx.color }}; margin-left: 0.5rem;">{{ ctx.label }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            <a href="{{ url_for('directory_page') }}" style="display: inline-block; margin-top: 1rem; font-size: 0.85rem; color: var(--accent);">View all agents →</a>
+        </div>
+        <div class="card" style="padding: 1.5rem;">
+            <h3 style="color: var(--accent); margin-bottom: 0.5rem;">📋 Tasks</h3>
+            <p style="font-size: 2.5rem; font-weight: 800; color: #fff;">{{ task_count }}</p>
+            <p style="color: var(--text-secondary); font-size: 0.8rem;">Total tasks</p>
+            {% if tasks %}
+            <ul style="margin-top: 1rem; list-style: none; padding: 0;">
+                {% for task in tasks[:5] %}
+                <li style="padding: 0.3rem 0; border-bottom: 1px solid var(--border-subtle); font-size: 0.85rem;">
+                    <span style="color: var(--text-primary);">{{ task.get('type', 'Unknown') }}</span>
+                    <span style="color: var(--text-muted); margin-left: 0.5rem;">— {{ task.get('status', 'pending') }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            <a href="{{ url_for('tasks_page') }}" style="display: inline-block; margin-top: 1rem; font-size: 0.85rem; color: var(--accent);">View all tasks →</a>
+        </div>
     </div>
-    {% endfor %}
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+        <div class="card" style="padding: 1.5rem;">
+            <h3 style="color: var(--accent); margin-bottom: 0.5rem;">💰 Wallet</h3>
+            <p style="color: var(--text-secondary); font-size: 0.8rem;">Your credits balance</p>
+            <a href="{{ url_for('wallet_page') }}" class="btn btn-sm" style="margin-top: 1rem;">Manage Wallet</a>
+        </div>
+        <div class="card" style="padding: 1.5rem;">
+            <h3 style="color: var(--accent); margin-bottom: 0.5rem;">🏪 Marketplace</h3>
+            <p style="color: var(--text-secondary); font-size: 0.8rem;">Discover and deploy new agents</p>
+            <a href="{{ url_for('marketplace_page') }}" class="btn btn-sm" style="margin-top: 1rem;">Browse Marketplace</a>
+        </div>
+    </div>
+    {% endif %}
 </div>
-
-<!-- Modal for agent details (placeholder) -->
-<div id="agent-modal" style="display:none;"></div>
-{% endblock %}
-
-{% block extra_scripts %}
-<script>
-function filterAgents() {
-    var filter = document.getElementById('capability-filter').value.toLowerCase();
-    var cards = document.querySelectorAll('.agent-card');
-    cards.forEach(function(card) {
-        var caps = card.getAttribute('data-capabilities') || '';
-        if (!filter || caps.includes(filter)) {
-            card.style.display = '';
-        } else {
-            card.style.display = 'none';
-        }
-    });
-}
-// Optional: click on agent card to show details
-document.querySelectorAll('.agent-card').forEach(function(card) {
-    card.addEventListener('click', function() {
-        var name = this.querySelector('.agent-name').textContent;
-        showToast('Agent: ' + name + ' — details coming soon.');
-    });
-});
-</script>
 {% endblock %}

@@ -71,12 +71,13 @@ def handle_auth_required(e):
     flash("Please log in to continue.", "warning")
     return redirect(url_for('login_page'))
 
+
 def derive_trust_context(agent):
     total = agent.get('total_tasks_completed', 0) + agent.get('total_tasks_failed', 0) + agent.get('total_tasks_timeout', 0)
     success = agent.get('success_rate', 0.0)
     timeouts = agent.get('total_tasks_timeout', 0)
     tier = str(agent.get('reputation_tier', 'unranked')).capitalize()
-    
+
     label = "Unknown Reliability"
     color = "#64748b"
     if total < 5:
@@ -97,7 +98,7 @@ def derive_trust_context(agent):
     else:
         label = "Moderate Reliability"
         color = "#64748b"
-        
+
     return {
         "total": total,
         "label": label,
@@ -107,7 +108,9 @@ def derive_trust_context(agent):
         "timeouts": timeouts
     }
 
+
 app.jinja_env.filters['trust_context'] = derive_trust_context
+
 
 @app.errorhandler(404)
 def handle_not_found(e):
@@ -121,6 +124,7 @@ def handle_not_found(e):
         return "", 204
     flash("Page not found.", "warning")
     return redirect(url_for('landing_page'))
+
 
 @app.errorhandler(Exception)
 def handle_exception(e):
@@ -139,25 +143,63 @@ def handle_exception(e):
     flash("An unexpected backend error occurred.", "danger")
     return render_template("error.html", error=str(e) if app.debug else "Internal Server Error"), 500
 
+
 @app.context_processor
 def inject_user():
     return dict(is_logged_in="access_token" in session)
+
 
 # ============================================================
 # PUBLIC ROUTES (no auth required)
 # ============================================================
 
+
 @app.route("/landing")
 def landing_page():
     return render_template("landing.html")
+
 
 @app.route("/")
 def index():
     return redirect(url_for('metaverse_page'))
 
+
 @app.route("/metaverse")
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    tasks 
-# ... [TRUNCATED -- preserve when editing] ...
+    tasks = []
+    agent_count = 0
+    task_count = 0
+
+    if "access_token" in session:
+        try:
+            agent_data = api_client.get_agents(limit=10)
+            if isinstance(agent_data, list):
+                agents = agent_data
+                agent_count = len(agent_data)
+            elif isinstance(agent_data, dict):
+                agents = agent_data.get("items", [])
+                agent_count = agent_data.get("total", 0)
+        except (APIError, AuthRequiredError):
+            pass
+
+        try:
+            task_data = api_client.get_tasks()
+            if isinstance(task_data, list):
+                tasks = task_data
+                task_count = len(task_data)
+            elif isinstance(task_data, dict):
+                tasks = task_data.get("items", [])
+                task_count = task_data.get("total", 0)
+        except (APIError, AuthRequiredError):
+            pass
+
+    return render_template(
+        "metaverse.html",
+        agents=agents,
+        tasks=tasks,
+        agent_count=agent_count,
+        task_count=task_count,
+        is_logged_in="access_token" in session
+    )
