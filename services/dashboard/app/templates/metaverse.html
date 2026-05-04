@@ -1,100 +1,73 @@
 {% extends "base.html" %}
-{% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
+{% block title %}J.A.R.V.I.S. — Metaverse{% endblock %}
 
 {% block content %}
-<div style="text-align:center;margin-bottom:2rem;">
-    <h1 style="font-size:2rem;font-weight:900;color:#fff;letter-spacing:-0.5px;">⚡ Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;max-width:600px;margin:0 auto;">
-        Monitor, deploy, and orchestrate AI agents across the AgentNet metaverse.
+<div class="metaverse-header" style="text-align:center;margin-bottom:2rem;">
+    <h1 style="font-size:2rem;font-weight:800;color:#fff;">🌌 AgentMetaverse</h1>
+    <p style="color:var(--text-secondary);max-width:540px;margin:0 auto;">
+        Explore autonomous AI agents operating in the metaverse. Each agent has a unique identity, 
+        reputation, and set of capabilities.
     </p>
 </div>
 
-{% if not agents %}
-<div class="card" style="text-align:center;padding:3rem;">
-    <p style="color:var(--text-secondary);font-size:1.1rem;">No agents registered yet. Be the first to deploy one.</p>
-    {% if is_logged_in %}
-    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">Register Agent</a>
-    {% endif %}
-</div>
-{% else %}
-<div class="agent-grid">
+{% if agents %}
+<div class="agent-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.5rem;">
     {% for agent in agents %}
-    <div class="card agent-card">
-        <div class="agent-header">
-            <h3>{{ agent.name }}</h3>
-            <span class="trust-badge" style="background:{{ agent.trust.color }};">{{ agent.trust.label }}</span>
-        </div>
-        <p class="agent-description">{{ agent.description or 'No description' }}</p>
-        <div class="agent-meta">
-            <span>🔄 {{ agent.trust.total }} tasks</span>
-            <span>✅ {{ agent.trust.success_percent }}</span>
-            {% if agent.trust.timeouts > 0 %}
-            <span>⏱️ {{ agent.trust.timeouts }} timeouts</span>
+    <div class="card metaverse-card" style="position:relative;overflow:hidden;">
+        <div class="card-body">
+            <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:1rem;">
+                <div class="agent-avatar" style="width:48px;height:48px;border-radius:50%;background:var(--jarvis-glow);display:flex;align-items:center;justify-content:center;font-size:1.3rem;font-weight:700;color:#fff;flex-shrink:0;">
+                    {{ agent.name[:1]|upper if agent.name else '?' }}
+                </div>
+                <div>
+                    <h3 style="margin:0;font-size:1.05rem;">{{ agent.name }}</h3>
+                    <span style="font-size:0.72rem;color:var(--text-muted);">#{{ agent.id[:8] if agent.id else 'unknown' }}</span>
+                </div>
+                {% if agent.trust and agent.trust.tier %}
+                <span class="tier-badge" style="margin-left:auto;background:{{ agent.trust.color }}20;color:{{ agent.trust.color }};padding:2px 8px;border-radius:6px;font-size:0.7rem;font-weight:600;">
+                    {{ agent.trust.tier }}
+                </span>
+                {% endif %}
+            </div>
+
+            <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1rem;">
+                {{ agent.description[:120] + '...' if agent.description and agent.description|length > 120 else agent.description or 'No description' }}
+            </p>
+
+            {% if agent.capabilities %}
+            <div style="margin-bottom:0.8rem;">
+                {% for cap in agent.capabilities[:3] %}
+                <span class="cap-tag" style="display:inline-block;background:var(--glass-bg);border:1px solid var(--border-glow);padding:2px 10px;border-radius:12px;font-size:0.7rem;margin:2px;">{{ cap }}</span>
+                {% endfor %}
+                {% if agent.capabilities|length > 3 %}
+                <span style="font-size:0.7rem;color:var(--text-muted);">+{{ agent.capabilities|length - 3 }} more</span>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            {% if agent.trust %}
+            <div class="trust-metrics" style="display:flex;gap:1rem;margin-top:0.8rem;padding-top:0.8rem;border-top:1px solid var(--border-glow);">
+                <div style="flex:1;text-align:center;">
+                    <div style="font-size:0.9rem;font-weight:700;color:{{ agent.trust.color }};">{{ agent.trust.success_percent }}</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted);">Success</div>
+                </div>
+                <div style="flex:1;text-align:center;">
+                    <div style="font-size:0.9rem;font-weight:700;color:var(--text-primary);">{{ agent.trust.total }}</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted);">Tasks</div>
+                </div>
+            </div>
             {% endif %}
         </div>
-        <div class="agent-actions">
-            <a href="{{ url_for('agent_detail_page', agent_id=agent.id) }}" class="btn btn-secondary btn-sm">View</a>
-        </div>
+        <div style="position:absolute;bottom:0;right:0;opacity:0.05;pointer-events:none;font-size:3rem;">✨</div>
     </div>
     {% endfor %}
 </div>
+{% else %}
+<div class="empty-state" style="text-align:center;padding:4rem 2rem;">
+    <div style="font-size:4rem;margin-bottom:1rem;">🌌</div>
+    <h2 style="color:var(--text-secondary);">No agents in the metaverse yet</h2>
+    <p style="color:var(--text-muted);">Be the first to register an agent and join the network.</p>
+    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">Register Agent</a>
+</div>
 {% endif %}
-{% endblock %}
-
-{% block extra_scripts %}
-<style>
-.agent-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 1.5rem;
-    margin-top: 1rem;
-}
-.agent-card {
-    padding: 1.25rem;
-    background: var(--glass-bg);
-    backdrop-filter: blur(var(--glass-blur));
-    border: 1px solid var(--border-glow);
-    border-radius: 12px;
-    transition: box-shadow 0.3s;
-}
-.agent-card:hover {
-    box-shadow: var(--jarvis-glow);
-}
-.agent-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.5rem;
-}
-.agent-header h3 {
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: #fff;
-    margin: 0;
-}
-.trust-badge {
-    font-size: 0.7rem;
-    font-weight: 600;
-    padding: 3px 8px;
-    border-radius: 6px;
-    color: #fff;
-    white-space: nowrap;
-}
-.agent-description {
-    color: var(--text-secondary);
-    font-size: 0.8rem;
-    margin-bottom: 0.75rem;
-    line-height: 1.4;
-}
-.agent-meta {
-    display: flex;
-    gap: 1rem;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    margin-bottom: 1rem;
-}
-.agent-actions {
-    text-align: right;
-}
-</style>
 {% endblock %}
