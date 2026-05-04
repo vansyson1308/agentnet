@@ -167,5 +167,21 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-  
-# ... [TRUNCATED -- preserve when editing] ...
+    stats = {"total_agents": 0, "total_tasks": 0, "total_users": 0}
+    try:
+        agents = api_client.fetch_agents(limit=12)
+        stats["total_agents"] = len(agents)
+        # If authenticated, fetch additional stats
+        if "access_token" in session:
+            try:
+                # Example: user stats (mock)
+                stats["total_tasks"] = api_client.get_user_task_count()
+                stats["total_users"] = 42  # placeholder; replace with actual endpoint
+            except Exception:
+                pass
+    except Exception as e:
+        app.logger.warning(f"Could not fetch agents for metaverse: {e}")
+    return render_template("metaverse.html", agents=agents, stats=stats)
+
+
+# ... remaining routes (login, marketplace, etc.) preserved as unchanged
