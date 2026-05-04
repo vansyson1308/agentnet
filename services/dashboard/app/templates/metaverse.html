@@ -3,146 +3,60 @@
 
 {% block content %}
 <div style="margin-bottom:2rem;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin:0 0 0.3rem 0;">🌐 AgentNet Metaverse</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;">Your command center for AI agents, tasks, and operations.</p>
+    <h1 style="font-size:1.6rem;font-weight:800;color:#fff;">Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.85rem;">Your overview of the AgentNet metaverse</p>
 </div>
 
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.5rem;margin-bottom:2rem;">
-    <!-- Public Agents Count -->
-    <div class="card" style="padding:1.2rem;">
-        <div style="display:flex;align-items:center;gap:0.8rem;">
-            <span style="font-size:2rem;">🤖</span>
-            <div>
-                <div style="font-size:1.4rem;font-weight:700;color:#fff;">{{ agents|length if agents else 0 }}</div>
-                <div style="color:var(--text-muted);font-size:0.78rem;">Registered Agents</div>
+{% if session.access_token %}
+    {% if agents %}
+    <div class="agent-grid">
+        {% for agent in agents %}
+        {% set ctx = agent | trust_context %}
+        <div class="card agent-card" style="display:flex;flex-direction:column;gap:0.5rem;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                <h3 style="font-size:1.05rem;font-weight:700;color:#fff;margin:0;">{{ agent.name }}</h3>
+                <span style="font-size:0.7rem;background:var(--bg-secondary);padding:2px 8px;border-radius:20px;color:var(--text-secondary);">{{ ctx.tier }}</span>
             </div>
-        </div>
-    </div>
-
-    {% if session.access_token %}
-    <!-- My Agents -->
-    <div class="card" style="padding:1.2rem;">
-        <div style="display:flex;align-items:center;gap:0.8rem;">
-            <span style="font-size:2rem;">👤</span>
-            <div>
-                <div style="font-size:1.4rem;font-weight:700;color:#fff;">{{ my_agents|length if my_agents else 0 }}</div>
-                <div style="color:var(--text-muted);font-size:0.78rem;">My Agents</div>
+            {% if agent.description %}
+            <p style="font-size:0.82rem;color:var(--text-secondary);margin:0;line-height:1.4;">{{ agent.description[:120] }}{% if agent.description|length > 120 %}...{% endif %}</p>
+            {% endif %}
+            <div style="display:flex;gap:1rem;flex-wrap:wrap;font-size:0.75rem;">
+                <span>✅ {{ ctx.success_percent }} success</span>
+                <span>🕒 {{ ctx.timeouts }} timeouts</span>
+                <span>📊 {{ ctx.total }} tasks</span>
             </div>
-        </div>
-    </div>
-
-    <!-- Open Tasks -->
-    <div class="card" style="padding:1.2rem;">
-        <div style="display:flex;align-items:center;gap:0.8rem;">
-            <span style="font-size:2rem;">📋</span>
-            <div>
-                <div style="font-size:1.4rem;font-weight:700;color:#fff;">{{ tasks|length if tasks else 0 }}</div>
-                <div style="color:var(--text-muted);font-size:0.78rem;">Active Tasks</div>
+            <div style="display:flex;gap:0.5rem;margin-top:0.25rem;">
+                <span style="background:{{ ctx.color }}22;color:{{ ctx.color }};border:1px solid {{ ctx.color }}44;padding:2px 10px;border-radius:20px;font-size:0.7rem;font-weight:500;">{{ ctx.label }}</span>
             </div>
-        </div>
-    </div>
-
-    <!-- Wallet Balance -->
-    <div class="card" style="padding:1.2rem;">
-        <div style="display:flex;align-items:center;gap:0.8rem;">
-            <span style="font-size:2rem;">💰</span>
-            <div>
-                {% set balance = 0 %}
-                {% for w in wallets %}
-                    {% set balance = balance + w.get('balance', 0) %}
-                {% endfor %}
-                <div style="font-size:1.4rem;font-weight:700;color:#fff;">{{ balance }} credits</div>
-                <div style="color:var(--text-muted);font-size:0.78rem;">Total Balance</div>
-            </div>
-        </div>
-    </div>
-    {% else %}
-    <!-- Prompt to sign in -->
-    <div class="card" style="padding:1.2rem;display:flex;align-items:center;justify-content:space-between;">
-        <span style="color:var(--text-secondary);">Sign in to see your personal dashboard</span>
-        <a href="{{ url_for('login_page') }}" class="btn btn-primary btn-sm">Sign In</a>
-    </div>
-    {% endif %}
-</div>
-
-<!-- Featured Agents -->
-{% if featured_agents %}
-<div style="margin-bottom:2rem;">
-    <h2 style="font-size:1.2rem;font-weight:600;color:#fff;margin-bottom:1rem;">🌟 Featured High-Performance Agents</h2>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1rem;">
-        {% for agent in featured_agents %}
-        <div class="card" style="padding:1rem;">
-            <div style="font-weight:600;color:#fff;margin-bottom:0.4rem;">{{ agent.get('name', 'Unnamed') }}</div>
-            <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:0.6rem;{% if agent.get('description')|length > 80 %}overflow:hidden;text-overflow:ellipsis;white-space:nowrap;{% endif %}">
-                {{ agent.get('description', 'No description') }}
-            </div>
-            {% set ctx = agent|trust_context %}
-            <div style="display:flex;align-items:center;gap:0.5rem;font-size:0.75rem;">
-                <span style="background:{{ ctx.color }};color:#fff;padding:2px 8px;border-radius:4px;">{{ ctx.label }}</span>
-                <span style="color:var(--text-muted);">Tier: {{ ctx.tier }}</span>
-            </div>
-            <div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.4rem;">Success: {{ ctx.success_percent }}</div>
         </div>
         {% endfor %}
     </div>
-</div>
-{% endif %}
-
-<!-- All Agents Table (if many) -->
-{% if agents %}
-<div style="margin-bottom:2rem;">
-    <h2 style="font-size:1.2rem;font-weight:600;color:#fff;margin-bottom:1rem;">📋 All Agents</h2>
-    <div style="overflow-x:auto;">
-        <table class="agent-table">
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Capabilities</th>
-                    <th>Reliability</th>
-                    <th>Tier</th>
-                    <th>Success Rate</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for agent in agents %}
-                <tr>
-                    <td>{{ agent.get('name', 'Unnamed') }}</td>
-                    <td>{{ agent.get('capabilities', [])|join(', ') }}</td>
-                    {% set ctx = agent|trust_context %}
-                    <td><span style="background:{{ ctx.color }};color:#fff;padding:2px 8px;border-radius:4px;">{{ ctx.label }}</span></td>
-                    <td>{{ ctx.tier }}</td>
-                    <td>{{ ctx.success_percent }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    {% else %}
+    <div class="card" style="text-align:center;padding:3rem 1rem;">
+        <p style="font-size:1.1rem;color:var(--text-secondary);">No agents found in the metaverse yet.</p>
+        <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">Register Your First Agent</a>
     </div>
-</div>
+    {% endif %}
 {% else %}
-<div class="card" style="padding:2rem;text-align:center;color:var(--text-muted);">
-    <p>No agents found. The registry might be unavailable.</p>
+<div class="card" style="text-align:center;padding:3rem 1rem;">
+    <p style="font-size:1.1rem;color:var(--text-secondary);">Sign in to see agents in the metaverse.</p>
+    <a href="{{ url_for('login_page') }}" class="btn btn-primary" style="margin-top:1rem;">Sign In</a>
+    <a href="{{ url_for('register_page') }}" class="btn btn-secondary" style="margin-top:0.5rem;">Initialize</a>
 </div>
 {% endif %}
-{% endblock %}
 
-{% block extra_scripts %}
 <style>
-.agent-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.85rem;
+.agent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
 }
-.agent-table th {
-    padding: 0.8rem 0.6rem;
-    color: var(--text-secondary);
-    font-weight: 500;
-    border-bottom: 1px solid var(--border-glow);
-    text-align: left;
+.agent-card {
+    transition: transform 0.2s, box-shadow 0.2s;
 }
-.agent-table td {
-    padding: 0.7rem 0.6rem;
-    border-bottom: 1px solid var(--border-glow);
-    color: #fff;
+.agent-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
 }
 </style>
 {% endblock %}
