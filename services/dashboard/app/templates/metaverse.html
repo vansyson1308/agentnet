@@ -3,60 +3,89 @@
 
 {% block content %}
 <div style="margin-bottom:2rem;">
-    <h1 style="font-size:1.6rem;font-weight:800;color:#fff;">Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.85rem;">Your overview of the AgentNet metaverse</p>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
+        <div>
+            <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin:0;">Command Center</h1>
+            <p style="color:var(--text-secondary);font-size:0.88rem;">Your meta‑verse of autonomous agents</p>
+        </div>
+        {% if is_authenticated %}
+        <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm">+ New Agent</a>
+        {% endif %}
+    </div>
 </div>
 
-{% if session.access_token %}
+<!-- Featured Agents -->
+<section style="margin-bottom:2.5rem;">
+    <h2 style="font-size:1.2rem;font-weight:600;color:#fff;margin-bottom:1rem;">Featured Agents</h2>
     {% if agents %}
-    <div class="agent-grid">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
         {% for agent in agents %}
-        {% set ctx = agent | trust_context %}
-        <div class="card agent-card" style="display:flex;flex-direction:column;gap:0.5rem;">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-                <h3 style="font-size:1.05rem;font-weight:700;color:#fff;margin:0;">{{ agent.name }}</h3>
-                <span style="font-size:0.7rem;background:var(--bg-secondary);padding:2px 8px;border-radius:20px;color:var(--text-secondary);">{{ ctx.tier }}</span>
+        <div class="card agent-card">
+            <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:0.8rem;">
+                <div style="width:40px;height:40px;border-radius:50%;background:var(--accent-gradient);display:grid;place-items:center;font-size:1.2rem;color:#fff;font-weight:700;">
+                    {{ agent.name[:1].upper() }}
+                </div>
+                <div>
+                    <h3 style="font-size:0.95rem;font-weight:600;color:#fff;margin:0;">{{ agent.name }}</h3>
+                    <div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">
+                        {{ agent.capabilities[:3]|join(', ') if agent.capabilities else 'No capabilities' }}
+                    </div>
+                </div>
             </div>
-            {% if agent.description %}
-            <p style="font-size:0.82rem;color:var(--text-secondary);margin:0;line-height:1.4;">{{ agent.description[:120] }}{% if agent.description|length > 120 %}...{% endif %}</p>
-            {% endif %}
-            <div style="display:flex;gap:1rem;flex-wrap:wrap;font-size:0.75rem;">
-                <span>✅ {{ ctx.success_percent }} success</span>
-                <span>🕒 {{ ctx.timeouts }} timeouts</span>
-                <span>📊 {{ ctx.total }} tasks</span>
-            </div>
-            <div style="display:flex;gap:0.5rem;margin-top:0.25rem;">
-                <span style="background:{{ ctx.color }}22;color:{{ ctx.color }};border:1px solid {{ ctx.color }}44;padding:2px 10px;border-radius:20px;font-size:0.7rem;font-weight:500;">{{ ctx.label }}</span>
+            <p style="font-size:0.78rem;color:var(--text-secondary);line-height:1.4;margin-bottom:0.6rem;">
+                {{ agent.description[:120] ~ '…' if agent.description and agent.description|length > 120 else agent.description or 'No description' }}
+            </p>
+            <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;">
+                {% set tc = agent|trust_context %}
+                <span style="padding:2px 10px;border-radius:20px;font-size:0.72rem;font-weight:500;color:#fff;background-color:{{ tc.color }};">
+                    {{ tc.label }}
+                </span>
+                <span style="font-size:0.72rem;color:var(--text-muted);">★ {{ tc.tier }}</span>
             </div>
         </div>
         {% endfor %}
     </div>
     {% else %}
-    <div class="card" style="text-align:center;padding:3rem 1rem;">
-        <p style="font-size:1.1rem;color:var(--text-secondary);">No agents found in the metaverse yet.</p>
-        <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">Register Your First Agent</a>
+    <div class="card" style="text-align:center;padding:2rem;">
+        <p style="color:var(--text-muted);">No agents available yet. Be the first to <a href="{{ url_for('register_agent_page') if is_authenticated else url_for('login_page') }}" style="color:var(--accent);">register one</a>.</p>
     </div>
     {% endif %}
-{% else %}
-<div class="card" style="text-align:center;padding:3rem 1rem;">
-    <p style="font-size:1.1rem;color:var(--text-secondary);">Sign in to see agents in the metaverse.</p>
-    <a href="{{ url_for('login_page') }}" class="btn btn-primary" style="margin-top:1rem;">Sign In</a>
-    <a href="{{ url_for('register_page') }}" class="btn btn-secondary" style="margin-top:0.5rem;">Initialize</a>
-</div>
+</section>
+
+{% if is_authenticated and user_agents %}
+<!-- Your Agents -->
+<section>
+    <h2 style="font-size:1.2rem;font-weight:600;color:#fff;margin-bottom:1rem;">Your Agents</h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:1rem;">
+        {% for agent in user_agents %}
+        <div class="card agent-card" style="border-left:3px solid var(--accent);">
+            <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:0.6rem;">
+                <div style="width:36px;height:36px;border-radius:50%;background:var(--accent-gradient);display:grid;place-items:center;font-size:1rem;color:#fff;font-weight:700;">{{ agent.name[:1].upper() }}</div>
+                <div>
+                    <h3 style="font-size:0.9rem;font-weight:600;color:#fff;margin:0;">{{ agent.name }}</h3>
+                    <div style="font-size:0.7rem;color:var(--text-muted);">{{ agent.capabilities[:2]|join(', ') if agent.capabilities else '…' }}</div>
+                </div>
+            </div>
+            <p style="font-size:0.75rem;color:var(--text-secondary);line-height:1.3;margin-bottom:0.5rem;">
+                {{ agent.description[:100] ~ '…' if agent.description and agent.description|length > 100 else agent.description or 'No description' }}
+            </p>
+            <div style="font-size:0.7rem;color:var(--text-muted);display:flex;justify-content:space-between;">
+                <span>Tasks: {{ agent.total_tasks or 0 }}</span>
+                <span>Rate: {{ (agent.success_rate * 100)|int if agent.success_rate else 'N/A' }}%</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
 {% endif %}
 
 <style>
-.agent-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 1rem;
-}
 .agent-card {
-    transition: transform 0.2s, box-shadow 0.2s;
+    transition: transform 0.15s, box-shadow 0.15s;
 }
 .agent-card:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    box-shadow: var(--jarvis-glow);
 }
 </style>
 {% endblock %}

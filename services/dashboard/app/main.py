@@ -167,125 +167,191 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
+    # Show public agent list (no auth required)
+    try:
+        agents = api_client.fetch_agents(limit=20)  # top agents
+    except APIError as e:
+        app.logger.warning(f"Could not fetch agents for metaverse: {e}")
+        flash("Could not load agent list.", "warning")
+    except Exception as e:
+        app.logger.error(f"Unexpected error fetching agents: {e}")
+        if _IS_DEV:
+            flash(f"Debug: {e}", "danger")
+        else:
+            flash("An unexpected error occurred.", "danger")
+
+    # If logged in, also fetch user-specific data (e.g., recent tasks, wallet)
+    user_agents = []
     if session.get("access_token"):
         try:
-            agents = api_client.fetch_agents(limit=50)
-        except APIError as e:
-            flash(f"Could not load agents: {e.message}", "danger")
-        except Exception as e:
-            flash("Failed to load agents. Please try again.", "danger")
-            app.logger.exception("metaverse_page agent fetch error")
-    return render_template("metaverse.html", agents=agents)
+            user_agents = api_client.fetch_my_agents()  # assume this method exists
+        except Exception:
+            pass  # non-critical
+
+    return render_template("metaverse.html",
+                           agents=agents,
+                           user_agents=user_agents,
+                           is_authenticated="access_token" in session)
 
 
 # ============================================================
-# AUTHENTICATION ROUTES
+# AUTHENTICATED ROUTES (require valid access_token)
 # ============================================================
 
 @app.route("/login", methods=["GET", "POST"])
 def login_page():
-    """Display login form and handle credentials submission."""
+    if session.get("access_token"):
+        return redirect(url_for('metaverse_page'))
+
     if request.method == "POST":
-        email = request.form.get("email", "").strip()
-        password = request.form.get("password", "").strip()
-        if not email or not password:
-            flash("Email and password are required.", "danger")
+        email = request.form.get("email")
+        otp_code = request.form.get("otp_code")
+        if not email or not otp_code:
+            flash("Email and OTP code are required.", "danger")
             return render_template("login.html")
+
         try:
-            token_data = api_client.login(email, password)
-            session["access_token"] = token_data["access_token"]
-            session["refresh_token"] = token_data.get("refresh_token", "")
+            result = api_client.login_otp(email, otp_code)
+            session["access_token"] = result["access_token"]
             session["user_email"] = email
-            next_page = request.args.get("next", url_for("metaverse_page"))
-            flash("Welcome back, Agent.", "success")
-            return redirect(next_page)
+            session.permanent = True
+            flash("Logged in successfully.", "success")
+            return redirect(url_for('metaverse_page'))
         except APIError as e:
             flash(f"Login failed: {e.message}", "danger")
         except Exception as e:
-            flash("An unexpected error occurred during login.", "danger")
-            app.logger.exception("Login error")
+            flash("An unexpected error occurred.", "danger")
+            app.logger.error(f"Login error: {e}")
+
     return render_template("login.html")
-
-
-@app.route("/register", methods=["GET", "POST"])
-def register_page():
-    """Display registration form and handle user creation."""
-    if request.method == "POST":
-        email = request.form.get("email", "").strip()
-        password = request.form.get("password", "").strip()
-        confirm = request.form.get("confirm_password", "").strip()
-        if not email or not password:
-            flash("Email and password are required.", "danger")
-            return render_template("register.html")
-        if password != confirm:
-            flash("Passwords do not match.", "danger")
-            return render_template("register.html")
-        try:
-            token_data = api_client.register(email, password)
-            session["access_token"] = token_data["access_token"]
-            session["refresh_token"] = token_data.get("refresh_token", "")
-            session["user_email"] = email
-            flash("Registration successful. Welcome to J.A.R.V.I.S.!", "success")
-            return redirect(url_for("metaverse_page"))
-        except APIError as e:
-            flash(f"Registration failed: {e.message}", "danger")
-        except Exception as e:
-            flash("An unexpected error occurred during registration.", "danger")
-            app.logger.exception("Register error")
-    return render_template("register.html")
 
 
 @app.route("/logout")
 def logout_page():
-    """Clear session and redirect to landing."""
     session.clear()
-    flash("You have been signed out.", "info")
-    return redirect(url_for("landing_page"))
+    flash("Logged out.", "info")
+    return redirect(url_for('metaverse_page'))
 
 
-# ============================================================
-# PROTECTED ROUTES (require authentication)
-# ============================================================
+@app.route("/register", methods=["GET", "POST"])
+def register_page():
+    if session.get("access_token"):
+        return redirect(url_for('metaverse_page'))
+
+    if request.method == "POST":
+        email = request.form.get("email")
+        if not email:
+            flash("Email is required.", "danger")
+            return render_template("register.html")
+        try:
+            api_client.request_otp(email)
+            flash("OTP sent to your email. Please use it to log in.", "success")
+            return redirect(url_for('login_page'))
+        except APIError as e:
+            flash(f"Registration failed: {e.message}", "danger")
+        except Exception as e:
+            flash("An unexpected error occurred.", "danger")
+            app.logger.error(f"Register error: {e}")
+    return render_template("register.html")
+
+
+@app.route("/register-agent", methods=["GET", "POST"])
+def register_agent_page():
+    if "access_token" not in session:
+        flash("Please log in first.", "warning")
+        return redirect(url_for('login_page'))
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        description = request.form.get("description", "").strip()
+        endpoint = request.form.get("endpoint", "").strip()
+        capabilities = request.form.get("capabilities", "").strip()
+        if not name:
+            flash("Agent name is required.", "danger")
+            return render_template("new_agent.html")
+        try:
+            api_client.register_agent(
+                name=name,
+                description=description,
+                endpoint=endpoint,
+                capabilities=[c.strip() for c in capabilities.split(",") if c.strip()],
+                token=session["access_token"]
+            )
+            flash("Agent registered successfully.", "success")
+            return redirect(url_for('my_agents_page'))
+        except APIError as e:
+            flash(f"Registration failed: {e.message}", "danger")
+        except Exception as e:
+            flash("An unexpected error occurred.", "danger")
+            app.logger.error(f"Register agent error: {e}")
+    return render_template("new_agent.html")
+
+
+@app.route("/marketplace")
+def marketplace_page():
+    return render_template("marketplace.html")
+
 
 @app.route("/directory")
 def directory_page():
+    if "access_token" not in session:
+        flash("Please log in.", "warning")
+        return redirect(url_for('login_page'))
     return render_template("directory.html")
 
 
 @app.route("/wallet")
 def wallet_page():
+    if "access_token" not in session:
+        flash("Please log in.", "warning")
+        return redirect(url_for('login_page'))
     return render_template("wallet.html")
 
 
 @app.route("/tasks")
 def tasks_page():
+    if "access_token" not in session:
+        flash("Please log in.", "warning")
+        return redirect(url_for('login_page'))
     return render_template("tasks.html")
 
 
 @app.route("/collaboration")
 def collaboration_page():
+    if "access_token" not in session:
+        flash("Please log in.", "warning")
+        return redirect(url_for('login_page'))
     return render_template("collaboration.html")
 
 
 @app.route("/notifications")
 def notifications_page():
+    if "access_token" not in session:
+        flash("Please log in.", "warning")
+        return redirect(url_for('login_page'))
     return render_template("notifications.html")
 
 
 @app.route("/my-agents")
 def my_agents_page():
+    if "access_token" not in session:
+        flash("Please log in.", "warning")
+        return redirect(url_for('login_page'))
     return render_template("my_agents.html")
 
 
 @app.route("/create-offer")
 def create_offer_page():
+    if "access_token" not in session:
+        flash("Please log in.", "warning")
+        return redirect(url_for('login_page'))
     return render_template("create_offer.html")
 
 
-@app.route("/register-agent", methods=["GET", "POST"])
-def register_agent_page():
-    if request.method == "POST":
-        # simplified: this would call API to register agent
-        flash("Agent registration submitted (stub).", "info")
-        return redirect(url_for("my_agents_page"))
-    return render_template("new_agent.html")
+# ============================================================
+# Error handlers (kept after routes)
+# ============================================================
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=_IS_DEV)
