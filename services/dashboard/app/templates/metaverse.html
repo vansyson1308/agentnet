@@ -1,128 +1,146 @@
 {% extends "base.html" %}
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
-{% block extra_head %}
-<style>
-    .metaverse-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-        gap: 1.25rem;
-        margin-top: 1.5rem;
-    }
-    .metaverse-card {
-        background: var(--glass-bg);
-        backdrop-filter: blur(var(--glass-blur));
-        border: 1px solid var(--border-glow);
-        border-radius: var(--radius);
-        padding: 1.25rem;
-        transition: box-shadow 0.2s;
-    }
-    .metaverse-card:hover {
-        box-shadow: var(--jarvis-glow);
-    }
-    .stat-value {
-        font-size: 1.8rem;
-        font-weight: 800;
-        color: var(--accent-primary);
-        margin-bottom: 0.25rem;
-    }
-    .stat-label {
-        font-size: 0.8rem;
-        color: var(--text-secondary);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    .agent-list-item {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 0.75rem 0;
-        border-bottom: 1px solid var(--border-subtle);
-    }
-    .agent-list-item:last-child {
-        border-bottom: none;
-    }
-    .agent-name {
-        font-weight: 600;
-        color: var(--text-primary);
-    }
-    .agent-status {
-        font-size: 0.75rem;
-        padding: 2px 8px;
-        border-radius: 4px;
-    }
-    .status-active { background: #10b981; color: #fff; }
-    .status-idle { background: #3b82f6; color: #fff; }
-    .status-offline { background: #64748b; color: #fff; }
-    .task-item {
-        padding: 0.6rem 0;
-        border-bottom: 1px solid var(--border-subtle);
-    }
-    .task-item:last-child {
-        border-bottom: none;
-    }
-    .task-title {
-        font-weight: 500;
-        color: var(--text-primary);
-    }
-    .task-meta {
-        font-size: 0.72rem;
-        color: var(--text-muted);
-    }
-</style>
-{% endblock %}
+
 {% block content %}
-<div style="text-align:center;margin-bottom:1rem;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">⚡ Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.85rem;">Your AI agent hub</p>
-</div>
+<div class="metaverse-container">
+    <header class="metaverse-header">
+        <h1>🪐 Command Center</h1>
+        <p class="subtitle">Real‑time overview of your agent network</p>
+    </header>
 
-{% if not is_authenticated %}
-<div class="alert alert-info">
-    <strong>Welcome!</strong> <a href="{{ url_for('login_page') }}" style="color:var(--accent-primary);">Sign in</a> to view your agents and tasks.
-</div>
-{% endif %}
+    {% if not is_authenticated %}
+    <div class="card" style="text-align:center;padding:2rem;">
+        <p style="margin-bottom:1rem;">Sign in to unlock your personal dashboard and manage agents.</p>
+        <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
+    </div>
+    {% else %}
+    <div class="stats-grid">
+        <div class="stat-card">
+            <span class="stat-icon">🤖</span>
+            <span class="stat-value">{{ total_agents }}</span>
+            <span class="stat-label">Agents</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-icon">📋</span>
+            <span class="stat-value">{{ total_tasks }}</span>
+            <span class="stat-label">Tasks</span>
+        </div>
+    </div>
 
-<div class="metaverse-grid">
-    <div class="metaverse-card">
-        <div class="stat-value">{{ agents|length }}</div>
-        <div class="stat-label">Agents Online</div>
-    </div>
-    <div class="metaverse-card">
-        <div class="stat-value">{{ tasks|length }}</div>
-        <div class="stat-label">Active Tasks</div>
-    </div>
-    <div class="metaverse-card">
-        <div class="stat-value">{{ agents|selectattr('status', 'equalto', 'active')|list|length }}</div>
-        <div class="stat-label">Running Agents</div>
-    </div>
-</div>
-
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-top:1.5rem;">
-    <div class="card">
-        <h3 style="margin-bottom:0.75rem;">🤖 Your Agents</h3>
-        {% if agents %}
-            {% for agent in agents %}
-            <div class="agent-list-item">
-                <span class="agent-name">{{ agent.name }}</span>
-                <span class="agent-status status-{{ agent.status if agent.status in ['active','idle','offline'] else 'idle' }}">{{ agent.status }}</span>
+    <div class="metaverse-sections">
+        <section class="card">
+            <h2>Your Agents</h2>
+            {% if agents %}
+            <div class="agent-list">
+                {% for agent in agents[:5] %}
+                <div class="agent-item">
+                    <strong>{{ agent.name }}</strong>
+                    <span class="badge badge-{{ 'success' if agent.status=='active' else 'secondary' }}">{{ agent.status }}</span>
+                </div>
+                {% endfor %}
             </div>
-            {% endfor %}
-        {% else %}
-            <p style="color:var(--text-muted);font-size:0.85rem;">No agents yet.</p>
-        {% endif %}
-    </div>
-    <div class="card">
-        <h3 style="margin-bottom:0.75rem;">📋 Recent Tasks</h3>
-        {% if tasks %}
-            {% for task in tasks[:10] %}
-            <div class="task-item">
-                <div class="task-title">{{ task.description }}</div>
-                <div class="task-meta">{{ task.status }} &middot; {{ task.created_at }}</div>
+            <a href="{{ url_for('directory_page') }}" class="btn btn-outline btn-sm">View All Agents</a>
+            {% else %}
+            <p style="color:var(--text-muted);">No agents yet. <a href="{{ url_for('register_agent_page') }}">Register one</a>.</p>
+            {% endif %}
+        </section>
+
+        <section class="card">
+            <h2>Recent Tasks</h2>
+            {% if tasks %}
+            <div class="task-list">
+                {% for task in tasks[:5] %}
+                <div class="task-item">
+                    <span>{{ task.description[:40] ~ '...' if task.description and task.description|length > 40 else task.description or 'No description' }}</span>
+                    <span class="badge badge-{{ 'success' if task.status=='completed' else ('warning' if task.status=='pending' else 'danger') }}">{{ task.status }}</span>
+                </div>
+                {% endfor %}
             </div>
-            {% endfor %}
-        {% else %}
-            <p style="color:var(--text-muted);font-size:0.85rem;">No tasks yet.</p>
-        {% endif %}
+            <a href="{{ url_for('tasks_page') }}" class="btn btn-outline btn-sm">View All Tasks</a>
+            {% else %}
+            <p style="color:var(--text-muted);">No tasks yet.</p>
+            {% endif %}
+        </section>
     </div>
+    {% endif %}
 </div>
+
+<style>
+.metaverse-container {
+    max-width:960px;
+    margin:0 auto;
+}
+.metaverse-header h1 {
+    font-size:1.8rem;
+    font-weight:800;
+    color:#fff;
+    margin-bottom:0.25rem;
+}
+.metaverse-header .subtitle {
+    color:var(--text-secondary);
+    font-size:0.9rem;
+    margin-bottom:1.5rem;
+}
+.stats-grid {
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));
+    gap:1rem;
+    margin-bottom:1.5rem;
+}
+.stat-card {
+    background:var(--glass-bg);
+    backdrop-filter:blur(var(--glass-blur));
+    border:1px solid var(--border-glow);
+    border-radius:12px;
+    padding:1.2rem;
+    text-align:center;
+}
+.stat-icon {
+    font-size:1.8rem;
+    display:block;
+    margin-bottom:0.3rem;
+}
+.stat-value {
+    font-size:2rem;
+    font-weight:700;
+    color:#fff;
+    display:block;
+}
+.stat-label {
+    font-size:0.8rem;
+    color:var(--text-secondary);
+}
+.metaverse-sections {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:1.5rem;
+}
+@media (max-width:600px) {
+    .metaverse-sections { grid-template-columns:1fr; }
+}
+.card h2 {
+    font-size:1rem;
+    font-weight:600;
+    margin-bottom:1rem;
+    color:#fff;
+}
+.agent-list, .task-list {
+    margin-bottom:1rem;
+}
+.agent-item, .task-item {
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:0.5rem 0;
+    border-bottom:1px solid rgba(255,255,255,0.05);
+}
+.agent-item:last-child, .task-item:last-child {
+    border-bottom:none;
+}
+.badge {
+    font-size:0.7rem;
+    padding:2px 8px;
+    border-radius:9999px;
+}
+</style>
 {% endblock %}
