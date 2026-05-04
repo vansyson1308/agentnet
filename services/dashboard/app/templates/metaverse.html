@@ -2,103 +2,52 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div class="metaverse-dashboard">
-    <div style="text-align:center;margin-bottom:2rem;">
-        <h1 style="font-size:2rem;font-weight:800;color:#fff;">🌐 Metaverse Command Center</h1>
-        <p style="color:var(--text-secondary);font-size:0.9rem;">Manage your agents, wallets, and tasks</p>
-    </div>
-
-    {% if not is_authenticated %}
-    <div class="card" style="text-align:center;padding:3rem;">
-        <h2 style="color:var(--text-primary);margin-bottom:1rem;">Welcome to J.A.R.V.I.S.</h2>
-        <p style="color:var(--text-secondary);margin-bottom:1.5rem;">
-            Sign in to manage your agents, wallets, and tasks. Or browse the marketplace as a guest.
-        </p>
-        <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
-        <a href="{{ url_for('register_page') }}" class="btn btn-secondary">Initialize Registration</a>
-    </div>
-    {% else %}
-
-    <!-- Stats Overview -->
-    <div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem;margin-bottom:2rem;">
-        <div class="card stat-card">
-            <h3 style="font-size:0.75rem;text-transform:uppercase;color:var(--text-muted);margin:0 0 0.25rem;">Agents</h3>
-            <p style="font-size:2rem;font-weight:700;color:#fff;margin:0;">{{ agents|length }}</p>
-        </div>
-        <div class="card stat-card">
-            <h3 style="font-size:0.75rem;text-transform:uppercase;color:var(--text-muted);margin:0 0 0.25rem;">Wallets</h3>
-            <p style="font-size:2rem;font-weight:700;color:#fff;margin:0;">{{ wallets|length }}</p>
-        </div>
-        <div class="card stat-card">
-            <h3 style="font-size:0.75rem;text-transform:uppercase;color:var(--text-muted);margin:0 0 0.25rem;">Tasks</h3>
-            <p style="font-size:2rem;font-weight:700;color:#fff;margin:0;">{{ tasks|length }}</p>
-        </div>
-    </div>
-
-    <!-- Agent List -->
-    <div style="margin-bottom:2rem;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-            <h2 style="font-size:1.3rem;font-weight:700;color:#fff;margin:0;">Your Agents</h2>
-            <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm">+ New Agent</a>
-        </div>
-        {% if agents %}
-        <div class="agent-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
-            {% for agent in agents %}
-            <div class="card agent-card">
-                <div style="display:flex;align-items:center;gap:0.75rem;">
-                    <div style="width:40px;height:40px;border-radius:50%;background:var(--accent-gradient);display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;">
-                        {{ agent.get('name','?')[:1]|upper }}
-                    </div>
-                    <div>
-                        <h3 style="margin:0;font-size:0.95rem;font-weight:600;color:#fff;">{{ agent.get('name','Unnamed') }}</h3>
-                        <p style="margin:2px 0 0;font-size:0.72rem;color:var(--text-muted);">
-                            {% if agent.get('capabilities') %}
-                            {{ agent['capabilities'][:3]|join(', ') }}{% if agent['capabilities']|length > 3 %}...{% endif %}
-                            {% else %}
-                            No capabilities
-                            {% endif %}
-                        </p>
-                    </div>
-                </div>
-                <div style="margin-top:0.75rem;display:flex;justify-content:space-between;align-items:center;">
-                    <span style="font-size:0.72rem;color:var(--text-secondary);">ID: {{ agent.get('id','?')[:8] }}</span>
-                    {% set trust = agent|trust_context %}
-                    <span style="font-size:0.7rem;padding:2px 8px;border-radius:30px;background:{{ trust.color }}20;color:{{ trust.color }};font-weight:500;">
-                        {{ trust.label }}
-                    </span>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <div class="card" style="text-align:center;padding:2rem;">
-            <p style="color:var(--text-secondary);">No agents registered yet.</p>
-            <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary">Create Your First Agent</a>
-        </div>
-        {% endif %}
-    </div>
-
-    <!-- Recent Tasks -->
-    <div>
-        <h2 style="font-size:1.3rem;font-weight:700;color:#fff;margin-bottom:1rem;">Recent Tasks</h2>
-        {% if tasks %}
-        <div style="display:grid;gap:0.75rem;">
-            {% for task in tasks[:10] %}
-            <div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:0.75rem 1rem;">
-                <span style="color:var(--text-primary);">{{ task.get('description','Untitled task') }}</span>
-                <span style="font-size:0.72rem;color:var(--text-muted);">
-                    {{ task.get('status','unknown') }}
-                </span>
-            </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <div class="card" style="text-align:center;padding:1.5rem;">
-            <p style="color:var(--text-secondary);">No tasks yet.</p>
-        </div>
-        {% endif %}
-    </div>
-
-    {% endif %}
+<div style="text-align:center;margin-bottom:2rem;">
+    <h1 style="font-size:2rem;font-weight:900;color:#fff;">🚀 Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.9rem;">Your AI agent headquarters</p>
 </div>
+
+{% if is_logged_in %}
+    <div class="card" style="padding:1.5rem;margin-bottom:1.5rem;">
+        <h2 style="font-size:1.2rem;font-weight:700;color:#fff;margin-bottom:1rem;">🤖 Available Agents</h2>
+        {% if agents %}
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
+                {% for agent in agents %}
+                <div class="card" style="padding:1rem;background:var(--glass-bg);backdrop-filter:blur(var(--glass-blur));border:1px solid var(--border-glow);">
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                        <div>
+                            <strong style="color:#fff;">{{ agent.name }}</strong>
+                            <p style="font-size:0.78rem;color:var(--text-muted);margin:0.25rem 0;">
+                                {{ agent.description or 'No description' }}
+                            </p>
+                        </div>
+                    </div>
+                    {% if agent.capabilities %}
+                    <div style="margin-top:0.5rem;display:flex;flex-wrap:wrap;gap:0.3rem;">
+                        {% for cap in agent.capabilities[:3] %}
+                        <span style="background:var(--accent);color:#fff;font-size:0.68rem;padding:2px 8px;border-radius:4px;">{{ cap }}</span>
+                        {% endfor %}
+                        {% if agent.capabilities|length > 3 %}
+                        <span style="font-size:0.68rem;color:var(--text-muted);">+{{ agent.capabilities|length - 3 }} more</span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p style="color:var(--text-muted);">No agents found. Start by registering one!</p>
+            <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm">+ Register Agent</a>
+        {% endif %}
+    </div>
+{% else %}
+    <div class="card" style="text-align:center;padding:2rem;background:var(--glass-bg);backdrop-filter:blur(var(--glass-blur));border:1px solid var(--border-glow);">
+        <h2 style="font-size:1.2rem;color:#fff;">Welcome to the Nexus</h2>
+        <p style="color:var(--text-secondary);">Sign in to access your personal agent network.</p>
+        <div style="margin-top:1rem;">
+            <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
+            <a href="{{ url_for('register_page') }}" class="btn btn-secondary" style="margin-left:0.5rem;">Initialize</a>
+        </div>
+    </div>
+{% endif %}
 {% endblock %}
