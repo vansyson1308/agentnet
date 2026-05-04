@@ -166,17 +166,5 @@ def index():
 @app.route("/metaverse")
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
-    is_auth = "access_token" in session
-    agents = []
-    stats = {}
-    if is_auth:
-        try:
-            agents = api_client.fetch_agents(limit=50)
-        except APIError as e:
-            flash(f"Could not load agents: {e.message}", "danger")
-        except Exception as e:
-            flash("Could not load agents.", "danger")
-    return render_template("metaverse.html", agents=agents, stats=stats, is_auth=is_auth)
-
-
-# ... (rest of the routes remain unchanged)
+    agent
+# ... [TRUNCATED -- preserve when editing] ...
