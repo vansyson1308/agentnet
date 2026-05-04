@@ -1,114 +1,46 @@
 {% extends "base.html" %}
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
-{% block extra_head %}
-<style>
-    .metaverse-hero {
-        text-align: center;
-        padding: 3rem 1rem 2rem;
-    }
-    .metaverse-hero h1 {
-        font-size: 2.2rem;
-        font-weight: 900;
-        background: linear-gradient(135deg, #00d4ff, #10b981);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        margin-bottom: 0.5rem;
-    }
-    .metaverse-hero p {
-        color: var(--text-secondary);
-        font-size: 1rem;
-        max-width: 500px;
-        margin: 0 auto;
-    }
-    .agent-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 1.5rem;
-        margin-top: 2rem;
-    }
-    .agent-card {
-        background: var(--glass-bg);
-        backdrop-filter: blur(var(--glass-blur));
-        border: 1px solid var(--border-glow);
-        border-radius: 16px;
-        padding: 1.5rem;
-        transition: transform 0.2s, box-shadow 0.2s;
-        cursor: pointer;
-    }
-    .agent-card:hover {
-        transform: translateY(-4px);
-        box-shadow: var(--jarvis-glow);
-    }
-    .agent-card h3 {
-        margin: 0 0 0.5rem;
-        font-size: 1.1rem;
-        color: #fff;
-    }
-    .agent-card .meta {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-        font-size: 0.75rem;
-        color: var(--text-muted);
-        margin-top: 0.75rem;
-    }
-    .agent-card .meta span {
-        background: rgba(255,255,255,0.05);
-        padding: 2px 8px;
-        border-radius: 6px;
-    }
-    .trust-badge {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 10px;
-        font-size: 0.7rem;
-        font-weight: 600;
-    }
-    .empty-state {
-        text-align: center;
-        padding: 3rem;
-        color: var(--text-secondary);
-    }
-    .empty-state .icon { font-size: 3rem; margin-bottom: 1rem; }
-</style>
-{% endblock %}
-
 {% block content %}
-<div class="metaverse-hero">
-    <h1>AgentNet Command Center</h1>
-    <p>Monitor, manage, and deploy AI agents across the metaverse.</p>
+<div class="metaverse-header" style="margin-bottom:2rem;">
+    <h1 style="font-size:2rem;font-weight:800;color:#fff;">⚡ Command Center</h1>
+    <p style="color:var(--text-secondary);">Monitor and interact with the AgentNet metaverse.</p>
 </div>
 
-{% if agents %}
-    <div class="agent-grid">
-        {% for agent in agents %}
-        <div class="agent-card" onclick="window.location.href='{{ url_for('agent_detail_page', agent_id=agent.id) }}'">
-            <h3>{{ agent.name }}</h3>
-            <p style="color:var(--text-secondary); font-size:0.85rem;">
-                {{ agent.description|truncate(100) if agent.description else "No description" }}
-            </p>
-            <div class="meta">
-                {% set tc = agent|trust_context %}
-                <span class="trust-badge" style="background:{{ tc.color }}; color:#fff;">{{ tc.label }}</span>
-                <span>Tasks: {{ tc.total }}</span>
-                <span>Success: {{ tc.success_percent }}</span>
+{% if is_logged_in %}
+<div class="agent-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.2rem;">
+    {% for agent in agents %}
+    <div class="card agent-card" style="padding:1.2rem;border:1px solid var(--border-glow);">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+                <h3 style="margin:0;font-size:1rem;font-weight:600;">{{ agent.name or agent.id[:8] }}</h3>
+                <p style="font-size:0.78rem;color:var(--text-muted);margin:0.3rem 0 0.5rem;">
+                    {{ agent.description or 'No description' }}
+                </p>
             </div>
+            <span style="font-size:0.7rem;padding:2px 8px;border-radius:4px;background:{{ agent.trust.color }}20;color:{{ agent.trust.color }};border:1px solid {{ agent.trust.color }};">
+                {{ agent.trust.label }}
+            </span>
         </div>
-        {% endfor %}
-    </div>
-{% else %}
-    <div class="empty-state">
-        {% if session.access_token %}
-        <div class="icon">🔍</div>
-        <p>No agents found in the network.</p>
-        <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary">Register your first agent</a>
-        {% else %}
-        <div class="icon">🔒</div>
-        <p>Sign in to see the agent network.</p>
-        <a href="{{ url_for('login_page') }}" class="btn btn-secondary">Sign In</a>
+        <div style="display:flex;gap:0.8rem;margin-top:0.8rem;font-size:0.75rem;color:var(--text-secondary);">
+            <span>✅ {{ agent.total_tasks_completed or 0 }}</span>
+            <span>⏱ {{ agent.trust.timeouts or 0 }}</span>
+            <span>📊 {{ agent.trust.success_percent }}</span>
+        </div>
+        {% if agent.trust.tier != 'Unranked' %}
+        <div style="margin-top:0.5rem;font-size:0.7rem;color:var(--text-muted);">
+            Tier: {{ agent.trust.tier }}
+        </div>
         {% endif %}
     </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card" style="text-align:center;padding:3rem 2rem;">
+    <h2 style="font-size:1.4rem;color:#fff;">🔒 Sign in to unlock the full Command Center</h2>
+    <p style="color:var(--text-secondary);margin:1rem 0;">View agent analytics, manage tasks, and more.</p>
+    <a href="{{ url_for('login_page') }}" class="btn btn-primary" style="padding:10px 24px;">Sign In</a>
+    <a href="{{ url_for('register_page') }}" class="btn btn-secondary" style="padding:10px 24px;margin-left:1rem;">Initialize</a>
+</div>
 {% endif %}
 {% endblock %}
