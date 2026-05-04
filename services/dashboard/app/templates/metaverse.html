@@ -2,32 +2,47 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="max-width:900px;margin:2rem auto;">
-    <div style="text-align:center;margin-bottom:2rem;">
-        <h1 style="font-size:2rem;font-weight:800;color:#fff;">Command Center</h1>
-        <p style="color:var(--text-secondary);font-size:0.9rem;">Welcome back, Commander. Manage your agents, tasks, and wallets.</p>
+<div style="text-align:center;margin-bottom:2rem;">
+    <h1 style="font-size:2rem;font-weight:800;color:#fff;">Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.9rem;">Monitor your agents, tasks, and network activity</p>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.5rem;margin-top:2rem;">
+    <!-- Agent Overview Card -->
+    <div class="card" style="text-align:center;">
+        <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:0.5rem;">Your Agents</div>
+        <div style="font-size:2.5rem;font-weight:800;color:var(--accent);">0</div>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">No agents deployed yet</p>
+        <a href="{{ url_for('new_agent_page') if 'new_agent_page' in url_for else '#' }}" class="btn btn-primary btn-sm" style="margin-top:0.75rem;display:inline-block;">+ Deploy Agent</a>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px,1fr));gap:1.5rem;">
-        <a href="{{ url_for('directory_page') }}" class="card" style="text-decoration:none;text-align:center;padding:2rem;">
-            <div style="font-size:2.5rem;margin-bottom:0.5rem;">📇</div>
-            <h3 style="margin:0 0 0.3rem;font-size:1rem;color:#fff;">Agent Directory</h3>
-            <p style="font-size:0.78rem;color:var(--text-muted);margin:0;">Discover and deploy agents</p>
-        </a>
-        <a href="{{ url_for('wallet_page') }}" class="card" style="text-decoration:none;text-align:center;padding:2rem;">
-            <div style="font-size:2.5rem;margin-bottom:0.5rem;">💰</div>
-            <h3 style="margin:0 0 0.3rem;font-size:1rem;color:#fff;">Wallet</h3>
-            <p style="font-size:0.78rem;color:var(--text-muted);margin:0;">View balances and transactions</p>
-        </a>
-        <a href="{{ url_for('tasks_page') }}" class="card" style="text-decoration:none;text-align:center;padding:2rem;">
-            <div style="font-size:2.5rem;margin-bottom:0.5rem;">📋</div>
-            <h3 style="margin:0 0 0.3rem;font-size:1rem;color:#fff;">Tasks</h3>
-            <p style="font-size:0.78rem;color:var(--text-muted);margin:0;">Monitor and manage task runs</p>
-        </a>
-        <a href="{{ url_for('collaboration_page') }}" class="card" style="text-decoration:none;text-align:center;padding:2rem;">
-            <div style="font-size:2.5rem;margin-bottom:0.5rem;">💬</div>
-            <h3 style="margin:0 0 0.3rem;font-size:1rem;color:#fff;">Collaboration</h3>
-            <p style="font-size:0.78rem;color:var(--text-muted);margin:0;">Chat with agents and teams</p>
-        </a>
+
+    <!-- Tasks Overview Card -->
+    <div class="card" style="text-align:center;">
+        <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:0.5rem;">Active Tasks</div>
+        <div style="font-size:2.5rem;font-weight:800;color:var(--success);">0</div>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">No running tasks</p>
+        <a href="{{ url_for('tasks_page') if 'tasks_page' in url_for else '#' }}" class="btn btn-secondary btn-sm" style="margin-top:0.75rem;display:inline-block;">View Tasks</a>
     </div>
+
+    <!-- Wallet Balance Card -->
+    <div class="card" style="text-align:center;">
+        <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:0.5rem;">Wallet Balance</div>
+        <div style="font-size:2.5rem;font-weight:800;color:var(--warning);">0</div>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">Credits</p>
+        <a href="{{ url_for('wallet_page') if 'wallet_page' in url_for else '#' }}" class="btn btn-secondary btn-sm" style="margin-top:0.75rem;display:inline-block;">Fund Wallet</a>
+    </div>
+
+    <!-- Marketplace Card -->
+    <div class="card" style="text-align:center;">
+        <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:0.5rem;">Marketplace</div>
+        <div style="font-size:2.5rem;font-weight:800;color:var(--info);">∞</div>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">Discover & hire agents</p>
+        <a href="{{ url_for('marketplace_page') if 'marketplace_page' in url_for else '/marketplace' }}" class="btn btn-secondary btn-sm" style="margin-top:0.75rem;display:inline-block;">Browse</a>
+    </div>
+</div>
+
+<div style="margin-top:2.5rem;padding:1.5rem;background:var(--glass-bg);border-radius:12px;border:1px solid var(--border-glow);backdrop-filter:blur(var(--glass-blur));">
+    <h2 style="font-size:1.2rem;font-weight:700;color:#fff;margin-bottom:0.75rem;">Recent Activity</h2>
+    <p style="color:var(--text-muted);font-size:0.85rem;">Your network activity will appear here once you start interacting with agents.</p>
 </div>
 {% endblock %}
