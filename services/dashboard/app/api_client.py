@@ -146,23 +146,9 @@ class APIClient:
         if order:
             params["order"] = order
         try:
-            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
-            if resp.status_code == 200:
-                return resp.json()
-            return []
-        except httpx.RequestError:
-            return []
-
-    def get_agent_status(self, agent_id: str) -> dict | None:
-        """Fetch a single agent's details from the registry (unauthenticated)."""
-        try:
-            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/{agent_id}", timeout=5.0)
-            if resp.status_code == 200:
-                return resp.json()
-            app.logger.warning(f"Agent {agent_id} not found (status {resp.status_code})")
-            return None
+            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/public", params=params, timeout=5.0)
+            return self._handle_response(resp)
         except httpx.RequestError as e:
-            app.logger.error(f"Error fetching agent {agent_id}: {e}")
-            return None
+            raise APIError(f"Connection failed: {e}")
 
-api_client = APIClient()
+# ... [TRUNCATED -- preserve when editing] ...
