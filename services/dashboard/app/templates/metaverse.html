@@ -4,83 +4,80 @@
 {% block content %}
 <div style="text-align:center;margin-bottom:2rem;">
     <h1 style="font-size:2rem;font-weight:800;color:#fff;">⚡ Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;">Your agent network at a glance</p>
+    <p style="color:var(--text-secondary);font-size:0.85rem;">Monitor your agents and tasks across the network</p>
 </div>
 
-<div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
-    <!-- Agents Panel -->
-    <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-            <h2 style="font-size:1.1rem;font-weight:600;color:#fff;margin:0;">🤖 Agents</h2>
-            <span style="background:var(--accent);padding:2px 10px;border-radius:20px;font-size:0.75rem;color:#fff;">
-                {{ agents|length }} online
-            </span>
-        </div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;align-items:start;">
+    <!-- Recent Agents -->
+    <div>
+        <h2 style="font-size:1.2rem;font-weight:600;color:#fff;margin-bottom:1rem;">Active Agents</h2>
         {% if agents %}
-        <div style="max-height:400px;overflow-y:auto;">
-            {% for agent in agents %}
-            <div class="agent-card" style="display:flex;align-items:center;padding:0.75rem;border-bottom:1px solid var(--border);gap:0.75rem;">
-                <div style="flex-shrink:0;width:36px;height:36px;border-radius:50%;background:var(--glass-bg);display:flex;align-items:center;justify-content:center;font-size:1.2rem;">
-                    🧠
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+            {% for agent in agents[:12] %}
+            <div class="card" style="padding:1rem;margin:0;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+                    <strong style="color:#fff;font-size:0.9rem;">{{ agent.name }}</strong>
+                    {% set ctx = agent|trust_context %}
+                    <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:0.7rem;background:{{ ctx.color }}22;color:{{ ctx.color }};">{{ ctx.tier }}</span>
                 </div>
-                <div style="flex:1;">
-                    <div style="font-weight:500;color:#fff;">{{ agent.name }}</div>
-                    <div style="font-size:0.72rem;color:var(--text-secondary);">{{ agent.capabilities|join(', ') if agent.capabilities else 'No capabilities' }}</div>
+                <div style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.5rem;">
+                    {{ agent.capabilities[:3]|join(', ') if agent.capabilities else 'No capabilities listed' }}
                 </div>
-                <div style="font-size:0.72rem;color:var(--text-muted);">
-                    {% set tc = agent|trust_context %}
-                    <span style="color:{{ tc.color }};">{{ tc.label }}</span>
+                <div style="font-size:0.75rem;color:var(--text-muted);">
+                    <span>Tasks: {{ ctx.total }}</span> ·
+                    <span style="color:{{ ctx.color }};">{{ ctx.label }}</span>
                 </div>
             </div>
             {% endfor %}
         </div>
+        {% if agents|length > 12 %}
+        <div style="text-align:center;margin-top:1rem;">
+            <a href="{{ url_for('directory_page') }}" class="btn btn-sm" style="font-size:0.8rem;">View All Agents →</a>
+        </div>
+        {% endif %}
         {% else %}
-        <p style="color:var(--text-muted);text-align:center;padding:1.5rem 0;">No agents registered yet. <a href="{{ url_for('register_agent_page') }}" style="color:var(--accent);">Deploy one</a>.</p>
+        <div class="card" style="padding:2rem;text-align:center;">
+            <p style="color:var(--text-muted);margin-bottom:1rem;">No agents deployed yet.</p>
+            <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary">Register Your First Agent</a>
+        </div>
         {% endif %}
     </div>
 
-    <!-- Tasks Panel -->
-    <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-            <h2 style="font-size:1.1rem;font-weight:600;color:#fff;margin:0;">📋 Recent Tasks</h2>
-            <span style="background:var(--accent);padding:2px 10px;border-radius:20px;font-size:0.75rem;color:#fff;">
-                {{ tasks|length }}
-            </span>
-        </div>
+    <!-- Recent Tasks -->
+    <div>
+        <h2 style="font-size:1.2rem;font-weight:600;color:#fff;margin-bottom:1rem;">Recent Tasks</h2>
         {% if tasks %}
-        <div style="max-height:400px;overflow-y:auto;">
-            {% for task in tasks %}
-            <div class="task-card" style="display:flex;align-items:center;padding:0.75rem;border-bottom:1px solid var(--border);gap:0.75rem;">
-                <div style="flex-shrink:0;width:32px;height:32px;border-radius:8px;background:var(--glass-bg);display:flex;align-items:center;justify-content:center;">
-                    {% if task.status == 'completed' %}✅{% elif task.status == 'failed' %}❌{% else %}⏳{% endif %}
+        <div style="display:grid;gap:0.75rem;">
+            {% for task in tasks[:10] %}
+            <div class="card" style="padding:0.75rem 1rem;margin:0;display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                    <div style="font-size:0.85rem;color:#fff;">{{ task.description[:80] }}{% if task.description|length > 80 %}…{% endif %}</div>
+                    <div style="font-size:0.7rem;color:var(--text-muted);">
+                        {% if task.agent_name %}Agent: {{ task.agent_name }} · {% endif %}
+                        {{ task.status }}
+                    </div>
                 </div>
-                <div style="flex:1;">
-                    <div style="font-weight:500;color:#fff;font-size:0.85rem;">{{ task.name or 'Untitled Task' }}</div>
-                    <div style="font-size:0.72rem;color:var(--text-secondary);">Assigned to {{ task.assigned_agent or 'none' }}</div>
-                </div>
-                <div style="font-size:0.72rem;color:var(--text-muted);">
-                    {{ task.created_at[:10] if task.created_at else '' }}
-                </div>
+                <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:0.7rem;
+                    {% if task.status == 'completed' %}background:#10b98122;color:#10b981;
+                    {% elif task.status == 'running' %}background:#3b82f622;color:#3b82f6;
+                    {% elif task.status == 'failed' %}background:#ef444422;color:#ef4444;
+                    {% else %}background:#64748b22;color:#64748b;
+                    {% endif %}">
+                    {{ task.status }}
+                </span>
             </div>
             {% endfor %}
         </div>
+        {% if tasks|length > 10 %}
+        <div style="text-align:center;margin-top:1rem;">
+            <a href="{{ url_for('tasks_page') }}" class="btn btn-sm" style="font-size:0.8rem;">View All Tasks →</a>
+        </div>
+        {% endif %}
         {% else %}
-        <p style="color:var(--text-muted);text-align:center;padding:1.5rem 0;">No tasks yet. <a href="{{ url_for('tasks_page') }}" style="color:var(--accent);">Create one</a>.</p>
+        <div class="card" style="padding:2rem;text-align:center;">
+            <p style="color:var(--text-muted);margin:0;">No tasks yet. Deploy an agent to get started.</p>
+        </div>
         {% endif %}
     </div>
 </div>
-
-<div style="margin-top:2rem;text-align:center;">
-    <a href="{{ url_for('marketplace_page') }}" class="btn btn-primary" style="font-size:0.9rem;">🏪 Explore Marketplace</a>
-    <a href="{{ url_for('directory_page') }}" class="btn btn-secondary" style="font-size:0.9rem;margin-left:0.75rem;">📇 Agent Directory</a>
-</div>
-{% endblock %}
-
-{% block extra_scripts %}
-<script>
-// Optional: auto-refresh every 30 seconds (if authenticated)
-{% if session.access_token %}
-setTimeout(function(){ location.reload(); }, 30000);
-{% endif %}
-</script>
 {% endblock %}
