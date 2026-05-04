@@ -1,115 +1,187 @@
 {% extends "base.html" %}
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
+{% block extra_head %}
+<style>
+    .dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 1.5rem;
+        margin-top: 1.5rem;
+    }
+    .dashboard-card {
+        background: var(--glass-bg);
+        backdrop-filter: blur(var(--glass-blur));
+        border: 1px solid var(--border-glow);
+        border-radius: var(--radius);
+        padding: 1.5rem;
+        transition: box-shadow 0.3s;
+    }
+    .dashboard-card:hover {
+        box-shadow: var(--jarvis-glow);
+    }
+    .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
+    .card-header h2 {
+        font-size: 1.1rem;
+        font-weight: 700;
+        margin: 0;
+    }
+    .badge {
+        display: inline-block;
+        padding: 0.2rem 0.7rem;
+        border-radius: 999px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        background: rgba(59,130,246,0.2);
+        color: #60a5fa;
+    }
+    .agent-list, .task-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+    .agent-item, .task-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .agent-item:last-child, .task-item:last-child {
+        border-bottom: none;
+    }
+    .agent-name {
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    .task-status {
+        font-size: 0.75rem;
+        font-weight: 600;
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+    }
+    .status-completed { background: rgba(16,185,129,0.2); color: #10b981; }
+    .status-pending { background: rgba(245,158,11,0.2); color: #f59e0b; }
+    .status-failed { background: rgba(239,68,68,0.2); color: #ef4444; }
+    .empty-state {
+        text-align: center;
+        padding: 2rem 1rem;
+        color: var(--text-secondary);
+        font-size: 0.85rem;
+    }
+    .quick-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-top: 1rem;
+    }
+    .quick-actions .btn {
+        flex: 1 1 140px;
+    }
+</style>
+{% endblock %}
 
 {% block content %}
-<div style="margin-bottom:2rem;">
-    <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
-        <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin:0;">Command Center</h1>
-        {% if not is_logged_in %}
-        <div style="background:rgba(251,191,36,0.15);border:1px solid rgba(251,191,36,0.3);padding:0.5rem 1rem;border-radius:8px;color:#fbbf24;font-size:0.85rem;">
-            ⚠️ Sign in to manage agents and view tasks
-        </div>
-        {% endif %}
-    </div>
-    <p style="color:var(--text-secondary);margin-top:0.5rem;">Your agent network operational overview</p>
+<div style="text-align:center;margin:2rem 0 1rem;">
+    <h1 style="font-size:2rem;font-weight:900;color:#fff;letter-spacing:-0.5px;">Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.9rem;">Your agent network at a glance</p>
 </div>
 
 {% if is_logged_in %}
-<!-- Stats Cards -->
-<div class="stats-grid">
-    <div class="card" style="text-align:center;padding:1.5rem;">
-        <div style="font-size:2rem;font-weight:800;color:var(--accent);">{{ agent_count }}</div>
-        <div style="color:var(--text-secondary);font-size:0.85rem;">Registered Agents</div>
-    </div>
-    <div class="card" style="text-align:center;padding:1.5rem;">
-        <div style="font-size:2rem;font-weight:800;color:var(--accent);">{{ task_count }}</div>
-        <div style="color:var(--text-secondary);font-size:0.85rem;">Active Tasks</div>
-    </div>
-    <div class="card" style="text-align:center;padding:1.5rem;">
-        <div style="font-size:2rem;font-weight:800;color:var(--accent);">{{ agents|selectattr('status', 'eq', 'online')|list|length }}</div>
-        <div style="color:var(--text-secondary);font-size:0.85rem;">Online Agents</div>
-    </div>
-</div>
+    <div class="dashboard-grid">
+        <!-- My Agents -->
+        <div class="dashboard-card">
+            <div class="card-header">
+                <h2>🤖 My Agents</h2>
+                <span class="badge">{{ user_agents|length }}</span>
+            </div>
+            {% if user_agents %}
+            <ul class="agent-list">
+                {% for agent in user_agents[:5] %}
+                <li class="agent-item">
+                    <span class="agent-name">{{ agent.name }}</span>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">{{ agent.capabilities[:2]|join(', ') if agent.capabilities else '—' }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div class="empty-state">You haven't created any agents yet.<br><a href="{{ url_for('register_agent_page') }}" style="color:#60a5fa;">Deploy your first agent</a></div>
+            {% endif %}
+            <div style="margin-top:1rem;text-align:right;">
+                <a href="{{ url_for('register_agent_page') }}" class="btn btn-sm btn-primary">+ New Agent</a>
+            </div>
+        </div>
 
-<!-- Recent Agents -->
-<div class="card" style="margin-top:1.5rem;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-        <h2 style="font-size:1.2rem;font-weight:600;margin:0;">Your Recent Agents</h2>
-        <a href="{{ url_for('directory_page') }}" class="btn btn-secondary btn-sm">View All</a>
-    </div>
-    {% if agents %}
-    <table class="agent-table">
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Status</th>
-                <th>Reliability</th>
-                <th>Tasks Completed</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for agent in agents[:5] %}
-            <tr>
-                <td><a href="{{ url_for('agent_detail_page', agent_id=agent.id) }}">{{ agent.name }}</a></td>
-                <td><span class="status-badge status-{{ agent.status or 'unknown' }}">{{ agent.status or 'Unknown' }}</span></td>
-                <td>
-                    {% set trust = agent_trust[loop.index0] %}
-                    <span style="display:inline-block;background:{{ trust.color }}22;color:{{ trust.color }};padding:2px 8px;border-radius:4px;font-size:0.75rem;">{{ trust.label }}</span>
-                </td>
-                <td>{{ agent.total_tasks_completed or 0 }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p style="color:var(--text-muted);font-size:0.9rem;text-align:center;padding:1rem;">No agents registered yet. <a href="{{ url_for('register_agent_page') }}">Register one now</a>.</p>
-    {% endif %}
-</div>
+        <!-- Recent Tasks -->
+        <div class="dashboard-card">
+            <div class="card-header">
+                <h2>📋 Recent Tasks</h2>
+                <span class="badge">{{ tasks|length }}</span>
+            </div>
+            {% if tasks %}
+            <ul class="task-list">
+                {% for task in tasks[:5] %}
+                <li class="task-item">
+                    <span>{{ task.description[:40] ~ '…' if task.description|length > 40 else task.description }}</span>
+                    <span class="task-status status-{{ task.status }}">{{ task.status }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div class="empty-state">No recent tasks.<br><a href="{{ url_for('tasks_page') }}" style="color:#60a5fa;">View all tasks</a></div>
+            {% endif %}
+            <div style="margin-top:1rem;text-align:right;">
+                <a href="{{ url_for('tasks_page') }}" class="btn btn-sm btn-secondary">All Tasks</a>
+            </div>
+        </div>
 
-<!-- Recent Tasks -->
-<div class="card" style="margin-top:1rem;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-        <h2 style="font-size:1.2rem;font-weight:600;margin:0;">Recent Tasks</h2>
-        <a href="{{ url_for('tasks_page') }}" class="btn btn-secondary btn-sm">View All</a>
+        <!-- Network Stats -->
+        <div class="dashboard-card">
+            <div class="card-header">
+                <h2>🌐 Network</h2>
+                <span class="badge">{{ agents|length }} agents</span>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-top:0.5rem;">
+                <div style="text-align:center;">
+                    <div style="font-size:1.8rem; font-weight:800; color:#10b981;">{{ agents|selectattr('status', 'equalto', 'online')|list|length }}</div>
+                    <div style="font-size:0.7rem; color:var(--text-secondary);">Online</div>
+                </div>
+                <div style="text-align:center;">
+                    <div style="font-size:1.8rem; font-weight:800; color:#f59e0b;">{{ agents|rejectattr('status', 'equalto', 'online')|list|length }}</div>
+                    <div style="font-size:0.7rem; color:var(--text-secondary);">Offline</div>
+                </div>
+            </div>
+            <div class="quick-actions">
+                <a href="{{ url_for('directory_page') }}" class="btn btn-sm">Browse Directory</a>
+                <a href="{{ url_for('marketplace_page') }}" class="btn btn-sm">Marketplace</a>
+            </div>
+        </div>
     </div>
-    {% if tasks %}
-    <table class="agent-table">
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Created</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for task in tasks[:10] %}
-            <tr>
-                <td style="font-family:monospace;font-size:0.8rem;">{{ task.id[:8] }}...</td>
-                <td>{{ task.task_type or 'N/A' }}</td>
-                <td><span class="status-badge status-{{ task.status or 'unknown' }}">{{ task.status or 'Unknown' }}</span></td>
-                <td>{{ task.created_at[:10] if task.created_at else '—' }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p style="color:var(--text-muted);font-size:0.9rem;text-align:center;padding:1rem;">No tasks yet. Create one from the <a href="{{ url_for('tasks_page') }}">Tasks</a> page.</p>
-    {% endif %}
-</div>
-
 {% else %}
-<!-- Public landing content for unauthenticated users -->
-<div class="card" style="text-align:center;padding:3rem 2rem;">
-    <h2 style="font-size:1.5rem;font-weight:700;color:#fff;margin-bottom:1rem;">Welcome to AgentNet</h2>
-    <p style="color:var(--text-secondary);max-width:500px;margin:0 auto 1.5rem;">
-        The decentralized network of AI agents. Sign in to manage your agents, track tasks, and collaborate.
-    </p>
-    <div style="display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;">
-        <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
-        <a href="{{ url_for('register_page') }}" class="btn btn-secondary">Get Started</a>
+    <div class="dashboard-card" style="max-width:480px;margin:2rem auto;text-align:center;">
+        <div style="font-size:3rem;margin-bottom:0.5rem;">🔐</div>
+        <h2 style="margin:0 0 0.5rem;">Welcome to J.A.R.V.I.S.</h2>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">Sign in to manage your agents, track tasks, and explore the network.</p>
+        <div style="margin-top:1.5rem;display:flex;gap:1rem;justify-content:center;">
+            <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
+            <a href="{{ url_for('register_page') }}" class="btn btn-secondary">Initialize</a>
+        </div>
     </div>
-</div>
 {% endif %}
+{% endblock %}
 
+{% block extra_scripts %}
+<script>
+    // Optional: auto-refresh stats every 30 seconds if authenticated
+    {% if is_logged_in %}
+    setInterval(function() {
+        // simple page reload to keep data fresh
+        window.location.reload();
+    }, 30000);
+    {% endif %}
+</script>
 {% endblock %}

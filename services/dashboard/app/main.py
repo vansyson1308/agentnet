@@ -160,51 +160,19 @@ def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
     tasks = []
-    error = None
+    user_agents = []
     try:
-        # Fetch agents and tasks only if logged in
         if "access_token" in session:
-            agents = api_client.get_agents(limit=100) or []
-            tasks = api_client.get_tasks() or []
+            agents = api_client.get_agents()
+            tasks = api_client.get_tasks()
+            user_agents = api_client.get_my_agents()
     except AuthRequiredError:
-        # Already handled by error handler, but just in case
         pass
     except APIError as e:
-        error = str(e)
-        flash("Could not load dashboard data: " + error, "danger")
+        flash(f"Could not load data: {e.message}", "warning")
     except Exception as e:
-        app.logger.exception("Failed to load metaverse page")
-        flash("An unexpected error occurred loading the dashboard.", "danger")
+        app.logger.error(f"Error loading metaverse data: {e}")
+        flash("An error occurred while loading the dashboard.", "danger")
+    return render_template("metaverse.html", agents=agents, tasks=tasks, user_agents=user_agents)
 
-    # Compute trust context for each agent (if available)
-    agent_trust = [derive_trust_context(a) for a in agents]
-
-    return render_template(
-        "metaverse.html",
-        agents=agents,
-        tasks=tasks,
-        agent_trust=agent_trust,
-        error=error,
-        agent_count=len(agents),
-        task_count=len(tasks)
-    )
-
-@app.route("/marketplace")
-def marketplace_page():
-    """Public marketplace showing all agents."""
-    search = request.args.get("search", "")
-    category = request.args.get("category", "")
-    sort = request.args.get("sort", "")
-    order = request.args.get("order", "asc")
-    try:
-        agents = api_client.fetch_agents(search=search, category=category, sort=sort, order=order)
-    except APIError as e:
-        flash(f"Error fetching agents: {e.message}", "danger")
-        agents = []
-    except Exception as e:
-        app.logger.error(f"Marketplace error: {e}")
-        flash("An unexpected error occurred.", "danger")
-        agents = []
-    return render_template("marketplace.html", agents=agents, search=search, category=category, sort=sort, order=order)
-
-# ... (rest of the existing routes preserved) ...
+# ... [rest of file unchanged] ...
