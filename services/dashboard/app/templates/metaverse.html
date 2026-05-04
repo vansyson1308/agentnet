@@ -2,71 +2,236 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="margin-bottom:2rem;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin-bottom:0.25rem;">Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;">Monitor your agents and tasks across the network</p>
-</div>
+<div class="metaverse-container">
+    <header class="metaverse-header">
+        <h1>🌐 Command Center</h1>
+        <p class="text-secondary">Monitor your network, agents, and tasks in real time.</p>
+    </header>
 
-<div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
-    <!-- Agents Panel -->
-    <div class="card" style="grid-column:1/2;">
-        <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;display:flex;align-items:center;gap:0.5rem;">
-            🤖 Agents ({{ agents|length }})
-        </h2>
-        {% if agents %}
-        <div style="display:flex;flex-direction:column;gap:0.75rem;">
-            {% for agent in agents[:10] %}
-            <div style="padding:0.75rem;background:var(--glass-bg);border-radius:8px;border:1px solid var(--border-glow);">
-                <div style="display:flex;align-items:center;justify-content:space-between;">
-                    <div>
-                        <span style="font-weight:600;color:#fff;">{{ agent.name }}</span>
-                        <span style="color:var(--text-muted);font-size:0.75rem;margin-left:0.5rem;">{{ agent.agent_id[:8] }}…</span>
+    <div class="metaverse-grid">
+        <!-- Agents Overview -->
+        <div class="card metaverse-card">
+            <div class="card-header">
+                <h2>🤖 Agents</h2>
+                <span class="badge badge-info">{{ agents|length }} total</span>
+            </div>
+            <div class="card-body">
+                {% if agents %}
+                <div class="agent-list">
+                    {% for agent in agents %}
+                    <div class="agent-item">
+                        <div class="agent-info">
+                            <strong>{{ agent.name }}</strong>
+                            <span class="text-muted">{{ agent.capabilities|join(', ') }}</span>
+                        </div>
+                        <div class="agent-reputation">
+                            {% if agent|trust_context %}
+                            <span class="reputation-badge" style="background:{{ agent|trust_context['color'] }};">
+                                {{ agent|trust_context['label'] }}
+                            </span>
+                            {% endif %}
+                        </div>
                     </div>
-                    <span class="badge" style="background:{{ agent|trust_context({'label':'Unrated','color':'#64748b','tier':'','total':0,'success_percent':'','timeouts':0})['color'] }};">
-                        {{ agent|trust_context({'label':'Unrated','color':'#64748b','tier':'','total':0,'success_percent':'','timeouts':0})['label'] }}
-                    </span>
+                    {% endfor %}
                 </div>
-                <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:4px;">
-                    {{ agent.capabilities|join(', ') if agent.capabilities else 'No capabilities listed' }}
-                </div>
+                {% else %}
+                <p class="text-muted">No agents registered yet. Create one from the <a href="{{ url_for('register_agent_page') }}">New Agent</a> page.</p>
+                {% endif %}
             </div>
-            {% endfor %}
         </div>
-        {% else %}
-        <p style="color:var(--text-muted);font-size:0.85rem;">No agents found. <a href="{{ url_for('register_agent_page') }}" style="color:var(--accent);">Register one now</a>.</p>
-        {% endif %}
-    </div>
 
-    <!-- Tasks Panel -->
-    <div class="card" style="grid-column:2/3;">
-        <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;display:flex;align-items:center;gap:0.5rem;">
-            📋 Tasks ({{ tasks|length }})
-        </h2>
-        {% if tasks %}
-        <div style="display:flex;flex-direction:column;gap:0.5rem;">
-            {% for task in tasks[:10] %}
-            <div style="padding:0.6rem;background:var(--glass-bg);border-radius:6px;border-left:3px solid 
-                {%- if task.status == 'completed' %}var(--success)
-                {%- elif task.status == 'failed' %}var(--danger)
-                {%- elif task.status == 'running' %}var(--warning)
-                {%- else %}var(--border-glow){% endif %};">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="font-weight:500;color:#fff;font-size:0.85rem;">{{ task.task_id[:8] }}</span>
-                    <span class="badge" style="background:
-                        {%- if task.status == 'completed' %}#10b981
-                        {%- elif task.status == 'failed' %}#ef4444
-                        {%- elif task.status == 'running' %}#f59e0b
-                        {%- else %}#64748b{% endif %};">
-                        {{ task.status }}
-                    </span>
-                </div>
-                <div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">Agent: {{ task.agent_id[:8] if task.agent_id else 'N/A' }}</div>
+        <!-- Tasks Overview -->
+        <div class="card metaverse-card">
+            <div class="card-header">
+                <h2>📋 Recent Tasks</h2>
+                <span class="badge badge-info">{{ tasks|length }} total</span>
             </div>
-            {% endfor %}
+            <div class="card-body">
+                {% if tasks %}
+                <div class="task-list">
+                    {% for task in tasks[:10] %}
+                    <div class="task-item">
+                        <span class="task-status status-{{ task.status|lower }}">{{ task.status }}</span>
+                        <span class="task-name">{{ task.name or 'Unnamed Task' }}</span>
+                        <span class="task-agent">{{ task.agent_name or 'Unknown Agent' }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted">No tasks yet. Start by assigning a task to an agent.</p>
+                {% endif %}
+            </div>
         </div>
-        {% else %}
-        <p style="color:var(--text-muted);font-size:0.85rem;">No tasks yet. Assign one via the <a href="{{ url_for('tasks_page') }}" style="color:var(--accent);">Tasks page</a>.</p>
-        {% endif %}
+
+        <!-- Quick Actions -->
+        <div class="card metaverse-card">
+            <div class="card-header">
+                <h2>⚡ Quick Actions</h2>
+            </div>
+            <div class="card-body">
+                <ul class="quick-actions">
+                    <li><a href="{{ url_for('marketplace_page') }}">🏪 Browse Marketplace</a></li>
+                    <li><a href="{{ url_for('wallet_page') }}">💰 Manage Wallet</a></li>
+                    <li><a href="{{ url_for('tasks_page') }}">📋 View All Tasks</a></li>
+                    <li><a href="{{ url_for('register_agent_page') }}">🤖 Register New Agent</a></li>
+                </ul>
+            </div>
+        </div>
     </div>
 </div>
+
+<style>
+.metaverse-container {
+    animation: fadeIn 0.4s ease;
+}
+
+.metaverse-header h1 {
+    font-size: 1.8rem;
+    font-weight: 800;
+    color: var(--text-primary);
+    margin-bottom: 0.25rem;
+}
+
+.metaverse-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1.5rem;
+    margin-top: 1.5rem;
+}
+
+.metaverse-card {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.metaverse-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-muted);
+}
+
+.card-header h2 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.card-body {
+    padding-top: 0.75rem;
+}
+
+.agent-list, .task-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.agent-item, .task-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    background: var(--glass-bg);
+    border-radius: 8px;
+    border: 1px solid var(--border-glow);
+    transition: background 0.2s;
+}
+
+.agent-item:hover, .task-item:hover {
+    background: rgba(255,255,255,0.05);
+}
+
+.agent-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.agent-info strong {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.agent-info .text-muted {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.reputation-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #fff;
+}
+
+.task-item {
+    display: grid;
+    grid-template-columns: 80px 1fr 1fr;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.task-status {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.status-pending { background: #f59e0b; color: #000; }
+.status-running { background: #3b82f6; color: #fff; }
+.status-completed { background: #10b981; color: #fff; }
+.status-failed { background: #ef4444; color: #fff; }
+
+.task-name {
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.task-agent {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-align: right;
+}
+
+.quick-actions {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.quick-actions li a {
+    display: block;
+    padding: 0.5rem 0.75rem;
+    background: var(--glass-bg);
+    border-radius: 8px;
+    color: var(--text-primary);
+    text-decoration: none;
+    border: 1px solid var(--border-glow);
+    transition: background 0.2s;
+}
+
+.quick-actions li a:hover {
+    background: rgba(255,255,255,0.08);
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+</style>
 {% endblock %}
