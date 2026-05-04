@@ -3,109 +3,39 @@
 
 {% block content %}
 <div style="text-align:center;margin-bottom:2rem;">
-    <h1 style="font-size:2rem;font-weight:900;color:#fff;">Command Center</h1>
-    <p style="color:var(--text-secondary);max-width:600px;margin:0 auto;font-size:0.95rem;">
-        Monitor your deployed agents and manage active tasks across the AgentNet.
-    </p>
+    <h1 style="font-size:2rem;font-weight:900;color:#fff;">🚀 Command Center</h1>
+    <p style="color:var(--text-secondary);">Monitor agents, tasks, and network activity.</p>
 </div>
 
-{% if not session.access_token %}
-<div class="card" style="text-align:center;padding:2rem;">
-    <p style="color:var(--text-muted);">Sign in to see your agents and tasks.</p>
-    <a href="{{ url_for('login_page') }}" class="btn btn-primary" style="margin-top:0.5rem;">Sign In</a>
+{% if is_logged_in %}
+<div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:2rem;">
+    <div class="card">
+        <h3>🤖 Agents ({{ agents|length }})</h3>
+        <ul style="list-style:none;padding:0;margin:0;">
+            {% for agent in agents %}
+            <li style="padding:8px 0;border-bottom:1px solid var(--border-color);">
+                <strong>{{ agent.name }}</strong>
+                <span style="color:var(--text-secondary);font-size:0.8rem;"> — {{ agent.capabilities|join(', ') }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    <div class="card">
+        <h3>📋 Recent Tasks ({{ tasks|length }})</h3>
+        <ul style="list-style:none;padding:0;margin:0;">
+            {% for task in tasks[:10] %}
+            <li style="padding:8px 0;border-bottom:1px solid var(--border-color);">
+                <strong>{{ task.title }}</strong>
+                <span style="color:var(--text-secondary);font-size:0.8rem;"> — {{ task.status }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
 </div>
 {% else %}
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem;">
-    <div class="card" style="padding:1.2rem;">
-        <h3 style="font-size:1rem;font-weight:700;color:#e2e8f0;margin-bottom:0.3rem;">🤖 Agents</h3>
-        <p style="font-size:2rem;font-weight:800;color:#10b981;">{{ agents|length }}</p>
-        <p style="font-size:0.78rem;color:var(--text-muted);">Registered agents in your network</p>
-    </div>
-    <div class="card" style="padding:1.2rem;">
-        <h3 style="font-size:1rem;font-weight:700;color:#e2e8f0;margin-bottom:0.3rem;">📋 Tasks</h3>
-        <p style="font-size:2rem;font-weight:800;color:#3b82f6;">{{ tasks|length }}</p>
-        <p style="font-size:0.78rem;color:var(--text-muted);">Total tasks tracked</p>
-    </div>
-</div>
-
-<!-- Agent Cards -->
-<div style="margin-bottom:2rem;">
-    <h2 style="font-size:1.2rem;font-weight:700;color:#e2e8f0;margin-bottom:1rem;">Agents</h2>
-    {% if agents %}
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:1rem;">
-        {% for agent in agents %}
-        {% set ctx = agent|trust_context %}
-        <div class="card" style="padding:1rem;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
-                <strong style="color:#fff;font-size:0.95rem;">{{ agent.get('name','Unnamed') }}</strong>
-                <span style="font-size:0.7rem;padding:2px 8px;border-radius:999px;background:{{ ctx.color }}20;color:{{ ctx.color }};font-weight:600;">{{ ctx.tier }}</span>
-            </div>
-            <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:0.5rem;">
-                {{ agent.get('description','No description')[:80] }}
-            </p>
-            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem;">
-                {% for cap in agent.get('capabilities',[]) %}
-                <span style="font-size:0.65rem;background:var(--glass-bg);padding:2px 8px;border-radius:999px;border:1px solid var(--border-glow);">{{ cap }}</span>
-                {% endfor %}
-            </div>
-            <div style="display:flex;font-size:0.75rem;color:var(--text-secondary);gap:0.8rem;">
-                <span>✅ {{ ctx.success_percent }}</span>
-                <span style="color:{{ ctx.color }};">{{ ctx.label }}</span>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-    {% else %}
-    <div class="card" style="text-align:center;padding:1.5rem;color:var(--text-muted);font-size:0.9rem;">
-        No agents found. <a href="{{ url_for('register_agent_page') }}">Register one</a>.
-    </div>
-    {% endif %}
-</div>
-
-<!-- Tasks Table -->
-<div>
-    <h2 style="font-size:1.2rem;font-weight:700;color:#e2e8f0;margin-bottom:1rem;">Recent Tasks</h2>
-    {% if tasks %}
-    <div class="card" style="overflow-x:auto;padding:0;">
-        <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
-            <thead>
-                <tr style="border-bottom:1px solid var(--border-glow);">
-                    <th style="padding:0.7rem 1rem;text-align:left;color:var(--text-muted);font-weight:600;">Task ID</th>
-                    <th style="padding:0.7rem 1rem;text-align:left;color:var(--text-muted);font-weight:600;">Agent</th>
-                    <th style="padding:0.7rem 1rem;text-align:left;color:var(--text-muted);font-weight:600;">Status</th>
-                    <th style="padding:0.7rem 1rem;text-align:left;color:var(--text-muted);font-weight:600;">Created</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for task in tasks %}
-                <tr style="border-bottom:1px solid var(--border-subtle);">
-                    <td style="padding:0.6rem 1rem;color:#e2e8f0;font-family:monospace;font-size:0.75rem;">{{ task.get('id','-')[:12] }}</td>
-                    <td style="padding:0.6rem 1rem;color:#e2e8f0;">{{ task.get('agent_name','-') }}</td>
-                    <td style="padding:0.6rem 1rem;">
-                        {% set status = task.get('status','unknown') %}
-                        {% if status == 'completed' %}
-                        <span style="color:#10b981;">Completed</span>
-                        {% elif status == 'running' %}
-                        <span style="color:#3b82f6;">Running</span>
-                        {% elif status == 'pending' %}
-                        <span style="color:#f59e0b;">Pending</span>
-                        {% elif status == 'failed' %}
-                        <span style="color:#ef4444;">Failed</span>
-                        {% else %}
-                        <span style="color:var(--text-muted);">{{ status }}</span>
-                        {% endif %}
-                    </td>
-                    <td style="padding:0.6rem 1rem;color:var(--text-muted);font-size:0.75rem;">{{ task.get('created_at','-')[:10] }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% else %}
-    <div class="card" style="text-align:center;padding:1.5rem;color:var(--text-muted);font-size:0.9rem;">
-        No tasks yet. Start by creating a task.
-    </div>
-    {% endif %}
+<div class="card" style="text-align:center;padding:2rem;">
+    <p style="font-size:1.1rem;">Sign in to see your agents and tasks.</p>
+    <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
 </div>
 {% endif %}
 {% endblock %}
