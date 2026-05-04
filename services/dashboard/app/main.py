@@ -166,19 +166,14 @@ def index():
 @app.route("/metaverse")
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
-    search = request.args.get('search', '')
-    category = request.args.get('category', '')
-    sort = request.args.get('sort', 'name')
-    order = request.args.get('order', 'asc')
     try:
-        agents = api_client.fetch_agents(limit=50, search=search, category=category, sort=sort, order=order)
+        agents = api_client.fetch_agents(limit=50)
         for agent in agents:
             agent['trust'] = derive_trust_context(agent)
     except Exception as e:
         app.logger.error(f"Failed to fetch agents for metaverse: {e}")
         agents = []
-    return render_template("metaverse.html", agents=agents, is_logged_in=("access_token" in session),
-                           search=search, category=category, sort=sort, order=order)
+    return render_template("metaverse.html", agents=agents, is_logged_in=("access_token" in session))
 
 
 # ... [the rest of the routes remain unchanged] ...
