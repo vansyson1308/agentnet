@@ -151,6 +151,32 @@ def inject_user():
 def landing_page():
     return render_template("landing.html")
 
+@app.route("/")
+def index():
+    return redirect(url_for('metaverse_page'))
+
+@app.route("/metaverse")
+def metaverse_page():
+    """Command Center – main dashboard for authenticated users."""
+    if "access_token" not in session:
+        return redirect(url_for('landing_page'))
+
+    try:
+        agents = api_client.get_my_agents()
+        tasks = api_client.get_tasks()
+        wallets = api_client.get_wallets()
+    except AuthRequiredError:
+        flash("Please log in again.", "warning")
+        return redirect(url_for('login_page'))
+    except APIError as e:
+        flash(f"Could not load dashboard: {e.message}", "danger")
+        agents, tasks, wallets = [], [], []
+
+    return render_template("metaverse.html",
+                           agents=agents,
+                           tasks=tasks,
+                           wallets=wallets)
+
 @app.route("/marketplace")
 def marketplace_page():
     search = request.args.get("search")
@@ -159,24 +185,135 @@ def marketplace_page():
     order = request.args.get("order", "desc")
     try:
         agents = api_client.fetch_agents(search=search, category=category, sort=sort, order=order)
-    except Exception:
+    except APIError as e:
+        flash(f"Could not load marketplace: {e.message}", "danger")
         agents = []
     return render_template("marketplace.html", agents=agents)
 
 # ============================================================
-# METAVERSE ROUTE (added for PAP-5-METAVERSE-2)
+# AUTH ROUTES
 # ============================================================
 
-@app.route("/metaverse")
-def metaverse_page():
-    """Render the Command Center / Metaverse page."""
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    if request.method == "GET":
+        return render_template("login.html")
+    username = request.form.get("username")
+    password = request.form.get("password")
+    if not username or not password:
+        flash("Username and password required.", "warning")
+        return render_template("login.html")
     try:
-        agents = api_client.get_agents() if session.get("access_token") else []
-    except Exception:
-        agents = []
-    return render_template("metaverse.html", agents=agents)
+        result = api_client.login(username, password)
+        session["access_token"] = result["access_token"]
+        session["refresh_token"] = result.get("refresh_token")
+        flash("Welcome back, Agent!", "success")
+        return redirect(url_for('metaverse_page'))
+    except APIError as e:
+        flash(f"Login failed: {e.message}", "danger")
+        return render_template("login.html")
 
-# ... remaining routes (truncated in prompt, preserved here)
-# For brevity, the original file continues with auth routes, wallet, tasks, etc.
-# As per the instruction we preserve all existing content.
-# In the actual file this would include login, register, logout, wallet, tasks, etc.
+@app.route("/register", methods=["GET", "POST"])
+def register_page():
+    if request.method == "GET":
+        return render_template("register.html")
+    email = request.form.get("email")
+    password = request.form.get("password")
+    if not email or not password:
+        flash("Email and password required.", "warning")
+        return render_template("register.html")
+    try:
+        result = api_client.register(email, password)
+        flash("Account created! Please log in.", "success")
+        return redirect(url_for('login_page'))
+    except APIError as e:
+        flash(f"Registration failed: {e.message}", "danger")
+        return render_template("register.html")
+
+@app.route("/logout")
+def logout_page():
+    session.clear()
+    flash("You have been signed out.", "info")
+    return redirect(url_for('landing_page'))
+
+# ============================================================
+# PROTECTED ROUTES
+# ============================================================
+
+@app.route("/my-agents")
+def my_agents_page():
+    try:
+        agents = api_client.get_my_agents()
+    except APIError as e:
+        flash(f"Could not load agents: {e.message}", "danger")
+        agents = []
+    return render_template("my_agents.html", agents=agents)
+
+@app.route("/agents/new", methods=["GET", "POST"])
+def register_agent_page():
+    if request.method == "GET":
+        return render_template("new_agent.html")
+    data = {
+        "name": request.form.get("name"),
+        "description": request.form.get("description"),
+        "endpoint": request.form.get("endpoint"),
+        "capabilities": [c.strip() for c in request.form.get("capabilities", "").split(",") if c.strip()]
+    }
+    if not data["name"]:
+        flash("Agent name is required.", "warning")
+        return render_template("new_agent.html")
+    try:
+        agent = api_client.create_agent(data)
+        flash(f"Agent '{agent['name']}' registered!", "success")
+        return redirect(url_for('my_agents_page'))
+    except APIError as e:
+        flash(f"Failed to register agent: {e.message}", "danger")
+        return render_template("new_agent.html")
+
+@app.route("/directory")
+def directory_page():
+    try:
+        agents = api_client.get_agents()
+    except APIError as e:
+        flash(f"Could not load directory: {e.message}", "danger")
+        agents = []
+    return render_template("directory.html", agents=agents)
+
+@app.route("/wallet")
+def wallet_page():
+    try:
+        wallets = api_client.get_wallets()
+        transactions = api_client.get_transactions()
+    except APIError as e:
+        flash(f"Could not load wallet: {e.message}", "danger")
+        wallets, transactions = [], []
+    return render_template("wallet.html", wallets=wallets, transactions=transactions)
+
+@app.route("/tasks")
+def tasks_page():
+    try:
+        tasks = api_client.get_tasks()
+    except APIError as e:
+        flash(f"Could not load tasks: {e.message}", "danger")
+        tasks = []
+    return render_template("tasks.html", tasks=tasks)
+
+@app.route("/collaboration")
+def collaboration_page():
+    return render_template("collaboration.html")
+
+@app.route("/notifications")
+def notifications_page():
+    return render_template("notifications.html")
+
+# ============================================================
+# STATIC FILES AND ERROR PAGES
+# ============================================================
+
+@app.route("/static/<path:filename>")
+def static_files(filename):
+    # handled by default static folder
+    return send_from_directory("static", filename)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=_IS_DEV)
