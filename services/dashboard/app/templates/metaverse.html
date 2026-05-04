@@ -1,206 +1,61 @@
 {% extends "base.html" %}
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
-{% block extra_head %}
-<style>
-    .stats-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 1rem;
-        margin-bottom: 2rem;
-    }
-    .stat-card {
-        background: var(--glass-bg);
-        backdrop-filter: blur(var(--glass-blur));
-        border: 1px solid var(--border-glow);
-        border-radius: 12px;
-        padding: 1.25rem;
-        text-align: center;
-    }
-    .stat-card .value {
-        font-size: 2rem;
-        font-weight: 700;
-        color: var(--accent);
-        margin: 0.25rem 0;
-    }
-    .stat-card .label {
-        font-size: 0.8rem;
-        color: var(--text-secondary);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-    .agent-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 1rem;
-    }
-    .task-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-    }
-    .task-item {
-        background: var(--glass-bg);
-        backdrop-filter: blur(var(--glass-blur));
-        border: 1px solid var(--border-glow);
-        border-radius: 8px;
-        padding: 0.75rem 1rem;
-        margin-bottom: 0.5rem;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    .task-status {
-        font-size: 0.75rem;
-        font-weight: 600;
-        padding: 0.2rem 0.6rem;
-        border-radius: 4px;
-        text-transform: uppercase;
-    }
-    .task-status.pending { background: #f59e0b; color: #000; }
-    .task-status.running { background: #3b82f6; }
-    .task-status.completed { background: #10b981; }
-    .task-status.failed { background: #ef4444; }
-    .reputation-badge {
-        display: inline-block;
-        font-size: 0.7rem;
-        font-weight: 600;
-        padding: 0.15rem 0.5rem;
-        border-radius: 9999px;
-        background: var(--bg-secondary);
-        color: var(--text-secondary);
-        margin-left: 0.5rem;
-    }
-    .trust-indicator {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.3rem;
-        font-size: 0.75rem;
-        font-weight: 500;
-    }
-    .trust-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        display: inline-block;
-    }
-    .section-title {
-        font-size: 1.1rem;
-        font-weight: 700;
-        color: var(--text-primary);
-        margin-bottom: 0.75rem;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-    .empty-state {
-        text-align: center;
-        padding: 3rem 1rem;
-        color: var(--text-muted);
-        font-style: italic;
-    }
-</style>
-{% endblock %}
 
 {% block content %}
-<div style="margin-bottom: 2rem;">
-    <h1 style="font-size: 1.8rem; font-weight: 800; color: var(--text-primary); margin: 0;">
-        <span style="display: inline-block; width: 12px; height: 12px; background: var(--accent); border-radius: 50%; margin-right: 0.75rem;"></span>
-        Command Center
-    </h1>
-    <p style="color: var(--text-secondary); font-size: 0.9rem; margin-top: 0.25rem;">
-        {% if is_logged_in %}
-        Monitor your agents and tasks at a glance.
-        {% else %}
-        <a href="{{ url_for('login_page') }}" style="color: var(--accent); text-decoration: underline;">Sign in</a> to see your personal agents and tasks.
-        {% endif %}
-    </p>
-</div>
-
-{% if is_logged_in %}
-<div class="stats-grid">
-    <div class="stat-card">
-        <div class="label">Agents</div>
-        <div class="value">{{ agents|length }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">Tasks</div>
-        <div class="value">{{ tasks|length }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">Active Tasks</div>
-        <div class="value">{{ tasks|selectattr('status', 'equalto', 'running')|list|length }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">Completed Tasks</div>
-        <div class="value">{{ tasks|selectattr('status', 'equalto', 'completed')|list|length }}</div>
-    </div>
-</div>
-
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
-    <div>
-        <div class="section-title">🤖 Your Agents</div>
-        {% if agents %}
-        <div class="agent-grid">
-            {% for agent in agents %}
-            {% set ctx = agent|trust_context %}
-            <div style="background: var(--glass-bg); backdrop-filter: blur(var(--glass-blur)); border: 1px solid var(--border-glow); border-radius: 12px; padding: 1rem;">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                    <div>
-                        <h3 style="font-size: 1rem; font-weight: 700; margin: 0;">{{ agent.get('name', 'Unnamed') }}</h3>
-                        <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">
-                            Capabilities: {{ agent.get('capabilities', [])|join(', ') or '—' }}
-                        </div>
-                    </div>
-                    <span class="reputation-badge">{{ ctx.tier }}</span>
-                </div>
-                <div style="margin-top: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.75rem;">
-                    <div class="trust-indicator">
-                        <span class="trust-dot" style="background: {{ ctx.color }};"></span>
-                        {{ ctx.label }}
-                    </div>
-                    <span style="font-size: 0.75rem; color: var(--text-muted);">Success: {{ ctx.success_percent }}</span>
-                    {% if ctx.timeouts > 0 %}
-                    <span style="font-size: 0.75rem; color: #f59e0b;">⚠️ {{ ctx.timeouts }} timeouts</span>
-                    {% endif %}
-                </div>
-            </div>
-            {% endfor %}
+<div class="metaverse-hero">
+    <div class="hero-content">
+        <h1>Welcome to the Metaverse</h1>
+        <p>Your agent command center. Manage, deploy, and monitor AI agents across the network.</p>
+        {% if not session.access_token %}
+        <div class="hero-cta">
+            <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In to Manage</a>
+            <a href="{{ url_for('register_page') }}" class="btn btn-secondary">Initialize Account</a>
         </div>
-        {% else %}
-        <div class="empty-state">No agents registered yet. <a href="{{ url_for('register_agent_page') }}" style="color: var(--accent);">Create one</a>.</div>
-        {% endif %}
-    </div>
-
-    <div>
-        <div class="section-title">📋 Recent Tasks</div>
-        {% if tasks %}
-        <ul class="task-list">
-            {% for task in tasks[:10] %}
-            <li class="task-item">
-                <div>
-                    <div style="font-weight: 600; font-size: 0.9rem;">{{ task.get('name', 'Untitled') }}</div>
-                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">
-                        Agent: {{ task.get('agent_name', '—') }} · Created: {{ task.get('created_at', '—')[:10] if task.get('created_at') else '—' }}
-                    </div>
-                </div>
-                <span class="task-status {{ task.get('status', 'pending')|lower }}">{{ task.get('status', 'pending') }}</span>
-            </li>
-            {% endfor %}
-        </ul>
-        {% else %}
-        <div class="empty-state">No tasks yet. <a href="{{ url_for('tasks_page') }}" style="color: var(--accent);">Start one</a>.</div>
         {% endif %}
     </div>
 </div>
 
-{% else %}
-<div class="empty-state" style="padding: 4rem 1rem;">
-    <div style="font-size: 1.2rem; margin-bottom: 0.5rem;">🔒</div>
-    <p style="font-size: 1rem; font-weight: 500;">Welcome to the AgentNet Command Center</p>
-    <p style="color: var(--text-secondary); margin-top: 0.5rem;">Sign in to manage your agents, track tasks, and monitor performance.</p>
-    <div style="margin-top: 1.5rem;">
-        <a href="{{ url_for('login_page') }}" class="btn btn-primary" style="padding: 0.6rem 1.5rem;">Sign In</a>
-        <a href="{{ url_for('register_page') }}" class="btn btn-secondary" style="padding: 0.6rem 1.5rem; margin-left: 0.5rem;">Initialize Account</a>
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+
+<div class="dashboard-grid">
+    <div class="card dashboard-card">
+        <h3>🔧 Agents</h3>
+        <p class="stat-number">{{ agents|length }}</p>
+        <span class="stat-label">Registered on network</span>
+        {% if agents %}
+        <a href="{{ url_for('directory_page') }}" class="btn btn-sm btn-outline">View All</a>
+        {% endif %}
+    </div>
+    <div class="card dashboard-card">
+        <h3>📋 Tasks</h3>
+        <p class="stat-number">{{ tasks|length }}</p>
+        <span class="stat-label">Total tasks submitted</span>
+        {% if tasks %}
+        <a href="{{ url_for('tasks_page') }}" class="btn btn-sm btn-outline">View All</a>
+        {% endif %}
+    </div>
+    <div class="card dashboard-card">
+        <h3>💰 Wallet</h3>
+        <p class="stat-number">—</p>
+        <span class="stat-label">Balance (sign in to see)</span>
+        <a href="{{ url_for('wallet_page') }}" class="btn btn-sm btn-outline">Manage</a>
+    </div>
+</div>
+
+{% if session.access_token and agents %}
+<div class="card" style="margin-top:1.5rem;">
+    <h3>Recent Agents</h3>
+    <div class="agent-list">
+        {% for agent in agents[:6] %}
+        <div class="agent-card-small">
+            <h4>{{ agent.name }}</h4>
+            <p>{{ agent.description[:80] }}{% if agent.description|length > 80 %}…{% endif %}</p>
+            <span class="trust-badge" style="background:{{ agent|trust_context().color }}">{{ agent|trust_context().label }}</span>
+            <span class="tier-badge">{{ agent|trust_context().tier }}</span>
+        </div>
+        {% endfor %}
     </div>
 </div>
 {% endif %}
