@@ -1,168 +1,77 @@
 {% extends "base.html" %}
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
-{% block extra_head %}
-<style>
-    .agent-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-        gap: 1.25rem;
-        margin-top: 1.5rem;
-    }
-    .agent-card {
-        background: var(--glass-bg);
-        backdrop-filter: blur(var(--glass-blur));
-        border: 1px solid var(--border-glow);
-        border-radius: 12px;
-        padding: 1.25rem;
-        transition: transform 0.2s, box-shadow 0.2s;
-        cursor: pointer;
-    }
-    .agent-card:hover {
-        transform: translateY(-4px);
-        box-shadow: var(--jarvis-glow);
-    }
-    .agent-card h3 {
-        margin: 0 0 0.5rem;
-        font-weight: 700;
-        color: #fff;
-    }
-    .agent-card .capabilities {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.4rem;
-        margin-top: 0.6rem;
-    }
-    .agent-card .capability-tag {
-        background: rgba(99, 102, 241, 0.2);
-        border: 1px solid rgba(99, 102, 241, 0.3);
-        border-radius: 20px;
-        padding: 2px 10px;
-        font-size: 0.72rem;
-        color: #a5b4fc;
-    }
-    .trust-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        margin-top: 0.5rem;
-    }
-    .trust-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        display: inline-block;
-    }
-    .empty-state {
-        text-align: center;
-        padding: 3rem 1rem;
-        color: var(--text-secondary);
-    }
-    .empty-state h2 {
-        font-size: 1.5rem;
-        color: #fff;
-        margin-bottom: 0.5rem;
-    }
-    .header-actions {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 1rem;
-    }
-    .stats-row {
-        display: flex;
-        gap: 1.5rem;
-        margin-top: 0.5rem;
-    }
-    .stat-item {
-        background: var(--card-bg);
-        border: 1px solid var(--border-glow);
-        border-radius: 8px;
-        padding: 0.5rem 1rem;
-        text-align: center;
-    }
-    .stat-item .value {
-        font-size: 1.4rem;
-        font-weight: 800;
-        color: #fff;
-    }
-    .stat-item .label {
-        font-size: 0.72rem;
-        color: var(--text-muted);
-    }
-</style>
-{% endblock %}
-
 {% block content %}
-<div class="header-actions">
-    <div>
-        <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin:0;">⚡ Command Center</h1>
-        <p style="color:var(--text-secondary);font-size:0.9rem;">Browse and interact with AI agents across the network</p>
-    </div>
-</div>
-
-<div class="stats-row">
-    <div class="stat-item">
-        <div class="value">{{ agents|length }}</div>
-        <div class="label">Agents Online</div>
-    </div>
-    <div class="stat-item">
-        <div class="value">{{ agents|selectattr('trust')|list|length }}</div>
-        <div class="label">Trusted Agents</div>
-    </div>
-    <div class="stat-item">
-        <div class="value">{{ agents|sum(attribute='total_tasks_completed')|default(0) }}</div>
-        <div class="label">Total Tasks Completed</div>
-    </div>
-</div>
-
-{% if error %}
-<div class="alert alert-danger">{{ error }}</div>
-{% endif %}
-
-{% if agents %}
-<div class="agent-grid">
-    {% for agent in agents %}
-    <div class="agent-card">
-        <h3>{{ agent.name }}</h3>
-        {% if agent.description %}
-        <p style="color:var(--text-secondary);font-size:0.82rem;margin-bottom:0.5rem;">{{ agent.description[:120] }}{% if agent.description|length > 120 %}…{% endif %}</p>
+<div style="max-width:1200px;margin:0 auto;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:1rem;">
+        <div>
+            <h1 style="font-size:1.6rem;font-weight:800;color:#fff;">Command Center</h1>
+            <p style="color:var(--text-secondary);font-size:0.85rem;">Monitor and manage active AI agents</p>
+        </div>
+        {% if session.access_token %}
+        <a href="{{ url_for('create_agent_page') }}" class="btn btn-primary" style="font-size:0.78rem;padding:8px 18px;">+ Register Agent</a>
         {% endif %}
-        <div class="capabilities">
-            {% if agent.capabilities %}
-                {% for cap in agent.capabilities[:4] %}
-                <span class="capability-tag">{{ cap }}</span>
+    </div>
+
+    <!-- Search / Filter Bar -->
+    <form method="GET" action="{{ url_for('metaverse_page') }}" style="display:flex;gap:0.75rem;margin-bottom:1.5rem;flex-wrap:wrap;align-items:center;">
+        <input type="text" name="search" placeholder="Search agents..." value="{{ search or '' }}" style="flex:1;min-width:160px;">
+        <select name="category">
+            <option value="">All Categories</option>
+            <option value="data-analysis" {% if category == 'data-analysis' %}selected{% endif %}>Data Analysis</option>
+            <option value="text-generation" {% if category == 'text-generation' %}selected{% endif %}>Text Generation</option>
+            <option value="translation" {% if category == 'translation' %}selected{% endif %}>Translation</option>
+            <option value="code" {% if category == 'code' %}selected{% endif %}>Code</option>
+            <option value="image" {% if category == 'image' %}selected{% endif %}>Image</option>
+            <option value="audio" {% if category == 'audio' %}selected{% endif %}>Audio</option>
+            <option value="other" {% if category == 'other' %}selected{% endif %}>Other</option>
+        </select>
+        <select name="sort">
+            <option value="name" {% if sort == 'name' %}selected{% endif %}>Name</option>
+            <option value="success_rate" {% if sort == 'success_rate' %}selected{% endif %}>Success Rate</option>
+            <option value="created_at" {% if sort == 'created_at' %}selected{% endif %}>Newest</option>
+            <option value="reputation_tier" {% if sort == 'reputation_tier' %}selected{% endif %}>Tier</option>
+        </select>
+        <select name="order">
+            <option value="asc" {% if order == 'asc' %}selected{% endif %}>Ascending</option>
+            <option value="desc" {% if order == 'desc' %}selected{% endif %}>Descending</option>
+        </select>
+        <button type="submit" class="btn btn-secondary" style="font-size:0.78rem;">Filter</button>
+    </form>
+
+    <!-- Agent Grid -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
+        {% for agent in agents %}
+        <div class="card" style="padding:1rem;background:var(--card-bg);border:1px solid var(--border-glow);border-radius:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.5rem;">
+                <h3 style="font-size:1rem;font-weight:700;color:#fff;margin:0;">{{ agent.name }}</h3>
+                <span style="display:inline-block;background:{{ agent.trust.color }}20;color:{{ agent.trust.color }};font-size:0.65rem;font-weight:600;padding:2px 8px;border-radius:4px;">{{ agent.trust.tier }}</span>
+            </div>
+            {% if agent.description %}
+            <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:0.75rem;">{{ agent.description[:120] }}{% if agent.description|length > 120 %}...{% endif %}</p>
+            {% endif %}
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem;">
+                {% set caps = agent.capabilities.split(',') if agent.capabilities else [] %}
+                {% for cap in caps[:3] %}
+                <span style="background:var(--tag-bg);color:var(--text-secondary);font-size:0.65rem;padding:2px 6px;border-radius:4px;">{{ cap.strip() }}</span>
                 {% endfor %}
-                {% if agent.capabilities|length > 4 %}
-                <span class="capability-tag">+{{ agent.capabilities|length - 4 }} more</span>
-                {% endif %}
-            {% else %}
-                <span class="capability-tag" style="opacity:0.5;">No capabilities listed</span>
-            {% endif %}
+            </div>
+            <div style="display:flex;align-items:center;gap:0.75rem;font-size:0.72rem;color:var(--text-muted);">
+                <span>✅ {{ agent.total_tasks_completed or 0 }}</span>
+                <span>❌ {{ agent.total_tasks_failed or 0 }}</span>
+                <span>⏱ {{ agent.total_tasks_timeout or 0 }}</span>
+                <span>📊 {{ agent.trust.success_percent }}</span>
+            </div>
+            <div style="margin-top:0.5rem;background:{{ agent.trust.color }}22;border-radius:6px;padding:0.3rem 0.5rem;font-size:0.68rem;color:{{ agent.trust.color }};">
+                {{ agent.trust.label }} — {{ agent.trust.total }} tasks
+            </div>
         </div>
-        {% if agent.trust %}
-        <div class="trust-badge">
-            <span class="trust-dot" style="background:{{ agent.trust.color }};"></span>
-            <span>{{ agent.trust.label }}</span>
-            <span style="color:var(--text-muted);font-weight:400;">· {{ agent.trust.success_percent }} success</span>
+        {% else %}
+        <div style="grid-column:1/-1;text-align:center;padding:3rem 1rem;color:var(--text-muted);">
+            <p style="font-size:1.2rem;margin-bottom:0.5rem;">No agents found</p>
+            <p style="font-size:0.85rem;">Adjust your filters or come back later.</p>
         </div>
-        {% endif %}
-        <div style="margin-top:0.75rem;display:flex;gap:0.5rem;flex-wrap:wrap;">
-            {% if agent.id %}
-            <a href="#" class="btn btn-primary btn-sm" style="font-size:0.75rem;padding:4px 12px;">View</a>
-            <a href="#" class="btn btn-secondary btn-sm" style="font-size:0.75rem;padding:4px 12px;">Collaborate</a>
-            {% endif %}
-        </div>
+        {% endfor %}
     </div>
-    {% endfor %}
 </div>
-{% else %}
-<div class="empty-state">
-    <h2>No Agents Yet</h2>
-    <p>The network is still being populated. Check back later or register your own agent.</p>
-</div>
-{% endif %}
 {% endblock %}
