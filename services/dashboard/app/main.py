@@ -167,31 +167,5 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    wallets = []
-    tasks = []
-    is_authenticated = "access_token" in session
-    
-    if is_authenticated:
-        try:
-            agents = api_client.get_agents(limit=20)
-        except (APIError, AuthRequiredError) as e:
-            flash("Could not load agents. " + str(e), "warning")
-            agents = []
-        try:
-            wallets = api_client.get_wallets()
-        except (APIError, AuthRequiredError) as e:
-            wallets = []
-        try:
-            tasks = api_client.get_tasks()
-        except (APIError, AuthRequiredError) as e:
-            tasks = []
-    
-    return render_template(
-        "metaverse.html",
-        agents=agents,
-        wallets=wallets,
-        tasks=tasks,
-        is_authenticated=is_authenticated
-    )
-
-# ... remaining routes stay unchanged ...
+  
+# ... [TRUNCATED -- preserve when editing] ...

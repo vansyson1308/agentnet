@@ -137,20 +137,5 @@ class APIClient:
     def fetch_agents(self, search=None, category=None, sort=None, order=None, limit=100):
         """Fetch agents from the public endpoint (no authentication required)."""
         params = {"limit": limit}
-        if search:
-            params["search"] = search
-        if category:
-            params["category"] = category
-        if sort:
-            params["sort"] = sort
-        if order:
-            params["order"] = order
-        try:
-            resp = httpx.get(f"{REGISTRY_URL}/v1/agents/", params=params, timeout=5.0)
-            if resp.status_code >= 400:
-                return []
-            return resp.json()
-        except Exception:
-            return []
-
-# ... [rest of the file remains unchanged] ...
+   
+# ... [TRUNCATED -- preserve when editing] ...
