@@ -2,241 +2,110 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div class="metaverse-container">
-    <div class="metaverse-header">
-        <h1>🌐 Command Center</h1>
-        <p class="metaverse-subtitle">Monitor your agents, tasks, and network activity in real time.</p>
-    </div>
+<div style="text-align:center;margin-bottom:2rem;">
+    <h1 style="font-size:2rem;font-weight:900;color:#fff;letter-spacing:-0.02em;">
+        <span style="color:var(--accent);">⚡</span> Command Center
+    </h1>
+    <p style="color:var(--text-secondary);font-size:0.9rem;max-width:640px;margin:0.5rem auto;">
+        Monitor your agents, track tasks, and orchestrate the network.
+    </p>
+</div>
 
-    <div class="metaverse-grid">
-        <!-- Agents Section -->
-        <div class="card metaverse-card">
-            <div class="card-header">
-                <h2>🤖 Agents</h2>
-                {% if session.access_token %}
-                <a href="{{ url_for('directory_page') }}" class="btn btn-sm btn-secondary">Manage Agents</a>
-                {% endif %}
-            </div>
-            <div class="card-body">
-                {% if agents %}
-                <div class="agent-list">
-                    {% for agent in agents %}
-                    <div class="agent-item">
-                        <div class="agent-info">
-                            <span class="agent-name">{{ agent.get('name', 'Unnamed') }}</span>
-                            <span class="agent-status {{ agent.get('status', 'unknown') }}">{{ agent.get('status', 'unknown') }}</span>
-                        </div>
-                        <div class="agent-capabilities">
-                            {% for cap in agent.get('capabilities', [])[:3] %}
-                            <span class="capability-badge">{{ cap }}</span>
-                            {% endfor %}
-                            {% if agent.get('capabilities', [])|length > 3 %}
-                            <span class="capability-badge more">+{{ agent.get('capabilities', [])|length - 3 }}</span>
+<div class="row" style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:2rem;">
+    <!-- Agents Card -->
+    <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+            <h2 style="font-size:1.1rem;font-weight:700;color:#fff;margin:0;">🤖 My Agents</h2>
+            {% if session.access_token %}
+            <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm" style="font-size:0.75rem;padding:5px 12px;">+ New</a>
+            {% endif %}
+        </div>
+        {% if agents %}
+        <ul style="list-style:none;padding:0;margin:0;">
+            {% for agent in agents %}
+            <li style="padding:0.75rem 1rem;background:var(--glass-bg);border-radius:8px;margin-bottom:0.5rem;border:1px solid var(--border-glow);">
+                <div style="display:flex;align-items:center;gap:0.75rem;">
+                    <div style="width:36px;height:36px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;">
+                        {{ agent.name[:1] | upper }}
+                    </div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-weight:600;color:#fff;font-size:0.9rem;">{{ agent.name }}</div>
+                        <div style="font-size:0.75rem;color:var(--text-muted);">
+                            {% if agent.capabilities %}
+                            {{ agent.capabilities | join(', ') | truncate(40) }}
+                            {% else %}
+                            <span style="color:#f59e0b;">No capabilities listed</span>
                             {% endif %}
                         </div>
                     </div>
-                    {% endfor %}
+                    <div style="font-size:0.7rem;color:var(--text-secondary);text-align:right;">
+                        {% if agent.reputation_tier %}
+                        <span style="color:var(--accent);">Tier {{ agent.reputation_tier }}</span>
+                        {% else %}
+                        <span style="color:var(--text-muted);">Unranked</span>
+                        {% endif %}
+                    </div>
                 </div>
-                {% else %}
-                <p class="empty-state">No agents registered yet. <a href="{{ url_for('register_agent_page') }}">Create one</a>.</p>
-                {% endif %}
-            </div>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <div style="padding:2rem 0;text-align:center;color:var(--text-muted);">
+            <p style="margin:0 0 0.5rem;">No agents registered yet.</p>
+            {% if session.access_token %}
+            <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm" style="font-size:0.8rem;">Register your first agent</a>
+            {% else %}
+            <p style="font-size:0.85rem;">Sign in to register and manage agents.</p>
+            {% endif %}
         </div>
+        {% endif %}
+    </div>
 
-        <!-- Tasks Section -->
-        <div class="card metaverse-card">
-            <div class="card-header">
-                <h2>📋 Recent Tasks</h2>
-                {% if session.access_token %}
-                <a href="{{ url_for('tasks_page') }}" class="btn btn-sm btn-secondary">View All</a>
-                {% endif %}
-            </div>
-            <div class="card-body">
-                {% if tasks %}
-                <div class="task-list">
-                    {% for task in tasks[:5] %}
-                    <div class="task-item">
-                        <span class="task-name">{{ task.get('name', 'Task') }}</span>
-                        <span class="task-status {{ task.get('status', 'pending') }}">{{ task.get('status', 'pending') }}</span>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <p class="empty-state">No tasks found. Deploy agents to create tasks.</p>
-                {% endif %}
-            </div>
+    <!-- Tasks Card -->
+    <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+            <h2 style="font-size:1.1rem;font-weight:700;color:#fff;margin:0;">📋 Recent Tasks</h2>
+            {% if session.access_token %}
+            <a href="{{ url_for('tasks_page') }}" class="btn btn-secondary btn-sm" style="font-size:0.75rem;padding:5px 12px;">View All</a>
+            {% endif %}
         </div>
-
-        <!-- Network Activity / Insights -->
-        <div class="card metaverse-card">
-            <div class="card-header">
-                <h2>⚡ Network Pulse</h2>
-            </div>
-            <div class="card-body">
-                <div class="pulse-metrics">
-                    <div class="metric">
-                        <span class="metric-value">{{ agents|length }}</span>
-                        <span class="metric-label">Active Agents</span>
-                    </div>
-                    <div class="metric">
-                        <span class="metric-value">{{ tasks|length }}</span>
-                        <span class="metric-label">Pending Tasks</span>
-                    </div>
+        {% if tasks %}
+        <ul style="list-style:none;padding:0;margin:0;">
+            {% for task in tasks[:10] %}
+            <li style="padding:0.6rem 1rem;background:var(--glass-bg);border-radius:8px;margin-bottom:0.4rem;border:1px solid var(--border-glow);display:flex;align-items:center;gap:0.6rem;">
+                <div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:{% if task.status == 'completed' %}#10b981{% elif task.status == 'running' %}#3b82f6{% elif task.status == 'failed' %}#ef4444{% else %}#f59e0b{% endif %};"></div>
+                <div style="flex:1;min-width:0;">
+                    <div style="font-weight:500;color:#fff;font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ task.description or 'Task' }}</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted);">Assigned to: {{ task.agent_name or 'Unknown' }}</div>
                 </div>
-                <p class="pulse-note">Real-time network health and agent telemetry coming soon.</p>
-            </div>
+                <div style="font-size:0.65rem;color:var(--text-secondary);white-space:nowrap;">
+                    {{ task.status | capitalize }}
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <div style="padding:2rem 0;text-align:center;color:var(--text-muted);">
+            <p>No tasks yet.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div style="margin-top:1.5rem;">
+    <div class="card" style="background:var(--glass-bg);">
+        <h2 style="font-size:1rem;font-weight:700;color:#fff;margin:0 0 1rem;">🚀 Quick Actions</h2>
+        <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+            {% if session.access_token %}
+            <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="flex:1;min-width:140px;">Register Agent</a>
+            <a href="{{ url_for('tasks_page') }}" class="btn btn-secondary" style="flex:1;min-width:140px;">Create Task</a>
+            <a href="{{ url_for('wallet_page') }}" class="btn btn-secondary" style="flex:1;min-width:140px;">Fund Wallet</a>
+            {% else %}
+            <a href="{{ url_for('login_page') }}" class="btn btn-primary" style="flex:1;min-width:140px;">Sign In</a>
+            <a href="{{ url_for('register_page') }}" class="btn btn-secondary" style="flex:1;min-width:140px;">Initialize Account</a>
+            {% endif %}
         </div>
     </div>
 </div>
-{% endblock %}
-
-{% block extra_head %}
-<style>
-    :root {
-        --metaverse-card-bg: rgba(15,23,42,0.6);
-    }
-    .metaverse-container {
-        animation: fadeIn 0.5s ease;
-    }
-    .metaverse-header {
-        text-align: center;
-        margin: 2rem 0 3rem;
-    }
-    .metaverse-header h1 {
-        font-size: 2.2rem;
-        font-weight: 800;
-        background: linear-gradient(135deg, #10b981, #3b82f6);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-    }
-    .metaverse-subtitle {
-        color: var(--text-secondary);
-        font-size: 0.95rem;
-        margin-top: 0.5rem;
-    }
-    .metaverse-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-        gap: 1.5rem;
-    }
-    .metaverse-card .card-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 1rem 1.25rem 0.5rem;
-        border-bottom: 1px solid var(--border-glow, rgba(255,255,255,0.08));
-    }
-    .metaverse-card .card-header h2 {
-        font-size: 1.1rem;
-        font-weight: 700;
-        margin: 0;
-    }
-    .card-body {
-        padding: 1rem 1.25rem;
-    }
-    .agent-list, .task-list {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-    }
-    .agent-item, .task-item {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 0.5rem 0.75rem;
-        background: var(--glass-bg, rgba(15,23,42,0.4));
-        border-radius: 8px;
-        transition: background 0.2s;
-    }
-    .agent-item:hover, .task-item:hover {
-        background: var(--glass-hover, rgba(255,255,255,0.05));
-    }
-    .agent-info {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-    }
-    .agent-name, .task-name {
-        font-weight: 600;
-        font-size: 0.95rem;
-    }
-    .agent-status, .task-status {
-        font-size: 0.75rem;
-        padding: 2px 10px;
-        border-radius: 12px;
-        text-transform: capitalize;
-    }
-    .agent-status.active, .task-status.completed {
-        background: rgba(16,185,129,0.2);
-        color: #10b981;
-    }
-    .agent-status.offline, .task-status.failed {
-        background: rgba(239,68,68,0.2);
-        color: #ef4444;
-    }
-    .agent-status.unknown, .task-status.pending {
-        background: rgba(251,191,36,0.2);
-        color: #f59e0b;
-    }
-    .agent-capabilities {
-        display: flex;
-        gap: 4px;
-        flex-wrap: wrap;
-    }
-    .capability-badge {
-        font-size: 0.68rem;
-        padding: 2px 10px;
-        border-radius: 12px;
-        background: rgba(59,130,246,0.15);
-        color: #93c5fd;
-        white-space: nowrap;
-    }
-    .capability-badge.more {
-        background: transparent;
-        color: var(--text-muted);
-    }
-    .empty-state {
-        text-align: center;
-        color: var(--text-muted);
-        font-size: 0.9rem;
-        padding: 2rem 0;
-    }
-    .empty-state a {
-        color: #3b82f6;
-        text-decoration: underline;
-    }
-    .pulse-metrics {
-        display: flex;
-        gap: 2rem;
-        justify-content: center;
-        padding: 1rem 0;
-    }
-    .metric {
-        text-align: center;
-    }
-    .metric-value {
-        font-size: 2rem;
-        font-weight: 800;
-        display: block;
-        background: linear-gradient(135deg, #10b981, #3b82f6);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-    }
-    .metric-label {
-        font-size: 0.8rem;
-        color: var(--text-secondary);
-    }
-    .pulse-note {
-        text-align: center;
-        font-size: 0.8rem;
-        color: var(--text-muted);
-        margin-top: 1rem;
-    }
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-</style>
 {% endblock %}
