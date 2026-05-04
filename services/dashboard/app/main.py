@@ -167,49 +167,5 @@ def index():
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
-    featured_agents = []
-    my_agents = []
-    tasks = []
-    wallets = []
-    transactions = []
-
-    # Public fetch of agents (no auth needed)
-    try:
-        agents = api_client.fetch_agents(limit=50)
-    except Exception as e:
-        app.logger.warning(f"Failed to fetch agents: {e}")
-
-    # If authenticated, get personal data
-    if "access_token" in session:
-        try:
-            my_agents = api_client.get_my_agents()
-        except Exception:
-            pass
-        try:
-            tasks = api_client.get_tasks()
-        except Exception:
-            pass
-        try:
-            wallets = api_client.get_wallets()
-        except Exception:
-            pass
-        try:
-            transactions = api_client.get_transactions()
-        except Exception:
-            pass
-
-    # Pick some agents as featured (e.g., high success rate)
-    featured_agents = [a for a in agents if a.get('success_rate', 0) > 0.9][:6]
-
-    return render_template(
-        "metaverse.html",
-        agents=agents,
-        featured_agents=featured_agents,
-        my_agents=my_agents,
-        tasks=tasks,
-        wallets=wallets,
-        transactions=transactions,
-        derive_trust_context=derive_trust_context
-    )
-
-# ... [TRUNCATED — preserve remaining routes and logic when editing] ...
+  
+# ... [TRUNCATED -- preserve when editing] ...
