@@ -1,56 +1,75 @@
 {% extends "base.html" %}
-{% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
+{% block title %}J.A.R.V.I.S. — Metaverse Command Center{% endblock %}
 
 {% block content %}
 <div style="margin-bottom:2rem;">
-    <h1 style="font-size:1.6rem;font-weight:800;color:#fff;">⚡ Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.85rem;">Overview of agents and tasks</p>
+    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin-bottom:0.3rem;">🌐 Metaverse Command Center</h1>
+    <p style="color:var(--text-secondary);font-size:0.95rem;">Monitor and manage your AI agents and tasks in real-time</p>
 </div>
 
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:2rem;">
-    <!-- Agents summary -->
-    <div class="card" style="padding:1.2rem;">
-        <h2 style="font-size:1.1rem;font-weight:700;color:#fff;margin-bottom:1rem;">🤖 Agents</h2>
-        {% if agents %}
-        <ul style="list-style:none;padding:0;">
-            {% for agent in agents %}
-            {% set tc = agent|trust_context %}
-            <li style="display:flex;align-items:center;justify-content:space-between;padding:0.6rem 0;border-bottom:1px solid var(--border-glow);">
+<!-- AGENTS SECTION -->
+<div style="margin-bottom:2.5rem;">
+    <h2 style="font-size:1.2rem;font-weight:700;color:var(--text-primary);margin-bottom:1rem;">🤖 Agents <span style="font-weight:400;color:var(--text-muted);font-size:0.8rem;">{{ agents|length }} online</span></h2>
+    {% if agents %}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.2rem;">
+        {% for agent in agents %}
+        <div class="card" style="padding:1.2rem;transition:all 0.2s;border-left:4px solid {{ agent|trust_context|attr('color') }};">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.5rem;">
                 <div>
-                    <strong style="color:#fff;">{{ agent.name }}</strong>
-                    <span style="color:var(--text-secondary);font-size:0.8rem;margin-left:0.5rem;">{{ agent.capabilities }}</span>
+                    <h3 style="margin:0;font-size:1rem;font-weight:600;color:#fff;">{{ agent.name }}</h3>
+                    <span style="font-size:0.72rem;color:var(--text-muted);">{{ agent.agent_type or 'Generic' }}</span>
                 </div>
-                <span style="color:{{ tc.color }};font-size:0.8rem;font-weight:600;">{{ tc.label }}</span>
-            </li>
-            {% endfor %}
-        </ul>
-        {% else %}
-        <p style="color:var(--text-muted);">No agents registered.</p>
-        {% endif %}
+                <span style="font-size:0.7rem;padding:2px 8px;border-radius:10px;background:{{ agent|trust_context|attr('color') }}22;color:{{ agent|trust_context|attr('color') }};border:1px solid {{ agent|trust_context|attr('color') }}55;">{{ agent|trust_context|attr('tier') }}</span>
+            </div>
+            <p style="font-size:0.82rem;color:var(--text-secondary);margin:0.3rem 0 0.6rem;">{{ agent.description or 'No description' }}</p>
+            <div style="display:flex;gap:0.8rem;font-size:0.75rem;color:var(--text-muted);">
+                <span>✅ {{ agent|trust_context|attr('success_percent') }}</span>
+                <span>⏱️ {{ agent|trust_context|attr('timeouts') }} timeouts</span>
+                <span>📋 {{ agent|trust_context|attr('total') }} tasks</span>
+            </div>
+            <div style="margin-top:0.6rem;font-size:0.7rem;padding:3px 10px;border-radius:6px;background:{{ agent|trust_context|attr('color') }}22;color:{{ agent|trust_context|attr('color') }};display:inline-block;">
+                {{ agent|trust_context|attr('label') }}
+            </div>
+            {% if agent.capabilities %}
+            <div style="margin-top:0.5rem;display:flex;flex-wrap:wrap;gap:4px;">
+                {% for cap in agent.capabilities[:3] %}
+                <span style="font-size:0.65rem;background:var(--glass-bg);padding:2px 8px;border-radius:6px;border:1px solid var(--border-glow);color:var(--text-secondary);">{{ cap }}</span>
+                {% endfor %}
+                {% if agent.capabilities|length > 3 %}
+                <span style="font-size:0.65rem;color:var(--text-muted);">+{{ agent.capabilities|length - 3 }} more</span>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
     </div>
-
-    <!-- Tasks summary -->
-    <div class="card" style="padding:1.2rem;">
-        <h2 style="font-size:1.1rem;font-weight:700;color:#fff;margin-bottom:1rem;">📋 Tasks</h2>
-        {% if tasks %}
-        <ul style="list-style:none;padding:0;">
-            {% for task in tasks %}
-            <li style="display:flex;align-items:center;justify-content:space-between;padding:0.6rem 0;border-bottom:1px solid var(--border-glow);">
-                <div>
-                    <strong style="color:#fff;">{{ task.description }}</strong>
-                    <span style="color:var(--text-secondary);font-size:0.8rem;margin-left:0.5rem;">{{ task.status }}</span>
-                </div>
-            </li>
-            {% endfor %}
-        </ul>
-        {% else %}
-        <p style="color:var(--text-muted);">No tasks running.</p>
-        {% endif %}
+    {% else %}
+    <div class="card" style="text-align:center;padding:2.5rem;">
+        <p style="color:var(--text-muted);font-size:1rem;">No agents available. <a href="{{ url_for('register_agent_page') }}" style="color:var(--accent);">Register one</a></p>
     </div>
+    {% endif %}
 </div>
 
-<div style="text-align:center;margin-top:2rem;">
-    <a href="{{ url_for('marketplace_page') }}" class="btn btn-primary btn-sm" style="font-size:0.85rem;">🏪 Browse Marketplace</a>
-    <a href="{{ url_for('wallet_page') }}" class="btn btn-secondary btn-sm" style="font-size:0.85rem;margin-left:0.5rem;">💰 Wallet</a>
+<!-- TASKS SECTION -->
+<div>
+    <h2 style="font-size:1.2rem;font-weight:700;color:var(--text-primary);margin-bottom:1rem;">📋 Recent Tasks</h2>
+    {% if tasks %}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1rem;">
+        {% for task in tasks[:12] %}
+        <div class="card" style="padding:1rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem;">
+                <h4 style="margin:0;font-size:0.9rem;font-weight:600;color:#fff;">{{ task.description or 'Task' }}</h4>
+                <span style="font-size:0.7rem;padding:2px 8px;border-radius:8px;background:{% if task.status == 'completed' %}#10b98133;color:#10b981{% elif task.status == 'running' %}#3b82f633;color:#3b82f6{% else %}#f59e0b33;color:#f59e0b{% endif %};border:1px solid {% if task.status == 'completed' %}#10b98155{% elif task.status == 'running' %}#3b82f655{% else %}#f59e0b55{% endif %};">{{ task.status }}</span>
+            </div>
+            <p style="font-size:0.78rem;color:var(--text-secondary);margin:0.2rem 0;">Agent: {{ task.agent_name or 'Unknown' }}</p>
+            <p style="font-size:0.72rem;color:var(--text-muted);margin:0;">Created: {{ task.created_at or 'N/A' }}</p>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card" style="text-align:center;padding:2.5rem;">
+        <p style="color:var(--text-muted);font-size:1rem;">No tasks yet. Use the marketplace to assign one.</p>
+    </div>
+    {% endif %}
 </div>
 {% endblock %}
