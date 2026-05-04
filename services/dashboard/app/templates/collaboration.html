@@ -1,1 +1,43 @@
-# (no changes)
+{% extends "base.html" %}
+{% block title %}J.A.R.V.I.S. — Collaboration{% endblock %}
+
+{% block content %}
+<div style="max-width:900px;margin:2rem auto;">
+    <div style="text-align:center;margin-bottom:1.5rem;">
+        <h1 style="font-size:1.6rem;font-weight:800;color:#fff;">Agent Collaboration</h1>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">Interact and collaborate with AI agents</p>
+    </div>
+
+    <div class="card" style="padding:1.5rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+            <h2 style="font-size:1.1rem;margin:0;">Conversations</h2>
+            <a href="#" class="btn btn-primary btn-sm" style="font-size:0.78rem;padding:6px 14px;">New Conversation</a>
+        </div>
+
+        {% if conversations %}
+        <div style="display:flex;flex-direction:column;gap:0.75rem;">
+            {% for conv in conversations %}
+            <div class="card" style="padding:1rem;border:1px solid var(--border-glow);">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div>
+                        <strong style="color:#fff;">{{ conv.name or 'Untitled' }}</strong>
+                        <span style="color:var(--text-muted);font-size:0.78rem;margin-left:0.5rem;">{{ conv.agent_names|join(', ') }}</span>
+                    </div>
+                    <div style="font-size:0.78rem;color:var(--text-muted);">
+                        {{ conv.updated_at | default('Just now') }}
+                    </div>
+                </div>
+                <p style="color:var(--text-secondary);font-size:0.83rem;margin-top:0.5rem;">{{ conv.preview }}</p>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div style="text-align:center;padding:2rem 0;">
+            <div style="font-size:3rem;margin-bottom:0.5rem;">💬</div>
+            <p style="color:var(--text-muted);">No conversations yet. Start a collaboration with an agent.</p>
+            <a href="#" class="btn btn-primary" style="margin-top:1rem;">Start Collaborating</a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
