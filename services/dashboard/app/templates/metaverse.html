@@ -1,134 +1,107 @@
 {% extends "base.html" %}
-{% block title %}J.A.R.V.I.S. — Metaverse Command Center{% endblock %}
+{% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div class="welcome-block" style="margin-bottom:2rem;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">🌐 Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;margin-top:4px;">
-        Monitor your AI agents, track tasks, and manage the network.
+<div style="margin-bottom:2rem;">
+    <h1 style="font-size:1.6rem;font-weight:800;color:#fff;display:flex;align-items:center;gap:0.5rem;">
+        🏠 Command Center
+        <span style="font-size:0.7rem;font-weight:400;color:var(--text-secondary);">– AgentNet Metaverse</span>
+    </h1>
+    <p style="color:var(--text-secondary);font-size:0.85rem;max-width:600px;">
+        Monitor your deployed agents, track tasks, and explore the network.
     </p>
 </div>
 
-{% if not session.access_token %}
-<div class="card" style="text-align:center;padding:2rem;">
-    <h2 style="color:var(--text-muted);font-weight:400;">🔒 Sign in to view your agents and tasks</h2>
-    <p style="margin-top:0.5rem;">
-        <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
-        <a href="{{ url_for('register_page') }}" class="btn btn-secondary" style="margin-left:0.5rem;">Initialize</a>
-    </p>
-</div>
-{% else %}
-<!-- Quick Stats -->
-<div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:2rem;">
-    <div class="stat-card">
-        <div class="stat-label">Agents</div>
-        <div class="stat-value">{{ agents|length }}</div>
+{% if session.access_token %}
+<div class="stats-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:2rem;">
+    <div class="card" style="text-align:center;padding:1rem;">
+        <div style="font-size:2rem;font-weight:800;color:var(--primary);">{{ agents|length }}</div>
+        <div style="font-size:0.75rem;color:var(--text-secondary);">Agents</div>
     </div>
-    <div class="stat-card">
-        <div class="stat-label">Tasks</div>
-        <div class="stat-value">{{ tasks|length }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-label">Active Tasks</div>
-        <div class="stat-value">{{ tasks|selectattr('status','equalto','running')|list|length }}</div>
+    <div class="card" style="text-align:center;padding:1rem;">
+        <div style="font-size:2rem;font-weight:800;color:var(--primary);">{{ tasks|length }}</div>
+        <div style="font-size:0.75rem;color:var(--text-secondary);">Active Tasks</div>
     </div>
 </div>
 
-<div class="two-col" style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
-    <!-- Agents List -->
-    <div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
-            <h2 style="font-size:1.1rem;font-weight:700;color:#fff;">🤖 Your Agents</h2>
-            <a href="{{ url_for('register_agent_page') }}" style="font-size:0.8rem;color:var(--accent);">+ New</a>
-        </div>
-        {% if agents %}
-        <div class="list-container" style="max-height:400px;overflow-y:auto;">
-            {% for agent in agents %}
-            <div class="list-item" style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0.8rem;border-bottom:1px solid var(--border-subtle);">
+<!-- Agents Grid -->
+<section style="margin-bottom:2rem;">
+    <h2 style="font-size:1.1rem;font-weight:600;color:#fff;margin-bottom:1rem;">📡 Your Agents</h2>
+    {% if agents %}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:1rem;">
+        {% for agent in agents %}
+        <div class="card" style="padding:1.2rem;position:relative;">
+            <div style="display:flex;justify-content:space-between;align-items:start;">
                 <div>
-                    <strong style="color:#fff;">{{ agent.name }}</strong>
-                    <div style="font-size:0.75rem;color:var(--text-muted);">{{ agent.capabilities|join(', ') }}</div>
+                    <h3 style="margin:0;font-size:0.95rem;font-weight:600;color:#fff;">{{ agent.name }}</h3>
+                    <p style="margin:0.25rem 0 0;font-size:0.75rem;color:var(--text-secondary);">
+                        {{ agent.capabilities|join(', ') if agent.capabilities else 'No capabilities' }}
+                    </p>
                 </div>
-                <div style="text-align:right;">
-                    {% set ctx = agent|trust_context %}
-                    <span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:0.7rem;font-weight:600;background:{{ ctx.color }}22;color:{{ ctx.color }};">
-                        {{ ctx.label }}
-                    </span>
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <div class="card" style="text-align:center;padding:1.5rem;">
-            <p style="color:var(--text-muted);font-size:0.85rem;">No agents registered yet.</p>
-            <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm" style="margin-top:0.5rem;">Register an Agent</a>
-        </div>
-        {% endif %}
-    </div>
-
-    <!-- Tasks List -->
-    <div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
-            <h2 style="font-size:1.1rem;font-weight:700;color:#fff;">📋 Recent Tasks</h2>
-            <a href="{{ url_for('tasks_page') }}" style="font-size:0.8rem;color:var(--accent);">View all</a>
-        </div>
-        {% if tasks %}
-        <div class="list-container" style="max-height:400px;overflow-y:auto;">
-            {% for task in tasks %}
-            <div class="list-item" style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0.8rem;border-bottom:1px solid var(--border-subtle);">
-                <div>
-                    <strong style="color:#fff;font-size:0.9rem;">{{ task.description|truncate(60) }}</strong>
-                    <div style="font-size:0.75rem;color:var(--text-muted);">
-                        {{ task.agent_name or 'Unassigned' }} · {{ task.created_at|datetime }}
-                    </div>
-                </div>
-                <span class="status-badge status-{{ task.status }}" style="font-size:0.7rem;padding:2px 8px;border-radius:10px;text-transform:capitalize;">
-                    {{ task.status }}
+                {% set tc = agent|trust_context %}
+                <span style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:0.65rem;font-weight:600;color:#fff;background:{{ tc.color }};white-space:nowrap;">
+                    {{ tc.label }}
                 </span>
             </div>
-            {% endfor %}
+            <div style="margin-top:0.8rem;display:flex;gap:1rem;font-size:0.7rem;color:var(--text-secondary);">
+                <span>✅ {{ agent.total_tasks_completed or 0 }} done</span>
+                <span>❌ {{ agent.total_tasks_failed or 0 }} failed</span>
+                <span>⏱️ {{ tc.timeouts }} timeouts</span>
+            </div>
+            <div style="margin-top:0.5rem;font-size:0.65rem;color:var(--text-muted);">
+                Tier: {{ tc.tier }} · Success: {{ tc.success_percent }}
+            </div>
+            <div style="margin-top:0.7rem;">
+                <a href="/agent/{{ agent.id }}" class="btn btn-sm btn-outline" style="font-size:0.7rem;">View Details</a>
+            </div>
         </div>
-        {% else %}
-        <div class="card" style="text-align:center;padding:1.5rem;">
-            <p style="color:var(--text-muted);font-size:0.85rem;">No tasks yet. Assign tasks to your agents to get started.</p>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card" style="text-align:center;padding:2rem;">
+        <div style="font-size:2rem;margin-bottom:0.5rem;">🤖</div>
+        <p style="color:var(--text-secondary);font-size:0.85rem;">No agents yet.</p>
+        <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm">Register an Agent</a>
+    </div>
+    {% endif %}
+</section>
+
+<!-- Tasks List -->
+<section>
+    <h2 style="font-size:1.1rem;font-weight:600;color:#fff;margin-bottom:1rem;">📋 Active Tasks</h2>
+    {% if tasks %}
+    <div style="display:flex;flex-direction:column;gap:0.6rem;">
+        {% for task in tasks %}
+        <div class="card" style="padding:0.8rem 1rem;display:flex;justify-content:space-between;align-items:center;">
+            <div>
+                <div style="font-size:0.85rem;font-weight:500;color:#fff;">{{ task.description or 'Untitled Task' }}</div>
+                <div style="font-size:0.7rem;color:var(--text-secondary);">
+                    Agent: {{ task.agent_id }} · Status: {{ task.status or 'pending' }}
+                </div>
+            </div>
+            <span style="font-size:0.7rem;color:var(--text-muted);">{{ task.created_at or '' }}</span>
         </div>
-        {% endif %}
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card" style="text-align:center;padding:1.5rem;">
+        <p style="color:var(--text-secondary);font-size:0.85rem;">No active tasks.</p>
+    </div>
+    {% endif %}
+</section>
+
+{% else %}
+<!-- Unauthenticated prompt -->
+<div class="card" style="text-align:center;padding:3rem 2rem;max-width:500px;margin:auto;">
+    <div style="font-size:3rem;margin-bottom:1rem;">🔐</div>
+    <h2 style="color:#fff;font-size:1.2rem;font-weight:600;">Access the Command Center</h2>
+    <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1.5rem;">
+        Sign in to view your agents, tasks, and manage the metaverse.
+    </p>
+    <div style="display:flex;gap:1rem;justify-content:center;">
+        <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
+        <a href="{{ url_for('register_page') }}" class="btn btn-secondary">Initialize</a>
     </div>
 </div>
 {% endif %}
-{% endblock %}
-
-{% block extra_scripts %}
-<style>
-    .stat-card {
-        background: var(--glass-bg);
-        backdrop-filter: blur(var(--glass-blur));
-        border: 1px solid var(--border-glow);
-        border-radius: var(--radius);
-        padding: 1rem 1.2rem;
-    }
-    .stat-label {
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: var(--text-muted);
-    }
-    .stat-value {
-        font-size: 1.8rem;
-        font-weight: 800;
-        color: #fff;
-        margin-top: 2px;
-    }
-    .list-container {
-        background: var(--glass-bg);
-        backdrop-filter: blur(var(--glass-blur));
-        border: 1px solid var(--border-glow);
-        border-radius: var(--radius);
-        overflow: hidden;
-    }
-    .status-pending   { background: #f59e0b22; color: #f59e0b; }
-    .status-running   { background: #3b82f622; color: #3b82f6; }
-    .status-completed { background: #10b98122; color: #10b981; }
-    .status-failed    { background: #ef444422; color: #ef4444; }
-</style>
 {% endblock %}
