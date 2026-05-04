@@ -166,5 +166,239 @@ def index():
 @app.route("/metaverse")
 def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
-    agent
-# ... [TRUNCATED -- preserve when editing] ...
+    agents = []
+    stats = {}
+    error = None
+    if session.get("access_token"):
+        try:
+            agents = api_client.fetch_agents(limit=20)
+            # basic stats from agents
+            total_agents = len(agents)
+            if agents:
+                total_tasks = sum(a.get('total_tasks_completed', 0) + a.get('total_tasks_failed', 0) + a.get('total_tasks_timeout', 0) for a in agents)
+                avg_success = sum(a.get('success_rate', 0) for a in agents) / total_agents if total_agents else 0
+            else:
+                total_tasks = 0
+                avg_success = 0.0
+            stats = {
+                "total_agents": total_agents,
+                "total_tasks": total_tasks,
+                "avg_success": f"{avg_success:.1%}",
+                "online": sum(1 for a in agents if a.get('status') == 'online')
+            }
+        except APIError as e:
+            error = str(e.message)
+            flash("Could not fetch agent data. Using sample data.", "warning")
+        except Exception as e:
+            error = str(e)
+            flash("An error occurred loading the dashboard.", "danger")
+    return render_template("metaverse.html", agents=agents, stats=stats, error=error)
+
+
+@app.route("/marketplace")
+def marketplace_page():
+    agents = []
+    search = request.args.get("search", "")
+    category = request.args.get("category", "")
+    sort = request.args.get("sort", "name")
+    order = request.args.get("order", "asc")
+    try:
+        agents = api_client.fetch_agents(search=search, category=category, sort=sort, order=order, limit=100)
+    except APIError:
+        flash("Could not fetch agents.", "warning")
+        agents = []
+    return render_template("marketplace.html", agents=agents)
+
+
+@app.route("/marketplace/<agent_id>")
+def agent_detail_page(agent_id: str):
+    try:
+        agent = api_client.fetch_agent(agent_id)
+    except APIError as e:
+        if e.status_code == 404:
+            flash("Agent not found.", "warning")
+            return redirect(url_for("marketplace_page"))
+        flash(f"Error fetching agent: {e.message}", "danger")
+        return redirect(url_for("marketplace_page"))
+    trust = derive_trust_context(agent)
+    return render_template("agent_detail.html", agent=agent, trust=trust)
+
+
+# ============================================================
+# AUTH ROUTES (public registration / login)
+# ============================================================
+
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    if request.method == "POST":
+        email = request.form.get("email", "").strip()
+        password = request.form.get("password", "").strip()
+        if not email or not password:
+            flash("Email and password are required.", "danger")
+            return render_template("login.html")
+        try:
+            data = api_client.login(email, password)
+            session["access_token"] = data["access_token"]
+            session["user_id"] = data.get("user_id", "")
+            flash("Login successful.", "success")
+            return redirect(url_for("metaverse_page"))
+        except APIError as e:
+            flash(f"Login failed: {e.message}", "danger")
+    return render_template("login.html")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register_page():
+    if request.method == "POST":
+        email = request.form.get("email", "").strip()
+        password = request.form.get("password", "").strip()
+        username = request.form.get("username", "").strip()
+        if not email or not password or not username:
+            flash("All fields are required.", "danger")
+            return render_template("register.html")
+        try:
+            data = api_client.register(email, password, username)
+            flash("Registration successful. Please log in.", "success")
+            return redirect(url_for("login_page"))
+        except APIError as e:
+            flash(f"Registration failed: {e.message}", "danger")
+    return render_template("register.html")
+
+
+@app.route("/logout")
+def logout_page():
+    session.clear()
+    flash("You have been logged out.", "info")
+    return redirect(url_for("metaverse_page"))
+
+
+# ============================================================
+# AUTHENTICATED ROUTES (require token)
+# ============================================================
+
+@app.route("/directory")
+def directory_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    agents = []
+    try:
+        agents = api_client.fetch_agents(limit=200)
+    except APIError as e:
+        flash(f"Error fetching agents: {e.message}", "danger")
+    return render_template("directory.html", agents=agents)
+
+
+@app.route("/wallet")
+def wallet_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    # Placeholder: fetch wallet data from API later
+    return render_template("wallet.html")
+
+
+@app.route("/tasks")
+def tasks_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    return render_template("tasks.html")
+
+
+@app.route("/collaboration")
+def collaboration_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    return render_template("collaboration.html")
+
+
+@app.route("/notifications")
+def notifications_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    return render_template("notifications.html")
+
+
+@app.route("/register-agent", methods=["GET", "POST"])
+def register_agent_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        description = request.form.get("description", "").strip()
+        endpoint = request.form.get("endpoint", "").strip()
+        capabilities_str = request.form.get("capabilities", "").strip()
+        capabilities = [c.strip() for c in capabilities_str.split(",") if c.strip()]
+        if not name:
+            flash("Agent name is required.", "danger")
+            return render_template("new_agent.html")
+        try:
+            agent = api_client.register_agent(
+                name=name,
+                description=description,
+                endpoint=endpoint,
+                capabilities=capabilities,
+            )
+            flash(f"Agent '{name}' registered successfully!", "success")
+            return redirect(url_for("agent_detail_page", agent_id=agent["id"]))
+        except APIError as e:
+            flash(f"Registration failed: {e.message}", "danger")
+    return render_template("new_agent.html")
+
+
+@app.route("/my-agents")
+def my_agents_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    agents = []
+    try:
+        agents = api_client.fetch_my_agents()
+    except APIError as e:
+        flash(f"Error fetching your agents: {e.message}", "danger")
+    return render_template("my_agents.html", agents=agents)
+
+
+@app.route("/agent/<agent_id>/delete", methods=["POST"])
+def delete_agent(agent_id: str):
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    try:
+        api_client.delete_agent(agent_id)
+        flash("Agent deleted.", "success")
+    except APIError as e:
+        flash(f"Delete failed: {e.message}", "danger")
+    return redirect(url_for("my_agents_page"))
+
+
+@app.route("/create-offer", methods=["GET", "POST"])
+def create_offer_page():
+    if "access_token" not in session:
+        return redirect(url_for("login_page"))
+    if request.method == "POST":
+        # basic offer creation
+        flash("Offer creation not yet implemented.", "info")
+        return redirect(url_for("metaverse_page"))
+    return render_template("create_offer.html")
+
+
+# ============================================================
+# API-LIKE ENDPOINTS (for AJAX, non-HTML)
+# ============================================================
+
+@app.route("/api/agent/<agent_id>/status")
+def agent_status_api(agent_id: str):
+    try:
+        agent = api_client.fetch_agent(agent_id)
+        trust = derive_trust_context(agent)
+        return jsonify(trust)
+    except APIError as e:
+        return jsonify({"error": str(e.message)}), e.status_code
+
+
+@app.route("/api/notifications/stream")
+def notifications_stream():
+    if "access_token" not in session:
+        return jsonify({"error": "unauthorized"}), 403
+    def generate():
+        for i in range(10):
+            time.sleep(2)
+            yield f"data: {json.dumps({'msg': 'test notification'})}\n\n"
+    return Response(stream_with_context(generate()), mimetype="text/event-stream")
