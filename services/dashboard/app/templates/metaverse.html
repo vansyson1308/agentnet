@@ -1,59 +1,59 @@
 {% extends "base.html" %}
-{% block title %}J.A.R.V.I.S. — Metaverse Command Center{% endblock %}
+{% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
+
 {% block content %}
-<div style="max-width:1280px;margin:0 auto;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin-bottom:1rem;">🌌 Metaverse Command Center</h1>
-    <p style="color:var(--text-secondary);margin-bottom:2rem;">Overview of agents and tasks in the network.</p>
-    
+<div style="max-width:960px;margin:0 auto;">
+    <div style="text-align:center;margin-bottom:2rem;">
+        <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">🪐 Command Center</h1>
+        <p style="color:var(--text-secondary);font-size:0.9rem;">Your central hub for managing agents and tasks</p>
+    </div>
+
+    {% if not session.access_token %}
+    <div class="card" style="text-align:center;padding:3rem 2rem;">
+        <p style="font-size:1rem;margin-bottom:1.5rem;">Connect to unlock the full AgentNet experience.</p>
+        <a href="{{ url_for('login_page') }}" class="btn btn-primary">Sign In</a>
+        <a href="{{ url_for('register_page') }}" class="btn btn-secondary" style="margin-left:0.5rem;">Register</a>
+    </div>
+    {% else %}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
         <div class="card">
-            <h2 style="font-size:1.2rem;font-weight:700;color:#fff;margin-bottom:1rem;">Agents</h2>
+            <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;">Your Agents</h2>
             {% if agents %}
-            <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
-                <thead>
-                    <tr style="border-bottom:1px solid var(--border-glow);color:var(--text-muted);">
-                        <th style="text-align:left;padding:8px;">Name</th>
-                        <th style="text-align:left;padding:8px;">Capabilities</th>
-                        <th style="text-align:left;padding:8px;">Reputation</th>
-                    </tr>
-                </thead>
-                <tbody>
-                {% for agent in agents %}
-                    <tr style="border-bottom:1px solid var(--border-subtle);">
-                        <td style="padding:8px;color:#fff;">{{ agent.name or agent.id }}</td>
-                        <td style="padding:8px;color:var(--text-secondary);">{{ agent.capabilities|join(", ") if agent.capabilities else "—" }}</td>
-                        <td style="padding:8px;">{% if agent.reputation_tier %}<span style="color:#f59e0b;">{{ agent.reputation_tier }}</span>{% else %}<span style="color:var(--text-muted);">unranked</span>{% endif %}</td>
-                    </tr>
+            <div style="display:flex;flex-direction:column;gap:0.75rem;">
+                {% for agent in agents[:5] %}
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0;border-bottom:1px solid var(--border-color);">
+                    <span style="font-weight:500;">{{ agent.get('name', 'Unnamed') }}</span>
+                    <span style="font-size:0.8rem;color:var(--text-muted);">{{ agent.get('capabilities', [])|join(', ') }}</span>
+                </div>
                 {% endfor %}
-                </tbody>
-            </table>
+            </div>
+            {% if agents|length > 5 %}
+            <a href="{{ url_for('my_agents_page') }}" style="display:block;margin-top:0.75rem;text-align:center;font-size:0.85rem;">View all {{ agents|length }} agents →</a>
+            {% endif %}
             {% else %}
-            <p style="color:var(--text-muted);">No agents loaded. Please sign in.</p>
+            <p style="color:var(--text-muted);">No agents yet. <a href="{{ url_for('register_agent_page') }}">Create one</a>.</p>
             {% endif %}
         </div>
+
         <div class="card">
-            <h2 style="font-size:1.2rem;font-weight:700;color:#fff;margin-bottom:1rem;">Tasks</h2>
+            <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:1rem;">Recent Tasks</h2>
             {% if tasks %}
-            <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
-                <thead>
-                    <tr style="border-bottom:1px solid var(--border-glow);color:var(--text-muted);">
-                        <th style="text-align:left;padding:8px;">Task ID</th>
-                        <th style="text-align:left;padding:8px;">Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                {% for task in tasks %}
-                    <tr style="border-bottom:1px solid var(--border-subtle);">
-                        <td style="padding:8px;color:#fff;font-family:monospace;font-size:0.75rem;">{{ task.id }}</td>
-                        <td style="padding:8px;">{{ task.status }}</td>
-                    </tr>
+            <div style="display:flex;flex-direction:column;gap:0.75rem;">
+                {% for task in tasks[:5] %}
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:0.5rem 0;border-bottom:1px solid var(--border-color);">
+                    <span style="font-weight:500;">{{ task.get('description', 'Task') }}</span>
+                    <span style="font-size:0.8rem;color:var(--text-muted);">{{ task.get('status', 'unknown') }}</span>
+                </div>
                 {% endfor %}
-                </tbody>
-            </table>
+            </div>
+            {% if tasks|length > 5 %}
+            <a href="{{ url_for('tasks_page') }}" style="display:block;margin-top:0.75rem;text-align:center;font-size:0.85rem;">View all tasks →</a>
+            {% endif %}
             {% else %}
-            <p style="color:var(--text-muted);">No tasks loaded.</p>
+            <p style="color:var(--text-muted);">No tasks yet.</p>
             {% endif %}
         </div>
     </div>
+    {% endif %}
 </div>
 {% endblock %}
