@@ -1,75 +1,108 @@
 {% extends "base.html" %}
-{% block title %}J.A.R.V.I.S. — Metaverse Command Center{% endblock %}
+{% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="margin-bottom:2rem;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin-bottom:0.3rem;">🌐 Metaverse Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.95rem;">Monitor and manage your AI agents and tasks in real-time</p>
-</div>
+<div class="metaverse-container">
+    <!-- Header Stats -->
+    <div class="stats-row">
+        <div class="stat-card">
+            <span class="stat-label">Active Agents</span>
+            <span class="stat-value">{{ agents|length }}</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-label">Pending Tasks</span>
+            <span class="stat-value">{{ tasks|selectattr('status', 'equalto', 'pending')|list|length }}</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-label">Completed Tasks</span>
+            <span class="stat-value">{{ tasks|selectattr('status', 'equalto', 'completed')|list|length }}</span>
+        </div>
+    </div>
 
-<!-- AGENTS SECTION -->
-<div style="margin-bottom:2.5rem;">
-    <h2 style="font-size:1.2rem;font-weight:700;color:var(--text-primary);margin-bottom:1rem;">🤖 Agents <span style="font-weight:400;color:var(--text-muted);font-size:0.8rem;">{{ agents|length }} online</span></h2>
-    {% if agents %}
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.2rem;">
-        {% for agent in agents %}
-        <div class="card" style="padding:1.2rem;transition:all 0.2s;border-left:4px solid {{ agent|trust_context|attr('color') }};">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.5rem;">
-                <div>
-                    <h3 style="margin:0;font-size:1rem;font-weight:600;color:#fff;">{{ agent.name }}</h3>
-                    <span style="font-size:0.72rem;color:var(--text-muted);">{{ agent.agent_type or 'Generic' }}</span>
+    <!-- Agents Section -->
+    <div class="section">
+        <h2 class="section-title">Deployed Agents</h2>
+        {% if agents %}
+        <div class="agent-grid">
+            {% for agent in agents %}
+            <div class="agent-card card">
+                <h3>{{ agent.name }}</h3>
+                <p class="agent-capabilities">
+                    {% for cap in agent.capabilities[:3] %}
+                    <span class="badge">{{ cap }}</span>
+                    {% endfor %}
+                </p>
+                <div class="trust-indicator" style="border-left:4px solid {{ agent|trust_context['color'] }}">
+                    <span class="trust-label">{{ agent|trust_context['label'] }}</span>
+                    <span class="trust-tier">{{ agent|trust_context['tier'] }}</span>
                 </div>
-                <span style="font-size:0.7rem;padding:2px 8px;border-radius:10px;background:{{ agent|trust_context|attr('color') }}22;color:{{ agent|trust_context|attr('color') }};border:1px solid {{ agent|trust_context|attr('color') }}55;">{{ agent|trust_context|attr('tier') }}</span>
+                <div class="agent-meta">
+                    <span>Tasks: {{ agent|trust_context['total'] }}</span>
+                    <span>Success: {{ agent|trust_context['success_percent'] }}</span>
+                </div>
             </div>
-            <p style="font-size:0.82rem;color:var(--text-secondary);margin:0.3rem 0 0.6rem;">{{ agent.description or 'No description' }}</p>
-            <div style="display:flex;gap:0.8rem;font-size:0.75rem;color:var(--text-muted);">
-                <span>✅ {{ agent|trust_context|attr('success_percent') }}</span>
-                <span>⏱️ {{ agent|trust_context|attr('timeouts') }} timeouts</span>
-                <span>📋 {{ agent|trust_context|attr('total') }} tasks</span>
-            </div>
-            <div style="margin-top:0.6rem;font-size:0.7rem;padding:3px 10px;border-radius:6px;background:{{ agent|trust_context|attr('color') }}22;color:{{ agent|trust_context|attr('color') }};display:inline-block;">
-                {{ agent|trust_context|attr('label') }}
-            </div>
-            {% if agent.capabilities %}
-            <div style="margin-top:0.5rem;display:flex;flex-wrap:wrap;gap:4px;">
-                {% for cap in agent.capabilities[:3] %}
-                <span style="font-size:0.65rem;background:var(--glass-bg);padding:2px 8px;border-radius:6px;border:1px solid var(--border-glow);color:var(--text-secondary);">{{ cap }}</span>
-                {% endfor %}
-                {% if agent.capabilities|length > 3 %}
-                <span style="font-size:0.65rem;color:var(--text-muted);">+{{ agent.capabilities|length - 3 }} more</span>
-                {% endif %}
-            </div>
-            {% endif %}
+            {% endfor %}
         </div>
-        {% endfor %}
+        {% else %}
+        <p class="empty-state">No agents deployed yet. Visit the <a href="/marketplace">Marketplace</a> to find agents or <a href="/new-agent">register your own</a>.</p>
+        {% endif %}
     </div>
-    {% else %}
-    <div class="card" style="text-align:center;padding:2.5rem;">
-        <p style="color:var(--text-muted);font-size:1rem;">No agents available. <a href="{{ url_for('register_agent_page') }}" style="color:var(--accent);">Register one</a></p>
+
+    <!-- Tasks Section -->
+    <div class="section">
+        <h2 class="section-title">Recent Tasks</h2>
+        {% if tasks %}
+        <table class="task-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Agent</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in tasks[:10] %}
+                <tr>
+                    <td><code>{{ task.id[:8] }}…</code></td>
+                    <td>{{ task.agent_name or '—' }}</td>
+                    <td><span class="status-badge status-{{ task.status }}">{{ task.status }}</span></td>
+                    <td>{{ task.created_at[:10] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="empty-state">No tasks yet. Assign a task to an agent to see activity here.</p>
+        {% endif %}
     </div>
-    {% endif %}
 </div>
 
-<!-- TASKS SECTION -->
-<div>
-    <h2 style="font-size:1.2rem;font-weight:700;color:var(--text-primary);margin-bottom:1rem;">📋 Recent Tasks</h2>
-    {% if tasks %}
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1rem;">
-        {% for task in tasks[:12] %}
-        <div class="card" style="padding:1rem;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem;">
-                <h4 style="margin:0;font-size:0.9rem;font-weight:600;color:#fff;">{{ task.description or 'Task' }}</h4>
-                <span style="font-size:0.7rem;padding:2px 8px;border-radius:8px;background:{% if task.status == 'completed' %}#10b98133;color:#10b981{% elif task.status == 'running' %}#3b82f633;color:#3b82f6{% else %}#f59e0b33;color:#f59e0b{% endif %};border:1px solid {% if task.status == 'completed' %}#10b98155{% elif task.status == 'running' %}#3b82f655{% else %}#f59e0b55{% endif %};">{{ task.status }}</span>
-            </div>
-            <p style="font-size:0.78rem;color:var(--text-secondary);margin:0.2rem 0;">Agent: {{ task.agent_name or 'Unknown' }}</p>
-            <p style="font-size:0.72rem;color:var(--text-muted);margin:0;">Created: {{ task.created_at or 'N/A' }}</p>
-        </div>
-        {% endfor %}
-    </div>
-    {% else %}
-    <div class="card" style="text-align:center;padding:2.5rem;">
-        <p style="color:var(--text-muted);font-size:1rem;">No tasks yet. Use the marketplace to assign one.</p>
-    </div>
-    {% endif %}
-</div>
+<style>
+.metaverse-container { max-width: 960px; margin: 0 auto; }
+.stats-row { display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap; }
+.stat-card { flex: 1; min-width: 120px; padding: 1.2rem; background: var(--glass-bg); backdrop-filter: blur(var(--glass-blur)); border: 1px solid var(--border-glow); border-radius: var(--radius); text-align: center; }
+.stat-label { display: block; font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
+.stat-value { font-size: 2rem; font-weight: 800; color: #fff; }
+.section { margin-bottom: 2.5rem; }
+.section-title { font-size: 1.2rem; font-weight: 600; color: #fff; margin-bottom: 1rem; }
+.agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: 1rem; }
+.agent-card { padding: 1.2rem; }
+.agent-capabilities { margin: 0.5rem 0; }
+.badge { display: inline-block; padding: 2px 8px; background: rgba(59,130,246,0.15); color: #60a5fa; border-radius: 4px; font-size: 0.7rem; margin-right: 4px; }
+.trust-indicator { padding-left: 0.8rem; margin: 0.5rem 0; }
+.trust-label { font-weight: 600; }
+.trust-tier { font-size: 0.75rem; color: var(--text-muted); }
+.agent-meta { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); }
+.task-table { width: 100%; border-collapse: collapse; }
+.task-table th, .task-table td { padding: 0.6rem 0.8rem; text-align: left; border-bottom: 1px solid var(--border); }
+.task-table th { font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); }
+.status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; text-transform: capitalize; }
+.status-pending { background: rgba(251,191,36,0.15); color: #fbbf24; }
+.status-running { background: rgba(59,130,246,0.15); color: #60a5fa; }
+.status-completed { background: rgba(16,185,129,0.15); color: #10b981; }
+.status-failed { background: rgba(239,68,68,0.15); color: #ef4444; }
+.empty-state { color: var(--text-muted); text-align: center; padding: 2rem; }
+.empty-state a { color: var(--accent); }
+</style>
 {% endblock %}
