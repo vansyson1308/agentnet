@@ -2,44 +2,112 @@
 {% block title %}J.A.R.V.I.S. — Command Center{% endblock %}
 
 {% block content %}
-<div style="margin-bottom:1.5rem;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;">Overview of agents on the network</p>
+<div style="margin-bottom:2rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+            <h1 style="font-size:1.8rem;font-weight:800;color:#fff;margin:0;">Command Center</h1>
+            <p style="color:var(--text-secondary);font-size:0.9rem;margin-top:0.25rem;">Monitor and manage AI agents across the metaverse</p>
+        </div>
+        {% if is_logged_in %}
+        <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm">+ New Agent</a>
+        {% endif %}
+    </div>
 </div>
 
-{% if agents %}
-<div class="agent-grid">
-    {% for agent in agents %}
-    <div class="card agent-card" style="margin-bottom:1rem;">
-        <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:0.6rem;">
-            <div style="width:40px;height:40px;border-radius:50%;background:{{ agent.trust.color }};display:flex;align-items:center;justify-content:center;font-size:1.2rem;font-weight:700;color:#fff;">
-                {{ agent.name[:2].upper() if agent.name else '?' }}
+<div class="card" style="margin-bottom:1.5rem;">
+    <h2 style="font-size:1.2rem;font-weight:600;margin-bottom:1rem;">🧩 Active Agents</h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
+        {% for agent in agents %}
+        <div class="agent-card" style="background:var(--glass-bg);backdrop-filter:blur(var(--glass-blur));border:1px solid var(--border-glow);border-radius:12px;padding:1rem;transition:transform 0.2s,box-shadow 0.2s;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                <div>
+                    <h3 style="font-size:0.9rem;font-weight:600;color:#fff;margin:0;">{{ agent.name or 'Unnamed' }}</h3>
+                    <p style="font-size:0.75rem;color:var(--text-muted);margin:0.15rem 0 0.5rem;">{{ agent.description or '' }}</p>
+                </div>
+                {% if agent.status %}
+                <span class="status-badge status-{{ agent.status }}" style="font-size:0.65rem;padding:0.15rem 0.5rem;border-radius:20px;white-space:nowrap;">{{ agent.status }}</span>
+                {% endif %}
             </div>
-            <div>
-                <h3 style="margin:0;font-size:1.1rem;font-weight:600;color:#fff;">{{ agent.name }}</h3>
-                <span style="font-size:0.75rem;color:var(--text-muted);">{{ agent.capabilities[:3]|join(', ') if agent.capabilities else 'No capabilities listed' }}</span>
+            <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:0.5rem;">
+                {% if agent.capabilities %}
+                {% for cap in agent.capabilities[:3] %}
+                <span class="capability-tag" style="background:rgba(59,130,246,0.15);color:#60a5fa;font-size:0.65rem;padding:0.15rem 0.45rem;border-radius:6px;">{{ cap }}</span>
+                {% endfor %}
+                {% if agent.capabilities|length > 3 %}
+                <span style="font-size:0.65rem;color:var(--text-muted);">+{{ agent.capabilities|length - 3 }}</span>
+                {% endif %}
+                {% endif %}
+            </div>
+            {% if agent.id %}
+            <div style="margin-top:0.75rem;font-size:0.7rem;color:var(--text-muted);">
+                <span>ID: {{ agent.id[:8] }}...</span>
+            </div>
+            {% endif %}
+            <div style="margin-top:0.75rem;display:flex;gap:0.4rem;">
+                {% if agent.trust_context %}
+                <span class="trust-badge" style="background:{{ agent.trust_context.color }}20;color:{{ agent.trust_context.color }};font-size:0.65rem;padding:0.15rem 0.45rem;border-radius:6px;border:1px solid {{ agent.trust_context.color }}40;">
+                    {{ agent.trust_context.label }}
+                </span>
+                {% endif %}
+                {% if agent.reputation_tier %}
+                <span style="background:rgba(139,92,246,0.15);color:#a78bfa;font-size:0.65rem;padding:0.15rem 0.45rem;border-radius:6px;">{{ agent.reputation_tier }}</span>
+                {% endif %}
             </div>
         </div>
-        <p style="font-size:0.85rem;color:var(--text-secondary);margin:0 0 0.5rem 0;">
-            {{ agent.description[:120] + '...' if agent.description and agent.description|length > 120 else agent.description or 'No description' }}
-        </p>
-        <div style="display:flex;gap:1rem;font-size:0.75rem;color:var(--text-muted);">
-            <span>✅ {{ agent.total_tasks_completed or 0 }} completed</span>
-            <span>❌ {{ agent.total_tasks_failed or 0 }} failed</span>
-            <span>⏱ {{ agent.trust.timeouts }} timeouts</span>
+        {% else %}
+        <div style="text-align:center;padding:2rem;color:var(--text-muted);">
+            <p>No agents found in the network yet.</p>
+            {% if is_logged_in %}
+            <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary btn-sm" style="margin-top:0.5rem;">Be the first to register</a>
+            {% endif %}
         </div>
-        <div style="margin-top:0.5rem;display:flex;align-items:center;gap:0.5rem;">
-            <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{{ agent.trust.color }};"></span>
-            <span style="font-size:0.78rem;color:{{ agent.trust.color }};font-weight:500;">{{ agent.trust.label }}</span>
-            <span style="font-size:0.72rem;color:var(--text-muted);">({{ agent.trust.success_percent }} success)</span>
-        </div>
+        {% endfor %}
     </div>
-    {% endfor %}
 </div>
-{% else %}
-<div class="card" style="text-align:center;padding:3rem;">
-    <p style="font-size:1.1rem;color:var(--text-secondary);">No agents available yet.</p>
-    <p style="font-size:0.85rem;color:var(--text-muted);">Agents will appear here once they are registered on the network.</p>
+
+{% if is_logged_in and user_agents %}
+<div class="card">
+    <h2 style="font-size:1.2rem;font-weight:600;margin-bottom:1rem;">🔑 Your Agents</h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
+        {% for agent in user_agents %}
+        <div class="agent-card" style="background:var(--glass-bg);backdrop-filter:blur(var(--glass-blur));border:1px solid var(--border-glow);border-radius:12px;padding:1rem;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                <h3 style="font-size:0.9rem;font-weight:600;color:#fff;margin:0;">{{ agent.name or 'Unnamed' }}</h3>
+                <a href="{{ url_for('my_agents_page') }}" style="font-size:0.7rem;color:var(--accent);">Manage</a>
+            </div>
+            <p style="font-size:0.75rem;color:var(--text-muted);margin-top:0.25rem;">{{ agent.description or '' }}</p>
+            <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+                <span style="font-size:0.65rem;background:rgba(16,185,129,0.15);color:#34d399;padding:0.15rem 0.45rem;border-radius:6px;">{{ agent.status or 'inactive' }}</span>
+                <span style="font-size:0.65rem;color:var(--text-muted);">Tasks: {{ agent.total_tasks_completed or 0 }}</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
 </div>
 {% endif %}
+
+{% endblock %}
+
+{% block extra_scripts %}
+<style>
+.agent-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+.status-badge.status-active {
+    background: rgba(16,185,129,0.15);
+    color: #34d399;
+    border: 1px solid #34d39940;
+}
+.status-badge.status-idle {
+    background: rgba(251,191,36,0.15);
+    color: #fbbf24;
+    border: 1px solid #fbbf2440;
+}
+.status-badge.status-offline {
+    background: rgba(239,68,68,0.15);
+    color: #f87171;
+    border: 1px solid #f8717140;
+}
+</style>
 {% endblock %}
