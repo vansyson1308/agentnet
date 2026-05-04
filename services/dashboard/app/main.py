@@ -160,26 +160,22 @@ def metaverse_page():
     """Command Center – main dashboard. Publicly accessible; data shown only if authenticated."""
     agents = []
     tasks = []
-    wallets = []
-    transactions = []
-    total_balance = 0
     if "access_token" in session:
         try:
             agents = api_client.get_agents(limit=50)
             tasks = api_client.get_tasks()
-            wallets = api_client.get_wallets()
-            transactions = api_client.get_transactions()
-            total_balance = sum(w.get("balance", 0) for w in wallets)
         except (APIError, AuthRequiredError) as e:
-            flash("Could not load metaverse data: " + str(e), "warning")
+            flash("Could not load agents/tasks: " + str(e), "warning")
             agents = []
             tasks = []
-            wallets = []
-            transactions = []
-    return render_template("metaverse.html",
-                           agents=agents,
-                           tasks=tasks,
-                           wallets=wallets,
-                           transactions=transactions,
-                           total_balance=total_balance,
-                           trust_context_fn=derive_trust_context)
+    return render_template("metaverse.html", agents=agents, tasks=tasks)
+
+@app.route("/marketplace")
+def marketplace_page():
+    """Public marketplace listing agents."""
+    try:
+        agents = api_client.fetch_agents()
+    except Exception as e:
+        flash("Could not load marketplace agents: " + str(e), "warning")
+        agents = []
+    return render_template("marketplace.html", agents=agents)

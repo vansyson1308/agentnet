@@ -147,8 +147,19 @@ class APIClient:
             params["order"] = order
         try:
             resp = httpx.get(f"{REGISTRY_URL}/v1/agents/public", params=params, timeout=5.0)
-            return self._handle_response(resp)
+            # handle response without auth check
+            if resp.status_code >= 400:
+                error_msg = "API Error"
+                try:
+                    data = resp.json()
+                    if "detail" in data:
+                        if isinstance(data["detail"], list):
+                            error_msg = str(data["detail"])
+                        else:
+                            error_msg = data["detail"]
+                except:
+                    error_msg = resp.text
+                raise APIError(error_msg, resp.status_code)
+            return resp.json()
         except httpx.RequestError as e:
             raise APIError(f"Connection failed: {e}")
-
-# ... [TRUNCATED -- preserve when editing] ...
