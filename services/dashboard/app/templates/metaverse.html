@@ -3,92 +3,49 @@
 
 {% block content %}
 <div style="margin-bottom:2rem;">
-    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">🚀 Command Center</h1>
-    <p style="color:var(--text-secondary);font-size:0.9rem;">Your central hub for managing agents, tasks, and wallet.</p>
+    <h1 style="font-size:1.8rem;font-weight:800;color:#fff;">⚡ Command Center</h1>
+    <p style="color:var(--text-secondary);">Monitor and manage your AI agents across the metaverse.</p>
 </div>
 
-{% if error %}
-<div class="alert alert-danger">{{ error }}</div>
-{% endif %}
-
-{% if wallet_summary %}
-<section style="margin-bottom:2rem;">
-    <h2 style="font-size:1.2rem;font-weight:600;color:var(--text-heading);margin-bottom:0.75rem;">💰 Wallet</h2>
-    <div class="card" style="display:flex;gap:1rem;flex-wrap:wrap;">
-        <div><strong>Balance:</strong> {{ wallet_summary.get('balance', 'N/A') }}</div>
-        <div><strong>Total received:</strong> {{ wallet_summary.get('total_received', 'N/A') }}</div>
-        <div><strong>Total sent:</strong> {{ wallet_summary.get('total_sent', 'N/A') }}</div>
-    </div>
-</section>
-{% endif %}
-
-<section style="margin-bottom:2rem;">
-    <h2 style="font-size:1.2rem;font-weight:600;color:var(--text-heading);margin-bottom:0.75rem;">🤖 Agents</h2>
-    {% if agents %}
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
-        {% for agent in agents %}
-        {% set ctx = trust_context_filter(agent) %}
-        <div class="card agent-card">
-            <h3 style="font-size:1rem;font-weight:700;color:#fff;">{{ agent.name }}</h3>
-            <p style="font-size:0.8rem;color:var(--text-secondary);">{{ agent.description or 'No description' }}</p>
-            <div style="margin-top:0.5rem;font-size:0.75rem;color:var(--text-muted);">
-                <span style="display:inline-block;background:{{ ctx.color }};color:#fff;padding:2px 8px;border-radius:12px;font-weight:500;">{{ ctx.label }}</span>
-                <span style="margin-left:0.5rem;">{{ ctx.success_percent }} success</span>
-            </div>
+{% if agents %}
+<div class="agent-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.2rem;">
+    {% for agent in agents %}
+    {% set ctx = agent|trust_context %}
+    <div class="card agent-card" style="display:flex;flex-direction:column;gap:0.5rem;">
+        <div style="display:flex;align-items:center;gap:0.5rem;">
+            <div style="width:10px;height:10px;border-radius:50%;background:{{ ctx.color }};"></div>
+            <h3 style="margin:0;font-size:1rem;font-weight:600;color:#fff;">{{ agent.name }}</h3>
+            {% if agent.reputation_tier %}
+            <span style="margin-left:auto;font-size:0.7rem;padding:2px 8px;border-radius:12px;background:rgba(255,255,255,0.1);color:var(--text-muted);">{{ ctx.tier }}</span>
+            {% endif %}
         </div>
-        {% endfor %}
-    </div>
-    {% else %}
-    <p style="color:var(--text-muted);">No agents registered yet.</p>
-    {% endif %}
-    <div style="margin-top:1rem;">
-        <a href="{{ url_for('marketplace_page') }}" class="btn btn-primary btn-sm">Browse Marketplace</a>
-        {% if session.access_token %}
-        <a href="{{ url_for('register_agent_page') }}" class="btn btn-secondary btn-sm">Register New Agent</a>
-        {% endif %}
-    </div>
-</section>
-
-<section>
-    <h2 style="font-size:1.2rem;font-weight:600;color:var(--text-heading);margin-bottom:0.75rem;">📋 Recent Tasks</h2>
-    {% if tasks %}
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:1rem;">
-        {% for task in tasks %}
-        <div class="card task-card">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span style="font-weight:600;color:#fff;">{{ task.get('title', 'Task') }}</span>
-                <span class="badge badge-{{ task.get('status', 'pending') }}">{{ task.get('status', 'pending') }}</span>
-            </div>
-            <p style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.25rem;">{{ task.get('description', '') }}</p>
-            <div style="font-size:0.7rem;color:var(--text-muted);margin-top:0.25rem;">{{ task.get('created_at', '') }}</div>
+        <p style="color:var(--text-secondary);font-size:0.85rem;margin:0;">{{ agent.description or 'No description' }}</p>
+        <div style="display:flex;flex-wrap:wrap;gap:0.4rem;font-size:0.75rem;color:var(--text-muted);">
+            <span>🔢 Tasks: {{ ctx.total }}</span>
+            <span>✅ Success: {{ ctx.success_percent }}</span>
+            {% if ctx.timeouts > 0 %}
+            <span>⚠️ Timeouts: {{ ctx.timeouts }}</span>
+            {% endif %}
         </div>
-        {% endfor %}
+        <div style="margin-top:auto;font-size:0.72rem;color:{{ ctx.color }};font-weight:500;">
+            {{ ctx.label }}
+        </div>
     </div>
-    {% else %}
-    <p style="color:var(--text-muted);">No recent tasks.</p>
-    {% endif %}
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state" style="text-align:center;padding:3rem 1rem;color:var(--text-muted);">
+    <p style="font-size:1.2rem;font-weight:600;color:#fff;">No agents registered yet</p>
+    <p style="font-size:0.85rem;">Deploy your first agent to see it here.</p>
     {% if session.access_token %}
-    <div style="margin-top:1rem;">
-        <a href="{{ url_for('tasks_page') }}" class="btn btn-secondary btn-sm">View All Tasks</a>
-    </div>
+    <a href="{{ url_for('register_agent_page') }}" class="btn btn-primary" style="margin-top:1rem;">➕ Register Agent</a>
     {% endif %}
-</section>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-// Animate agent cards on load
-document.addEventListener('DOMContentLoaded', function() {
-    var cards = document.querySelectorAll('.agent-card, .task-card');
-    cards.forEach(function(card, i) {
-        card.style.opacity = '0';
-        card.style.transform = 'translateY(10px)';
-        setTimeout(function() {
-            card.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
-            card.style.opacity = '1';
-            card.style.transform = 'translateY(0)';
-        }, i * 100);
-    });
-});
+// Optional: Add live polling or real-time updates later
 </script>
 {% endblock %}
