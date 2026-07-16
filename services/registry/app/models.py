@@ -175,7 +175,7 @@ class User(Base):
     email = Column(String, unique=True, nullable=False)
     phone = Column(String)
     password_hash = Column(String, nullable=False)
-    is_email_verified = Column(Boolean, default=False, server_default=text('false'))
+    is_email_verified = Column(Boolean, default=False, server_default=text("false"))
     kyc_status = _enum_column(KYCStatus, default="pending")
     telegram_id = Column(String)
     notification_settings = Column(JSON, default={})
@@ -649,6 +649,7 @@ class MemoryItem(Base):
 
 class ProvisioningProvider(Base):
     """A service provider registered in the provisioning catalog."""
+
     __tablename__ = "provisioning_providers"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -665,10 +666,13 @@ class ProvisioningProvider(Base):
 
 class ProvisioningService(Base):
     """A provisionable service in the catalog."""
+
     __tablename__ = "provisioning_services"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    provider_id = Column(UUID(as_uuid=True), ForeignKey("provisioning_providers.id", ondelete="CASCADE"), nullable=False)
+    provider_id = Column(
+        UUID(as_uuid=True), ForeignKey("provisioning_providers.id", ondelete="CASCADE"), nullable=False
+    )
     service_name = Column(String, nullable=False)
     description = Column(Text)
     category = Column(String, nullable=False, index=True)  # domain, hosting, storage, db, ai, security
@@ -689,6 +693,7 @@ class ScopedToken(Base):
 
     Mirrors Stripe Shared Payment Token + Cloudflare scoped token.
     """
+
     __tablename__ = "scoped_tokens"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -711,6 +716,7 @@ class ScopedToken(Base):
 
 class Project(Base):
     """Persistent resource grouping — mirrors Stripe Projects' state.json."""
+
     __tablename__ = "projects"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -727,6 +733,7 @@ class Project(Base):
 
 class ProjectResource(Base):
     """A resource within a project."""
+
     __tablename__ = "project_resources"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -746,6 +753,7 @@ class OrchestratorPartner(Base):
 
     These platforms can provision AgentNet accounts on behalf of their users.
     """
+
     __tablename__ = "orchestrator_partners"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

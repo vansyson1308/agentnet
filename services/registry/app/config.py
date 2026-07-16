@@ -85,15 +85,12 @@ def require_env(name: str, *, dev_default: Optional[str] = None) -> str:
             return val
         if dev_default is not None:
             return dev_default
-        raise RuntimeError(
-            f"Required environment variable {name!r} is not set."
-        )
+        raise RuntimeError(f"Required environment variable {name!r} is not set.")
 
     # Production / staging — strict mode.
     if not val:
         raise RuntimeError(
-            f"Required environment variable {name!r} is not set. "
-            f"This must be set in non-development environments."
+            f"Required environment variable {name!r} is not set. " f"This must be set in non-development environments."
         )
     if val in _LEFTOVER_DEFAULTS:
         raise RuntimeError(
@@ -126,13 +123,8 @@ POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "agentnet")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "agentnet")
-POSTGRES_PASSWORD = require_env(
-    "POSTGRES_PASSWORD", dev_default=_DEV_POSTGRES_PASSWORD
-)
-DATABASE_URL = (
-    f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
-    f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
-)
+POSTGRES_PASSWORD = require_env("POSTGRES_PASSWORD", dev_default=_DEV_POSTGRES_PASSWORD)
+DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}" f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 
 # Managed execution control-plane credentials. These are independent from
 # end-user JWTs: the Paperclip adapter may create executions and runtime
@@ -142,9 +134,7 @@ if MANAGED_EXECUTION_ENABLED:
     MANAGED_EXECUTION_SERVICE_TOKEN = require_env(
         "MANAGED_EXECUTION_SERVICE_TOKEN", dev_default=_DEV_MANAGED_SERVICE_TOKEN
     )
-    RUNTIME_REGISTRATION_TOKEN = require_env(
-        "RUNTIME_REGISTRATION_TOKEN", dev_default=_DEV_RUNTIME_REGISTRATION_TOKEN
-    )
+    RUNTIME_REGISTRATION_TOKEN = require_env("RUNTIME_REGISTRATION_TOKEN", dev_default=_DEV_RUNTIME_REGISTRATION_TOKEN)
 else:
     # Dependencies reject every managed route before credential comparison.
     # This keeps the additive migration safe for existing deployments.

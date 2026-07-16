@@ -6,8 +6,8 @@ Revises: 0007_managed_execution
 
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0008_managed_artifacts"
@@ -21,7 +21,10 @@ def upgrade() -> None:
         "artifacts",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "run_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("execution_runs.id", ondelete="CASCADE"), nullable=False
+            "run_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("execution_runs.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("artifact_type", sa.String(length=64), nullable=False),
         sa.Column("uri", sa.String(length=2048), nullable=False),

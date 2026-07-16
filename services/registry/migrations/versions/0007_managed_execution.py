@@ -6,8 +6,8 @@ Revises: 0006_email_verified
 
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0007_managed_execution"
@@ -175,7 +175,10 @@ def upgrade() -> None:
         "attempts",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "run_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("execution_runs.id", ondelete="CASCADE"), nullable=False
+            "run_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("execution_runs.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("attempt_number", sa.Integer(), nullable=False),
         sa.Column("kind", sa.String(length=16), nullable=False, server_default="initial"),
@@ -191,10 +194,16 @@ def upgrade() -> None:
         "leases",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "run_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("execution_runs.id", ondelete="CASCADE"), nullable=False
+            "run_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("execution_runs.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column(
-            "attempt_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("attempts.id", ondelete="CASCADE"), nullable=False
+            "attempt_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("attempts.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column(
             "runtime_slot_id",
@@ -229,7 +238,10 @@ def upgrade() -> None:
         "run_events",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "run_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("execution_runs.id", ondelete="CASCADE"), nullable=False
+            "run_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("execution_runs.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("sequence", sa.Integer(), nullable=False),
         sa.Column("event_type", sa.String(length=128), nullable=False),
@@ -245,7 +257,10 @@ def upgrade() -> None:
         "runtime_heartbeats",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "runtime_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("runtimes.id", ondelete="CASCADE"), nullable=False
+            "runtime_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("runtimes.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("sequence", sa.Integer(), nullable=False),
         sa.Column("run_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("execution_runs.id", ondelete="SET NULL")),

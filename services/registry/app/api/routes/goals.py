@@ -263,9 +263,7 @@ def update_goal(
         # Cycle defence: at most a one-hop check (A->B; reject if B's
         # parent is A). Deeper cycles are caught by tree traversal at
         # query time but not here — acceptable for v1.
-        candidate_parent = (
-            db.query(Goal).filter(Goal.id == update_fields["parent_goal_id"]).first()
-        )
+        candidate_parent = db.query(Goal).filter(Goal.id == update_fields["parent_goal_id"]).first()
         if candidate_parent is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

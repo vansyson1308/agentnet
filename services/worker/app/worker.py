@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import os
-import time
 import uuid
 from datetime import datetime, timedelta
 
@@ -13,6 +12,7 @@ from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from .database import SessionLocal, engine
+from .logging_config import setup_logging
 from .models import (
     Agent,
     AgentStatus,
@@ -23,10 +23,8 @@ from .models import (
     TaskStatus,
     Transaction,
     TransactionStatus,
-    TransactionType,
     Wallet,
 )
-from .logging_config import setup_logging
 from .reflection_loop import convert_proposals_to_backlog, run_reflection_loop
 from .tracing import configure_tracing, get_tracer
 
@@ -115,25 +113,16 @@ async def process_timed_out_tasks(db: Session, redis_client):
         worker_pending_tasks.set(len(timed_out_tasks))
 
         for task_preview in timed_out_tasks:
-            with tracer.start_as_current_span(
-                "process_task", attributes={"task_id": str(task_preview.id)}
-            ):
+            with tracer.start_as_current_span("process_task", attributes={"task_id": str(task_preview.id)}):
                 try:
                     # Re-load with FOR UPDATE so the rest of this iteration
                     # can mutate state safely; abort if API/WS already moved
                     # the task to a terminal status.
-                    task = (
-                        db.query(TaskSession)
-                        .filter(TaskSession.id == task_preview.id)
-                        .with_for_update()
-                        .first()
-                    )
+                    task = db.query(TaskSession).filter(TaskSession.id == task_preview.id).with_for_update().first()
                     if task is None:
                         continue
                     if task.status not in (TaskStatus.INITIATED, TaskStatus.IN_PROGRESS):
-                        logger.info(
-                            f"Task {task.id} already in terminal state {task.status}, skipping"
-                        )
+                        logger.info(f"Task {task.id} already in terminal state {task.status}, skipping")
                         db.rollback()
                         continue
 
@@ -171,9 +160,7 @@ async def process_timed_out_tasks(db: Session, redis_client):
                         else:
                             reserved = float(caller_wallet.reserved_usdc)
                             if reserved < task.escrow_amount:
-                                raise RuntimeError(
-                                    f"reserved_usdc underflow for wallet {caller_wallet.id}"
-                                )
+                                raise RuntimeError(f"reserved_usdc underflow for wallet {caller_wallet.id}")
                             caller_wallet.reserved_usdc = reserved - task.escrow_amount
 
                         transaction.status = TransactionStatus.CANCELLED
@@ -203,30 +190,20 @@ async def process_timed_out_tasks(db: Session, redis_client):
                     # Increment callee's timeout count in the same txn so
                     # we cannot end up with a refunded task whose callee
                     # never had its reputation/metric debited.
-                    callee_agent = (
-                        db.query(Agent)
-                        .filter(Agent.id == task.callee_agent_id)
-                        .with_for_update()
-                        .first()
-                    )
+                    callee_agent = db.query(Agent).filter(Agent.id == task.callee_agent_id).with_for_update().first()
                     if callee_agent:
                         callee_agent.timeout_count += 1
                         if callee_agent.timeout_count >= 5:
                             callee_agent.status = AgentStatus.SUSPENDED
                             logger.error(
-                                f"Agent {callee_agent.id} ({callee_agent.name}) "
-                                f"SUSPENDED due to too many timeouts"
+                                f"Agent {callee_agent.id} ({callee_agent.name}) " f"SUSPENDED due to too many timeouts"
                             )
 
                     db.commit()
                     worker_timed_out_tasks_total.labels(
-                        currency=task.currency.value
-                        if hasattr(task.currency, "value")
-                        else str(task.currency)
+                        currency=task.currency.value if hasattr(task.currency, "value") else str(task.currency)
                     ).inc()
-                    logger.warning(
-                        f"Escrow {task.escrow_amount} refunded for timed-out task {task.id}"
-                    )
+                    logger.warning(f"Escrow {task.escrow_amount} refunded for timed-out task {task.id}")
 
                     # Send notifications
                     if redis_client:
@@ -475,7 +452,7 @@ async def process_offline_agents(db: Session):
             affected = (
                 db.query(Agent)
                 .filter(
-                    Agent.is_online == True,
+                    Agent.is_online.is_(True),
                     Agent.last_seen_at.isnot(None),
                     Agent.last_seen_at < cutoff,
                 )

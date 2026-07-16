@@ -15,9 +15,31 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install black isort flake8
-      - run: black --check services/ tests/ --diff --line-length=120 || true
-      - run: isort --check services/ tests/ --diff --profile=black --line-length=120 || true
-      - run: flake8 services/ tests/ --max-line-length=120 --ignore=E203,W503,E501 || true
+      - name: Lint changed Python files (strict)
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            base="origin/${{ github.base_ref }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+
+          files=()
+          while IFS= read -r file; do
+            case "$file" in
+              services/*.py|tests/*.py) files+=("$file") ;;
+            esac
+          done < <(git diff --name-only --diff-filter=ACMR "$base"...HEAD -- '*.py')
+
+          if (( ${#files[@]} == 0 )); then
+            echo "No changed Python files to lint"
+            exit 0
+          fi
+
+          black --check --diff --line-length=120 "${files[@]}"
+          isort --check --diff --profile=black --line-length=120 "${files[@]}"
+          flake8 "${files[@]}" --max-line-length=120 --ignore=E203,W503,E501
 
   build-and-test:
     runs-on: ubuntu-latest
@@ -73,7 +95,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r services/registry/requirements.txt
-          pip install -r services/payment/requirements.txt || true
+          pip install -r services/payment/requirements.txt
           pip install pytest pytest-asyncio pytest-cov httpx
 
       - name: Apply DB schema (init-db SQL bundle)

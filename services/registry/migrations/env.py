@@ -14,6 +14,8 @@ Usage:
 
 from __future__ import annotations
 
+import os
+import sys
 from logging.config import fileConfig
 
 from alembic import context
@@ -27,9 +29,6 @@ from sqlalchemy.engine import create_engine
 _ALEMBIC_LOCK_ID = 7654321
 
 # Make sure the application is importable.
-import os
-import sys
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Make sure model modules register with Base.metadata.

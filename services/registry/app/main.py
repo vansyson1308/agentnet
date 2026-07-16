@@ -1,24 +1,21 @@
 import asyncio
 import logging
 import os
-import time
 
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from starlette.middleware import Middleware
 
 from .a2a import build_registry_card
 from .api import router as api_router
-from .database import Base, SessionLocal, engine
+from .api.rate_limiter import RateLimitMiddleware
+from .config import MANAGED_EXECUTION_ENABLED, REDIS_URL
+from .database import SessionLocal, engine
 from .health import install_health_and_metrics
 from .logging_config import install_request_id_middleware, setup_logging
+from .run_service import expire_stale_leases
 from .security import setup_cors, setup_security_headers
 from .tracing import configure_tracing
 from .websocket_manager import manager
-from .api.rate_limiter import add_rate_limiter, RateLimitMiddleware
-from .run_service import expire_stale_leases
-from .config import MANAGED_EXECUTION_ENABLED
 
 # Configure structured logging — JSON in prod, console in dev. Must run
 # before any module-level logger is instantiated below so the formatter
@@ -42,15 +39,13 @@ install_request_id_middleware(app)
 # strictly to CORS_ALLOWED_ORIGINS.
 setup_cors(app)
 # Mount rate limiter (Redis-backed when available, in-memory fallback).
-import os as _os
-from .config import REDIS_URL as _REDIS_URL
 app.add_middleware(
     RateLimitMiddleware,
-    default_rate=int(_os.getenv("RATE_LIMIT_USER_PER_MIN", "100")),
-    default_burst=int(_os.getenv("RATE_LIMIT_USER_BURST", "150")),
-    agent_rate=int(_os.getenv("RATE_LIMIT_AGENT_PER_MIN", "300")),
-    agent_burst=int(_os.getenv("RATE_LIMIT_AGENT_BURST", "450")),
-    redis_url=_os.getenv("REDIS_URL_RATE_LIMIT") or _REDIS_URL,
+    default_rate=int(os.getenv("RATE_LIMIT_USER_PER_MIN", "100")),
+    default_burst=int(os.getenv("RATE_LIMIT_USER_BURST", "150")),
+    agent_rate=int(os.getenv("RATE_LIMIT_AGENT_PER_MIN", "300")),
+    agent_burst=int(os.getenv("RATE_LIMIT_AGENT_BURST", "450")),
+    redis_url=os.getenv("REDIS_URL_RATE_LIMIT") or REDIS_URL,
 )
 setup_security_headers(app)
 
@@ -82,6 +77,7 @@ async def _lease_reconciler_loop():
         finally:
             db.close()
         await asyncio.sleep(15)
+
 
 # Startup event
 @app.on_event("startup")
