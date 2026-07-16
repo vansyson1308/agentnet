@@ -175,7 +175,7 @@ class User(Base):
     email = Column(String, unique=True, nullable=False)
     phone = Column(String)
     password_hash = Column(String, nullable=False)
-    is_email_verified = Column(Boolean, default=False, server_default=text('false'))
+    is_email_verified = Column(Boolean, default=False, server_default=text("false"))
     kyc_status = _enum_column(KYCStatus, default="pending")
     telegram_id = Column(String)
     notification_settings = Column(JSON, default={})
@@ -302,6 +302,9 @@ class TaskSession(Base):
     fulfillment_channel = Column(String)  # 'websocket', 'webhook', 'internal'
     output = Column(JSON)
     retry_of_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id"))
+    # Legacy tasks retain the old delivery/payment flow. Managed tasks are
+    # created only by ManagedExecutionService and never self-settle.
+    execution_mode = Column(String(32), nullable=False, default="legacy", server_default="legacy")
 
     # Relationships
     caller_agent = relationship("Agent", foreign_keys=[caller_agent_id], back_populates="caller_tasks")
@@ -568,9 +571,17 @@ class Goal(Base):
     completed_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    # Paperclip-backed work is not represented by this legacy Goal table.
+    # The managed scheduler must never read rows where execution_mode=legacy.
+    execution_mode = Column(String(32), nullable=False, default="legacy", server_default="legacy")
 
     # Relationships
     parent = relationship("Goal", remote_side=[id], backref="children")
+
+
+# Register execution-plane tables with Base.metadata while keeping the
+# already-large legacy model module readable.
+from . import managed_models as _managed_models  # noqa: E402,F401
 
 
 class ImprovementProposal(Base):
@@ -638,6 +649,7 @@ class MemoryItem(Base):
 
 class ProvisioningProvider(Base):
     """A service provider registered in the provisioning catalog."""
+
     __tablename__ = "provisioning_providers"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -654,10 +666,13 @@ class ProvisioningProvider(Base):
 
 class ProvisioningService(Base):
     """A provisionable service in the catalog."""
+
     __tablename__ = "provisioning_services"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    provider_id = Column(UUID(as_uuid=True), ForeignKey("provisioning_providers.id", ondelete="CASCADE"), nullable=False)
+    provider_id = Column(
+        UUID(as_uuid=True), ForeignKey("provisioning_providers.id", ondelete="CASCADE"), nullable=False
+    )
     service_name = Column(String, nullable=False)
     description = Column(Text)
     category = Column(String, nullable=False, index=True)  # domain, hosting, storage, db, ai, security
@@ -678,6 +693,7 @@ class ScopedToken(Base):
 
     Mirrors Stripe Shared Payment Token + Cloudflare scoped token.
     """
+
     __tablename__ = "scoped_tokens"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -700,6 +716,7 @@ class ScopedToken(Base):
 
 class Project(Base):
     """Persistent resource grouping — mirrors Stripe Projects' state.json."""
+
     __tablename__ = "projects"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -716,6 +733,7 @@ class Project(Base):
 
 class ProjectResource(Base):
     """A resource within a project."""
+
     __tablename__ = "project_resources"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -735,6 +753,7 @@ class OrchestratorPartner(Base):
 
     These platforms can provision AgentNet accounts on behalf of their users.
     """
+
     __tablename__ = "orchestrator_partners"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

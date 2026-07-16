@@ -134,6 +134,7 @@ class GoalOut(BaseModel):
     completed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    execution_mode: str = "legacy"
 
     model_config = {"from_attributes": True}
 
@@ -204,6 +205,7 @@ def create_goal(
         success_criteria=payload.success_criteria,
         parent_goal_id=payload.parent_goal_id,
         target_date=payload.target_date,
+        execution_mode="legacy",
     )
     db.add(goal)
     db.commit()
@@ -261,9 +263,7 @@ def update_goal(
         # Cycle defence: at most a one-hop check (A->B; reject if B's
         # parent is A). Deeper cycles are caught by tree traversal at
         # query time but not here — acceptable for v1.
-        candidate_parent = (
-            db.query(Goal).filter(Goal.id == update_fields["parent_goal_id"]).first()
-        )
+        candidate_parent = db.query(Goal).filter(Goal.id == update_fields["parent_goal_id"]).first()
         if candidate_parent is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

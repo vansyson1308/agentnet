@@ -15,9 +15,31 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install black isort flake8
-      - run: black --check services/ tests/ --diff --line-length=120 || true
-      - run: isort --check services/ tests/ --diff --profile=black --line-length=120 || true
-      - run: flake8 services/ tests/ --max-line-length=120 --ignore=E203,W503,E501 || true
+      - name: Lint changed Python files (strict)
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            base="origin/${{ github.base_ref }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+
+          files=()
+          while IFS= read -r file; do
+            case "$file" in
+              services/*.py|tests/*.py) files+=("$file") ;;
+            esac
+          done < <(git diff --name-only --diff-filter=ACMR "$base"...HEAD -- '*.py')
+
+          if (( ${#files[@]} == 0 )); then
+            echo "No changed Python files to lint"
+            exit 0
+          fi
+
+          black --check --diff --line-length=120 "${files[@]}"
+          isort --check --diff --profile=black --line-length=120 "${files[@]}"
+          flake8 "${files[@]}" --max-line-length=120 --ignore=E203,W503,E501
 
   build-and-test:
     runs-on: ubuntu-latest
@@ -73,15 +95,27 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r services/registry/requirements.txt
-          pip install -r services/payment/requirements.txt || true
+          pip install -r services/payment/requirements.txt
           pip install pytest pytest-asyncio pytest-cov httpx
 
       - name: Apply DB schema (init-db SQL bundle)
         run: |
           for f in services/registry/init-db/*.sql; do
             echo "applying $f"
-            PGPASSWORD=testpass psql -h localhost -U agentnet -d agentnet_test -v ON_ERROR_STOP=1 -f "$f" || true
+            PGPASSWORD=testpass psql -h localhost -U agentnet -d agentnet_test -v ON_ERROR_STOP=1 -f "$f"
           done
+
+      - name: Apply managed execution migrations
+        working-directory: services/registry
+        run: |
+          alembic stamp 0001_baseline
+          alembic upgrade head
+          alembic current | grep 0008_managed_artifacts
+
+      - name: Run managed PostgreSQL concurrency tests
+        env:
+          RUN_MANAGED_POSTGRES_TESTS: "1"
+        run: pytest tests/test_managed_execution_postgres.py -v
 
       - name: Run full test suite
         run: |
@@ -120,3 +154,9 @@ jobs:
 
       - name: Validate compose
         run: docker compose config > /dev/null
+
+      - name: Build managed shadow services
+        run: |
+          docker build -t agentnet-paperclip-adapter-ci services/paperclip_adapter
+          docker build --build-arg CODEX_CLI_VERSION=0.144.4 -t agentnet-codex-runtime-ci services/runtime
+          docker run --rm --entrypoint codex agentnet-codex-runtime-ci --version | grep "0.144.4"

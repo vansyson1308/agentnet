@@ -6,7 +6,6 @@ that's covered by the build-and-test CI job.
 
 from __future__ import annotations
 
-import importlib.util
 import pathlib
 
 import pytest
@@ -62,3 +61,20 @@ def test_dockerfile_runs_alembic_on_startup():
     entry = (REPO / "services/registry/entrypoint.sh").read_text()
     assert "alembic upgrade head" in entry
     assert "alembic stamp" in entry  # baseline-stamp branch
+
+
+def test_online_migrations_commit_before_advisory_unlock():
+    env = (REPO / "services/registry/migrations/env.py").read_text()
+    run_index = env.index("context.run_migrations()")
+    commit_index = env.index("connection.commit()", run_index)
+    unlock_index = env.index("pg_advisory_unlock", commit_index)
+    assert run_index < commit_index < unlock_index
+    assert 'connection.execute(text("ROLLBACK"))' not in env
+
+
+def test_postgres_init_does_not_execute_operator_helper_twice():
+    helper = (REPO / "services/registry/init-db/apply-pending.sh").read_text()
+    assert "/docker-entrypoint-initdb.d/*" in helper
+    assert "numbered SQL files already applied" in helper
+    attributes = (REPO / ".gitattributes").read_text()
+    assert "*.sh text eol=lf" in attributes

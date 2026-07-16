@@ -1,4 +1,3 @@
-import base64
 import json
 import logging
 import secrets
@@ -6,7 +5,6 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -18,11 +16,13 @@ from ...auth import (
     verify_password,
 )
 from ...database import get_db
-from ...models import Agent, EmailVerificationToken, User, Wallet, WalletOwnerType
-from ...schemas import AgentLogin, AgentToken, UserLogin, UserToken
+from ...models import EmailVerificationToken, User, Wallet, WalletOwnerType
+from ...schemas import AgentLogin, AgentToken, UserToken
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(filename='/var/log/agentnet-verify.log', level=logging.INFO)
+# Service logging is configured centrally by app.main. A hard-coded
+# /var/log path made importing the API fail on developer machines and in
+# read-only containers.
 
 router = APIRouter()
 
@@ -196,23 +196,15 @@ async def agent_login(login_data: AgentLogin, db: Session = Depends(get_db)):
 async def verify_email(token: str, db: Session = Depends(get_db)):
     """Verify a user's email address using a verification token."""
     # Look up the token
-    verification = db.query(EmailVerificationToken).filter(
-        EmailVerificationToken.token == token
-    ).first()
+    verification = db.query(EmailVerificationToken).filter(EmailVerificationToken.token == token).first()
 
     if not verification:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired token"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
 
     # Check if token is expired or already consumed
     now = datetime.now(timezone.utc)
     if verification.expires_at <= now or verification.consumed_at is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired token"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
 
     # Mark user as verified
     user = db.query(User).filter(User.id == verification.user_id).first()

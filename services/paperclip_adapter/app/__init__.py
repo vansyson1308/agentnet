@@ -1,0 +1,1 @@
+"""Paperclip adapter package."""

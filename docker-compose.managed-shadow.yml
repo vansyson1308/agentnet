@@ -1,0 +1,50 @@
+services:
+  registry:
+    environment:
+      MANAGED_EXECUTION_ENABLED: "true"
+      MANAGED_EXECUTION_SERVICE_TOKEN: ${MANAGED_EXECUTION_SERVICE_TOKEN:?required}
+      RUNTIME_REGISTRATION_TOKEN: ${RUNTIME_REGISTRATION_TOKEN:?required}
+      LEGACY_AUTO_SCALER_ENABLED: "false"
+      ARTIFACT_STORE_PATH: /var/lib/agentnet/artifacts
+    volumes:
+      - managed-artifacts:/var/lib/agentnet/artifacts
+
+  paperclip-adapter:
+    build: ./services/paperclip_adapter
+    profiles: ["managed-shadow"]
+    environment:
+      REGISTRY_URL: http://registry:8000
+      MANAGED_EXECUTION_SERVICE_TOKEN: ${MANAGED_EXECUTION_SERVICE_TOKEN:?required}
+      PAPERCLIP_ADAPTER_TOKEN: ${PAPERCLIP_ADAPTER_TOKEN:?required}
+    depends_on:
+      registry:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - agentnet-network
+
+  codex-runtime:
+    build:
+      context: ./services/runtime
+      args:
+        CODEX_CLI_VERSION: ${CODEX_CLI_VERSION:?pin an explicit Codex CLI version}
+    profiles: ["managed-shadow"]
+    environment:
+      REGISTRY_URL: http://registry:8000
+      RUNTIME_ID: ${CODEX_RUNTIME_ID:?register runtime first}
+      RUNTIME_TOKEN: ${CODEX_RUNTIME_TOKEN:?register runtime first}
+      RUNTIME_REPOSITORY_ALLOWLIST: ${CODEX_REPOSITORY_ALLOWLIST:?required}
+      RUNTIME_WORK_ROOT: /worktrees
+      CODEX_API_KEY: ${CODEX_API_KEY:?required for non-interactive codex exec}
+    volumes:
+      - managed-worktrees:/worktrees
+    depends_on:
+      registry:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - agentnet-network
+
+volumes:
+  managed-artifacts:
+  managed-worktrees:

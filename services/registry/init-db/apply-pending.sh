@@ -13,6 +13,13 @@
 set -euo pipefail
 
 if [[ -z "${DATABASE_URL:-}" ]]; then
+    # The official Postgres image executes every *.sh file in this directory
+    # during first-volume initialization. The numbered SQL files have already
+    # been applied in that path, so this operator helper must be a no-op there.
+    if [[ "${BASH_SOURCE[0]}" == /docker-entrypoint-initdb.d/* ]]; then
+        echo "apply-pending.sh: init hook detected; numbered SQL files already applied"
+        exit 0
+    fi
     echo "error: DATABASE_URL not set" >&2
     exit 1
 fi

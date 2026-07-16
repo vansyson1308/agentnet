@@ -29,7 +29,6 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Tuple
 
 import jsonschema
-
 from sqlalchemy.orm import Session
 
 from .models import (
@@ -44,8 +43,8 @@ from .models import (
     TransactionType,
     Wallet,
 )
+from .task_contract import TaskStatus as ContractStatus
 from .task_contract import (
-    TaskStatus as ContractStatus,
     compute_input_hash,
     validate_state_transition,
 )
@@ -60,6 +59,7 @@ try:
         span_persist_failures_total,
     )
 except Exception:  # pragma: no cover — health module may fail in unit tests
+
     class _Noop:
         def labels(self, **_):
             return self
@@ -93,9 +93,7 @@ def _validate_capability(callee_agent: Agent, capability_name: str, input_data: 
         None,
     )
     if cap is None:
-        raise EscrowError(
-            f"Callee agent does not have capability {capability_name!r}"
-        )
+        raise EscrowError(f"Callee agent does not have capability {capability_name!r}")
     schema = cap.get("input_schema")
     if schema:
         try:
@@ -151,23 +149,14 @@ def create_task_with_escrow(
     # payload. The UNIQUE index on transactions.idempotency_key is the
     # ultimate guard against racing inserts.
     if idempotency_key:
-        existing_tx = (
-            db.query(Transaction)
-            .filter(Transaction.idempotency_key == idempotency_key)
-            .first()
-        )
+        existing_tx = db.query(Transaction).filter(Transaction.idempotency_key == idempotency_key).first()
         if existing_tx is not None:
             stored_hash = (existing_tx.extra_data or {}).get("request_hash")
             if stored_hash and stored_hash != request_hash:
                 raise EscrowError(
-                    "Idempotency-Key reused with a different request payload — "
-                    "refusing to return the cached task"
+                    "Idempotency-Key reused with a different request payload — " "refusing to return the cached task"
                 )
-            existing_task = (
-                db.query(TaskSession)
-                .filter(TaskSession.id == existing_tx.task_session_id)
-                .first()
-            )
+            existing_task = db.query(TaskSession).filter(TaskSession.id == existing_tx.task_session_id).first()
             if existing_task is not None:
                 return existing_task, existing_tx
 
@@ -180,9 +169,7 @@ def create_task_with_escrow(
     capability = _validate_capability(callee, capability_name, input_data)
     price = int(capability.get("price", 0))
     if max_budget < price:
-        raise EscrowError(
-            f"Insufficient budget: requested {price}, provided {max_budget}"
-        )
+        raise EscrowError(f"Insufficient budget: requested {price}, provided {max_budget}")
 
     # Lock the caller wallet row to serialize concurrent task creations.
     caller_wallet = (
@@ -197,9 +184,7 @@ def create_task_with_escrow(
     if currency == "credits":
         available = caller_wallet.balance_credits - caller_wallet.reserved_credits
         if available < price:
-            raise EscrowError(
-                f"Insufficient available credits: required {price}, available {available}"
-            )
+            raise EscrowError(f"Insufficient available credits: required {price}, available {available}")
         committed = caller_wallet.daily_spent + caller_wallet.reserved_credits
         if committed + price > caller_wallet.spending_cap:
             raise EscrowError(
@@ -213,9 +198,7 @@ def create_task_with_escrow(
     else:
         available = float(caller_wallet.balance_usdc) - float(caller_wallet.reserved_usdc)
         if available < price:
-            raise EscrowError(
-                f"Insufficient available USDC: required {price}, available {available}"
-            )
+            raise EscrowError(f"Insufficient available USDC: required {price}, available {available}")
         caller_wallet.reserved_usdc = float(caller_wallet.reserved_usdc) + price
 
     input_hash = compute_input_hash(input_data)
@@ -285,14 +268,11 @@ def start_task(
     callee_agent: Agent,
 ) -> TaskSession:
     """Transition INITIATED -> IN_PROGRESS for the given callee."""
-    task = (
-        db.query(TaskSession)
-        .filter(TaskSession.id == task_id)
-        .with_for_update()
-        .first()
-    )
+    task = db.query(TaskSession).filter(TaskSession.id == task_id).with_for_update().first()
     if task is None:
         raise EscrowError("Task session not found")
+    if getattr(task, "execution_mode", "legacy") != "legacy":
+        raise EscrowError("Managed tasks must use authenticated run commands")
     if task.callee_agent_id != callee_agent.id:
         raise EscrowError("Only the callee agent can start the task")
     if task.status == TaskStatus.IN_PROGRESS:
@@ -337,14 +317,11 @@ def confirm_task_completion(
     balance transfer (caller -> callee + platform fee) when the transaction
     flips to COMPLETED. App code only touches reserved_*.
     """
-    task = (
-        db.query(TaskSession)
-        .filter(TaskSession.id == task_id)
-        .with_for_update()
-        .first()
-    )
+    task = db.query(TaskSession).filter(TaskSession.id == task_id).with_for_update().first()
     if task is None:
         raise EscrowError("Task session not found")
+    if getattr(task, "execution_mode", "legacy") != "legacy":
+        raise EscrowError("Managed tasks cannot use callee self-confirmation")
     if task.callee_agent_id != callee_agent.id:
         raise EscrowError("Only the callee agent can confirm the task")
     if task.status == TaskStatus.COMPLETED:
@@ -404,15 +381,12 @@ def confirm_task_completion(
     if task.currency == CurrencyType.CREDITS:
         if caller_wallet.reserved_credits < task.escrow_amount:
             raise EscrowError(
-                "Internal: reserved_credits underflow on confirm — "
-                "indicates a bug in escrow accounting"
+                "Internal: reserved_credits underflow on confirm — " "indicates a bug in escrow accounting"
             )
         caller_wallet.reserved_credits -= task.escrow_amount
     else:
         if float(caller_wallet.reserved_usdc) < task.escrow_amount:
-            raise EscrowError(
-                "Internal: reserved_usdc underflow on confirm"
-            )
+            raise EscrowError("Internal: reserved_usdc underflow on confirm")
         caller_wallet.reserved_usdc = float(caller_wallet.reserved_usdc) - task.escrow_amount
 
     task.status = TaskStatus.COMPLETED
@@ -464,14 +438,11 @@ def fail_task_with_refund(
     if new_status not in (TaskStatus.FAILED, TaskStatus.TIMEOUT):
         raise EscrowError(f"fail_task_with_refund only handles failed/timeout, got {new_status}")
 
-    task = (
-        db.query(TaskSession)
-        .filter(TaskSession.id == task_id)
-        .with_for_update()
-        .first()
-    )
+    task = db.query(TaskSession).filter(TaskSession.id == task_id).with_for_update().first()
     if task is None:
         raise EscrowError("Task session not found")
+    if getattr(task, "execution_mode", "legacy") != "legacy":
+        raise EscrowError("Managed tasks must use authenticated run commands")
     if callee_agent_id is not None and task.callee_agent_id != callee_agent_id:
         raise EscrowError("Only the callee agent can fail the task")
     # Idempotency: terminal state -> noop.
@@ -507,15 +478,12 @@ def fail_task_with_refund(
         if task.currency == CurrencyType.CREDITS:
             if caller_wallet.reserved_credits < task.escrow_amount:
                 raise EscrowError(
-                    "Internal: reserved_credits underflow on refund — "
-                    "indicates a bug in escrow accounting"
+                    "Internal: reserved_credits underflow on refund — " "indicates a bug in escrow accounting"
                 )
             caller_wallet.reserved_credits -= task.escrow_amount
         else:
             if float(caller_wallet.reserved_usdc) < task.escrow_amount:
-                raise EscrowError(
-                    "Internal: reserved_usdc underflow on refund"
-                )
+                raise EscrowError("Internal: reserved_usdc underflow on refund")
             caller_wallet.reserved_usdc = float(caller_wallet.reserved_usdc) - task.escrow_amount
 
         transaction.status = TransactionStatus.CANCELLED
