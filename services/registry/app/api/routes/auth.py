@@ -22,7 +22,9 @@ from ...models import Agent, EmailVerificationToken, User, Wallet, WalletOwnerTy
 from ...schemas import AgentLogin, AgentToken, UserLogin, UserToken
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(filename='/var/log/agentnet-verify.log', level=logging.INFO)
+# Service logging is configured centrally by app.main. A hard-coded
+# /var/log path made importing the API fail on developer machines and in
+# read-only containers.
 
 router = APIRouter()
 

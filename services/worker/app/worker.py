@@ -576,11 +576,12 @@ async def main():
                             created = run_reflection_loop(db)
                         if created:
                             logger.info(f"reflection_loop: generated {created} proposals")
-                        # Convert PROPOSED proposals into backlog items
-                        # so the planner picks them up on the next tick
-                        backlogged = convert_proposals_to_backlog(db)
-                        if backlogged:
-                            logger.info(f"reflection_loop: converted {backlogged} proposals to backlog items")
+                        # YAML backlog export is legacy-only and disabled by
+                        # default. Paperclip is the managed Goal/WorkItem SoT.
+                        if os.getenv("LEGACY_BACKLOG_EXPORT_ENABLED", "false").lower() == "true":
+                            backlogged = convert_proposals_to_backlog(db)
+                            if backlogged:
+                                logger.info(f"reflection_loop: converted {backlogged} proposals to backlog items")
                     except Exception as e:
                         logger.error(f"reflection_loop error: {e}")
                         db.rollback()

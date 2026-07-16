@@ -293,6 +293,8 @@ def start_task(
     )
     if task is None:
         raise EscrowError("Task session not found")
+    if getattr(task, "execution_mode", "legacy") != "legacy":
+        raise EscrowError("Managed tasks must use authenticated run commands")
     if task.callee_agent_id != callee_agent.id:
         raise EscrowError("Only the callee agent can start the task")
     if task.status == TaskStatus.IN_PROGRESS:
@@ -345,6 +347,8 @@ def confirm_task_completion(
     )
     if task is None:
         raise EscrowError("Task session not found")
+    if getattr(task, "execution_mode", "legacy") != "legacy":
+        raise EscrowError("Managed tasks cannot use callee self-confirmation")
     if task.callee_agent_id != callee_agent.id:
         raise EscrowError("Only the callee agent can confirm the task")
     if task.status == TaskStatus.COMPLETED:
@@ -472,6 +476,8 @@ def fail_task_with_refund(
     )
     if task is None:
         raise EscrowError("Task session not found")
+    if getattr(task, "execution_mode", "legacy") != "legacy":
+        raise EscrowError("Managed tasks must use authenticated run commands")
     if callee_agent_id is not None and task.callee_agent_id != callee_agent_id:
         raise EscrowError("Only the callee agent can fail the task")
     # Idempotency: terminal state -> noop.

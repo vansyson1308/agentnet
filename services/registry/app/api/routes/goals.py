@@ -134,6 +134,7 @@ class GoalOut(BaseModel):
     completed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    execution_mode: str = "legacy"
 
     model_config = {"from_attributes": True}
 
@@ -204,6 +205,7 @@ def create_goal(
         success_criteria=payload.success_criteria,
         parent_goal_id=payload.parent_goal_id,
         target_date=payload.target_date,
+        execution_mode="legacy",
     )
     db.add(goal)
     db.commit()

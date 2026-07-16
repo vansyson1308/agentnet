@@ -21,6 +21,9 @@ from .catalog import router as catalog_router
 from .tokens import router as tokens_router
 from .projects import router as projects_router
 from .orchestrator import router as orchestrator_router
+from .managed_executions import router as managed_executions_router
+from .runtimes import router as runtimes_router
+from .runs import router as runs_router
 
 router = APIRouter()
 
@@ -46,3 +49,6 @@ router.include_router(catalog_router, tags=["catalog"])
 router.include_router(tokens_router, tags=["tokens"])
 router.include_router(projects_router, tags=["projects"])
 router.include_router(orchestrator_router, tags=["orchestrator"])
+router.include_router(managed_executions_router, prefix="/managed-executions", tags=["managed-executions"])
+router.include_router(runtimes_router, prefix="/runtimes", tags=["runtimes"])
+router.include_router(runs_router, prefix="/runs", tags=["runs"])

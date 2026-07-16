@@ -302,6 +302,9 @@ class TaskSession(Base):
     fulfillment_channel = Column(String)  # 'websocket', 'webhook', 'internal'
     output = Column(JSON)
     retry_of_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id"))
+    # Legacy tasks retain the old delivery/payment flow. Managed tasks are
+    # created only by ManagedExecutionService and never self-settle.
+    execution_mode = Column(String(32), nullable=False, default="legacy", server_default="legacy")
 
     # Relationships
     caller_agent = relationship("Agent", foreign_keys=[caller_agent_id], back_populates="caller_tasks")
@@ -568,9 +571,17 @@ class Goal(Base):
     completed_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    # Paperclip-backed work is not represented by this legacy Goal table.
+    # The managed scheduler must never read rows where execution_mode=legacy.
+    execution_mode = Column(String(32), nullable=False, default="legacy", server_default="legacy")
 
     # Relationships
     parent = relationship("Goal", remote_side=[id], backref="children")
+
+
+# Register execution-plane tables with Base.metadata while keeping the
+# already-large legacy model module readable.
+from . import managed_models as _managed_models  # noqa: E402,F401
 
 
 class ImprovementProposal(Base):

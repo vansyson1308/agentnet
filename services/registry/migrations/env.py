@@ -32,11 +32,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.config import DATABASE_URL  # noqa: E402
-from app.database import Base  # noqa: E402
-
 # Make sure model modules register with Base.metadata.
 import app.models  # noqa: F401, E402
+from app.config import DATABASE_URL  # noqa: E402
+from app.database import Base  # noqa: E402
 
 config = context.config
 if config.config_file_name is not None:
@@ -69,6 +68,12 @@ def run_migrations_online() -> None:
     connectable = create_engine(DATABASE_URL, poolclass=pool.NullPool)
     with connectable.connect() as connection:
         connection.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _ALEMBIC_LOCK_ID})
+        # SQLAlchemy 2.x autobegins on the lock SELECT. Commit that transaction
+        # before handing the connection to Alembic; the advisory lock is
+        # session-scoped and remains held across the commit. Without this,
+        # Alembic joins the lock transaction and a cleanup rollback silently
+        # discards every migration while still reporting success.
+        connection.commit()
         try:
             context.configure(
                 connection=connection,
@@ -76,22 +81,20 @@ def run_migrations_online() -> None:
             )
             with context.begin_transaction():
                 context.run_migrations()
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
         finally:
-            # Release even if migrations raised; otherwise the next pod
-            # in the rolling restart deadlocks on this lock.
-            # IMPORTANT: if the transaction is aborted (e.g. migration
-            # failed), pg_advisory_unlock will raise InFailedSqlTransaction.
-            # Rollback first, then unlock.
+            # Release even if migrations raised; otherwise the next pod in a
+            # rolling restart blocks until this connection closes.
+            if connection.in_transaction():
+                connection.rollback()
             try:
-                connection.execute(text("ROLLBACK"))
+                connection.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _ALEMBIC_LOCK_ID})
+                connection.commit()
             except Exception:
-                pass
-            try:
-                connection.execute(
-                    text("SELECT pg_advisory_unlock(:k)"), {"k": _ALEMBIC_LOCK_ID}
-                )
-            except Exception:
-                pass
+                connection.rollback()
 
 
 if context.is_offline_mode():

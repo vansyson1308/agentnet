@@ -45,6 +45,8 @@ def _dev_only_default(name: str) -> str:
 _DEV_JWT_SECRET = _dev_only_default("jwt-secret")
 _DEV_REDIS_PASSWORD = _dev_only_default("redis-password")
 _DEV_POSTGRES_PASSWORD = _dev_only_default("postgres-password")
+_DEV_MANAGED_SERVICE_TOKEN = _dev_only_default("managed-execution-service-token")
+_DEV_RUNTIME_REGISTRATION_TOKEN = _dev_only_default("runtime-registration-token")
 
 # Known leftover defaults that ship with the repo. If any of these slip
 # through to a non-dev environment we treat the env var as unset and raise,
@@ -131,3 +133,23 @@ DATABASE_URL = (
     f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
     f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 )
+
+# Managed execution control-plane credentials. These are independent from
+# end-user JWTs: the Paperclip adapter may create executions and runtime
+# operators may register processes, but neither credential can claim work.
+MANAGED_EXECUTION_ENABLED = os.getenv("MANAGED_EXECUTION_ENABLED", "false").lower() == "true"
+if MANAGED_EXECUTION_ENABLED:
+    MANAGED_EXECUTION_SERVICE_TOKEN = require_env(
+        "MANAGED_EXECUTION_SERVICE_TOKEN", dev_default=_DEV_MANAGED_SERVICE_TOKEN
+    )
+    RUNTIME_REGISTRATION_TOKEN = require_env(
+        "RUNTIME_REGISTRATION_TOKEN", dev_default=_DEV_RUNTIME_REGISTRATION_TOKEN
+    )
+else:
+    # Dependencies reject every managed route before credential comparison.
+    # This keeps the additive migration safe for existing deployments.
+    MANAGED_EXECUTION_SERVICE_TOKEN = ""
+    RUNTIME_REGISTRATION_TOKEN = ""
+RUNTIME_HEARTBEAT_TTL_SECONDS = int(os.getenv("RUNTIME_HEARTBEAT_TTL_SECONDS", "90"))
+LEASE_OFFER_TTL_SECONDS = int(os.getenv("LEASE_OFFER_TTL_SECONDS", "120"))
+ARTIFACT_STORE_PATH = os.getenv("ARTIFACT_STORE_PATH", "/var/lib/agentnet/artifacts")
