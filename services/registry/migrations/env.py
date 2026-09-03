@@ -65,10 +65,22 @@ def run_migrations_online() -> None:
     registry pods) cannot race and corrupt the schema. The second pod
     blocks on ``pg_advisory_lock`` until the first commits, then sees
     ``alembic upgrade head`` is a no-op.
+
+    IMPORTANT (regression fixed 2026-09): SQLAlchemy 2.x connections
+    *autobegin* a transaction on the first ``execute()``. Taking the
+    advisory lock therefore opened a transaction that alembic's
+    ``begin_transaction()`` joined instead of owning, and the old
+    ``finally: ROLLBACK`` then discarded every migration *and* the
+    ``alembic_version`` stamp on every boot — ``upgrade head`` appeared
+    to succeed but re-ran the same revisions each start. We now commit
+    the lock's transaction first (session-level advisory locks survive
+    commits), let alembic own and commit its own transaction, and only
+    roll back if the migration raised.
     """
     connectable = create_engine(DATABASE_URL, poolclass=pool.NullPool)
     with connectable.connect() as connection:
         connection.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _ALEMBIC_LOCK_ID})
+        connection.commit()  # end the autobegun txn; the session-level lock is kept
         try:
             context.configure(
                 connection=connection,
@@ -76,20 +88,26 @@ def run_migrations_online() -> None:
             )
             with context.begin_transaction():
                 context.run_migrations()
+            # alembic commits on clean exit of begin_transaction(); make it
+            # explicit so a future alembic behaviour change cannot regress
+            # us back into the silent-rollback bug.
+            if connection.in_transaction():
+                connection.commit()
+        except Exception:
+            # A failed migration must not leave a half-applied schema.
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+            raise
         finally:
             # Release even if migrations raised; otherwise the next pod
             # in the rolling restart deadlocks on this lock.
-            # IMPORTANT: if the transaction is aborted (e.g. migration
-            # failed), pg_advisory_unlock will raise InFailedSqlTransaction.
-            # Rollback first, then unlock.
-            try:
-                connection.execute(text("ROLLBACK"))
-            except Exception:
-                pass
             try:
                 connection.execute(
                     text("SELECT pg_advisory_unlock(:k)"), {"k": _ALEMBIC_LOCK_ID}
                 )
+                connection.commit()
             except Exception:
                 pass
 

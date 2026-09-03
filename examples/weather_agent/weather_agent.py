@@ -74,7 +74,7 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--email", default=os.getenv("WEATHER_EMAIL", "weather@example.com"))
-    parser.add_argument("--password", default=os.getenv("WEATHER_PASSWORD", "Strong-Pass-1!"))
+    parser.add_argument("--password", default=os.getenv("WEATHER_PASSWORD", ""))
     parser.add_argument("--name", default="weather_agent")
     parser.add_argument(
         "--registry-url",

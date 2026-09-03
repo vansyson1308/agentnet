@@ -74,7 +74,7 @@ jobs:
         run: |
           pip install -r services/registry/requirements.txt
           pip install -r services/payment/requirements.txt || true
-          pip install pytest pytest-asyncio pytest-cov httpx
+          pip install pytest pytest-asyncio pytest-cov httpx pyyaml
 
       - name: Apply DB schema (init-db SQL bundle)
         run: |

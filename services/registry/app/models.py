@@ -176,6 +176,9 @@ class User(Base):
     phone = Column(String)
     password_hash = Column(String, nullable=False)
     is_email_verified = Column(Boolean, default=False, server_default=text('false'))
+    # Society runtime authority: NULL (ordinary user) | 'operator' | 'event_producer'.
+    # Assigned only by operators / the seed CLI — never by an agent intent.
+    society_role = Column(String(32))
     kyc_status = _enum_column(KYCStatus, default="pending")
     telegram_id = Column(String)
     notification_settings = Column(JSON, default={})
@@ -745,3 +748,288 @@ class OrchestratorPartner(Base):
     client_secret_hash = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Autonomous Society Runtime v1 — durable events, runs, intents, grants,
+# code candidates. DDL: app/society/schema_sql.py (+ migration 0007).
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class SocietyEventStatus(str, enum.Enum):
+    PENDING = "pending"          # inserted, not yet routed to agents
+    DISPATCHED = "dispatched"    # runs created for every selected agent
+    PROCESSED = "processed"      # every run reached a terminal state
+    IGNORED = "ignored"          # no subscriber / suppressed by loop guard
+    EXPIRED = "expired"          # TTL elapsed before dispatch
+
+
+class AgentRunStatus(str, enum.Enum):
+    QUEUED = "queued"
+    CLAIMED = "claimed"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"            # retryable failure, will be re-queued until max_attempts
+    DEAD = "dead"                # exhausted retries / unrecoverable
+    SKIPPED = "skipped"          # suppressed (cooldown, budget, circuit breaker)
+
+
+class IntentRiskClass(str, enum.Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class PolicyDecision(str, enum.Enum):
+    PENDING = "pending"
+    ALLOW = "allow"
+    DENY = "deny"
+    APPROVAL_REQUIRED = "approval_required"
+    INVALID = "invalid"
+
+
+class IntentExecutionStatus(str, enum.Enum):
+    PENDING = "pending"
+    EXECUTED = "executed"
+    FAILED = "failed"
+    DENIED = "denied"
+    SKIPPED = "skipped"
+    AWAITING_APPROVAL = "awaiting_approval"
+    APPROVED = "approved"        # human approved; waiting for a worker to resume
+    REJECTED = "rejected"        # human rejected; terminal, never executes
+
+
+class SocietyUserRole(str, enum.Enum):
+    OPERATOR = "operator"                # full operator surfaces + approvals + ingress
+    EVENT_PRODUCER = "event_producer"    # may inject allow-listed world events only
+
+
+class ApprovalDecision(str, enum.Enum):
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class CodeCandidateStatus(str, enum.Enum):
+    REQUESTED = "requested"
+    BUILDING = "building"
+    BUILT = "built"
+    QA_RUNNING = "qa_running"
+    QA_PASSED = "qa_passed"
+    QA_FAILED = "qa_failed"
+    SECURITY_REVIEW = "security_review"
+    READY = "ready"              # QA (and security, if required) passed — human may merge
+    REJECTED = "rejected"
+    FAILED = "failed"
+    ABANDONED = "abandoned"
+
+
+class SocietyEvent(Base):
+    """Append-oriented durable event. Redis is only used to *wake* workers;
+    this row is the record. ``causation_id`` links to the event whose
+    processing produced this one; ``correlation_id`` is shared by the whole
+    chain so a story can be reconstructed with one query."""
+
+    __tablename__ = "society_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_type = Column(String(128), nullable=False, index=True)
+    actor_type = Column(String(32), nullable=False, default="system")
+    actor_id = Column(UUID(as_uuid=True))
+    subject_type = Column(String(64))
+    subject_id = Column(UUID(as_uuid=True))
+    payload = Column(PG_JSONB, nullable=False, default=dict)
+    correlation_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    causation_id = Column(UUID(as_uuid=True), ForeignKey("society_events.id", ondelete="SET NULL"))
+    causation_depth = Column(Integer, nullable=False, default=0)
+    idempotency_key = Column(String(160), unique=True)
+    status = _enum_column(SocietyEventStatus, nullable=False, default="pending")
+    dispatch_note = Column(Text)
+    trace_id = Column(UUID(as_uuid=True))
+    source_run_id = Column(UUID(as_uuid=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    dispatched_at = Column(DateTime(timezone=True))
+    processed_at = Column(DateTime(timezone=True))
+
+    cause = relationship("SocietyEvent", remote_side=[id], backref="effects")
+    runs = relationship("AgentRun", back_populates="event")
+
+
+class AgentRun(Base):
+    """One wake-up / cognition cycle of one agent for one event.
+
+    The lease (``worker_id`` + ``lease_expires_at``) makes crash recovery
+    safe: an expired lease is re-claimable. No hidden chain-of-thought is
+    stored — only ``decision_summary`` and a bounded ``context_summary``.
+    """
+
+    __tablename__ = "agent_runs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("society_events.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(64))
+    status = _enum_column(AgentRunStatus, nullable=False, default="queued")
+    worker_id = Column(String(128))
+    lease_expires_at = Column(DateTime(timezone=True))
+    attempt = Column(Integer, nullable=False, default=0)
+    max_attempts = Column(Integer, nullable=False, default=3)
+    not_before = Column(DateTime(timezone=True))
+    started_at = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+    model_provider = Column(String(64))
+    model_name = Column(String(128))
+    prompt_version = Column(String(32))
+    context_digest = Column(String(64))
+    context_summary = Column(PG_JSONB, nullable=False, default=dict)
+    decision_summary = Column(Text)
+    intents_count = Column(Integer, nullable=False, default=0)
+    tokens_in = Column(Integer)
+    tokens_out = Column(Integer)
+    cost_usd = Column(Numeric(12, 6), nullable=False, default=0)
+    # Model-request accounting (distinct from run attempts): how many HTTP
+    # requests the cognition adapter made for this run, how many were retries,
+    # and how many timed out.
+    model_requests = Column(Integer, nullable=False, default=0)
+    model_retries = Column(Integer, nullable=False, default=0)
+    model_timeouts = Column(Integer, nullable=False, default=0)
+    error = Column(Text)
+    sleep_until = Column(DateTime(timezone=True))
+    correlation_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    trace_id = Column(UUID(as_uuid=True))
+    span_id = Column(UUID(as_uuid=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    agent = relationship("Agent", foreign_keys=[agent_id])
+    event = relationship("SocietyEvent", back_populates="runs")
+    intents = relationship("AgentIntent", back_populates="run", order_by="AgentIntent.seq")
+
+
+class AgentIntent(Base):
+    """A typed, validated action proposed by the model and adjudicated by
+    the policy engine. ``idempotency_key`` is UNIQUE so re-execution after a
+    crash cannot double-apply a side effect."""
+
+    __tablename__ = "agent_intents"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False)
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    seq = Column(Integer, nullable=False)
+    intent_type = Column(String(64), nullable=False)
+    payload = Column(PG_JSONB, nullable=False, default=dict)
+    idempotency_key = Column(String(160), nullable=False, unique=True)
+    risk_class = _enum_column(IntentRiskClass, nullable=False, default="low")
+    policy_decision = _enum_column(PolicyDecision, nullable=False, default="pending")
+    policy_reason = Column(Text)
+    execution_status = _enum_column(IntentExecutionStatus, nullable=False, default="pending")
+    result = Column(PG_JSONB, nullable=False, default=dict)
+    error = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    executed_at = Column(DateTime(timezone=True))
+    # Resume lease: an APPROVED intent is claimed by exactly one worker.
+    resume_worker_id = Column(String(128))
+    resume_lease_expires_at = Column(DateTime(timezone=True))
+    resume_attempt = Column(Integer, nullable=False, default=0)
+
+    run = relationship("AgentRun", back_populates="intents")
+    agent = relationship("Agent", foreign_keys=[agent_id])
+    approval = relationship("IntentApproval", back_populates="intent", uselist=False)
+
+
+class IntentApproval(Base):
+    """Durable human decision on an ``awaiting_approval`` intent. Exactly one
+    row per intent (UNIQUE) — approve/reject races are resolved by the row
+    lock on the intent, and the first decision wins."""
+
+    __tablename__ = "intent_approvals"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    intent_id = Column(UUID(as_uuid=True), ForeignKey("agent_intents.id", ondelete="CASCADE"), nullable=False, unique=True)
+    run_id = Column(UUID(as_uuid=True), nullable=False)
+    agent_id = Column(UUID(as_uuid=True), nullable=False)
+    decided_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    decision = _enum_column(ApprovalDecision, nullable=False)
+    reason = Column(Text)
+    original_policy_reason = Column(Text)
+    decided_at = Column(DateTime(timezone=True), server_default=func.now())
+    resumed_at = Column(DateTime(timezone=True))
+    executed_at = Column(DateTime(timezone=True))
+    final_state = Column(String(32))
+    resume_error = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    intent = relationship("AgentIntent", back_populates="approval")
+    decided_by = relationship("User", foreign_keys=[decided_by_user_id])
+
+
+class AgentCapabilityGrant(Base):
+    """The ONLY source of an agent's runtime permissions. Written by the
+    seed/admin path, never by an intent (policy.py has no code path that
+    mutates this table; tests/society/test_policy.py asserts it)."""
+
+    __tablename__ = "agent_capability_grants"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, unique=True)
+    role = Column(String(64), nullable=False)
+    allowed_intents = Column(PG_JSONB, nullable=False, default=list)
+    approval_required_intents = Column(PG_JSONB, nullable=False, default=list)
+    resource_scopes = Column(PG_JSONB, nullable=False, default=dict)
+    risk_ceiling = _enum_column(IntentRiskClass, nullable=False, default="low")
+    max_runs_per_hour = Column(Integer, nullable=False, default=20)
+    max_intents_per_run = Column(Integer, nullable=False, default=5)
+    daily_model_budget_usd = Column(Numeric(12, 6), nullable=False, default=1.0)
+    max_task_escrow_credits = Column(Integer, nullable=False, default=0)
+    wake_cooldown_seconds = Column(Integer, nullable=False, default=30)
+    enabled = Column(Boolean, nullable=False, default=True)
+    paused_until = Column(DateTime(timezone=True))
+    consecutive_failures = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    agent = relationship("Agent", foreign_keys=[agent_id])
+
+
+class CodeCandidate(Base):
+    """Durable record of one autonomous engineering attempt: an isolated
+    worktree/branch produced by the Builder, evaluated by QA (and Security
+    when the diff touches risky surfaces). Never merged by the runtime."""
+
+    __tablename__ = "code_candidates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    proposal_id = Column(UUID(as_uuid=True), ForeignKey("improvement_proposals.id", ondelete="SET NULL"))
+    task_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id", ondelete="SET NULL"))
+    goal_id = Column(UUID(as_uuid=True), ForeignKey("goals.id", ondelete="SET NULL"))
+    correlation_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    requested_by_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"))
+    builder_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"))
+    builder_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"))
+    qa_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"))
+    qa_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"))
+    security_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"))
+    security_run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"))
+    title = Column(String(255), nullable=False)
+    spec = Column(PG_JSONB, nullable=False, default=dict)
+    branch_name = Column(String(255))
+    workspace_path = Column(String(512))
+    base_sha = Column(String(64))
+    head_sha = Column(String(64))
+    diff_stat = Column(Text)
+    patch_summary = Column(Text)
+    changed_files = Column(PG_JSONB, nullable=False, default=list)
+    status = _enum_column(CodeCandidateStatus, nullable=False, default="requested")
+    qa_report = Column(PG_JSONB, nullable=False, default=dict)
+    security_report = Column(PG_JSONB, nullable=False, default=dict)
+    requires_security_review = Column(Boolean, nullable=False, default=False)
+    error = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    proposal = relationship("ImprovementProposal", foreign_keys=[proposal_id])
+    task = relationship("TaskSession", foreign_keys=[task_id])
+    goal = relationship("Goal", foreign_keys=[goal_id])
+    builder_run = relationship("AgentRun", foreign_keys=[builder_run_id])
+    qa_run = relationship("AgentRun", foreign_keys=[qa_run_id])
+    security_run = relationship("AgentRun", foreign_keys=[security_run_id])

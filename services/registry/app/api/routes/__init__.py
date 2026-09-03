@@ -21,6 +21,7 @@ from .catalog import router as catalog_router
 from .tokens import router as tokens_router
 from .projects import router as projects_router
 from .orchestrator import router as orchestrator_router
+from .society import router as society_router
 
 router = APIRouter()
 
@@ -46,3 +47,5 @@ router.include_router(catalog_router, tags=["catalog"])
 router.include_router(tokens_router, tags=["tokens"])
 router.include_router(projects_router, tags=["projects"])
 router.include_router(orchestrator_router, tags=["orchestrator"])
+# Autonomous Society Runtime v1 — observability + JARVIS-style queries
+router.include_router(society_router, tags=["society"])

@@ -63,6 +63,17 @@ This repo involves financial invariants. Follow these rules strictly:
 
 ### Secrets
 - Never commit secrets. Keep `.env.example` updated whenever env vars change.
+- `tests/test_no_hardcoded_secrets.py` scans for provider keys / password literals / secret env defaults.
+
+### Autonomous Society Runtime (services/registry/app/society)
+- The model only proposes typed intents (`intents.py`); `policy.py` decides from `agent_capability_grants` — never add an executor that mutates grants, wallets, secrets or runs a shell.
+- New side effects must go through existing primitives (`task_service`, `AgentChat`, `Goal`, `MemoryItem`, `ImprovementProposal`) and emit a causation-linked event with an intent-derived idempotency key.
+- Schema changes: edit `society/schema_sql.py` (idempotent DDL) — `init-db/16-society-runtime.sql` is generated from it and `tests/society/test_schema_and_migrations.py` enforces sync.
+- Operator authority is ONE dependency (`society/operator_auth.py`, durable `users.society_role`, user JWTs only). Never add client-side checks, email comparisons in routes, secret query params or a universal bearer token. Public society routes stay structural (no payloads/context/decision text/paths/provider config).
+- Approvals: `society/approvals.py` decides and resumes the PERSISTED intent (model never re-called), re-runs the full policy with `approval_granted=True` and fails closed. Forbidden HIGH intents are never approvable.
+- Live model: `python -m app.society.canary preflight` before any real-model run; a credential that ever appeared in git history is compromised (fingerprint denylist + history scan). NO FAKE AUTONOMY — never present `ScriptedRoleModel`/`FakeModel` output as live proof; the canary refuses them.
+- `seed_society` unions operator gates (`approval_required_intents`) instead of resetting them; the canary seeds only a missing fleet.
+- See `docs/SOCIETY_RUNTIME.md`, `docs/SOCIETY_LIVE_MODEL_RUNBOOK.md`, ADR-0001 and ADR-0002.
 
 ---
 
@@ -173,6 +184,8 @@ pytest tests/test_cors_security.py -v           # CORS security config
 pytest tests/test_rate_limiting.py -v          # Rate limiting
 pytest tests/test_task_contract.py -v           # Task contracts & state machine
 pytest tests/test_approval_workflow.py -v         # Approval workflow tests
+pytest tests/society -v                          # Autonomous Society Runtime (needs Postgres; skips with reason otherwise)
+python examples/demo_autonomous_society.py       # Deterministic society E2E (one event -> Scout..QA -> READY)
 
 # Or use Makefile
 make test        # Run tests
@@ -192,6 +205,7 @@ make compose-up  # Start services
 | registry | 8000 | Agent registration, task management, auth, WebSocket |
 | payment  | 8001 | Wallets, transactions, approval requests |
 | worker   | -    | Background: auto-refund timeouts, daily metrics reset |
+| society-worker | 9101 (metrics) | Autonomous Society Runtime loop (`python -m app.society.worker`, registry image); idle unless `SOCIETY_RUNTIME_ENABLED=true` |
 | jaeger   | 16686| Distributed tracing UI |
 
 ### 6.2 API Structure

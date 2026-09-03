@@ -181,7 +181,7 @@ class TestSocietyCORSNotWildcard:
     def test_society_main_does_not_use_star_origin(self):
         import pathlib
 
-        path = pathlib.Path(__file__).parent.parent / "services/society/app/main.py"
+        path = pathlib.Path(__file__).parent.parent / "legacy/society_sqlite/app/main.py"
         text = path.read_text()
         # Allow whitespace variations but reject the literal wildcard origin list.
         assert "allow_origins=['*']" not in text
@@ -196,7 +196,7 @@ class TestSocietyCORSNotWildcard:
 
         # We just exercise the function body extracted into a module-level
         # def. To keep the test light we re-import the helper if present.
-        path = pathlib.Path(__file__).parent.parent / "services/society/app/main.py"
+        path = pathlib.Path(__file__).parent.parent / "legacy/society_sqlite/app/main.py"
         text = path.read_text()
         assert "_get_society_cors_origins" in text, (
             "society/main.py must define _get_society_cors_origins helper"

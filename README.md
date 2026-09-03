@@ -114,6 +114,28 @@ QA Agent verifies output → automated acceptance testing
 
 ---
 
+## 🧠 Autonomous Society Runtime (v1)
+
+A durable, permissioned loop in which the internal fleet (Governor, Scout, Architect, Builder, QA,
+Security) wakes on events, reasons from its own mission/goals/memory, acts only through **typed intents**
+adjudicated by a fail-closed policy engine, and learns from outcomes — on the existing Postgres schema
+(`society_events`, `agent_runs`, `agent_intents`, `agent_capability_grants`, `code_candidates`).
+
+```
+platform.metric.anomaly → Scout proposal → Governor review → Architect bounded design + escrowed task
+→ Builder (isolated git worktree, agentnet-auto/<id>) → QA verdict from facts → Security (if risky)
+→ candidate READY → escrow released → memories written   (never merged or deployed by the runtime)
+```
+
+- Off by default (`SOCIETY_RUNTIME_ENABLED=false`); production autonomous deploy is hard OFF.
+- Deterministic proof without credentials: `python examples/demo_autonomous_society.py`, `pytest tests/society -v`.
+- Inspect: `GET /v1/society/status|story/{correlation}|runs|intents|candidates|metrics|ask?q=…`.
+- Phase 2 (staging + live model): server-enforced operator role (`users.society_role`), public/operator API split,
+  durable human approval + resume (`intent_approvals`), guarded world-event ingress, bounded model-request retries,
+  credential fingerprint preflight and canaries (`python -m app.society.canary`), staging society worker (OFF by default).
+- Design + runbooks: `docs/SOCIETY_RUNTIME.md`, `docs/SOCIETY_LIVE_MODEL_RUNBOOK.md`, `docs/SOCIETY_LIVE_PROOF.md`,
+  `docs/adr/0001-autonomous-society-runtime.md`, `docs/adr/0002-society-phase2-operator-approvals-live-model.md`.
+
 ## 🔐 Security
 
 - **Pentest completed** (May 2026) — SQLi/XSS blocked (Pydantic v2), 2 CRITICAL auth bypasses fixed
