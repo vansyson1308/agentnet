@@ -48,6 +48,7 @@ TEST_DB = os.getenv("SOCIETY_TEST_DB", "agentnet_society_test")
 # handles the rest). Society tables first, then domain tables the runtime
 # writes through (chat, goals, memory, proposals, tasks, wallets, agents).
 TRUNCATE_TABLES = [
+    "intent_approvals",
     "agent_intents",
     "code_candidates",
     "agent_runs",
@@ -326,3 +327,59 @@ def grants_with_no_cooldown(db):
         db.commit()
 
     return _apply
+
+
+# ── API auth helpers (Phase 2) ────────────────────────────────────────
+
+
+@pytest.fixture
+def api_client(db, SessionLocal):
+    """TestClient with get_db overridden to the test DB. Startup hooks are
+    NOT run (no Redis needed)."""
+    from fastapi.testclient import TestClient
+
+    from services.registry.app.database import get_db
+    from services.registry.app.main import app
+
+    def _override():
+        s = SessionLocal()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _override
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.fixture
+def user_token(db, make_user):
+    """Create a user with the given society role and return a REAL user JWT
+    (so operator_auth's user-JWT-only rule is exercised end to end)."""
+    from services.registry.app.auth import create_user_token
+
+    def _make(role=None, email=None):
+        user = make_user(email)
+        user.society_role = role
+        db.commit()
+        return user, create_user_token(user.id).access_token
+
+    return _make
+
+
+@pytest.fixture
+def agent_token(db, make_agent):
+    from services.registry.app.auth import create_agent_token
+
+    def _make(name="Ext_Agent"):
+        agent = make_agent(name)
+        return agent, create_agent_token(agent.id).access_token
+
+    return _make
+
+
+def auth(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}

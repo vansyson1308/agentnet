@@ -109,9 +109,10 @@ def test_alembic_upgrade_persists_and_is_idempotent(society_db_url):
     first = _alembic(env, "upgrade", "head")
     assert first.returncode == 0, first.stderr
     assert "0006_email_verified -> 0007_society_runtime" in first.stderr + first.stdout
+    assert "0007_society_runtime -> 0008_society_phase2" in first.stderr + first.stdout
 
     current = _alembic(env, "current")
-    assert "0007_society_runtime" in current.stdout + current.stderr, "alembic_version was not persisted"
+    assert "0008_society_phase2" in current.stdout + current.stderr, "alembic_version was not persisted"
 
     second = _alembic(env, "upgrade", "head")
     assert second.returncode == 0, second.stderr
@@ -120,7 +121,7 @@ def test_alembic_upgrade_persists_and_is_idempotent(society_db_url):
 
 @pytest.mark.parametrize(
     "table",
-    ["society_events", "agent_runs", "agent_intents", "agent_capability_grants", "code_candidates"],
+    ["society_events", "agent_runs", "agent_intents", "agent_capability_grants", "code_candidates", "intent_approvals"],
 )
 def test_orm_models_match_database_columns(engine, table):
     """Every ORM column exists in the DB and vice versa (catches SQL/ORM drift)."""
