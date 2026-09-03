@@ -33,7 +33,7 @@ AGENT_IDS = {
 USER_CREDS = {
     "username": os.environ.get("AGENTNET_USER_EMAIL", "annhien.dev@gmail.com"),
     # ⚠️ Set AGENTNET_USER_EMAIL + AGENTNET_USER_PASSWORD in .env to login
-    "password": os.environ.get("AGENTNET_USER_PASSWORD", "TestPass123"),
+    "password": os.environ.get("AGENTNET_USER_PASSWORD", ""),
 }
 
 

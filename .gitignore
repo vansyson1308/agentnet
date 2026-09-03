@@ -8,4 +8,10 @@ __pycache__/
 venv/
 .pytest_cache/
 .DS_Store
-Thumbs.db.env.github_token
+Thumbs.db
+.env.github_token
+.env.local
+.env.*.local
+*.secret
+.secrets.local
+

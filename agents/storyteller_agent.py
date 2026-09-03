@@ -47,7 +47,7 @@ class Storyteller:
         try:
             # Login as admin
             r = await self.client.post(f"{REGISTRY_URL}/v1/auth/user/login", data={
-                "username": "echo@agentnet.io.vn", "password": "EchoAgent2026!"
+                "username": os.getenv("AGENTNET_ADMIN_EMAIL", ""), "password": os.getenv("AGENTNET_ADMIN_PASSWORD", "")
             })
             if r.status_code == 200:
                 self.token = r.json()["access_token"]

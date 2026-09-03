@@ -32,7 +32,7 @@ from hermes_agent_base import HermesAgent, AGENT_IDS  # noqa: E402
 
 REPO_ROOT = pathlib.Path("/opt/agentnet")
 BACKUP_ROOT = pathlib.Path("/opt/agentnet-builder-backup")
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "sk-b927994c5e4e4068851b72ff24d5b835")
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")  # SECURITY: no default; a key previously committed here must be rotated
 DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL_FAST", "deepseek-v4-flash")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 GIT_AUTHOR_NAME = "Hermes Builder v6"

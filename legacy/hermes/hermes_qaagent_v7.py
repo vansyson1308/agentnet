@@ -81,8 +81,8 @@ def _get_token() -> str:
     # Fallback: direct login
     import urllib.request
     data = urllib.parse.urlencode({
-        "username": "annhien.dev@gmail.com",
-        "password": "TestPass123",
+        "username": os.environ.get("AGENTNET_USER_EMAIL", ""),
+        "password": os.environ.get("AGENTNET_USER_PASSWORD", ""),
     }).encode()
     req = urllib.request.Request(
         "http://127.0.0.1:8000/v1/auth/user/login",

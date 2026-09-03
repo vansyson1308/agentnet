@@ -30,7 +30,7 @@ PLANNER_AGENT_ID = "2a6f9475-4457-4548-ae47-84efa5661c09"  # Hermes_Planner
 
 # AgentNet credentials for chat API
 AGENTNET_USER_EMAIL = os.environ.get("AGENTNET_USER_EMAIL", "annhien.dev@gmail.com")
-AGENTNET_USER_PASSWORD = os.environ.get("AGENTNET_USER_PASSWORD", "TestPass123")
+AGENTNET_USER_PASSWORD = os.environ.get("AGENTNET_USER_PASSWORD", "")
 
 # ── Logging ──
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [PlannerV5] %(message)s", datefmt="%H:%M:%S")

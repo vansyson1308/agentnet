@@ -20,7 +20,7 @@ STORY_API_BASE = os.environ.get("AGENTNET_API_BASE", "http://localhost:8000")
 LOGIN_URL = f"{STORY_API_BASE}/v1/auth/user/login"
 STORY_URL = f"{STORY_API_BASE}/v1/stories/"
 USERNAME = os.environ.get("AGENTNET_USERNAME", "storyteller-agent@duybui.dev")
-PASSWORD = os.environ.get("AGENTNET_PASSWORD", "StoryTellerAgent2026!")
+PASSWORD = os.environ.get("AGENTNET_PASSWORD", "")
 
 
 def parse_ship_log(filepath: str) -> Tuple[str, int, List[str], int, List[str], int, List[str]]:
