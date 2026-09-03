@@ -55,6 +55,7 @@ from .executor import ExecContext, ExecutionError, execute
 from .intents import DecisionValidationError, ValidatedIntent, payload_to_dict, validate_intents
 from .policy import check_run_budget, evaluate_intent
 from .roles import load_role_definitions, subscriptions_by_event
+from .world import emit_heartbeat, ingest_task_outcomes
 from .runs import (
     claim_next_run,
     complete_run,
@@ -208,6 +209,13 @@ class SocietyWorker:
     def dispatch(self, stats: Optional[CycleStats] = None) -> None:
         db = self.session_factory()
         try:
+            try:
+                if self.settings.ingest_task_outcomes:
+                    ingest_task_outcomes(db, lookback_seconds=self.settings.ingest_lookback_seconds)
+                emit_heartbeat(db, self.settings)
+            except Exception:  # noqa: BLE001 — world ingestion must never block dispatch
+                db.rollback()
+                logger.exception("society world ingestion failed")
             ds = dispatch_pending_events(db, settings=self.settings, routing=self.routing)
         finally:
             db.close()

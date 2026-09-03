@@ -375,6 +375,8 @@ def _builder(context: AgentContext) -> Dict[str, Any]:
             intents.append({"type": "START_TASK", "payload": {"task_id": task["id"]}})
         intents.append({"type": "FAIL_TASK", "payload": {"task_id": task["id"], "error": f"candidate {cid} rejected: {p.get('qa_summary', '')}"[:4000]}})
         return _decision(f"Candidate {cid} was REJECTED; failing task {task['id']} so escrow is refunded.", intents, 1800)
+    if et in ("agent.message.received", "task.created", "task.completed"):
+        return _decision(f"Noted {et}; the Builder acts on code_change.requested and candidate outcomes only.", [], 900)
     cand = next((c for c in context.candidates if c["id"] == cid), None)
     if cand is None:
         return _decision(f"Candidate {cid} not in context; nothing to build.", [], 600)

@@ -138,6 +138,55 @@ services:
     networks:
       - agentnet-network
 
+  # Autonomous Society Runtime worker (v1). Shares the registry image so it
+  # uses the same models/task_service/alembic schema. Disabled by default:
+  # SOCIETY_RUNTIME_ENABLED=false makes it idle. The repo is mounted so the
+  # Builder can create isolated git worktrees (only used when
+  # SOCIETY_AUTONOMOUS_CODE_ENABLED=true). Production deploy is hard OFF.
+  society-worker:
+    build:
+      context: ./services/registry
+      dockerfile: Dockerfile
+    container_name: agentnet-society-worker
+    entrypoint: []
+    command: python -m app.society.worker
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-agentnet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-agentnet}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-your_redis_password}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-your_jwt_secret_key}
+      JAEGER_ENABLED: "false"
+      ENVIRONMENT: development
+      SOCIETY_RUNTIME_ENABLED: ${SOCIETY_RUNTIME_ENABLED:-false}
+      SOCIETY_MODEL_PROVIDER: ${SOCIETY_MODEL_PROVIDER:-scripted}
+      SOCIETY_MODEL_NAME: ${SOCIETY_MODEL_NAME:-}
+      SOCIETY_MODEL_BASE_URL: ${SOCIETY_MODEL_BASE_URL:-}
+      SOCIETY_MODEL_API_KEY: ${SOCIETY_MODEL_API_KEY:-}
+      SOCIETY_MAX_RUNS_PER_HOUR: ${SOCIETY_MAX_RUNS_PER_HOUR:-120}
+      SOCIETY_DAILY_MODEL_BUDGET: ${SOCIETY_DAILY_MODEL_BUDGET:-2.0}
+      SOCIETY_MAX_CAUSATION_DEPTH: ${SOCIETY_MAX_CAUSATION_DEPTH:-12}
+      SOCIETY_AUTONOMOUS_CODE_ENABLED: ${SOCIETY_AUTONOMOUS_CODE_ENABLED:-false}
+      SOCIETY_STAGING_DEPLOY_ENABLED: ${SOCIETY_STAGING_DEPLOY_ENABLED:-false}
+      SOCIETY_REPO_ROOT: /workspace/repo
+      SOCIETY_WORKSPACE_ROOT: /tmp/agentnet-society-workspaces
+      SOCIETY_METRICS_PORT: 9101
+    volumes:
+      - ./:/workspace/repo
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      registry:
+        condition: service_started
+    networks:
+      - agentnet-network
+
   # Simulation Service (MiroFish swarm simulation)
   simulation:
     build:

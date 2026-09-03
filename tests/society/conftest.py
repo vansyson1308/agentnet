@@ -308,6 +308,7 @@ def society_settings(tmp_path, temp_repo, monkeypatch):
     monkeypatch.setenv("SOCIETY_WAKE_POLL_SECONDS", "1")
     monkeypatch.setenv("SOCIETY_RETRY_BACKOFF_BASE_SECONDS", "0")
     monkeypatch.setenv("SOCIETY_QA_TEST_TIMEOUT_SECONDS", "120")
+    monkeypatch.setenv("SOCIETY_HEARTBEAT_INTERVAL_SECONDS", "0")  # tests enable it explicitly
     reset_settings_cache()
     settings = SocietySettings()
     yield settings
