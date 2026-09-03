@@ -145,6 +145,9 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         ),
         subscriptions=(
             EventType.PLATFORM_METRIC_ANOMALY,
+            EventType.PLATFORM_HEALTH_DEGRADED,
+            EventType.USER_FEEDBACK_RECEIVED,
+            EventType.STAGING_CANARY_SIGNAL,
             EventType.TASK_FAILED,
             EventType.TASK_TIMEOUT,
             EventType.QA_FAILED,
