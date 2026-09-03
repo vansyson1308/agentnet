@@ -61,6 +61,7 @@ from .config import SocietySettings
 from .engineering import workspace as ws_mod
 from .engineering.qa import RISKY_PATH_RE, evaluate_candidate, static_security_scan
 from .events import EventType, emit_event, utcnow
+from .ids import candidate_id_for
 from .intents import IntentType, ValidatedIntent
 
 logger = logging.getLogger(__name__)
@@ -532,8 +533,12 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
         if existing is not None:
             return ExecOutcome(result={"candidate_id": str(existing.id), "duplicate": True, "status": _ev(existing.status)})
     requires_sec = bool(p.requires_security_review) or any(RISKY_PATH_RE.search(f) for f in spec["files_allowed"]) or spec.get("kind") == "code"
+    cand_id = candidate_id_for(ctx.run.correlation_id, p.proposal_id, p.title)
+    existing_by_id = ctx.db.query(CodeCandidate).filter(CodeCandidate.id == cand_id).first()
+    if existing_by_id is not None:
+        return ExecOutcome(result={"candidate_id": str(existing_by_id.id), "duplicate": True, "status": _ev(existing_by_id.status)})
     cand = CodeCandidate(
-        id=uuid.uuid4(),
+        id=cand_id,
         proposal_id=p.proposal_id,
         task_id=p.task_id,
         goal_id=p.goal_id,
@@ -583,8 +588,12 @@ def _submit_code_candidate(ctx: ExecContext) -> ExecOutcome:
         changed = ws_mod.changed_files(ws)
         stat = ws_mod.diff_stat(ws)
     except ws_mod.WorkspaceError as exc:
+        # The lease heartbeat may already have committed status=BUILDING;
+        # persist the reset explicitly so the worker's rollback cannot leave
+        # the candidate stuck in BUILDING.
         cand.status = CodeCandidateStatus.REQUESTED if status != CodeCandidateStatus.QA_FAILED.value else CodeCandidateStatus.QA_FAILED
         cand.error = str(exc)[:2000]
+        ctx.db.commit()
         raise ExecutionError(f"workspace refused: {exc}") from exc
     cand.status = CodeCandidateStatus.BUILT
     cand.branch_name = ws.branch
@@ -644,8 +653,9 @@ def _evaluate_code_candidate(ctx: ExecContext) -> ExecOutcome:
         ws = ws_mod.ensure_workspace(ctx.settings, cand.id)
         report = evaluate_candidate(ctx.settings, ws, cand.spec or {}, list(cand.changed_files or []), attempts=prev_attempts + 1)
     except ws_mod.WorkspaceError as exc:
-        cand.status = CodeCandidateStatus.BUILT
+        cand.status = CodeCandidateStatus.BUILT  # heartbeat committed QA_RUNNING; persist the reset
         cand.error = str(exc)[:2000]
+        ctx.db.commit()
         raise ExecutionError(f"workspace unavailable for QA: {exc}") from exc
     ctx.heartbeat()
     report_dict = report.to_dict()

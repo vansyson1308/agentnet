@@ -159,7 +159,10 @@ def main() -> None:  # pragma: no cover — CLI
     db = SessionLocal()
     try:
         report = seed_society(db)
-        print(json.dumps({"user_id": str(report.user_id), "agents": {k: str(v) for k, v in report.agents.items()}, "created": report.created_agents, "reused": report.reused_agents}, indent=2))
+        logger.info(
+            "society seed report: %s",
+            json.dumps({"user_id": str(report.user_id), "agents": {k: str(v) for k, v in report.agents.items()}, "created": report.created_agents, "reused": report.reused_agents}),
+        )
     finally:
         db.close()
 

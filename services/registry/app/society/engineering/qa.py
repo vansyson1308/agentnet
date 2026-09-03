@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import logging
 import os
-import py_compile
 import re
 import subprocess
 import sys
@@ -136,9 +135,10 @@ def _compile_check(ws: Workspace, changed: Sequence[str]) -> Check:
             if not p.exists():
                 continue
             try:
-                py_compile.compile(str(p), doraise=True, cfile=os.devnull)
-            except py_compile.PyCompileError as exc:
-                errors.append(f"{rel}: {str(exc).splitlines()[-1][:200]}")
+                # compile in-memory: never writes bytecode into the worktree
+                compile(p.read_bytes(), str(p), "exec", dont_inherit=True)
+            except (SyntaxError, ValueError) as exc:
+                errors.append(f"{rel}: {type(exc).__name__}: {str(exc)[:200]}")
     return Check("compile", not errors, "; ".join(errors) if errors else f"{sum(1 for c in changed if c.endswith('.py'))} python file(s) compile")
 
 

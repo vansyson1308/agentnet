@@ -43,6 +43,12 @@ def test_single_event_drives_full_engineering_loop(db, SessionLocal, society_set
     report = seed_society(db)
     grants_with_no_cooldown()
     assert set(report.agents) == {"governor", "scout", "architect", "builder", "qa", "security"}
+    # Operator funding (what the dev-only /wallets/{id}/fund endpoint does). The runtime itself never mints.
+    from services.registry.app.models import Wallet, WalletOwnerType
+
+    architect_wallet = db.query(Wallet).filter(Wallet.owner_type == WalletOwnerType.AGENT, Wallet.owner_id == report.agents["architect"]).first()
+    architect_wallet.balance_credits = 100
+    db.commit()
 
     # ── the ONLY external input ──
     correlation = uuid.uuid4()
@@ -124,6 +130,23 @@ def test_single_event_drives_full_engineering_loop(db, SessionLocal, society_set
     for t in ("CREATE_IMPROVEMENT", "REVIEW_IMPROVEMENT", "REQUEST_CODE_CHANGE", "SUBMIT_CODE_CANDIDATE", "EVALUATE_CODE_CANDIDATE", "WRITE_MEMORY"):
         assert t in executed, (t, [(i.intent_type, _ev(i.execution_status), i.error) for i in intents])
     assert all(_ev(i.policy_decision) in ("allow", "deny", "invalid") for i in intents)
+
+    # the Architect escrowed a Builder task; payment was released only after READY
+    from services.registry.app.models import TaskSession, Transaction
+
+    tasks = db.query(TaskSession).all()
+    assert len(tasks) == 1 and _ev(tasks[0].status) == "completed" and tasks[0].escrow_amount == 10
+    assert tasks[0].caller_agent_id == report.agents["architect"] and tasks[0].callee_agent_id == report.agents["builder"]
+    assert tasks[0].input["candidate_id"] == str(cand.id)
+    db.refresh(architect_wallet)
+    builder_wallet = db.query(Wallet).filter(Wallet.owner_type == WalletOwnerType.AGENT, Wallet.owner_id == report.agents["builder"]).first()
+    assert architect_wallet.balance_credits == 90 and architect_wallet.reserved_credits == 0
+    assert 0 < builder_wallet.balance_credits <= 10
+    tx = db.query(Transaction).filter(Transaction.task_session_id == tasks[0].id).first()
+    assert _ev(tx.status) == "completed"
+    complete_intent = db.query(AgentIntent).filter(AgentIntent.intent_type == "COMPLETE_TASK").first()
+    ready_event = next(e for e in events if e.event_type == EventType.CODE_CANDIDATE_READY)
+    assert complete_intent is not None and complete_intent.run.event_id == ready_event.id, "payment must be released by the READY event, not before"
 
     # society learned something, and the trace is queryable through spans
     memories = db.query(MemoryItem).all()

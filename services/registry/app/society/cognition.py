@@ -33,6 +33,7 @@ from typing import Any, Callable, Dict, List, Optional, Protocol
 
 from .config import SocietySettings
 from .context import AgentContext
+from .ids import candidate_id_for
 from .intents import AgentDecision, DecisionValidationError, IntentType, parse_decision
 
 logger = logging.getLogger(__name__)
@@ -270,8 +271,27 @@ def _architect(context: AgentContext) -> Dict[str, Any]:
         title = (p.get("title") or "Approved change")[:200]
         slug = _slug(title)
         doc_path = f"docs/society/candidates/{slug}.md"
+        cid = str(candidate_id_for(context.event["correlation_id"], pid, title))
+        available = int((context.budget.get("wallet") or {}).get("available_credits") or 0)
+        cap = int(context.budget.get("max_task_escrow_credits") or 0)
+        escrow_intents: List[Dict[str, Any]] = []
+        if _allowed(context, IntentType.CREATE_TASK) and available >= 10 and cap >= 10:
+            escrow_intents.append(
+                {
+                    "type": "CREATE_TASK",
+                    "payload": {
+                        "callee_agent": "Society_Builder",
+                        "capability": "implement_change",
+                        "input": {"candidate_id": cid, "title": title},
+                        "max_budget": 10,
+                        "timeout_seconds": 3600,
+                        "proposal_id": pid,
+                    },
+                }
+            )
         return _decision(
-            f"Designing a bounded documentation candidate for proposal {pid}: one file, mechanical acceptance test.",
+            f"Designing a bounded documentation candidate for proposal {pid}: one file, mechanical acceptance test"
+            + ("; escrowing 10 credits for the Builder." if escrow_intents else "."),
             [
                 {
                     "type": "REQUEST_CODE_CHANGE",
@@ -292,12 +312,13 @@ def _architect(context: AgentContext) -> Dict[str, Any]:
                         },
                     },
                 },
+                *escrow_intents,
                 {
                     "type": "SEND_MESSAGE",
                     "payload": {
                         "to_agent": "Society_Builder",
                         "title": f"Implementation request: {title}"[:255],
-                        "content": f"Please implement the bounded candidate for proposal {pid}. Only {doc_path} may change; acceptance: tests/society/acceptance/test_candidate_docs.py."[:4000],
+                        "content": f"Please implement candidate {cid} for proposal {pid}. Only {doc_path} may change; acceptance: tests/society/acceptance/test_candidate_docs.py."[:4000],
                         "message_type": "review_request",
                     },
                 },
@@ -323,10 +344,37 @@ def _architect(context: AgentContext) -> Dict[str, Any]:
     return _decision("No design work in this event.", [], 1800)
 
 
+def _builder_task_for(context: AgentContext, cid: str) -> Optional[Dict[str, Any]]:
+    for t in context.tasks:
+        inp = t["input"]["data"] if isinstance(t.get("input"), dict) and t["input"].get("_untrusted") else t.get("input") or {}
+        if t["role"] == "callee" and isinstance(inp, dict) and inp.get("candidate_id") == cid:
+            return t
+    return None
+
+
 def _builder(context: AgentContext) -> Dict[str, Any]:
     et = context.event["type"]
     p = _payload(context)
     cid = p.get("candidate_id")
+    task = _builder_task_for(context, cid) if cid else None
+    # Economic close-out: the escrowed implementation task is released only
+    # after QA/Security marked the candidate READY, refunded when REJECTED.
+    if et == "code_candidate.ready":
+        if task is None:
+            return _decision(f"Candidate {cid} ready; no escrowed task to close.", [], 1800)
+        intents: List[Dict[str, Any]] = []
+        if task["status"] == "initiated":
+            intents.append({"type": "START_TASK", "payload": {"task_id": task["id"]}})
+        intents.append({"type": "COMPLETE_TASK", "payload": {"task_id": task["id"], "output": {"candidate_id": cid, "verdict": "ready", "branch": p.get("branch_name")}}})
+        return _decision(f"Candidate {cid} is READY; completing escrowed task {task['id']}.", intents, 1800)
+    if et == "code_candidate.rejected":
+        if task is None:
+            return _decision(f"Candidate {cid} rejected; no escrowed task to fail.", [], 1800)
+        intents = []
+        if task["status"] == "initiated":
+            intents.append({"type": "START_TASK", "payload": {"task_id": task["id"]}})
+        intents.append({"type": "FAIL_TASK", "payload": {"task_id": task["id"], "error": f"candidate {cid} rejected: {p.get('qa_summary', '')}"[:4000]}})
+        return _decision(f"Candidate {cid} was REJECTED; failing task {task['id']} so escrow is refunded.", intents, 1800)
     cand = next((c for c in context.candidates if c["id"] == cid), None)
     if cand is None:
         return _decision(f"Candidate {cid} not in context; nothing to build.", [], 600)
@@ -345,9 +393,13 @@ def _builder(context: AgentContext) -> Dict[str, Any]:
             f"## Evidence\n\nCandidate `{cid}`; proposal `{cand.get('proposal_id')}`; correlation `{context.event['correlation_id']}`.\n\n"
             f"## Verification\n\nAcceptance test: `{(spec.get('acceptance_tests') or ['n/a'])[0]}` executed by Society_QA in an isolated worktree.\n"
         )
+        intents = []
+        if task is not None and task["status"] == "initiated":
+            intents.append({"type": "START_TASK", "payload": {"task_id": task["id"]}})
+        intents.append({"type": "SUBMIT_CODE_CANDIDATE", "payload": {"candidate_id": cid, "edits": [{"path": target, "content": content}], "summary": f"Add {target} documenting '{title}' with the required sections."[:4000]}})
         return _decision(
-            f"Submitting candidate {cid}: one file ({target}) per the allow-list.",
-            [{"type": "SUBMIT_CODE_CANDIDATE", "payload": {"candidate_id": cid, "edits": [{"path": target, "content": content}], "summary": f"Add {target} documenting '{title}' with the required sections."[:4000]}}],
+            f"Submitting candidate {cid}: one file ({target}) per the allow-list" + ("; starting escrowed task." if task else "."),
+            intents,
             300,
         )
     return _decision(f"Candidate {cid}: no further build attempts allowed.", [], 1800)

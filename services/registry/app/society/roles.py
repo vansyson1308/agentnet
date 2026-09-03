@@ -80,8 +80,8 @@ _LOW_COMMON = (
 )
 
 # Capability entries follow the shape task_service._validate_capability
-# expects (name + input_schema); prices are 0 because internal work is
-# escrowed per task by the caller, not priced by the callee.
+# expects (name + input_schema + price). The price is what a requester must
+# escrow (task_service reserves exactly `price` from the caller's wallet).
 _BUILDER_CAPABILITY = {
     "name": "implement_change",
     "version": "1.0",
@@ -92,7 +92,7 @@ _BUILDER_CAPABILITY = {
         "required": ["candidate_id"],
     },
     "output_schema": {"type": "object"},
-    "price": 0,
+    "price": 10,  # credits escrowed by the requester per implementation task
 }
 _QA_CAPABILITY = {
     "name": "evaluate_candidate",
@@ -100,7 +100,7 @@ _QA_CAPABILITY = {
     "description": "Independently evaluate a code candidate (compile + acceptance tests)",
     "input_schema": {"type": "object", "properties": {"candidate_id": {"type": "string"}}, "required": ["candidate_id"]},
     "output_schema": {"type": "object"},
-    "price": 0,
+    "price": 5,
 }
 
 DEFAULT_ROLES: Dict[str, RoleDefinition] = {
@@ -200,7 +200,12 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             IntentType.COMPLETE_TASK.value,
             IntentType.FAIL_TASK.value,
         ),
-        subscriptions=(EventType.CODE_CHANGE_REQUESTED, EventType.CODE_CANDIDATE_QA_FAILED),
+        subscriptions=(
+            EventType.CODE_CHANGE_REQUESTED,
+            EventType.CODE_CANDIDATE_QA_FAILED,
+            EventType.CODE_CANDIDATE_READY,
+            EventType.CODE_CANDIDATE_REJECTED,
+        ),
         risk_ceiling=IntentRiskClass.MEDIUM.value,
         resource_scopes={"memory_scopes": ["agent"]},
         capabilities=(_BUILDER_CAPABILITY,),

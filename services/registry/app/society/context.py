@@ -130,7 +130,13 @@ class AgentContext:
         return json.dumps(self.to_dict(), sort_keys=True, ensure_ascii=False, default=str, separators=(",", ":"))
 
     def digest(self) -> str:
-        return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
+        """sha256 over the canonical context minus wall-clock fields, so the
+        same database state always yields the same digest (deterministic
+        assembly is testable)."""
+        d = self.to_dict()
+        d.pop("generated_at", None)
+        d.pop("run_id", None)
+        return hashlib.sha256(json.dumps(d, sort_keys=True, ensure_ascii=False, default=str, separators=(",", ":")).encode("utf-8")).hexdigest()
 
     def summary(self) -> Dict[str, Any]:
         """Bounded summary persisted on the run (what the agent saw, in outline)."""
