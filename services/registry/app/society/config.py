@@ -89,6 +89,15 @@ class SocietySettings:
     # return cost. Conservative defaults; override per deployment.
     model_usd_per_1k_input: Decimal = field(default_factory=lambda: _decimal("SOCIETY_MODEL_USD_PER_1K_INPUT", "0.0005"))
     model_usd_per_1k_output: Decimal = field(default_factory=lambda: _decimal("SOCIETY_MODEL_USD_PER_1K_OUTPUT", "0.0015"))
+    # Model REQUEST retries (network / 429 / 5xx / timeout) are bounded and
+    # distinct from run attempts. Cognition has no side effects, so replaying a
+    # request is safe; the only cost is money, which is accounted per request.
+    model_request_retries: int = field(default_factory=lambda: _int("SOCIETY_MODEL_REQUEST_RETRIES", 1, minimum=0))
+    model_retry_backoff_seconds: int = field(default_factory=lambda: _int("SOCIETY_MODEL_RETRY_BACKOFF_SECONDS", 2, minimum=0))
+    # Prefer native JSON-schema structured output when the provider supports
+    # it (OpenAI-style ``response_format.json_schema``); falls back to
+    # ``json_object`` + strict parsing when off or rejected by the provider.
+    model_json_schema: bool = field(default_factory=lambda: _bool("SOCIETY_MODEL_JSON_SCHEMA", False))
 
     # ── global budgets / loop-storm limits ─────────────────────────────
     max_runs_per_hour: int = field(default_factory=lambda: _int("SOCIETY_MAX_RUNS_PER_HOUR", 120, minimum=1))
@@ -115,6 +124,25 @@ class SocietySettings:
     ingest_task_outcomes: bool = field(default_factory=lambda: _bool("SOCIETY_INGEST_TASK_OUTCOMES", True))
     ingest_lookback_seconds: int = field(default_factory=lambda: _int("SOCIETY_INGEST_LOOKBACK_SECONDS", 3600, minimum=60))
     dispatch_batch_size: int = field(default_factory=lambda: _int("SOCIETY_DISPATCH_BATCH_SIZE", 50, minimum=1))
+
+    # ── approvals / ingress ────────────────────────────────────────────
+    approval_resume_max_attempts: int = field(default_factory=lambda: _int("SOCIETY_APPROVAL_RESUME_MAX_ATTEMPTS", 3, minimum=1))
+    ingress_event_allowlist: tuple = field(
+        default_factory=lambda: tuple(
+            sorted(
+                {
+                    "platform.metric.anomaly",
+                    "platform.health.degraded",
+                    "user.feedback.received",
+                    "staging.canary.signal",
+                }
+                | {e.strip() for e in os.getenv("SOCIETY_INGRESS_EVENT_ALLOWLIST", "").split(",") if e.strip()}
+            )
+        )
+    )
+    ingress_max_payload_bytes: int = field(default_factory=lambda: _int("SOCIETY_INGRESS_MAX_PAYLOAD_BYTES", 8192, minimum=256))
+    ingress_max_events_per_actor_per_hour: int = field(default_factory=lambda: _int("SOCIETY_INGRESS_MAX_PER_ACTOR_PER_HOUR", 30, minimum=1))
+    ingress_max_events_per_hour: int = field(default_factory=lambda: _int("SOCIETY_INGRESS_MAX_PER_HOUR", 120, minimum=1))
 
     # ── engineering loop ───────────────────────────────────────────────
     repo_root: str = field(default_factory=lambda: os.getenv("SOCIETY_REPO_ROOT") or _detect_repo_root())
@@ -149,8 +177,18 @@ class SocietySettings:
                 out[f.name] = "***" if getattr(self, f.name) else ""
             else:
                 v = getattr(self, f.name)
-                out[f.name] = str(v) if isinstance(v, Decimal) else v
+                out[f.name] = str(v) if isinstance(v, Decimal) else (list(v) if isinstance(v, tuple) else v)
         return out
+
+    def public_flags(self) -> dict:
+        """The only settings a public (unauthenticated) surface may show."""
+        return {
+            "runtime_enabled": self.runtime_enabled,
+            "autonomous_code_enabled": self.autonomous_code_enabled,
+            "staging_deploy_enabled": self.staging_deploy_enabled,
+            "production_deploy_enabled": self.production_deploy_enabled,
+            "model_provider": self.model_provider,
+        }
 
 
 @lru_cache(maxsize=1)

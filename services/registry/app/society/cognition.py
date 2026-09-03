@@ -48,10 +48,48 @@ class ModelResponse:
     tokens_out: int = 0
     cost_usd: Decimal = Decimal("0")
     raw_summary: str = ""
+    # request accounting (distinct from run attempts)
+    requests: int = 1
+    retries: int = 0
+    timeouts: int = 0
 
 
 class ModelTimeout(Exception):
-    """Model did not answer within the configured timeout."""
+    """Model did not answer within the configured timeout (after bounded retries)."""
+
+
+class ModelProviderError(Exception):
+    """Provider returned a non-retryable or repeatedly failing response.
+    The message never includes request headers or credentials."""
+
+
+_RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
+
+
+def _decision_json_schema() -> Dict[str, Any]:
+    """Non-strict JSON schema for the AgentDecision contract (intent payloads
+    are open objects validated by the typed parser afterwards)."""
+    return {
+        "type": "object",
+        "properties": {
+            "decision_summary": {"type": "string", "maxLength": 1000},
+            "intents": {
+                "type": "array",
+                "maxItems": 50,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string"},
+                        "payload": {"type": "object"},
+                        "idempotency_key": {"type": ["string", "null"]},
+                    },
+                    "required": ["type", "payload"],
+                },
+            },
+            "sleep_for_seconds": {"type": "integer", "minimum": 0, "maximum": 86400},
+        },
+        "required": ["decision_summary", "intents", "sleep_for_seconds"],
+    }
 
 
 class CognitiveModel(Protocol):
@@ -539,8 +577,50 @@ class OpenAICompatibleModel:
         headers = {"Authorization": f"Bearer {self.settings.model_api_key}", "Content-Type": "application/json"}
         async with httpx.AsyncClient(timeout=self.settings.model_timeout_seconds) as client:
             resp = await client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                # Never echo the request (it carries the Authorization header) or the
+                # full provider body; keep status + a short excerpt for the audit trail.
+                raise _HTTPStatus(resp.status_code, resp.text[:200])
             return resp.json()
+
+    def _response_format(self) -> Dict[str, Any]:
+        if self.settings.model_json_schema:
+            return {"type": "json_schema", "json_schema": {"name": "agent_decision", "schema": _decision_json_schema(), "strict": False}}
+        return {"type": "json_object"}
+
+    async def _request_with_retries(self, payload: Dict[str, Any], stats: Dict[str, int]) -> Dict[str, Any]:
+        """Bounded model-request retry: at most 1 + SOCIETY_MODEL_REQUEST_RETRIES
+        attempts, only for transport errors, timeouts and retryable statuses.
+        Cognition has no side effects, so replaying is safe; every attempt is
+        counted for cost/observability."""
+        max_attempts = 1 + int(self.settings.model_request_retries)
+        last_exc: Optional[BaseException] = None
+        for attempt in range(1, max_attempts + 1):
+            stats["requests"] += 1
+            try:
+                return await asyncio.wait_for(self._post(payload), timeout=self.settings.model_timeout_seconds)
+            except asyncio.TimeoutError:
+                stats["timeouts"] += 1
+                last_exc = ModelTimeout(f"model call exceeded {self.settings.model_timeout_seconds}s (attempt {attempt}/{max_attempts})")
+            except _HTTPStatus as exc:
+                if exc.status == 400 and payload.get("response_format", {}).get("type") == "json_schema":
+                    # provider does not support json_schema: fall back once to json_object
+                    payload = {**payload, "response_format": {"type": "json_object"}}
+                    last_exc = ModelProviderError(f"provider rejected json_schema (400); retrying with json_object: {exc.excerpt}")
+                elif exc.status in _RETRYABLE_STATUS:
+                    last_exc = ModelProviderError(f"provider status {exc.status} (attempt {attempt}/{max_attempts}): {exc.excerpt}")
+                else:
+                    raise ModelProviderError(f"provider status {exc.status}: {exc.excerpt}") from None
+            except Exception as exc:  # noqa: BLE001 — transport-level failure
+                name = type(exc).__name__
+                if name in ("DecisionValidationError",):
+                    raise
+                last_exc = ModelProviderError(f"transport error {name} (attempt {attempt}/{max_attempts})")
+            if attempt < max_attempts:
+                stats["retries"] += 1
+                await asyncio.sleep(self.settings.model_retry_backoff_seconds * attempt)
+        assert last_exc is not None
+        raise last_exc
 
     async def decide(self, context: AgentContext) -> ModelResponse:
         payload = {
@@ -548,12 +628,10 @@ class OpenAICompatibleModel:
             "messages": self._messages(context),
             "temperature": 0.2,
             "max_tokens": self.settings.model_max_output_tokens,
-            "response_format": {"type": "json_object"},
+            "response_format": self._response_format(),
         }
-        try:
-            data = await asyncio.wait_for(self._post(payload), timeout=self.settings.model_timeout_seconds)
-        except asyncio.TimeoutError as exc:
-            raise ModelTimeout(f"model call exceeded {self.settings.model_timeout_seconds}s") from exc
+        stats = {"requests": 0, "retries": 0, "timeouts": 0}
+        data = await self._request_with_retries(payload, stats)
         try:
             content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
@@ -562,6 +640,10 @@ class OpenAICompatibleModel:
         tokens_in = int(usage.get("prompt_tokens") or 0)
         tokens_out = int(usage.get("completion_tokens") or 0)
         cost = (Decimal(tokens_in) / 1000) * self.settings.model_usd_per_1k_input + (Decimal(tokens_out) / 1000) * self.settings.model_usd_per_1k_output
+        # retried attempts that returned nothing still cost input tokens at the
+        # provider; account conservatively for them.
+        if stats["retries"]:
+            cost += (Decimal(tokens_in) / 1000) * self.settings.model_usd_per_1k_input * stats["retries"]
         decision = parse_decision(content, max_intents=int(context.permissions.get("max_intents_per_run") or 5))
         return ModelResponse(
             decision=decision,
@@ -571,7 +653,17 @@ class OpenAICompatibleModel:
             tokens_out=tokens_out,
             cost_usd=cost.quantize(Decimal("0.000001")),
             raw_summary=str(content)[:500],
+            requests=stats["requests"],
+            retries=stats["retries"],
+            timeouts=stats["timeouts"],
         )
+
+
+class _HTTPStatus(Exception):
+    def __init__(self, status: int, excerpt: str):
+        super().__init__(f"HTTP {status}")
+        self.status = status
+        self.excerpt = excerpt
 
 
 def get_model(settings: SocietySettings) -> CognitiveModel:
@@ -586,6 +678,7 @@ __all__ = [
     "CognitiveModel",
     "ModelResponse",
     "ModelTimeout",
+    "ModelProviderError",
     "FakeModel",
     "ScriptedRoleModel",
     "OpenAICompatibleModel",
