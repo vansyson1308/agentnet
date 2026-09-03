@@ -47,7 +47,8 @@ from ..models import (
     Span,
     SpanStatus,
 )
-from .cognition import CognitiveModel, ModelTimeout, get_model
+from .approvals import claim_next_approved_intent, execute_approved_intent
+from .cognition import CognitiveModel, ModelProviderError, ModelTimeout, get_model
 from .config import SocietySettings, get_settings
 from .context import build_context
 from .events import WAKE_CHANNEL, EventType, emit_event, utcnow
@@ -128,6 +129,7 @@ class CycleStats:
     intents_failed: int = 0
     duplicates_prevented: int = 0
     loop_breaks: int = 0
+    approved_intents_resumed: int = 0
     cycles: int = 0
     processed_run_ids: List[str] = field(default_factory=list)
 
@@ -231,7 +233,10 @@ class SocietyWorker:
     # ── one run ────────────────────────────────────────────────────────
 
     async def _decide(self, context) -> Any:
-        return await asyncio.wait_for(self.model.decide(context), timeout=self.settings.model_timeout_seconds)
+        # Total budget: every bounded request attempt plus backoff, then a margin.
+        attempts = 1 + int(getattr(self.settings, "model_request_retries", 0))
+        total = self.settings.model_timeout_seconds * attempts + self.settings.model_retry_backoff_seconds * attempts * 2 + 5
+        return await asyncio.wait_for(self.model.decide(context), timeout=total)
 
     def _persist_decision(self, db: Session, run: AgentRun, agent: Agent, grant: AgentCapabilityGrant, context, response) -> List[AgentIntent]:
         run.model_provider = response.provider
@@ -243,6 +248,9 @@ class SocietyWorker:
         run.tokens_in = response.tokens_in
         run.tokens_out = response.tokens_out
         run.cost_usd = Decimal(str(response.cost_usd or 0))
+        run.model_requests = int(getattr(response, "requests", 1) or 1)
+        run.model_retries = int(getattr(response, "retries", 0) or 0)
+        run.model_timeouts = int(getattr(response, "timeouts", 0) or 0)
         run.sleep_until = utcnow() + timedelta(seconds=int(response.decision.sleep_for_seconds or 0))
         validated = validate_intents(response.decision, run.id)
         rows: List[AgentIntent] = []
@@ -435,7 +443,13 @@ class SocietyWorker:
                 try:
                     response = await self._decide(context)
                 except (asyncio.TimeoutError, ModelTimeout) as exc:
+                    run.model_timeouts = int(run.model_timeouts or 0) + 1
+                    run.model_requests = int(run.model_requests or 0) + 1
                     status = fail_run(db, run, f"model timeout: {exc}", settings=self.settings)
+                    return self._count_fail(status, stats)
+                except ModelProviderError as exc:
+                    run.model_requests = int(run.model_requests or 0) + 1
+                    status = fail_run(db, run, f"model provider error: {exc}", settings=self.settings)
                     return self._count_fail(status, stats)
                 except DecisionValidationError as exc:
                     status = fail_run(db, run, f"invalid structured output: {exc}", settings=self.settings)
@@ -499,6 +513,30 @@ class SocietyWorker:
             processed += 1
         return processed
 
+    def process_approved_intents(self, stats: Optional[CycleStats] = None, *, max_intents: int = 50) -> int:
+        """Resume human-approved intents without re-deciding (approvals.py)."""
+        done = 0
+        while done < max_intents and not self._stop:
+            db = self.session_factory()
+            try:
+                intent = claim_next_approved_intent(db, worker_id=self.worker_id, lease_seconds=self.settings.run_lease_seconds)
+                if intent is None:
+                    break
+                result = execute_approved_intent(db, intent, settings=self.settings, worker_id=self.worker_id)
+            finally:
+                db.close()
+            done += 1
+            M_INTENT_EXEC.labels(result=f"resumed_{result}").inc()
+            if stats is not None:
+                stats.approved_intents_resumed += 1
+                if result == "executed":
+                    stats.intents_executed += 1
+                elif result == "denied":
+                    stats.intents_denied += 1
+                elif result == "failed":
+                    stats.intents_failed += 1
+        return done
+
     async def run_until_idle(self, *, max_cycles: int = 50, max_runs: int = 200, wait_for_backoff: bool = True) -> CycleStats:
         """Drive the loop until no pending events/claimable runs remain.
         Used by tests and the demo; the same code path as run_forever."""
@@ -509,6 +547,7 @@ class SocietyWorker:
             self.dispatch(stats)
             n = await self.process_claimable(stats, max_runs=max_runs - total)
             total += n
+            self.process_approved_intents(stats)
             db = self.session_factory()
             try:
                 if pending_work_exists(db):
@@ -537,6 +576,7 @@ class SocietyWorker:
             try:
                 self.dispatch()
                 await self.process_claimable()
+                self.process_approved_intents()
             except Exception:  # noqa: BLE001
                 logger.exception("society worker loop error")
                 await asyncio.sleep(settings.wake_poll_seconds)

@@ -104,9 +104,16 @@ def evaluate_intent(
     grant: Optional[AgentCapabilityGrant],
     settings: SocietySettings,
     agent: Agent,
+    approval_granted: bool = False,
 ) -> PolicyVerdict:
     """Adjudicate one validated intent. Order matters: cheapest, most
-    conservative checks first; every branch returns explicitly."""
+    conservative checks first; every branch returns explicitly.
+
+    ``approval_granted`` is set only by the approval-resume path AFTER a
+    durable human decision. It satisfies exactly one condition — the
+    grant's ``approval_required_intents`` — and nothing else: forbidden
+    types, disabled grants, ceilings, feature flags, scopes and caps are
+    re-evaluated from current state and still fail closed."""
     risk = risk_of(intent.intent_type)
 
     if not intent.valid:
@@ -176,6 +183,8 @@ def evaluate_intent(
             return PolicyVerdict(PolicyDecision.DENY, risk, "an agent cannot message itself")
 
     if itype.value in set(grant.approval_required_intents or []):
+        if approval_granted:
+            return PolicyVerdict(PolicyDecision.ALLOW, risk, "allowed: human approval recorded and all other checks re-passed")
         return PolicyVerdict(PolicyDecision.APPROVAL_REQUIRED, risk, f"{itype.value} requires human approval for this agent")
 
     return PolicyVerdict(PolicyDecision.ALLOW, risk, "allowed by grant")

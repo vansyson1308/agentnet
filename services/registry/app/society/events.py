@@ -64,6 +64,14 @@ class EventType:
     STAGING_DEPLOY_REQUESTED = "staging_deploy.requested"
     INTENT_DENIED = "intent.denied"
     INTENT_APPROVAL_REQUIRED = "intent.approval_required"
+    INTENT_APPROVED = "intent.approved"
+    INTENT_REJECTED = "intent.rejected"
+    INTENT_RESUMED = "intent.resumed"
+    INTENT_EXECUTED = "intent.executed"
+    # world events accepted from outside (see config.ingress_event_allowlist)
+    PLATFORM_HEALTH_DEGRADED = "platform.health.degraded"
+    USER_FEEDBACK_RECEIVED = "user.feedback.received"
+    STAGING_CANARY_SIGNAL = "staging.canary.signal"
     RUN_DEAD = "run.dead"
     LOOP_BREAKER_TRIPPED = "loop_breaker.tripped"
 

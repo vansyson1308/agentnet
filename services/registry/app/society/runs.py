@@ -375,6 +375,18 @@ def pending_work_exists(db: Session, *, now: Optional[datetime] = None) -> bool:
     now = now or utcnow()
     if db.query(SocietyEvent.id).filter(SocietyEvent.status == SocietyEventStatus.PENDING).first():
         return True
+    from ..models import AgentIntent, IntentExecutionStatus
+
+    approved = (
+        db.query(AgentIntent.id)
+        .filter(
+            AgentIntent.execution_status == IntentExecutionStatus.APPROVED,
+            (AgentIntent.resume_lease_expires_at.is_(None)) | (AgentIntent.resume_lease_expires_at <= now),
+        )
+        .first()
+    )
+    if approved is not None:
+        return True
     return (
         db.query(AgentRun.id)
         .filter(

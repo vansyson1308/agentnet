@@ -196,3 +196,50 @@ CREATE TABLE IF NOT EXISTS code_candidates (
 CREATE INDEX IF NOT EXISTS idx_code_candidates_status ON code_candidates (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_code_candidates_correlation ON code_candidates (correlation_id);
 """
+
+
+# Phase 2 additions (migration 0008): operator role, durable approvals with
+# resume leases, model-request accounting, ingress rate-limit index.
+SOCIETY_PHASE2_SQL = r"""
+-- ============================================================
+-- Autonomous Society Runtime v1 — Phase 2 (operators, approvals, model accounting)
+-- ============================================================
+
+-- Durable operator / service-identity role. NULL = ordinary user.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS society_role VARCHAR(32);
+
+-- Model-request accounting (requests/retries/timeouts are distinct from run attempts).
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS model_requests INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS model_retries INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS model_timeouts INTEGER NOT NULL DEFAULT 0;
+
+-- Resume lease for approved intents (claimed by exactly one worker).
+ALTER TABLE agent_intents ADD COLUMN IF NOT EXISTS resume_worker_id VARCHAR(128);
+ALTER TABLE agent_intents ADD COLUMN IF NOT EXISTS resume_lease_expires_at TIMESTAMPTZ;
+ALTER TABLE agent_intents ADD COLUMN IF NOT EXISTS resume_attempt INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_agent_intents_resumable ON agent_intents (execution_status, resume_lease_expires_at);
+
+-- One durable decision per intent; who/what/when/why and the terminal outcome.
+CREATE TABLE IF NOT EXISTS intent_approvals (
+    id                       UUID PRIMARY KEY,
+    intent_id                UUID NOT NULL UNIQUE REFERENCES agent_intents(id) ON DELETE CASCADE,
+    run_id                   UUID NOT NULL,
+    agent_id                 UUID NOT NULL,
+    decided_by_user_id       UUID REFERENCES users(id) ON DELETE SET NULL,
+    decision                 VARCHAR(16) NOT NULL,
+    reason                   TEXT,
+    original_policy_reason   TEXT,
+    decided_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    resumed_at               TIMESTAMPTZ,
+    executed_at              TIMESTAMPTZ,
+    final_state              VARCHAR(32),
+    resume_error             TEXT,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_intent_approvals_decision ON intent_approvals (decision, decided_at);
+
+-- Ingress rate limiting counts events per actor per window.
+CREATE INDEX IF NOT EXISTS idx_society_events_actor_created ON society_events (actor_type, actor_id, created_at);
+"""
+
+SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL

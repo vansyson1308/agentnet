@@ -176,6 +176,9 @@ class User(Base):
     phone = Column(String)
     password_hash = Column(String, nullable=False)
     is_email_verified = Column(Boolean, default=False, server_default=text('false'))
+    # Society runtime authority: NULL (ordinary user) | 'operator' | 'event_producer'.
+    # Assigned only by operators / the seed CLI — never by an agent intent.
+    society_role = Column(String(32))
     kyc_status = _enum_column(KYCStatus, default="pending")
     telegram_id = Column(String)
     notification_settings = Column(JSON, default={})
@@ -792,6 +795,18 @@ class IntentExecutionStatus(str, enum.Enum):
     DENIED = "denied"
     SKIPPED = "skipped"
     AWAITING_APPROVAL = "awaiting_approval"
+    APPROVED = "approved"        # human approved; waiting for a worker to resume
+    REJECTED = "rejected"        # human rejected; terminal, never executes
+
+
+class SocietyUserRole(str, enum.Enum):
+    OPERATOR = "operator"                # full operator surfaces + approvals + ingress
+    EVENT_PRODUCER = "event_producer"    # may inject allow-listed world events only
+
+
+class ApprovalDecision(str, enum.Enum):
+    APPROVED = "approved"
+    REJECTED = "rejected"
 
 
 class CodeCandidateStatus(str, enum.Enum):
@@ -871,6 +886,12 @@ class AgentRun(Base):
     tokens_in = Column(Integer)
     tokens_out = Column(Integer)
     cost_usd = Column(Numeric(12, 6), nullable=False, default=0)
+    # Model-request accounting (distinct from run attempts): how many HTTP
+    # requests the cognition adapter made for this run, how many were retries,
+    # and how many timed out.
+    model_requests = Column(Integer, nullable=False, default=0)
+    model_retries = Column(Integer, nullable=False, default=0)
+    model_timeouts = Column(Integer, nullable=False, default=0)
     error = Column(Text)
     sleep_until = Column(DateTime(timezone=True))
     correlation_id = Column(UUID(as_uuid=True), nullable=False, index=True)
@@ -906,9 +927,40 @@ class AgentIntent(Base):
     error = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     executed_at = Column(DateTime(timezone=True))
+    # Resume lease: an APPROVED intent is claimed by exactly one worker.
+    resume_worker_id = Column(String(128))
+    resume_lease_expires_at = Column(DateTime(timezone=True))
+    resume_attempt = Column(Integer, nullable=False, default=0)
 
     run = relationship("AgentRun", back_populates="intents")
     agent = relationship("Agent", foreign_keys=[agent_id])
+    approval = relationship("IntentApproval", back_populates="intent", uselist=False)
+
+
+class IntentApproval(Base):
+    """Durable human decision on an ``awaiting_approval`` intent. Exactly one
+    row per intent (UNIQUE) — approve/reject races are resolved by the row
+    lock on the intent, and the first decision wins."""
+
+    __tablename__ = "intent_approvals"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    intent_id = Column(UUID(as_uuid=True), ForeignKey("agent_intents.id", ondelete="CASCADE"), nullable=False, unique=True)
+    run_id = Column(UUID(as_uuid=True), nullable=False)
+    agent_id = Column(UUID(as_uuid=True), nullable=False)
+    decided_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    decision = _enum_column(ApprovalDecision, nullable=False)
+    reason = Column(Text)
+    original_policy_reason = Column(Text)
+    decided_at = Column(DateTime(timezone=True), server_default=func.now())
+    resumed_at = Column(DateTime(timezone=True))
+    executed_at = Column(DateTime(timezone=True))
+    final_state = Column(String(32))
+    resume_error = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    intent = relationship("AgentIntent", back_populates="approval")
+    decided_by = relationship("User", foreign_keys=[decided_by_user_id])
 
 
 class AgentCapabilityGrant(Base):
