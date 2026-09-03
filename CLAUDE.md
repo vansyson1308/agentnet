@@ -69,7 +69,11 @@ This repo involves financial invariants. Follow these rules strictly:
 - The model only proposes typed intents (`intents.py`); `policy.py` decides from `agent_capability_grants` — never add an executor that mutates grants, wallets, secrets or runs a shell.
 - New side effects must go through existing primitives (`task_service`, `AgentChat`, `Goal`, `MemoryItem`, `ImprovementProposal`) and emit a causation-linked event with an intent-derived idempotency key.
 - Schema changes: edit `society/schema_sql.py` (idempotent DDL) — `init-db/16-society-runtime.sql` is generated from it and `tests/society/test_schema_and_migrations.py` enforces sync.
-- See `docs/SOCIETY_RUNTIME.md` and ADR-0001.
+- Operator authority is ONE dependency (`society/operator_auth.py`, durable `users.society_role`, user JWTs only). Never add client-side checks, email comparisons in routes, secret query params or a universal bearer token. Public society routes stay structural (no payloads/context/decision text/paths/provider config).
+- Approvals: `society/approvals.py` decides and resumes the PERSISTED intent (model never re-called), re-runs the full policy with `approval_granted=True` and fails closed. Forbidden HIGH intents are never approvable.
+- Live model: `python -m app.society.canary preflight` before any real-model run; a credential that ever appeared in git history is compromised (fingerprint denylist + history scan). NO FAKE AUTONOMY — never present `ScriptedRoleModel`/`FakeModel` output as live proof; the canary refuses them.
+- `seed_society` unions operator gates (`approval_required_intents`) instead of resetting them; the canary seeds only a missing fleet.
+- See `docs/SOCIETY_RUNTIME.md`, `docs/SOCIETY_LIVE_MODEL_RUNBOOK.md`, ADR-0001 and ADR-0002.
 
 ---
 

@@ -15,8 +15,10 @@ WORLD / DOMAIN EVENT ─► society_events (durable, idempotent, pg_notify wake)
         ─► new society_events (causation-linked) ─► … ─► sleep until the next relevant event
 ```
 
-Code: `services/registry/app/society/` · Schema: migration `0007_society_runtime` (+ `init-db/16-society-runtime.sql`) ·
-Tests: `tests/society/` · API: `/v1/society/*` · Demo: `examples/demo_autonomous_society.py`.
+Code: `services/registry/app/society/` · Schema: migrations `0007_society_runtime` + `0008_society_phase2` (both generated
+from `schema_sql.py`; `init-db/16-society-runtime.sql` is the fresh-volume bundle) · Tests: `tests/society/` ·
+API: `/v1/society/*` (public structural surface + operator surface) · Demo: `examples/demo_autonomous_society.py` ·
+Staging/live model: `docs/SOCIETY_LIVE_MODEL_RUNBOOK.md` · Decisions: ADR-0001, ADR-0002.
 
 ## Data model
 
@@ -27,6 +29,8 @@ Tests: `tests/society/` · API: `/v1/society/*` · Demo: `examples/demo_autonomo
 | `agent_intents` | Typed, adjudicated actions | `idempotency_key` UNIQUE; `risk_class`, `policy_decision`, `execution_status`, `result`/`error` |
 | `agent_capability_grants` | The only source of an agent's permissions | Written only by `seed.py`/operators; allowed intents, risk ceiling, budgets, cooldown, circuit-breaker state |
 | `code_candidates` | Builder → QA → Security record | branch `agentnet-auto/<id>`, base/head sha, changed files, `qa_report`, `security_report`, status machine below |
+| `intent_approvals` (Phase 2) | Human decision audit for `awaiting_approval` intents | `intent_id` UNIQUE; who decided, decision, reason, original policy reason, resumed/executed timestamps, `final_state`, `resume_error` |
+| `users.society_role` (Phase 2) | Durable operator authority | `operator` \| `event_producer` \| NULL; the only source `operator_auth` consults besides the bootstrap allowlist |
 
 Candidate status machine: `requested → building → built → qa_running → qa_passed → (security_review →) ready` · `qa_failed` (one retry) `→ rejected` · `failed/abandoned`.
 
@@ -55,7 +59,11 @@ targets it (`payload.target_agent_id` / `subject_type=agent`), e.g. `agent.messa
 
 Additional refusals in executors: no self-review, requester ≠ builder ≠ QA ≠ security reviewer, no
 message/task/offer to yourself, goals only for owner/society, memory scope per grant.
-`approval_required_intents` on a grant park an intent as `awaiting_approval` (visible in `/v1/society/ask?q=blocked`).
+`approval_required_intents` on a grant park an intent as `awaiting_approval` (visible in `/v1/society/ask?q=blocked`
+and `/v1/society/approvals`). An operator approves/rejects through `POST /v1/society/intents/{id}/approve|reject`;
+the runtime then resumes the **persisted** intent (model not re-called), re-runs the full policy with
+`approval_granted=True` and fails closed if a flag, grant, scope or cap changed. Forbidden HIGH types are never
+approvable. `intent.approval_required/approved/rejected/resumed/executed` events carry the story (`approvals.py`).
 
 ## World signals
 
@@ -63,7 +71,11 @@ message/task/offer to yourself, goals only for owner/society, memory scope per g
 refund worker become `task.failed` / `task.timeout` events (one per task, correlation = the task's trace id,
 deduped by subject so runtime-initiated failures are not doubled), and `society.heartbeat` is emitted at most
 once per `SOCIETY_HEARTBEAT_INTERVAL_SECONDS` so the Governor can reprioritise goals without polling.
-Operators/webhooks inject other world events through `POST /v1/society/events` (reserved society types refused).
+Operators/webhooks inject other world events through `POST /v1/society/events` — `event_producer` or `operator` role
+required, allow-listed types only (`platform.metric.anomaly`, `platform.health.degraded`, `user.feedback.received`,
+`staging.canary.signal` + `SOCIETY_INGRESS_EVENT_ALLOWLIST`), reserved families and `target_agent_id` refused,
+bounded payloads (size/depth/string/keys), `idempotency_key` replay answers 200 with the original event,
+per-actor and global hourly limits. Payloads are untrusted data, never instructions.
 
 ## Loop-storm protections
 
@@ -100,7 +112,7 @@ staging OFF, production deploy hard OFF (not a setting), provider `scripted`. Li
 
 ```bash
 # 1. schema (existing DB: container entrypoint does this; manually:)
-cd services/registry && alembic upgrade head        # → 0007_society_runtime
+cd services/registry && alembic upgrade head        # → 0008_society_phase2 (0007 + Phase 2)
 
 # 2. seed the fleet (idempotent; reuses agents by name)
 python -m app.society.seed
@@ -109,21 +121,35 @@ python -m app.society.seed
 docker compose up -d society-worker
 docker compose logs -f society-worker
 
-# 4. inject a world event (auth required; reserved society.* types are refused)
+# 3b. operator roles (durable; bootstrap the FIRST one with SOCIETY_OPERATOR_BOOTSTRAP_EMAILS)
+python -m app.society.operator you@example.com operator
+curl -X POST http://localhost:8000/v1/society/operators -H "Authorization: Bearer $OPERATOR_JWT" \
+     -H 'Content-Type: application/json' -d '{"email":"webhook@example.com","role":"event_producer"}'
+
+# 4. inject a world event (event_producer/operator USER JWT; reserved society.* types are refused)
 curl -X POST http://localhost:8000/v1/society/events -H "Authorization: Bearer $TOKEN" \
      -H 'Content-Type: application/json' \
      -d '{"event_type":"platform.metric.anomaly","payload":{"metric":"task_failure_rate","value":0.42,"severity_score":70}}'
 
-# 5. observe
+# 5. observe (public = structural; operator = full detail)
 curl http://localhost:8000/v1/society/status
 curl "http://localhost:8000/v1/society/story/<correlation_id>"
-curl "http://localhost:8000/v1/society/ask?q=what%20is%20blocked"
+curl -H "Authorization: Bearer $OPERATOR_JWT" "http://localhost:8000/v1/society/story/<correlation_id>/detail"
+curl -H "Authorization: Bearer $OPERATOR_JWT" "http://localhost:8000/v1/society/ask?q=what%20is%20blocked"
+
+# 6. approvals (operator)
+curl -H "Authorization: Bearer $OPERATOR_JWT" http://localhost:8000/v1/society/approvals
+curl -X POST -H "Authorization: Bearer $OPERATOR_JWT" -H 'Content-Type: application/json' \
+     -d '{"reason":"reviewed"}' http://localhost:8000/v1/society/intents/<intent_id>/approve   # or /reject
+
+# 7. live model (see docs/SOCIETY_LIVE_MODEL_RUNBOOK.md)
+python -m app.society.canary preflight                 # credential safety + provider probe; never prints the key
 curl http://localhost:8000/v1/tasks/traces/<trace_id>          # spans: society.run / society.intent.*
 curl http://localhost:9101/metrics | grep agentnet_society_       # Prometheus
 
 # deterministic proof (no credentials needed)
 python examples/demo_autonomous_society.py            # exit 0 ⇢ candidate READY
-pytest tests/society -v                               # 112 DB-backed tests
+pytest tests/society -v                               # 152 DB-backed tests
 ```
 
 Pause the society: `SOCIETY_RUNTIME_ENABLED=false` (worker idles; pending events wait, nothing is lost).
@@ -133,17 +159,19 @@ Stuck run: leases expire (`SOCIETY_RUN_LEASE_SECONDS`) and the run is re-claimed
 
 ### Staging
 
-`docker-compose.staging.yml` does not yet include `society-worker`; to trial on staging add the same
-service block with `POSTGRES_DB=agentnet_staging`, `ENVIRONMENT=staging`, `SOCIETY_RUNTIME_ENABLED=true`,
-`SOCIETY_AUTONOMOUS_CODE_ENABLED=true` (a checkout mounted at `/workspace/repo`), then run the smoke list:
-`/healthz` on registry, `alembic current == 0007_society_runtime`, `GET /v1/society/status` shows the fleet,
-`POST /v1/society/events` → `GET /v1/society/story/<corr>` shows runs, `/v1/society/metrics`, and confirm
-`production_deploy_enabled: false`. Staging was **not** deployed from this environment (no access).
+`docker-compose.staging.yml` carries `society-worker-staging` (registry image, `agentnet_staging`, runtime and code
+loop OFF by default, no docker socket, no published ports, healthcheck on the internal metrics port; credential only
+from the host environment). `deploy/runbook-staging.sh` asserts alembic head `0008_society_phase2`, runs
+`deploy/society-migration-check.sh` (fresh + upgrade + downgrade round-trip on scratch databases) and
+`deploy/society-staging-smoke.py`; `deploy/society-staging-redteam.py` and `python -m app.society.canary` drive the
+live-model canaries. Full procedure, GO/NO-GO and failure policy: `docs/SOCIETY_LIVE_MODEL_RUNBOOK.md`. What was
+actually proven (and what was blocked): `docs/SOCIETY_LIVE_PROOF.md`. Production compose has no society service.
 
 ## Known limitations
 
 - `ScriptedRoleModel` is a deterministic rule engine, not an LLM; it proves the runtime, not model quality.
-  Live runs need an OpenAI-compatible endpoint and were not exercised here (no credentials).
+  Live runs need an OpenAI-compatible endpoint and a credential that `canary preflight` accepts; the canary refuses
+  scripted/fake providers (NO FAKE AUTONOMY).
 - Only documentation candidates are exercised end to end; `kind=code` candidates take the same path
   but always require Security review.
 - `REQUEST_STAGING_DEPLOY` is recorded only; deployment remains a human/CI action.
@@ -152,8 +180,8 @@ service block with `POSTGRES_DB=agentnet_staging`, `ENVIRONMENT=staging`, `SOCIE
 - The `worker` service still carries its own copy of `models.py` (pre-existing drift); the society worker
   uses the registry models.
 - `agent_reputation_history` ORM/DB drift (ORM has `id`, DB does not) is pre-existing and untouched.
-- Human approval UI: `awaiting_approval` intents are persisted and listed, but there is no approve/resume
-  endpoint yet.
+- Human approval is API-only (`/v1/society/approvals`, `approve|reject`); there is no UI. `modify` (edit-then-approve)
+  is deliberately unsupported: intents are immutable once persisted.
 
 ## A2A compliance gap (documented, not fixed here)
 
