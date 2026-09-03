@@ -31,6 +31,37 @@ SOCIETY_RUNTIME_SQL = r"""
 -- Autonomous Society Runtime v1 (durable event / run / intent model)
 -- ============================================================
 
+-- spans.extra_data: the ORM (Span.extra_data) and every writer (task_service,
+-- worker, society runtime) use extra_data, but 01-init.sql created the
+-- column as "metadata" — fresh volumes could not persist spans through the
+-- ORM at all. Rename when only the old name exists; otherwise add the column.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'spans' AND column_name = 'metadata')
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'spans' AND column_name = 'extra_data') THEN
+        ALTER TABLE spans RENAME COLUMN metadata TO extra_data;
+    END IF;
+END $$;
+ALTER TABLE spans ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'::jsonb;
+
+-- agent_chat is the existing inter-agent messaging table the runtime
+-- writes SEND_MESSAGE intents into. It had no DDL in init-db (the ORM model
+-- existed but nothing created it on fresh volumes); ensure it here.
+CREATE TABLE IF NOT EXISTS agent_chat (
+    id               UUID PRIMARY KEY,
+    from_agent_id    UUID NOT NULL REFERENCES agents(id),
+    to_agent_id      UUID REFERENCES agents(id),
+    message_type     VARCHAR(32) NOT NULL,
+    title            VARCHAR NOT NULL,
+    content          TEXT NOT NULL,
+    msg_metadata     JSON DEFAULT '{}'::json,
+    thread_id        UUID NOT NULL,
+    is_read          BOOLEAN DEFAULT FALSE,
+    created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_chat_to_created ON agent_chat (to_agent_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_chat_thread ON agent_chat (thread_id);
+
 CREATE TABLE IF NOT EXISTS society_events (
     id               UUID PRIMARY KEY,
     event_type       VARCHAR(128) NOT NULL,

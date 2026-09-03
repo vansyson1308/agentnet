@@ -101,6 +101,21 @@ def _bootstrap_schema(dbname: str) -> None:
         cur.execute(SOCIETY_RUNTIME_SQL)
     finally:
         conn.close()
+    # Tables that exist only as ORM models (no init-db DDL, e.g. projects,
+    # scoped_tokens, audit_log): create them so the schema matches a
+    # deployment where the ORM created them. Society tables are untouched
+    # (already present via the SQL above; create_all skips existing tables).
+    from sqlalchemy import create_engine
+
+    from services.registry.app import models as _models
+
+    pw = PG["password"]
+    auth = f"{PG['user']}:{pw}@" if pw else f"{PG['user']}@"
+    eng = create_engine(f"postgresql://{auth}{PG['host']}:{PG['port']}/{dbname}")
+    try:
+        _models.Base.metadata.create_all(eng)
+    finally:
+        eng.dispose()
 
 
 @pytest.fixture(scope="session")
@@ -233,3 +248,80 @@ def make_agent(db, make_user):
         return agent
 
     return _make
+
+
+# ── engineering-loop helpers ──────────────────────────────────────────
+
+ACCEPTANCE_REL = "tests/society/acceptance/test_candidate_docs.py"
+
+
+def _git(args, cwd):
+    import subprocess
+
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", "/tmp"),
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+    return subprocess.run(["git", *args], cwd=str(cwd), env=env, capture_output=True, text=True, check=True).stdout
+
+
+def make_temp_repo(root: pathlib.Path) -> pathlib.Path:
+    """A throw-away git repo that mirrors the parts of this repository the
+    engineering loop needs (acceptance test + docs dir), so tests never
+    create branches/worktrees in the developer's real checkout."""
+    repo = root / "repo"
+    repo.mkdir()
+    (repo / "tests" / "society" / "acceptance").mkdir(parents=True)
+    (repo / "tests" / "__init__.py").write_text("")
+    (repo / "tests" / "society" / "__init__.py").write_text("")
+    (repo / "tests" / "society" / "acceptance" / "__init__.py").write_text("")
+    (repo / ACCEPTANCE_REL).write_text((REPO / ACCEPTANCE_REL).read_text(encoding="utf-8"), encoding="utf-8")
+    (repo / "docs" / "society" / "candidates").mkdir(parents=True)
+    (repo / "docs" / "society" / "candidates" / "README.md").write_text("# candidates\n")
+    (repo / "pytest.ini").write_text("[pytest]\naddopts = -q -p no:cacheprovider\n")
+    (repo / "README.md").write_text("# temp repo\n")
+    _git(["init", "-q", "-b", "main"], repo)
+    _git(["add", "-A"], repo)
+    _git(["commit", "-q", "-m", "init"], repo)
+    return repo
+
+
+@pytest.fixture
+def temp_repo(tmp_path):
+    return make_temp_repo(tmp_path)
+
+
+@pytest.fixture
+def society_settings(tmp_path, temp_repo, monkeypatch):
+    """Runtime settings with autonomy ON, pointing at the temp repo."""
+    from services.registry.app.society.config import reset_settings_cache, SocietySettings
+
+    monkeypatch.setenv("SOCIETY_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("SOCIETY_AUTONOMOUS_CODE_ENABLED", "true")
+    monkeypatch.setenv("SOCIETY_MODEL_PROVIDER", "scripted")
+    monkeypatch.setenv("SOCIETY_REPO_ROOT", str(temp_repo))
+    monkeypatch.setenv("SOCIETY_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("SOCIETY_WAKE_POLL_SECONDS", "1")
+    monkeypatch.setenv("SOCIETY_RETRY_BACKOFF_BASE_SECONDS", "0")
+    monkeypatch.setenv("SOCIETY_QA_TEST_TIMEOUT_SECONDS", "120")
+    reset_settings_cache()
+    settings = SocietySettings()
+    yield settings
+    reset_settings_cache()
+
+
+@pytest.fixture
+def grants_with_no_cooldown(db):
+    """After seeding, remove wake cooldowns so tests run fast."""
+    from services.registry.app.models import AgentCapabilityGrant
+
+    def _apply():
+        for g in db.query(AgentCapabilityGrant).all():
+            g.wake_cooldown_seconds = 0
+        db.commit()
+
+    return _apply
