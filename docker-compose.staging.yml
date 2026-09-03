@@ -21,6 +21,15 @@ services:
       ENVIRONMENT: staging
       CORS_ALLOWED_ORIGINS: "https://staging.agentnet.io.vn,http://localhost:8180"
       RATE_LIMIT_PER_MINUTE: 60
+      # Society API (operator surfaces + world-event ingress). The runtime
+      # itself lives in society-worker-staging; the API only reads state,
+      # records approvals and accepts allow-listed world events.
+      SOCIETY_OPERATOR_BOOTSTRAP_EMAILS: ${SOCIETY_OPERATOR_BOOTSTRAP_EMAILS:-}
+      SOCIETY_MODEL_PROVIDER: ${SOCIETY_MODEL_PROVIDER:-scripted}
+      SOCIETY_RUNTIME_ENABLED: ${SOCIETY_RUNTIME_ENABLED:-false}
+      SOCIETY_AUTONOMOUS_CODE_ENABLED: ${SOCIETY_AUTONOMOUS_CODE_ENABLED:-false}
+      SOCIETY_INGRESS_MAX_PER_ACTOR_PER_HOUR: ${SOCIETY_INGRESS_MAX_PER_ACTOR_PER_HOUR:-30}
+      SOCIETY_INGRESS_MAX_PER_HOUR: ${SOCIETY_INGRESS_MAX_PER_HOUR:-120}
     ports:
       - "8100:8000"
     # Inherits Dockerfile CMD which already runs uvicorn with
@@ -88,6 +97,70 @@ services:
     networks:
       - agentnet_agentnet-network
 
+  # Autonomous Society Runtime worker (staging). OFF by default: with
+  # SOCIETY_RUNTIME_ENABLED unset the process idles and touches nothing.
+  # Hard rules: no docker socket, no published ports (metrics stay on the
+  # compose network), no production settings, and the production deploy
+  # intent is not a setting at all (hard OFF in code).
+  society-worker-staging:
+    build: ./services/registry
+    container_name: agentnet-staging-society-worker
+    entrypoint: []
+    command: python -m app.society.worker
+    environment:
+      POSTGRES_HOST: agentnet-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: agentnet_staging
+      REDIS_HOST: agentnet-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JAEGER_ENABLED: "false"
+      ENVIRONMENT: staging
+      SOCIETY_RUNTIME_ENABLED: ${SOCIETY_RUNTIME_ENABLED:-false}
+      SOCIETY_AUTONOMOUS_CODE_ENABLED: ${SOCIETY_AUTONOMOUS_CODE_ENABLED:-false}
+      SOCIETY_STAGING_DEPLOY_ENABLED: "false"
+      # Live model: credential comes from the host .env / secret store only.
+      # Never commit it; `python -m app.society.canary preflight` refuses
+      # credentials that ever appeared in git history.
+      SOCIETY_MODEL_PROVIDER: ${SOCIETY_MODEL_PROVIDER:-scripted}
+      SOCIETY_MODEL_NAME: ${SOCIETY_MODEL_NAME:-}
+      SOCIETY_MODEL_BASE_URL: ${SOCIETY_MODEL_BASE_URL:-}
+      SOCIETY_MODEL_API_KEY: ${SOCIETY_MODEL_API_KEY:-}
+      SOCIETY_MODEL_TIMEOUT_SECONDS: ${SOCIETY_MODEL_TIMEOUT_SECONDS:-45}
+      SOCIETY_MODEL_REQUEST_RETRIES: ${SOCIETY_MODEL_REQUEST_RETRIES:-1}
+      SOCIETY_MODEL_RETRY_BACKOFF_SECONDS: ${SOCIETY_MODEL_RETRY_BACKOFF_SECONDS:-2}
+      SOCIETY_MODEL_JSON_SCHEMA: ${SOCIETY_MODEL_JSON_SCHEMA:-false}
+      SOCIETY_DAILY_MODEL_BUDGET: ${SOCIETY_DAILY_MODEL_BUDGET:-2.0}
+      SOCIETY_MAX_RUNS_PER_HOUR: ${SOCIETY_MAX_RUNS_PER_HOUR:-60}
+      SOCIETY_MAX_RUNS_PER_CORRELATION: ${SOCIETY_MAX_RUNS_PER_CORRELATION:-40}
+      SOCIETY_MAX_CAUSATION_DEPTH: ${SOCIETY_MAX_CAUSATION_DEPTH:-12}
+      SOCIETY_APPROVAL_RESUME_MAX_ATTEMPTS: ${SOCIETY_APPROVAL_RESUME_MAX_ATTEMPTS:-3}
+      SOCIETY_HEARTBEAT_INTERVAL_SECONDS: ${SOCIETY_HEARTBEAT_INTERVAL_SECONDS:-3600}
+      SOCIETY_REPO_ROOT: /workspace/repo
+      SOCIETY_WORKSPACE_ROOT: /var/lib/agentnet-society/workspaces
+      SOCIETY_METRICS_PORT: 9101   # container-internal only (healthcheck); never published
+      SOCIETY_WORKER_ID: staging-society-worker
+      # The checkout is bind-mounted from the host; git refuses foreign-owned
+      # repositories unless marked safe. Worktrees stay on agentnet-auto/*.
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: "*"
+    volumes:
+      - ./:/workspace/repo
+      - society_workspaces_staging:/var/lib/agentnet-society/workspaces
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:9101/metrics', timeout=2).status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - agentnet_agentnet-network
+
   dashboard-staging:
     build: ./services/dashboard
     container_name: agentnet-staging-dashboard
@@ -109,6 +182,9 @@ services:
     restart: unless-stopped
     networks:
       - agentnet_agentnet-network
+
+volumes:
+  society_workspaces_staging:
 
 networks:
   agentnet_agentnet-network:

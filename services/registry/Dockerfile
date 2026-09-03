@@ -2,8 +2,9 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install build dependencies for ed25519 + psycopg2.
-RUN apt-get update && apt-get install -y --no-install-recommends gcc python3-dev libffi-dev \
+# Install build dependencies for ed25519 + psycopg2, plus git: the society
+# worker (same image) creates isolated agentnet-auto/* worktrees with it.
+RUN apt-get update && apt-get install -y --no-install-recommends gcc python3-dev libffi-dev git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies (alembic added explicitly so migrations run on startup).
