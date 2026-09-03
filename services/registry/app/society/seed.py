@@ -126,6 +126,11 @@ def upsert_grant(db: Session, agent: Agent, role: RoleDefinition, report: SeedRe
         db.add(grant)
     else:
         for k, v in fields.items():
+            if k == "approval_required_intents":
+                # Operator-configured approval gates (canary `gate`, manual SQL)
+                # only ever narrow permissions; a re-seed must not silently
+                # remove them. Role defaults and existing gates are unioned.
+                v = sorted(set(v or []) | set(grant.approval_required_intents or []))
             setattr(grant, k, v)
     db.flush()
     report.grants_upserted.append(role.agent_name)

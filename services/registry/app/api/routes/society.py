@@ -28,7 +28,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import Response, APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -668,7 +668,7 @@ class EventInject(BaseModel):
 
 
 @router.post("/events", status_code=status.HTTP_201_CREATED)
-def inject_event(body: EventInject, db: Session = Depends(get_db), producer: User = Depends(require_event_producer)):
+def inject_event(body: EventInject, response: Response, db: Session = Depends(get_db), producer: User = Depends(require_event_producer)):
     """Inject an allow-listed WORLD event. Society-internal families are
     reserved; payloads are bounded; per-actor and global hourly limits apply;
     an idempotency key makes redelivery harmless."""
@@ -683,6 +683,7 @@ def inject_event(body: EventInject, db: Session = Depends(get_db), producer: Use
     if body.idempotency_key:
         existing = db.query(SocietyEvent).filter(SocietyEvent.idempotency_key == body.idempotency_key).first()
         if existing is not None:
+            response.status_code = status.HTTP_200_OK  # replay: nothing created
             return {**_event_out(existing), "duplicate": True}
 
     hour_ago = _now() - timedelta(hours=1)
@@ -705,4 +706,7 @@ def inject_event(body: EventInject, db: Session = Depends(get_db), producer: Use
         idempotency_key=body.idempotency_key,
     )
     db.commit()
+    if getattr(ev, "deduplicated", False):  # lost a race with an identical concurrent POST
+        response.status_code = status.HTTP_200_OK
+        return {**_event_out(ev), "duplicate": True}
     return {**_event_out(ev), "duplicate": False}

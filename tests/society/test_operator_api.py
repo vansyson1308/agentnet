@@ -164,13 +164,13 @@ def test_ingress_idempotency_and_rate_limits(api_client, db, society_settings, u
     post = lambda tok, body: api_client.post("/v1/society/events", headers=auth(tok), json=body)  # noqa: E731
     r1 = post(a_tok, {"event_type": "platform.metric.anomaly", "payload": {"metric": "x"}, "idempotency_key": "webhook-1"})
     r2 = post(a_tok, {"event_type": "platform.metric.anomaly", "payload": {"metric": "x"}, "idempotency_key": "webhook-1"})
-    assert r1.status_code == 201 and r2.status_code == 201 and r2.json()["id"] == r1.json()["id"] and r2.json()["duplicate"] is True
+    assert r1.status_code == 201 and r2.status_code == 200 and r2.json()["id"] == r1.json()["id"] and r2.json()["duplicate"] is True  # replay creates nothing
     assert db.query(SocietyEvent).filter(SocietyEvent.event_type == "platform.metric.anomaly").count() == 1
     assert post(a_tok, {"event_type": "platform.metric.anomaly", "payload": {"n": 2}}).status_code == 201
     assert post(a_tok, {"event_type": "platform.metric.anomaly", "payload": {"n": 3}}).status_code == 201
     assert post(a_tok, {"event_type": "platform.metric.anomaly", "payload": {"n": 4}}).status_code == 429  # per-actor
     # redelivery of an existing key still works even when rate-limited
-    assert post(a_tok, {"event_type": "platform.metric.anomaly", "payload": {"metric": "x"}, "idempotency_key": "webhook-1"}).status_code == 201
+    assert post(a_tok, {"event_type": "platform.metric.anomaly", "payload": {"metric": "x"}, "idempotency_key": "webhook-1"}).status_code == 200  # replay: 200, nothing created
     assert post(b_tok, {"event_type": "platform.metric.anomaly", "payload": {"n": 5}}).status_code == 201
     assert post(b_tok, {"event_type": "platform.metric.anomaly", "payload": {"n": 6}}).status_code == 201
     assert post(b_tok, {"event_type": "platform.metric.anomaly", "payload": {"n": 7}}).status_code == 429  # global (5)

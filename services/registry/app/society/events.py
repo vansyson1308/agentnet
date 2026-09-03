@@ -139,10 +139,12 @@ def emit_event(
         existing = db.query(SocietyEvent).filter(SocietyEvent.idempotency_key == idempotency_key).first()
         if existing is not None:
             logger.info("society event dedup: %s key=%s -> existing %s", event_type, idempotency_key, existing.id)
+            existing.deduplicated = True  # transient marker for callers (not a column)
             return existing
     if notify:
         db.execute(text("SELECT pg_notify(:ch, :payload)"), {"ch": WAKE_CHANNEL, "payload": str(event_id)})
     row = db.query(SocietyEvent).filter(SocietyEvent.id == event_id).first()
+    row.deduplicated = False
     return row
 
 
