@@ -206,10 +206,13 @@ jobs:
         run: |
           docker compose -f docker-compose.yml config > /dev/null
           docker compose -f docker-compose.yml -f docker-compose.demo.yml config > /dev/null
-          export POSTGRES_HOST=db.invalid POSTGRES_USER=render POSTGRES_PASSWORD=render-only REDIS_HOST=redis.invalid REDIS_PASSWORD=render-only \
-                 JWT_SECRET_KEY=render-only FLASK_SECRET_KEY=render-only CORS_ALLOWED_ORIGINS=https://staging.invalid
+          # Throwaway values generated per run: the staging project must render,
+          # and no credential-shaped literal belongs in the repository.
+          export POSTGRES_HOST=db.invalid POSTGRES_USER=render POSTGRES_PASSWORD="$(openssl rand -hex 8)" \
+                 REDIS_HOST=redis.invalid REDIS_PASSWORD="$(openssl rand -hex 8)" JWT_SECRET_KEY="$(openssl rand -hex 16)" \
+                 FLASK_SECRET_KEY="$(openssl rand -hex 16)" CORS_ALLOWED_ORIGINS=https://staging.invalid
           docker compose -f docker-compose.staging.yml config > /dev/null
-          SHARED_INFRA_NETWORK=render-only docker compose -f docker-compose.staging.yml -f docker-compose.staging.shared-infra.yml config > /dev/null
+          SHARED_INFRA_NETWORK=render-overlay docker compose -f docker-compose.staging.yml -f docker-compose.staging.shared-infra.yml config > /dev/null
       - name: Compose topology tests need only the CLI (ownership proven on rendered config)
         run: |
           pip install pytest pyyaml

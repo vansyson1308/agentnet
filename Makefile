@@ -61,17 +61,20 @@ test-ci:
 # Docker Compose
 # ─────────────────────────────────────────────────────────
 
+# Throwaway values so the staging project renders. Generated per run so no
+# credential-shaped literal ever lives in the repository (secret scanners
+# rightly flag those); they are never used against a real service.
+RENDER_ENV = POSTGRES_HOST=db.invalid POSTGRES_USER=render POSTGRES_PASSWORD=$$(openssl rand -hex 8) \
+	REDIS_HOST=redis.invalid REDIS_PASSWORD=$$(openssl rand -hex 8) JWT_SECRET_KEY=$$(openssl rand -hex 16) \
+	FLASK_SECRET_KEY=$$(openssl rand -hex 16) CORS_ALLOWED_ORIGINS=https://staging.invalid
+
 compose-validate:
 	@echo "Validating LOCAL compose project (agentnet-local)..."
 	docker compose -f docker-compose.yml config > /dev/null
-	@echo "Validating STAGING compose project (agentnet-staging; placeholder env, render only)..."
-	POSTGRES_HOST=db.invalid POSTGRES_USER=render POSTGRES_PASSWORD=render-only REDIS_HOST=redis.invalid REDIS_PASSWORD=render-only \
-	JWT_SECRET_KEY=render-only FLASK_SECRET_KEY=render-only CORS_ALLOWED_ORIGINS=https://staging.invalid \
-	docker compose -f docker-compose.staging.yml config > /dev/null
+	@echo "Validating STAGING compose project (agentnet-staging; throwaway env, render only)..."
+	$(RENDER_ENV) docker compose -f docker-compose.staging.yml config > /dev/null
 	@echo "Validating STAGING + shared-infra overlay..."
-	SHARED_INFRA_NETWORK=render-only POSTGRES_HOST=db.invalid POSTGRES_USER=render POSTGRES_PASSWORD=render-only REDIS_HOST=redis.invalid REDIS_PASSWORD=render-only \
-	JWT_SECRET_KEY=render-only FLASK_SECRET_KEY=render-only CORS_ALLOWED_ORIGINS=https://staging.invalid \
-	docker compose -f docker-compose.staging.yml -f docker-compose.staging.shared-infra.yml config > /dev/null
+	SHARED_INFRA_NETWORK=render-overlay $(RENDER_ENV) docker compose -f docker-compose.staging.yml -f docker-compose.staging.shared-infra.yml config > /dev/null
 	@echo "compose projects OK (local + staging are separate projects; see tests/test_compose_topology.py)"
 
 compose-staging-config:

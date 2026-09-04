@@ -26,6 +26,7 @@ import json
 import os
 import pathlib
 import re
+import secrets
 import shutil
 import subprocess
 
@@ -42,15 +43,17 @@ DEMO_FILE = "docker-compose.demo.yml"
 LEGACY_PROD = "deploy/legacy-vps/docker-compose.prod.yml"
 LEGACY_DIR = ROOT / "deploy" / "legacy-vps"
 
-# Placeholder values so the staging project renders; they are never real.
+# Throwaway values so the staging project renders; generated per process so
+# no credential-shaped literal lives in the repository (the tests only
+# assert structure, never these values).
 STAGING_ENV = {
     "POSTGRES_HOST": "db.staging.invalid",
     "POSTGRES_USER": "staging_user",
-    "POSTGRES_PASSWORD": "placeholder-render-only",
+    "POSTGRES_PASSWORD": secrets.token_hex(8),
     "REDIS_HOST": "redis.staging.invalid",
-    "REDIS_PASSWORD": "placeholder-render-only",
-    "JWT_SECRET_KEY": "placeholder-render-only",
-    "FLASK_SECRET_KEY": "placeholder-render-only",
+    "REDIS_PASSWORD": secrets.token_hex(8),
+    "JWT_SECRET_KEY": secrets.token_hex(16),
+    "FLASK_SECRET_KEY": secrets.token_hex(16),
     "CORS_ALLOWED_ORIGINS": "https://staging.invalid",
 }
 STAGING_REQUIRED = ["POSTGRES_HOST", "POSTGRES_USER", "POSTGRES_PASSWORD", "REDIS_HOST", "REDIS_PASSWORD", "JWT_SECRET_KEY", "CORS_ALLOWED_ORIGINS", "FLASK_SECRET_KEY"]
