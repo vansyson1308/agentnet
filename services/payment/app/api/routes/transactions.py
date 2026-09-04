@@ -23,6 +23,20 @@ from ...schemas import TransactionCreate, TransactionUpdate
 router = APIRouter()
 
 
+def wallet_owned_by(db: Session, wallet: Wallet, principal) -> bool:
+    """True when ``principal`` (User or Agent) owns ``wallet``."""
+    if wallet.owner_type == WalletOwnerType.USER:
+        return isinstance(principal, User) and wallet.owner_id == principal.id
+    if wallet.owner_type == WalletOwnerType.AGENT:
+        if isinstance(principal, Agent):
+            return wallet.owner_id == principal.id
+        if isinstance(principal, User):
+            return (
+                db.query(Agent.id).filter(Agent.id == wallet.owner_id, Agent.user_id == principal.id).first() is not None
+            )
+    return False
+
+
 @router.post("/create", response_model=Dict[str, Any])
 async def create_transaction(
     transaction: TransactionCreate,
@@ -36,36 +50,15 @@ async def create_transaction(
     if not from_wallet:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source wallet not found")
 
-    # Check if the current user/agent has access to the source wallet
-    if from_wallet.owner_type == WalletOwnerType.USER:
-        if isinstance(current_user_or_agent, User) and from_wallet.owner_id != current_user_or_agent.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have access to the source wallet",
-            )
-    elif from_wallet.owner_type == WalletOwnerType.AGENT:
-        if isinstance(current_user_or_agent, Agent) and from_wallet.owner_id != current_user_or_agent.id:
-            # Check if the wallet belongs to an agent owned by the user
-            if isinstance(current_user_or_agent, User):
-                agent = (
-                    db.query(Agent)
-                    .filter(
-                        Agent.id == from_wallet.owner_id,
-                        Agent.user_id == current_user_or_agent.id,
-                    )
-                    .first()
-                )
-
-                if not agent:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="You don't have access to the source wallet",
-                    )
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You don't have access to the source wallet",
-                )
+    # The caller must OWN the source wallet: a user owns their own wallet and
+    # the wallets of their agents; an agent owns only its own wallet. Every
+    # other combination is refused (previously the user-vs-agent-wallet and
+    # agent-vs-user-wallet cases skipped the check entirely).
+    if not wallet_owned_by(db, from_wallet, current_user_or_agent):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to the source wallet",
+        )
 
     # Get the destination wallet
     to_wallet = db.query(Wallet).filter(Wallet.id == transaction.to_wallet).first()
@@ -149,6 +142,13 @@ async def confirm_transaction(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="One or both wallets not found",
+        )
+
+    # Only the owner of the paying wallet may settle it.
+    if not wallet_owned_by(db, from_wallet, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to the source wallet",
         )
 
     # Update the transaction status

@@ -101,7 +101,69 @@ class TestReadyz:
         client = TestClient(app)
         resp = client.get("/readyz")
         assert resp.status_code == 503
-        assert "db" in resp.text
+        body = resp.json()
+        assert body["status"] == "not_ready" and "db" in body["failing"]
+        # component names only — never the exception text (DSN, host, user)
+        assert "db down" not in resp.text
+
+    def test_readyz_503_when_redis_down_without_leaking_details(self, registry_app, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        app, health = registry_app
+
+        class _OkConn:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def execute(self, *a, **k):
+                return None
+
+        class _OkEngine:
+            def connect(self):
+                return _OkConn()
+
+        monkeypatch.setattr(health, "engine", _OkEngine())
+        monkeypatch.setattr(health, "REDIS_URL", "redis://:hunter2@redis.internal.invalid:6379/0")
+
+        resp = TestClient(app).get("/readyz")
+        assert resp.status_code == 503
+        assert resp.json() == {"status": "not_ready", "failing": ["redis"]}
+        assert "hunter2" not in resp.text and "redis.internal" not in resp.text
+
+    def test_readyz_200_when_both_dependencies_answer(self, registry_app, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        app, health = registry_app
+
+        class _OkConn:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def execute(self, *a, **k):
+                return None
+
+        class _OkEngine:
+            def connect(self):
+                return _OkConn()
+
+        class _OkRedis:
+            async def ping(self):
+                return True
+
+            async def aclose(self):
+                return None
+
+        monkeypatch.setattr(health, "engine", _OkEngine())
+        monkeypatch.setattr(health.redis, "from_url", lambda *a, **k: _OkRedis())
+        resp = TestClient(app).get("/readyz")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ready"
 
 
 class TestMetrics:
@@ -156,3 +218,28 @@ class TestWiring:
             pathlib.Path(__file__).parent.parent / "services/worker/app/worker.py"
         ).read_text()
         assert "start_http_server(WORKER_METRICS_PORT)" in text
+
+
+class TestOptionalSurfacesDefaultOff:
+    """Phase 2.5 §6/§9: privileged or anonymous surfaces are opt-in."""
+
+    def test_flags_default_off(self, monkeypatch):
+        import importlib
+        import sys
+
+        for k in ("AUTO_SCALER_ENABLED", "PUBLIC_AGENT_REGISTRATION_ENABLED", "ORCHESTRATOR_ENABLED"):
+            monkeypatch.delenv(k, raising=False)
+        monkeypatch.setenv("ENVIRONMENT", "development")
+        sys.modules.pop("services.registry.app.config", None)
+        cfg = importlib.import_module("services.registry.app.config")
+        assert cfg.AUTO_SCALER_ENABLED is False
+        assert cfg.PUBLIC_AGENT_REGISTRATION_ENABLED is False
+        assert cfg.ORCHESTRATOR_ENABLED is False
+
+    def test_registry_startup_skips_auto_scaler_when_disabled(self, monkeypatch):
+        """The startup hook must not launch the Docker-socket scaler unless enabled."""
+        import pathlib
+
+        text = pathlib.Path("services/registry/app/main.py").read_text(encoding="utf-8")
+        assert "if AUTO_SCALER_ENABLED:" in text
+        assert text.index("if AUTO_SCALER_ENABLED:") < text.index("await start_auto_scaler()")

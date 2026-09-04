@@ -111,6 +111,11 @@ def get_fleet_activity(db: Session = Depends(get_db)):
     features_shipped = sum(1 for m in today_chat
                             if m["message_type"] == "completed")
 
+    # Message bodies are private to their parties; the public feed keeps
+    # structure only (type, title, sender, timestamps).
+    for m in chat_messages:
+        m.pop("content", None)
+
     # --- Agents list (for Fleet Activity page) ---
     agent_rows = db.execute(
         text("""

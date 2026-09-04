@@ -72,8 +72,14 @@ async def startup_event():
     global _auto_scaler_task
     # Initialize Redis connection for WebSocket manager
     await manager.init_redis()
-    # Start auto-scaler background task
-    _auto_scaler_task = await start_auto_scaler()
+    # Start auto-scaler background task only when explicitly enabled: it
+    # needs the Docker socket and polls the registry over HTTP.
+    from .config import AUTO_SCALER_ENABLED
+
+    if AUTO_SCALER_ENABLED:
+        _auto_scaler_task = await start_auto_scaler()
+    else:
+        logger.info("Auto-scaler disabled (AUTO_SCALER_ENABLED=false)")
     logger.info("Registry service started")
 
 

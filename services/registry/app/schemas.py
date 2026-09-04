@@ -122,6 +122,13 @@ class Agent(AgentBase):
         from_attributes = True
 
 
+class AgentPublic(Agent):
+    """Marketplace view of an agent: everything a caller needs to discover and
+    call it, without the owner's internal user id."""
+
+    user_id: Optional[UUID4] = Field(default=None, exclude=True)
+
+
 class AgentReputation(BaseModel):
     """Detailed reputation metrics for an agent."""
 

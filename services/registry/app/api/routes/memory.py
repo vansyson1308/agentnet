@@ -37,7 +37,8 @@ from sqlalchemy import cast, type_coerce
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from ...auth import get_current_user
+from ...auth import get_current_user, get_current_user_or_agent
+from ...authz import owns_agent, principal_agent_ids, require_operator_user
 from ...database import get_db
 from ...models import (
     Agent,
@@ -159,9 +160,15 @@ def list_memory(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
+    current=Depends(get_current_user_or_agent),
 ):
-    """List memory items. Public. Filters compose with AND."""
-    query = db.query(MemoryItem)
+    """List memory items visible to the principal: SOCIETY-scope lessons plus
+    AGENT-scope lessons of agents it owns. Filters compose with AND."""
+    mine = principal_agent_ids(db, current)
+    visible = MemoryItem.scope == MemoryScope.SOCIETY.value
+    if mine:
+        visible = visible | MemoryItem.agent_id.in_(mine)
+    query = db.query(MemoryItem).filter(visible)
     if scope:
         query = query.filter(MemoryItem.scope == scope.value)
     if agent_id:
@@ -181,9 +188,12 @@ def list_memory(
 
 
 @router.get("/{memory_id}", response_model=MemoryOut)
-def get_memory(memory_id: uuid.UUID, db: Session = Depends(get_db)):
+def get_memory(memory_id: uuid.UUID, db: Session = Depends(get_db), current=Depends(get_current_user_or_agent)):
     item = db.query(MemoryItem).filter(MemoryItem.id == memory_id).first()
     if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="memory item not found")
+    scope = item.scope.value if hasattr(item.scope, "value") else item.scope
+    if scope != MemoryScope.SOCIETY.value and not (item.agent_id and owns_agent(db, current, item.agent_id)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="memory item not found")
     return item
 
@@ -194,9 +204,12 @@ def create_memory(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Write a lesson. Society-scope is open to any user; agent-scope
-    requires ownership of the target agent."""
+    """Write a lesson. Society-scope lessons are read by every agent before
+    it acts, so writing them is an operator action; agent-scope requires
+    ownership of the target agent."""
     _ensure_scope_agent_consistency(payload.scope, payload.agent_id)
+    if payload.scope == MemoryScope.SOCIETY:
+        require_operator_user(current_user, detail="society-scope memory is written by operators (or the runtime)")
     _ensure_owner_for_agent_scope(db, current_user, payload.agent_id)
 
     if payload.source_task_id is not None:

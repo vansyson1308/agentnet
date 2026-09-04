@@ -77,33 +77,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     def _get_client_key(self, request: Request) -> str:
         """Unique key per caller — token subject if present, otherwise the
-        real client IP. Behind Caddy, ``request.client.host`` is the proxy
-        IP, so we MUST trust X-Forwarded-For first; uvicorn's
-        --proxy-headers is what populates it. We pick the leftmost
-        non-private IP from the comma-separated list per RFC 7239."""
+        peer address as uvicorn reports it.
+
+        We deliberately do NOT read X-Forwarded-For here. Any client can
+        send that header, so parsing it in the application would let an
+        unauthenticated caller pick a fresh bucket per request (rate-limit
+        bypass on login/register). uvicorn's ``--proxy-headers`` rewrites
+        ``request.client`` from X-Forwarded-For ONLY when the peer is listed
+        in ``FORWARDED_ALLOW_IPS`` (the hosting platform's proxy), so the
+        trust decision lives in one place, configured per deployment."""
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             return hashlib.sha256(auth.encode()).hexdigest()[:16]
-
-        forwarded = request.headers.get("X-Forwarded-For", "")
-        if forwarded:
-            for raw in forwarded.split(","):
-                ip = raw.strip()
-                if not ip:
-                    continue
-                # Skip private / loopback that some proxies prepend.
-                if ip.startswith(("10.", "192.168.", "127.", "::1", "fc", "fd")):
-                    continue
-                if ip.startswith("172."):
-                    try:
-                        second = int(ip.split(".")[1])
-                        if 16 <= second <= 31:
-                            continue
-                    except (IndexError, ValueError):
-                        pass
-                return ip
-            # Every entry was private — fall back to the leftmost.
-            return forwarded.split(",")[0].strip()
         return (request.client.host if request.client else None) or "unknown"
 
     async def _is_agent(self, request: Request) -> bool:

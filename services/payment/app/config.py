@@ -111,3 +111,14 @@ DATABASE_URL = (
     f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
     f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 )
+
+
+# ---------------------------------------------------------------------------
+# Internal service-to-service calls (worker → payment)
+# ---------------------------------------------------------------------------
+# Shared secret presented as `X-Internal-Token` by trusted background workers
+# on internal endpoints such as POST /v1/approval_requests/worker/expire.
+# Non-development environments must set it explicitly; development uses a
+# derived, obviously-non-prod sentinel like the other dev defaults.
+_DEV_INTERNAL_WORKER_TOKEN = _dev_only_default("internal-worker-token")
+INTERNAL_WORKER_TOKEN = require_env("INTERNAL_WORKER_TOKEN", dev_default=_DEV_INTERNAL_WORKER_TOKEN)

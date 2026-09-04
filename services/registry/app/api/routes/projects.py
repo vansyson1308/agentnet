@@ -26,14 +26,32 @@ from ...schemas import (
     ProjectResourceCreate,
 )
 from ...auth import get_current_user
-from ...models import User
+from ...authz import require_owned_agent
+from ...models import Agent, User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _owned_project(db: Session, project_id: uuid.UUID, user: User) -> Project:
+    """A project belongs to the owner of its agent. Non-owners get 404 so
+    project ids cannot be enumerated."""
+    project = (
+        db.query(Project)
+        .join(Agent, Agent.id == Project.agent_id)
+        .filter(Project.id == project_id, Agent.user_id == user.id)
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
 @router.post("/projects", response_model=ProjectResponse, status_code=201)
-async def create_project(body: ProjectCreate, db: Session = Depends(get_db), _current_user: User = Depends(get_current_user)):
+async def create_project(body: ProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if body.agent_id is None:
+        raise HTTPException(status_code=422, detail="agent_id is required: projects belong to one of your agents")
+    require_owned_agent(db, current_user, body.agent_id, detail="projects can only be created for agents you own")
     project = Project(name=body.name, agent_id=body.agent_id, description=body.description)
     db.add(project)
     db.commit()
@@ -45,28 +63,23 @@ async def create_project(body: ProjectCreate, db: Session = Depends(get_db), _cu
 async def list_projects(
     agent_id: uuid.UUID | None = None,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    q = db.query(Project)
+    q = db.query(Project).join(Agent, Agent.id == Project.agent_id).filter(Agent.user_id == current_user.id)
     if agent_id:
         q = q.filter(Project.agent_id == agent_id)
     return q.order_by(Project.created_at.desc()).all()
 
 
 @router.get("/projects/{project_id}", response_model=ProjectResponse)
-async def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), _current_user: User = Depends(get_current_user)):
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    return project
+async def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return _owned_project(db, project_id, current_user)
 
 
 @router.get("/projects/{project_id}/state", response_model=ProjectStateExport)
-async def export_project_state(project_id: uuid.UUID, db: Session = Depends(get_db), _current_user: User = Depends(get_current_user)):
+async def export_project_state(project_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Export project as state.json — machine-readable for CI/CD."""
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = _owned_project(db, project_id, current_user)
 
     resources = []
     for res in project.resources:
@@ -94,11 +107,9 @@ async def add_project_resource(
     project_id: uuid.UUID,
     body: ProjectResourceCreate,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    _owned_project(db, project_id, current_user)
 
     res = ProjectResource(
         project_id=project_id,
@@ -118,8 +129,9 @@ async def remove_project_resource(
     project_id: uuid.UUID,
     resource_id: uuid.UUID,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
+    _owned_project(db, project_id, current_user)
     res = db.query(ProjectResource).filter(
         ProjectResource.id == resource_id,
         ProjectResource.project_id == project_id,

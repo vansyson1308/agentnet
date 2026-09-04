@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from ...auth import get_current_user_or_agent, verify_token
 from ...database import get_db
+from ...models import User
 from ...websocket_manager import manager
 
 # Import event bus for subscribing to task state changes
@@ -128,22 +129,27 @@ async def websocket_endpoint(
         manager.disconnect(connection_id, db)
 
 
-@router.websocket("/ws/tasks/timeline")
+@router.websocket("/tasks/timeline")
 async def task_timeline_endpoint(
     websocket: WebSocket,
     token: str = Query(...),
+    db: Session = Depends(get_db),
 ):
-    """WebSocket endpoint for live task execution timeline.
+    """WebSocket endpoint for the live, platform-wide task timeline.
 
-    Pushes task state change events to authenticated dashboard clients.
-    Events include: task_id, agent_name, escrow_amount, current_state,
-    previous_state, duration, timestamp.
+    The stream carries every task's agent names and escrow amounts, so it
+    is an OPERATOR view: a user session token with the society operator
+    role is required (agent and scoped tokens are refused).
     """
-    # Authenticate via token
+    from ...society.operator_auth import is_operator
+
     try:
-        verify_token(token)  # raises exception on invalid token
+        token_data = verify_token(token, db=db)
+        user = db.query(User).filter(User.id == token_data.user_id).first() if token_data.user_id and token_data.scoped_token_id is None else None
+        if user is None or not is_operator(user):
+            raise PermissionError("operator role required")
     except Exception as e:
-        logger.error(f"Timeline WebSocket authentication error: {e}")
+        logger.warning(f"Timeline WebSocket refused: {e}")
         await websocket.close(code=1008, reason="Authentication error")
         return
 

@@ -8,6 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from sqlalchemy.orm import Session
 
 from ...auth import get_current_agent, get_current_user_or_agent, hash_input
+from ...authz import ACTION_EXECUTE, principal_agent_ids, require_party, require_scoped_action, reserve_scoped_spend
 from ...database import get_db
 from ...models import (
     Agent,
@@ -23,7 +24,6 @@ from ...models import (
 )
 from ...schemas import SpanCreate, SpanInDB
 from ...schemas import Task as TaskSchema
-from ...schemas import TaskCreate
 from ...governance import create_notification
 from ...schemas import TaskCreate, TaskUpdate
 from ...task_service import (
@@ -181,6 +181,11 @@ async def create_task_session(
             detail="Caller agent ID must match the current agent",
         )
 
+    # Scoped tokens: the action must be allowed and the amount is charged
+    # against the token's cap inside the same transaction as the escrow.
+    require_scoped_action(current_agent, ACTION_EXECUTE)
+    reserve_scoped_spend(db, current_agent, task.max_budget)
+
     try:
         task_session, _transaction = create_task_with_escrow(
             db=db,
@@ -196,6 +201,7 @@ async def create_task_session(
             idempotency_key=idempotency_key,
         )
     except EscrowError as e:
+        db.rollback()  # also drops any scoped-token charge made above
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     audit_logger.info(
@@ -263,6 +269,7 @@ async def start_task(
     agent_id: Optional[uuid.UUID] = Query(None),
 ):
     """Callee confirms start. Updates status to in_progress (delegates to task_service)."""
+    require_scoped_action(current_user_or_agent, ACTION_EXECUTE)
     current_agent = _resolve_agent(current_user_or_agent, db, agent_id=agent_id)
     try:
         start_task_session(db=db, task_id=task_id, callee_agent=current_agent)
@@ -290,6 +297,7 @@ async def confirm_task(
     agent_id: Optional[uuid.UUID] = Query(None),
 ):
     """Callee reports completion (delegates to task_service.confirm_task_completion)."""
+    require_scoped_action(current_user_or_agent, ACTION_EXECUTE)
     current_agent = _resolve_agent(current_user_or_agent, db, agent_id=agent_id)
     try:
         task_session = confirm_task_completion(
@@ -352,6 +360,7 @@ async def fail_task(
     agent_id: Optional[uuid.UUID] = Query(None),
 ):
     """Callee reports failure (delegates to task_service.fail_task_with_refund)."""
+    require_scoped_action(current_user_or_agent, ACTION_EXECUTE)
     current_agent = _resolve_agent(current_user_or_agent, db, agent_id=agent_id)
     try:
         task_session = fail_task_with_refund(
@@ -406,18 +415,18 @@ async def get_task(
     db: Session = Depends(get_db),
     current_user_or_agent=Depends(get_current_user_or_agent),
 ):
-    """Get task status."""
-    current_agent = _resolve_agent(current_user_or_agent, db)
+    """Get task status (any agent of the principal may be caller or callee)."""
     task_session = db.query(TaskSession).filter(TaskSession.id == task_id).first()
 
     if not task_session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task session not found")
 
-    if task_session.caller_agent_id != current_agent.id and task_session.callee_agent_id != current_agent.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the caller or callee agent can view the task",
-        )
+    require_party(
+        db,
+        current_user_or_agent,
+        [task_session.caller_agent_id, task_session.callee_agent_id],
+        detail="Only the caller or callee agent can view the task",
+    )
 
     return task_session
 
@@ -429,12 +438,13 @@ async def list_tasks(
     db: Session = Depends(get_db),
     current_user_or_agent=Depends(get_current_user_or_agent),
 ):
-    """List tasks related to the authenticated user/agent."""
-    current_agent = _resolve_agent(current_user_or_agent, db)
-    
+    """List tasks in which any agent of the authenticated user/agent took part."""
+    mine = principal_agent_ids(db, current_user_or_agent)
+    if not mine:
+        return []
+
     query = db.query(TaskSession).filter(
-        (TaskSession.caller_agent_id == current_agent.id) | 
-        (TaskSession.callee_agent_id == current_agent.id)
+        TaskSession.caller_agent_id.in_(mine) | TaskSession.callee_agent_id.in_(mine)
     )
     
     if status_filter:
@@ -449,8 +459,16 @@ async def get_trace(
     db: Session = Depends(get_db),
     current_user_or_agent=Depends(get_current_user_or_agent),
 ):
-    """Retrieve full span tree for a trace."""
-    spans = db.query(Span).filter(Span.trace_id == trace_id).order_by(Span.created_at).all()
+    """Retrieve the span tree for a trace — only spans produced by the
+    principal's own agents. A trace with no visible spans reads as absent."""
+    mine = principal_agent_ids(db, current_user_or_agent)
+    spans = (
+        db.query(Span).filter(Span.trace_id == trace_id, Span.agent_id.in_(mine)).order_by(Span.created_at).all()
+        if mine
+        else []
+    )
+    if not spans:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trace not found")
 
     # Build span tree
     span_list = []

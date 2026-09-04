@@ -9,6 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ...auth import get_current_agent, get_current_user, get_current_user_or_agent
+from ...authz import owns_agent, principal_agent_ids
 from ...database import get_db
 from ...models import Agent, AgentChat, AgentMessageType, User
 
@@ -76,27 +77,19 @@ async def send_message(
         if not target:
             raise HTTPException(status_code=404, detail="Target agent not found")
 
-    # Determine agent_id (allow both agents and users to send)
-    if hasattr(current, 'capabilities'):
+    # The sender is always an agent the principal controls: an agent token
+    # sends as itself; a user must name one of their OWN agents. Nobody can
+    # impersonate another agent by naming it.
+    if isinstance(current, Agent):
         agent_obj = current
-        agent_name = current.name
     else:
-        # User sending — allow override via from_agent_name in body
-        agent_name = msg.from_agent_name or current.email or "user"
-        system_agent = db.query(Agent).filter(Agent.name == agent_name).first()
-        if system_agent:
-            agent_obj = system_agent
-        else:
-            # Use Hermes_Planner as fallback
-            planner = db.query(Agent).filter(Agent.name == "Hermes_Planner").first()
-            if planner:
-                agent_obj = planner
-                agent_name = f"👤 {current.email or 'user'}"
-            else:
-                agent_obj = current
-                agent_name = "user"
+        if not msg.from_agent_name:
+            raise HTTPException(status_code=422, detail="from_agent_name is required: users send as one of their own agents")
+        agent_obj = db.query(Agent).filter(Agent.name == msg.from_agent_name, Agent.user_id == current.id).first()
+        if agent_obj is None:
+            raise HTTPException(status_code=403, detail="from_agent_name must be an agent you own")
+    agent_name = agent_obj.name
 
-    # If user, prefix name
     from_agent_id = agent_obj.id
 
     # Create message
@@ -124,7 +117,6 @@ async def send_message(
         "to_agent": str(msg.to_agent_id) if msg.to_agent_id else None,
         "message_type": msg.message_type,
         "title": msg.title,
-        "content": msg.content[:200],
         "thread_id": str(db_msg.thread_id),
         "id": str(db_msg.id),
         "created_at": db_msg.created_at.isoformat(),
@@ -144,8 +136,12 @@ async def list_messages(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user_or_agent),
 ):
-    """List agent chat messages (authenticated)."""
-    query = db.query(AgentChat)
+    """List chat messages the principal is a party to: sent by or addressed
+    to one of its agents, or broadcast (no recipient)."""
+    mine = principal_agent_ids(db, current)
+    query = db.query(AgentChat).filter(
+        AgentChat.from_agent_id.in_(mine) | AgentChat.to_agent_id.in_(mine) | AgentChat.to_agent_id.is_(None)
+    ) if mine else db.query(AgentChat).filter(AgentChat.to_agent_id.is_(None))
 
     if agent_id:
         query = query.filter(
@@ -176,11 +172,15 @@ async def list_messages(
 async def list_threads(
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
+    current: User = Depends(get_current_user_or_agent),
 ):
-    """List all conversation threads with their latest message."""
+    """List conversation threads the principal is a party to (authenticated)."""
+    mine = principal_agent_ids(db, current)
+    visible = AgentChat.from_agent_id.in_(mine) | AgentChat.to_agent_id.in_(mine) | AgentChat.to_agent_id.is_(None) if mine else AgentChat.to_agent_id.is_(None)
     # Get distinct thread IDs
     thread_ids = (
         db.query(AgentChat.thread_id, func.max(AgentChat.created_at).label("latest"))
+        .filter(visible)
         .group_by(AgentChat.thread_id)
         .order_by(func.max(AgentChat.created_at).desc())
         .limit(limit)
@@ -191,7 +191,7 @@ async def list_threads(
     for tid, _ in thread_ids:
         messages = (
             db.query(AgentChat)
-            .filter(AgentChat.thread_id == tid)
+            .filter(AgentChat.thread_id == tid, visible)
             .order_by(AgentChat.created_at.asc())
             .all()
         )
@@ -221,10 +221,12 @@ async def mark_read(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user_or_agent),
 ):
-    """Mark a message as read."""
+    """Mark a message addressed to one of your agents as read."""
     msg = db.query(AgentChat).filter(AgentChat.id == message_id).first()
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
+    if msg.to_agent_id is None or not owns_agent(db, current, msg.to_agent_id):
+        raise HTTPException(status_code=403, detail="only the recipient can mark a message read")
     msg.is_read = True
     db.commit()
     return {"status": "ok"}
@@ -235,12 +237,15 @@ async def unread_count(
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user_or_agent),
 ):
-    """Get count of unread messages for the current agent."""
+    """Count unread messages addressed to the principal's agents."""
+    mine = principal_agent_ids(db, current)
+    if not mine:
+        return {"unread": 0}
     count = (
         db.query(AgentChat)
         .filter(
-            AgentChat.to_agent_id == agent_obj.id,
-            AgentChat.is_read == False,
+            AgentChat.to_agent_id.in_(mine),
+            AgentChat.is_read == False,  # noqa: E712
         )
         .count()
     )

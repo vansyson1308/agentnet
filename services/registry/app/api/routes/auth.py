@@ -17,12 +17,22 @@ from ...auth import (
     get_password_hash,
     verify_password,
 )
+from ...config import IS_DEV, public_url
 from ...database import get_db
 from ...models import Agent, EmailVerificationToken, User, Wallet, WalletOwnerType
 from ...schemas import AgentLogin, AgentToken, UserLogin, UserToken
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(filename='/var/log/agentnet-verify.log', level=logging.INFO)
+
+
+def _announce_verification(email: str, token_value: str) -> None:
+    """SMTP is not wired yet. In development the link is the only way to
+    verify, so it is logged at INFO. Outside development the token is a
+    credential and is never written to logs; only the fact is recorded."""
+    if IS_DEV:
+        logger.info("DEV ONLY verification link for %s: %s", email, public_url(f"/v1/auth/verify-email?token={token_value}"))
+    else:
+        logger.info("verification token issued for %s (delivery pending: SMTP not configured)", email)
 
 router = APIRouter()
 
@@ -111,10 +121,7 @@ async def user_register(user_data: UserRegister, db: Session = Depends(get_db)):
     db.add(verification)
     db.commit()
 
-    # Log the verification link (SMTP not yet configured)
-    logger.info(f"Verification token for {user.email}: {token_value}")
-    verification_url = f"https://agentnet.io.vn/v1/auth/verify-email?token={token_value}"
-    logger.info(f"Verification URL: {verification_url}")
+    _announce_verification(user.email, token_value)
 
     return UserRegisterResponse(id=str(user.id), email=user.email, message="User registered successfully")
 
@@ -243,8 +250,7 @@ async def resend_verification(req: ResendVerificationRequest, db: Session = Depe
         db.add(verification)
         db.commit()
 
-        # Log the token (SMTP not yet configured)
-        logger.info(f"Verification token for {user.email}: {token_value}")
+        _announce_verification(user.email, token_value)
 
     # Always return a generic message to avoid email enumeration
     return {"ok": True, "message": "If the email exists, a verification link has been sent."}

@@ -20,6 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy.orm import Session
 
 from ...auth import get_current_user_or_agent
+from ...authz import require_party
 from ...database import get_db
 from ...models import Agent, NegotiationRound, Offer, OfferStatus
 from ...governance import create_notification
@@ -120,11 +121,13 @@ async def create_offer(
 async def get_offer_with_negotiation(
     offer_id: uuid.UUID,
     db: Session = Depends(get_db),
+    current=Depends(get_current_user_or_agent),
 ):
-    """Get offer with full negotiation history."""
+    """Get offer with full negotiation history (parties only)."""
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Offer not found")
+    require_party(db, current, [offer.from_agent_id, offer.to_agent_id], detail="only the offer's parties can view its negotiation")
 
     return offer
 
@@ -285,7 +288,6 @@ async def accept_offer(
             "offer_id": str(offer.id),
             "from_agent": from_agent.name if from_agent else str(offer.from_agent_id),
             "to_agent": to_agent.name if to_agent else str(offer.to_agent_id),
-            "price": offer.price,
             "timestamp": datetime.utcnow().isoformat(),
         })
     )

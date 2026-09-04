@@ -9,12 +9,13 @@ Features:
 """
 
 import logging
+import secrets
 import uuid
 from datetime import datetime
 from typing import List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import Header, APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ from ...approval_workflow import (
     validate_approval_transition,
 )
 from ...auth import get_current_agent, get_current_user
+from ...config import INTERNAL_WORKER_TOKEN
 from ...database import get_db
 from ...models import (
     Agent,
@@ -418,13 +420,20 @@ async def get_approval(
 # ─────────────────────────────────────────────────────────
 
 
-@router.post("/worker/expire")
+def require_internal_worker(x_internal_token: Optional[str] = Header(None)) -> None:
+    """Service-to-service guard: the background worker presents the shared
+    INTERNAL_WORKER_TOKEN. Anything else is treated as not found."""
+    if not x_internal_token or not secrets.compare_digest(x_internal_token, INTERNAL_WORKER_TOKEN):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+
+@router.post("/worker/expire", dependencies=[Depends(require_internal_worker)])
 async def expire_pending_approvals(db: Session = Depends(get_db)):
     """
     Worker endpoint to expire pending approvals that have timed out.
 
-    This should be called periodically by the worker service.
-    On expiry, reserved funds are released for task escrow approvals.
+    Called periodically by the worker service with the X-Internal-Token
+    header. On expiry, reserved funds are released for task escrow approvals.
     """
     now = datetime.utcnow()
 

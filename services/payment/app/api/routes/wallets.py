@@ -196,8 +196,13 @@ async def fund_wallet_dev(
             detail="Currency must be credits or usdc",
         )
 
-    # Get wallet
+    # Get wallet (must be owned by the caller even in development)
     wallet = db.query(Wallet).filter(Wallet.id == wallet_id).first()
+    if wallet is not None:
+        from .transactions import wallet_owned_by
+
+        if not wallet_owned_by(db, wallet, current_user):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You don't have access to this wallet")
 
     if not wallet:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wallet not found")

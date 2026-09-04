@@ -10,8 +10,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ...a2a import agent_to_a2a_card
-from ...auth import get_current_agent, get_current_user
+from ...authz import owns_agent, require_owned_agent
+from ...auth import get_current_agent, get_current_user, get_current_user_or_agent
 from ...database import get_db
+from ...models import TaskSession, TaskStatus
 from ...models import (
     Agent,
     AgentStatus,
@@ -26,6 +28,7 @@ from ...reputation import compute_agent_reputation
 from ...sandbox import SandboxError, SandboxTimeoutError, SSRFError, sandboxed_call
 from ...schemas import Agent as AgentSchema
 from ...schemas import (
+    AgentPublic,
     AgentCreate,
     AgentReputation,
     AgentUpdate,
@@ -106,7 +109,15 @@ async def public_register_agent(
     agent: AgentCreate,
     db: Session = Depends(get_db),
 ):
-    """Public agent registration — no auth required. Creates a placeholder user if needed."""
+    """Public agent registration — no auth required. Creates a placeholder user if needed.
+
+    OFF by default (404) — see PUBLIC_AGENT_REGISTRATION_ENABLED. The
+    placeholder owner has no password hash and can never log in; agents
+    created here start UNVERIFIED with an empty wallet."""
+    from ...config import PUBLIC_AGENT_REGISTRATION_ENABLED, PUBLIC_REGISTRATION_OWNER_EMAIL
+
+    if not PUBLIC_AGENT_REGISTRATION_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
     # Validate capabilities
     for capability in agent.capabilities:
         try:
@@ -119,11 +130,11 @@ async def public_register_agent(
             )
 
     # Find or create anonymous user for public registrations
-    anon_user = db.query(User).filter(User.email == "public@agentnet.io.vn").first()
+    anon_user = db.query(User).filter(User.email == PUBLIC_REGISTRATION_OWNER_EMAIL).first()
     if not anon_user:
         anon_user = User(
             id=uuid.uuid4(),
-            email="public@agentnet.io.vn",
+            email=PUBLIC_REGISTRATION_OWNER_EMAIL,
             password_hash="",
             kyc_status="pending",
         )
@@ -172,7 +183,24 @@ async def public_register_agent(
     return db_agent
 
 
-@router.get("/{agent_id}", response_model=AgentSchema)
+@router.get("/public/", response_model=List[AgentPublic])
+async def list_agents_public(
+    capability: Optional[str] = Query(None, description="Filter by capability name"),
+    status: Optional[AgentStatus] = Query(None, description="Filter by agent status"),
+    skip: int = Query(0, ge=0, description="Skip records"),
+    limit: int = Query(100, ge=1, le=1000, description="Limit records"),
+    db: Session = Depends(get_db),
+):
+    """Public endpoint: list agents without authentication."""
+    query = db.query(Agent)
+    if capability:
+        query = query.filter(Agent.capabilities.contains([{"name": capability}]))
+    if status:
+        query = query.filter(Agent.status == status)
+    return query.offset(skip).limit(limit).all()
+
+
+@router.get("/{agent_id}", response_model=AgentPublic)
 async def get_agent(agent_id: uuid.UUID, db: Session = Depends(get_db)):
     """Get agent details (including reputation)."""
     db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
@@ -399,24 +427,7 @@ async def update_agent(
     return current_agent
 
 
-@router.get("/public/", response_model=List[AgentSchema])
-async def list_agents_public(
-    capability: Optional[str] = Query(None, description="Filter by capability name"),
-    status: Optional[AgentStatus] = Query(None, description="Filter by agent status"),
-    skip: int = Query(0, ge=0, description="Skip records"),
-    limit: int = Query(100, ge=1, le=1000, description="Limit records"),
-    db: Session = Depends(get_db),
-):
-    """Public endpoint: list agents without authentication."""
-    query = db.query(Agent)
-    if capability:
-        query = query.filter(Agent.capabilities.contains([{"name": capability}]))
-    if status:
-        query = query.filter(Agent.status == status)
-    return query.offset(skip).limit(limit).all()
-
-
-@router.get("/", response_model=List[AgentSchema])
+@router.get("/", response_model=List[AgentPublic])
 async def search_agents(
     capability: Optional[str] = Query(None, description="Filter by capability name"),
     min_rating: Optional[int] = Query(None, ge=0, le=100, description="Minimum verification score"),
@@ -464,12 +475,9 @@ async def verify_capability(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Challenge agent to verify capability."""
-    # Get the agent
-    db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
-
-    if db_agent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    """Challenge one of YOUR agents to verify a capability (owner only: the
+    outcome changes verify_score/status)."""
+    db_agent = require_owned_agent(db, current_user, agent_id, detail="only the agent owner can run capability verification")
 
     # Check if the agent has the requested capability
     capability = None
@@ -551,12 +559,20 @@ async def report_task(
     db: Session = Depends(get_db),
     current_agent: Agent = Depends(get_current_agent),
 ):
-    """Report task result (update reputation)."""
-    # Check if the agent exists
+    """Report the outcome of a task YOU called on this agent (updates its reputation).
+
+    Only the caller of a finished task may report on its callee; a report
+    for an unrelated agent, or for an unfinished task, is refused."""
     db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
 
     if db_agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    task = db.query(TaskSession).filter(TaskSession.id == report.task_session_id).first()
+    if task is None or task.callee_agent_id != db_agent.id or task.caller_agent_id != current_agent.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="reports must reference a task you called on this agent")
+    if task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT, TaskStatus.REFUNDED):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="task is not finished")
 
     # Update agent's reputation based on the report
     if report.success:
@@ -838,17 +854,24 @@ async def list_agent_lessons(
     min_importance: int = Query(0, ge=0, le=100),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
+    current=Depends(get_current_user_or_agent),
 ):
-    """Public: lessons relevant to this agent.
+    """Lessons relevant to this agent (authenticated).
 
     Returns the union of (a) AGENT-scope memory items owned by this
-    agent, plus (b) SOCIETY-scope memory items (skip with
-    ``include_society=false``). Results are sorted by importance desc
-    then created_at desc, and capped at ``limit`` total rows.
+    agent — visible only to the agent itself or its owner — plus (b)
+    SOCIETY-scope memory items (skip with ``include_society=false``).
+    Results are sorted by importance desc then created_at desc, and
+    capped at ``limit`` total rows.
     """
     db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
     if db_agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    if not owns_agent(db, current, agent_id):
+        if not include_society:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="agent-scope lessons are private to the agent and its owner")
+        include_society = True
+        agent_id = None  # society lessons only
 
     from sqlalchemy import cast, type_coerce
     from sqlalchemy.dialects.postgresql import JSONB

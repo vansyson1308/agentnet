@@ -32,7 +32,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
-from ...auth import get_current_user
+from ...auth import get_current_user, get_current_user_or_agent
+from ...authz import require_operator_user, require_party, user_is_operator
+from ...task_service import EscrowError, create_task_with_escrow
 from ...database import get_db
 from ...models import (
     Agent,
@@ -178,8 +180,10 @@ def list_proposals(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
+    _current=Depends(get_current_user_or_agent),
 ):
-    """List improvement proposals. Public — no auth."""
+    """List improvement proposals (authenticated: they describe platform
+    problems, root causes and risks)."""
     query = db.query(ImprovementProposal)
     if status_filter:
         query = query.filter(ImprovementProposal.status == status_filter.value)
@@ -200,7 +204,7 @@ def list_proposals(
 
 
 @router.get("/{proposal_id}", response_model=ProposalOut)
-def get_proposal(proposal_id: uuid.UUID, db: Session = Depends(get_db)):
+def get_proposal(proposal_id: uuid.UUID, db: Session = Depends(get_db), _current=Depends(get_current_user_or_agent)):
     proposal = (
         db.query(ImprovementProposal).filter(ImprovementProposal.id == proposal_id).first()
     )
@@ -266,8 +270,9 @@ def approve_proposal(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Approve a proposal. Self-approval guard: caller cannot equal
-    proposed_by_user_id, and cannot own the proposed_by_agent."""
+    """Approve a proposal (operator role). Self-approval guard: caller cannot
+    equal proposed_by_user_id, and cannot own the proposed_by_agent."""
+    require_operator_user(current_user, detail="approving proposals requires the operator role")
     proposal = (
         db.query(ImprovementProposal).filter(ImprovementProposal.id == proposal_id).first()
     )
@@ -301,11 +306,14 @@ def reject_proposal(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Reject a proposal: operators, or the user who proposed it."""
     proposal = (
         db.query(ImprovementProposal).filter(ImprovementProposal.id == proposal_id).first()
     )
     if proposal is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="proposal not found")
+    if proposal.proposed_by_user_id != current_user.id and not user_is_operator(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="only the proposer or an operator can reject a proposal")
 
     _check_transition(_coerce_status(proposal.status), ProposalStatus.REJECTED)
     proposal.status = ProposalStatus.REJECTED
@@ -336,6 +344,7 @@ def convert_proposal_to_task(
     For v1 the conversion just creates the task row; the caller agent
     can then START it via the existing flow.
     """
+    require_operator_user(current_user, detail="converting proposals into paid tasks requires the operator role")
     proposal = (
         db.query(ImprovementProposal).filter(ImprovementProposal.id == proposal_id).first()
     )
@@ -387,22 +396,23 @@ def convert_proposal_to_task(
             detail=f"insufficient available credits: have {available}, need {body.escrow_amount}",
         )
 
-    now = datetime.now(timezone.utc)
-    task = TaskSession(
-        id=uuid.uuid4(),
-        trace_id=uuid.uuid4(),
-        span_id=uuid.uuid4(),
-        caller_agent_id=caller_agent.id,
-        callee_agent_id=callee.id,
-        capability=body.capability,
-        input=body.input,
-        input_hash=None,  # caller fills via standard /tasks/start
-        escrow_amount=body.escrow_amount,
-        currency=CurrencyType.CREDITS,
-        status=TaskStatus.INITIATED,
-        timeout_at=now + timedelta(minutes=body.timeout_minutes),
-    )
-    db.add(task)
+    # The task goes through the ONE escrow path (task_service): funds are
+    # reserved on the caller wallet now, so a later completion/refund can
+    # never release money that was never locked.
+    try:
+        task, _tx = create_task_with_escrow(
+            db=db,
+            caller_agent=caller_agent,
+            callee_agent_id=callee.id,
+            capability_name=body.capability,
+            input_data=body.input or {},
+            max_budget=body.escrow_amount,
+            currency="credits",
+            timeout_seconds=body.timeout_minutes * 60,
+            idempotency_key=f"proposal:{proposal.id}",
+        )
+    except EscrowError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
     proposal.status = ProposalStatus.CONVERTED_TO_TASK
     proposal.converted_task_id = task.id
@@ -417,8 +427,9 @@ def mark_proposal_implemented(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Promote CONVERTED_TO_TASK -> IMPLEMENTED. Requires the linked task
+    """Promote CONVERTED_TO_TASK -> IMPLEMENTED (operator role). Requires the linked task
     to be in 'completed' status."""
+    require_operator_user(current_user, detail="marking proposals implemented requires the operator role")
     proposal = (
         db.query(ImprovementProposal).filter(ImprovementProposal.id == proposal_id).first()
     )
@@ -466,6 +477,8 @@ def reflect_endpoint(
     task = db.query(TaskSession).filter(TaskSession.id == body.task_id).first()
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="task not found")
+    if not user_is_operator(current_user):
+        require_party(db, current_user, [task.caller_agent_id, task.callee_agent_id], detail="you can only reflect on tasks your agents took part in")
 
     payload = reflect_on_task(task)
     payload_out = {
