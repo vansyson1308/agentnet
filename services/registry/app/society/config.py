@@ -33,13 +33,29 @@ def _bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in _TRUE
 
 
+class SocietyConfigError(RuntimeError):
+    """Raised at startup for a configuration that must never run."""
+
+
+def _strict() -> bool:
+    """Outside development a malformed or out-of-range value is an error, not a
+    silently clamped default (fail fast, never run with limits you did not set)."""
+    return os.getenv("ENVIRONMENT", "development").strip().lower() != "development"
+
+
 def _int(name: str, default: int, *, minimum: int = 0) -> int:
     raw = os.getenv(name)
     try:
         val = int(raw) if raw not in (None, "") else default
     except ValueError:
+        if _strict():
+            raise SocietyConfigError(f"{name}={raw!r} is not an integer")
         logger.warning("society config: %s=%r is not an int; using %s", name, raw, default)
         val = default
+    if val < minimum:
+        if _strict():
+            raise SocietyConfigError(f"{name}={val} is below the minimum {minimum}")
+        logger.warning("society config: %s=%s is below the minimum %s; clamped", name, val, minimum)
     return max(minimum, val)
 
 
@@ -48,8 +64,14 @@ def _decimal(name: str, default: str) -> Decimal:
     try:
         val = Decimal(raw) if raw not in (None, "") else Decimal(default)
     except Exception:  # noqa: BLE001
+        if _strict():
+            raise SocietyConfigError(f"{name}={raw!r} is not a number")
         logger.warning("society config: %s=%r is not a number; using %s", name, raw, default)
         val = Decimal(default)
+    if val < 0:
+        if _strict():
+            raise SocietyConfigError(f"{name}={val} must not be negative")
+        logger.warning("society config: %s=%s is negative; clamped to 0", name, val)
     return max(Decimal("0"), val)
 
 
@@ -168,6 +190,8 @@ class SocietySettings:
             logger.warning(
                 "SOCIETY_PRODUCTION_DEPLOY_ENABLED is set but production autonomous deploy is hard-disabled in v1; ignoring"
             )
+        for problem in validate_settings(self):
+            raise SocietyConfigError(problem)
 
     def public_dict(self) -> dict:
         """Settings safe to expose over the API / logs (no API key)."""
@@ -189,6 +213,41 @@ class SocietySettings:
             "production_deploy_enabled": self.production_deploy_enabled,
             "model_provider": self.model_provider,
         }
+
+
+def validate_settings(s: "SocietySettings") -> list:
+    """Fail-fast rules (see docs/DEPLOYMENT_ARCHITECTURE.md §2):
+
+    * production never runs the society runtime or the autonomous code loop in
+      this phase — the flags are refused, not ignored;
+    * budgets and limits must be sane (no negative money, no impossible timeouts);
+    * a live provider outside development must point at an https endpoint.
+    """
+    problems = []
+    env = os.getenv("ENVIRONMENT", "development").strip().lower()
+    if env == "production":
+        if s.runtime_enabled:
+            problems.append("SOCIETY_RUNTIME_ENABLED=true is refused in production (production Society activation is out of scope)")
+        if s.autonomous_code_enabled:
+            problems.append("SOCIETY_AUTONOMOUS_CODE_ENABLED=true is refused in production")
+        if s.staging_deploy_enabled:
+            problems.append("SOCIETY_STAGING_DEPLOY_ENABLED=true is meaningless in production and refused")
+    if s.daily_model_budget_usd < 0:
+        problems.append("SOCIETY_DAILY_MODEL_BUDGET must be >= 0")
+    if s.model_usd_per_1k_input < 0 or s.model_usd_per_1k_output < 0:
+        problems.append("SOCIETY_MODEL_USD_PER_1K_* must be >= 0")
+    if s.run_lease_seconds <= s.model_timeout_seconds // 2 and s.run_lease_seconds < 30:
+        problems.append("SOCIETY_RUN_LEASE_SECONDS is too short for the model timeout (a run would lose its lease mid-call)")
+    if s.model_provider == LIVE_PROVIDER_NAME and env != "development":
+        url = (s.model_base_url or "").strip()
+        if not url.startswith("https://"):
+            problems.append("SOCIETY_MODEL_BASE_URL must be an https:// URL outside development")
+        if not s.model_api_key:
+            problems.append("SOCIETY_MODEL_API_KEY is required when SOCIETY_MODEL_PROVIDER=openai_compatible")
+    return problems
+
+
+LIVE_PROVIDER_NAME = "openai_compatible"
 
 
 @lru_cache(maxsize=1)

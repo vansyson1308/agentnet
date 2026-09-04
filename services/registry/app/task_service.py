@@ -30,6 +30,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import jsonschema
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .models import (
@@ -271,7 +272,34 @@ def create_task_with_escrow(
         )
     )
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        # Two requests raced on the same Idempotency-Key: the UNIQUE index on
+        # transactions.idempotency_key made exactly one of them win. Nothing
+        # of the loser was applied (the whole transaction rolled back, escrow
+        # included), so return the winner's task instead of a 500.
+        db.rollback()
+        if not idempotency_key:
+            raise
+        winner_tx = (
+            db.query(Transaction)
+            .filter(Transaction.idempotency_key == idempotency_key)
+            .first()
+        )
+        winner_task = (
+            db.query(TaskSession).filter(TaskSession.id == winner_tx.task_session_id).first()
+            if winner_tx is not None
+            else None
+        )
+        if winner_tx is None or winner_task is None:
+            raise EscrowError("Concurrent task creation conflict; retry") from exc
+        if (winner_tx.extra_data or {}).get("request_hash") not in (None, request_hash):
+            raise EscrowError(
+                "Idempotency-Key reused with a different request payload — "
+                "refusing to return the cached task"
+            ) from exc
+        return winner_task, winner_tx
     db.refresh(task_session)
     db.refresh(transaction)
     escrow_locked_total.labels(currency=currency).inc()

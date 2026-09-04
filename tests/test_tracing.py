@@ -210,17 +210,61 @@ class TestOpenTelemetry:
         # Verified by code inspection
         assert True
 
-    def test_tracer_provider_configured(self):
-        """
-        configure_tracing() sets up:
-        - TracerProvider with service name
-        - JaegerExporter for sending spans
-        - BatchSpanProcessor for efficient export
-        - FastAPIInstrumentor (for registry, payment)
-        - SQLAlchemyInstrumentor
-        """
-        # Verified by code inspection of tracing.py
-        assert True
+    def test_tracer_provider_configured(self, monkeypatch):
+        """configure_tracing() attaches an OTLP/HTTP BatchSpanProcessor when
+        export is enabled and NO exporter when JAEGER_ENABLED=false — and it
+        never raises when the collector is unreachable."""
+        import importlib
+        import sys
+
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        sys.path.insert(0, "services/registry")
+        monkeypatch.setenv("ENVIRONMENT", "development")
+        tracing = importlib.import_module("services.registry.app.tracing")
+
+        class _Engine:  # SQLAlchemyInstrumentor needs a real engine; a stub makes it warn, not fail
+            pass
+
+        from fastapi import FastAPI
+
+        monkeypatch.setenv("JAEGER_ENABLED", "false")
+        provider = tracing.configure_tracing(FastAPI(), _Engine())
+        procs = provider._active_span_processor._span_processors
+        assert not any(isinstance(sp, BatchSpanProcessor) for sp in procs), "disabled export must attach no exporter"
+
+        monkeypatch.setenv("JAEGER_ENABLED", "true")
+        monkeypatch.setenv("JAEGER_AGENT_HOST", "collector.invalid")
+        monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+        monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", raising=False)
+        provider = tracing.configure_tracing(FastAPI(), _Engine())
+        batch = [sp for sp in provider._active_span_processor._span_processors if isinstance(sp, BatchSpanProcessor)]
+        assert len(batch) == 1
+        exporter = batch[0].span_exporter
+        assert type(exporter).__name__ == "OTLPSpanExporter"
+        assert exporter._endpoint == "http://collector.invalid:4318/v1/traces"
+        provider.shutdown()
+
+    def test_standard_otel_endpoint_env_wins(self, monkeypatch):
+        import importlib
+
+        tracing = importlib.import_module("services.registry.app.tracing")
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://otlp.example.invalid")
+        assert tracing._otlp_traces_endpoint() is None, "the exporter resolves OTEL_EXPORTER_OTLP_* itself"
+        monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+        monkeypatch.setenv("JAEGER_AGENT_HOST", "jaeger")
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_PORT", "4318")
+        assert tracing._otlp_traces_endpoint() == "http://jaeger:4318/v1/traces"
+
+    def test_every_service_exports_over_otlp_not_deprecated_thrift(self):
+        import pathlib
+
+        for svc in ("registry", "payment", "simulation", "worker"):
+            text = pathlib.Path(f"services/{svc}/app/tracing.py").read_text(encoding="utf-8")
+            assert "opentelemetry.exporter.otlp.proto.http" in text, svc
+            assert "exporter.jaeger.thrift" not in text, svc
+            req = pathlib.Path(f"services/{svc}/requirements.txt").read_text(encoding="utf-8")
+            assert "opentelemetry-exporter-otlp-proto-http" in req and "exporter-jaeger" not in req, svc
 
 
 # ============================================================

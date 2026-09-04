@@ -2,9 +2,9 @@ import asyncio
 import json
 import logging
 import os
-import time
 import uuid
 from datetime import datetime, timedelta
+from typing import Optional
 
 import httpx
 import redis.asyncio as redis
@@ -23,7 +23,6 @@ from .models import (
     TaskStatus,
     Transaction,
     TransactionStatus,
-    TransactionType,
     Wallet,
 )
 from .logging_config import setup_logging
@@ -52,6 +51,18 @@ worker_pending_tasks = Gauge(
     "Tasks the worker just observed in INITIATED/IN_PROGRESS state past timeout.",
 )
 WORKER_METRICS_PORT = int(os.getenv("WORKER_METRICS_PORT", "9100"))
+
+
+def _poll_interval_from_env() -> int:
+    """Main-loop cadence. Never below 1s so a misconfiguration cannot turn
+    the worker into a busy loop against the database."""
+    try:
+        return max(1, int(os.getenv("WORKER_POLL_INTERVAL_SEC", "30")))
+    except ValueError:
+        return 30
+
+
+WORKER_POLL_INTERVAL_SEC = _poll_interval_from_env()
 
 # Configure structured logging — JSON in prod, console in dev.
 setup_logging("worker")
@@ -492,9 +503,35 @@ async def process_offline_agents(db: Session):
             db.rollback()
 
 
-async def main():
-    """Main worker loop."""
+def install_signal_handlers(loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event) -> None:
+    """SIGTERM/SIGINT (docker stop, orchestrator drain) request a graceful
+    stop: the current iteration finishes and commits or rolls back through
+    its own session, then the loop exits instead of dying mid-transaction."""
+    import signal
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except (NotImplementedError, RuntimeError):  # pragma: no cover — non-Unix loops
+            signal.signal(sig, lambda *_: stop_event.set())
+
+
+async def wait_or_stop(stop_event: asyncio.Event, seconds: float) -> None:
+    """Sleep ``seconds`` but return early when a stop is requested."""
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=seconds)
+    except asyncio.TimeoutError:
+        pass
+
+
+async def main(stop_event: Optional[asyncio.Event] = None):
+    """Main worker loop. Runs until ``stop_event`` is set (SIGTERM/SIGINT
+    set it); every iteration uses a fresh session so a DB outage in one
+    pass never poisons the next, and a failing pass waits the normal poll
+    interval — there is no busy loop."""
     logger.info("Auto-Refund Worker started")
+    stop_event = stop_event or asyncio.Event()
+    install_signal_handlers(asyncio.get_running_loop(), stop_event)
 
     # Expose Prometheus metrics on a dedicated port — the worker has no
     # HTTP framework, so prometheus_client spawns its own daemon thread.
@@ -512,13 +549,20 @@ async def main():
         )
         raise
 
-    # Initialize Redis
+    # Initialize Redis. Notifications are best-effort: refunds never wait
+    # for Redis, and a client that fails at startup is retried each pass.
     redis_client = None
+
+    async def _connect_redis():
+        client = await init_redis()
+        await client.ping()
+        return client
+
     try:
-        redis_client = await init_redis()
+        redis_client = await _connect_redis()
         logger.info("Connected to Redis")
     except Exception as e:
-        logger.error(f"Failed to connect to Redis: {e}")
+        logger.error(f"Redis unavailable at startup (notifications disabled until it returns): {e}")
 
     # Last time daily metrics were reset
     last_reset_time = datetime.utcnow()
@@ -533,8 +577,15 @@ async def main():
     reflection_interval_sec = max(30, int(os.getenv("REFLECTION_LOOP_INTERVAL_SEC", "300")))
     last_reflection_time = datetime.utcnow() - timedelta(seconds=reflection_interval_sec)
 
-    while True:
+    while not stop_event.is_set():
         try:
+            if redis_client is None:
+                try:
+                    redis_client = await _connect_redis()
+                    logger.info("Connected to Redis")
+                except Exception as e:
+                    logger.warning(f"Redis still unavailable: {e}")
+
             # Create a new database session for each iteration
             db = SessionLocal()
 
@@ -593,8 +644,14 @@ async def main():
         except Exception as e:
             logger.error(f"Error in main loop: {e}")
 
-        # Sleep for 30 seconds
-        await asyncio.sleep(30)
+        await wait_or_stop(stop_event, WORKER_POLL_INTERVAL_SEC)
+
+    if redis_client is not None:
+        try:
+            await redis_client.aclose()
+        except Exception:  # noqa: BLE001 — shutdown must not raise
+            pass
+    logger.info("Auto-Refund Worker stopped (graceful)")
 
 
 if __name__ == "__main__":

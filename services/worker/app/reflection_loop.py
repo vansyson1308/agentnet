@@ -360,7 +360,10 @@ def run_self_review(db: Session) -> int:
     return created
 
 
-BACKLOG_PATH = os.getenv("AGENT_BACKLOG_PATH", "/opt/agentnet/AGENT_BACKLOG.md")
+# Path of the human-readable backlog the reflection loop appends to. Relative to the
+# worker process CWD by default (the local compose stack mounts the repository copy);
+# absent file => the loop simply skips backlog writes.
+BACKLOG_PATH = os.getenv("AGENT_BACKLOG_PATH", "AGENT_BACKLOG.md")
 
 
 def _next_backlog_id() -> str:

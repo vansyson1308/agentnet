@@ -619,10 +619,23 @@ def main() -> None:  # pragma: no cover — process entrypoint
     worker = SocietyWorker(SessionLocal, settings=settings, listen_dsn=DATABASE_URL)
     if not settings.runtime_enabled:
         logger.warning("SOCIETY_RUNTIME_ENABLED=false — worker idles until enabled")
+    async def _serve() -> None:
+        import signal
+
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                loop.add_signal_handler(sig, worker.stop)
+            except (NotImplementedError, RuntimeError):  # pragma: no cover
+                signal.signal(sig, lambda *_: worker.stop())
+        await worker.run_forever()
+
     try:
-        asyncio.run(worker.run_forever())
+        asyncio.run(_serve())
     except KeyboardInterrupt:
         logger.info("society worker stopped")
+    else:
+        logger.info("society worker stopped (graceful)")
 
 
 if __name__ == "__main__":  # pragma: no cover
