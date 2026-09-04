@@ -62,8 +62,20 @@ test-ci:
 # ─────────────────────────────────────────────────────────
 
 compose-validate:
-	@echo "Validating docker-compose..."
-	docker compose config
+	@echo "Validating LOCAL compose project (agentnet-local)..."
+	docker compose -f docker-compose.yml config > /dev/null
+	@echo "Validating STAGING compose project (agentnet-staging; placeholder env, render only)..."
+	POSTGRES_HOST=db.invalid POSTGRES_USER=render POSTGRES_PASSWORD=render-only REDIS_HOST=redis.invalid REDIS_PASSWORD=render-only \
+	JWT_SECRET_KEY=render-only FLASK_SECRET_KEY=render-only CORS_ALLOWED_ORIGINS=https://staging.invalid \
+	docker compose -f docker-compose.staging.yml config > /dev/null
+	@echo "Validating STAGING + shared-infra overlay..."
+	SHARED_INFRA_NETWORK=render-only POSTGRES_HOST=db.invalid POSTGRES_USER=render POSTGRES_PASSWORD=render-only REDIS_HOST=redis.invalid REDIS_PASSWORD=render-only \
+	JWT_SECRET_KEY=render-only FLASK_SECRET_KEY=render-only CORS_ALLOWED_ORIGINS=https://staging.invalid \
+	docker compose -f docker-compose.staging.yml -f docker-compose.staging.shared-infra.yml config > /dev/null
+	@echo "compose projects OK (local + staging are separate projects; see tests/test_compose_topology.py)"
+
+compose-staging-config:
+	docker compose -f docker-compose.staging.yml config
 
 compose-up:
 	@echo "Starting services..."

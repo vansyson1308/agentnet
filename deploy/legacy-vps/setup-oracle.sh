@@ -1,4 +1,21 @@
 #!/bin/bash
+# =============================================================================
+# LEGACY — DO NOT USE FOR CURRENT DEPLOYMENT
+#
+# This script belongs to the retired single-VPS / SSH deployment model
+# (fixed host, root shell, /opt/agentnet checkout, Caddy in front, combined
+# `docker compose -f docker-compose.yml -f docker-compose.prod.yml` project).
+# It is kept as operational history only. The current, hosting-neutral
+# procedure is docs/DEPLOYMENT_ARCHITECTURE.md; staging is the standalone
+# Compose project in docker-compose.staging.yml.
+#
+# The guard below makes accidental execution impossible.
+# =============================================================================
+if [[ "${AGENTNET_ALLOW_LEGACY_VPS:-}" != "I_UNDERSTAND_THIS_IS_RETIRED" ]]; then
+    echo "REFUSING: $(basename "$0") is a LEGACY VPS deployment script (see deploy/legacy-vps/README.md)." >&2
+    echo "Current procedure: docs/DEPLOYMENT_ARCHITECTURE.md" >&2
+    exit 64
+fi
 # ============================================================
 # AgentNet Oracle Cloud Free Tier Setup Script
 # ============================================================

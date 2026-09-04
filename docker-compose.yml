@@ -1,3 +1,20 @@
+# =============================================================================
+# docker-compose.yml = LOCAL DEVELOPMENT STACK ONLY (Compose project: agentnet-local)
+#
+# Owns its own Postgres, Redis, Jaeger and every AgentNet service with hot
+# reload and obviously-fake dev secrets. It is NOT a production or staging
+# definition:
+#   * staging  -> docker-compose.staging.yml  (own project `agentnet-staging`,
+#                 externally managed Postgres/Redis; see docs/DEPLOYMENT_ARCHITECTURE.md)
+#   * production -> no Compose definition is current; the retired VPS files live
+#                 under deploy/legacy-vps/ and refuse to run.
+# The explicit `name:` below makes `docker compose down` scope to this project
+# regardless of the checkout directory name (Compose labels resources with the
+# project name and only removes what it labeled). Volume/network names are
+# pinned so existing local data survives the project rename.
+# =============================================================================
+name: agentnet-local
+
 services:
   # Database
   postgres:
@@ -58,7 +75,7 @@ services:
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_EXPIRATION: ${JWT_EXPIRATION:-3600}
       JAEGER_AGENT_HOST: jaeger
-      JAEGER_AGENT_PORT: 6831
+      OTEL_EXPORTER_OTLP_PORT: 4318
       ENVIRONMENT: development
     ports:
       - "8000:8000"
@@ -92,7 +109,7 @@ services:
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_EXPIRATION: ${JWT_EXPIRATION:-3600}
       JAEGER_AGENT_HOST: jaeger
-      JAEGER_AGENT_PORT: 6831
+      OTEL_EXPORTER_OTLP_PORT: 4318
       ENVIRONMENT: development
     ports:
       - "8001:8001"
@@ -123,9 +140,10 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-your_redis_password}
       JAEGER_AGENT_HOST: jaeger
-      JAEGER_AGENT_PORT: 6831
+      OTEL_EXPORTER_OTLP_PORT: 4318
       ENVIRONMENT: development
       SIMULATION_TIMEOUT_SECONDS: ${SIMULATION_TIMEOUT_SECONDS:-3600}
+      AGENT_BACKLOG_PATH: /app/AGENT_BACKLOG.md
     depends_on:
       postgres:
         condition: service_healthy
@@ -133,7 +151,7 @@ services:
         condition: service_healthy
     volumes:
       - ./services/worker:/app
-      - ./AGENT_BACKLOG.md:/opt/agentnet/AGENT_BACKLOG.md
+      - ./AGENT_BACKLOG.md:/app/AGENT_BACKLOG.md
     command: python -m app.worker
     networks:
       - agentnet-network
@@ -206,7 +224,7 @@ services:
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_EXPIRATION: ${JWT_EXPIRATION:-3600}
       JAEGER_AGENT_HOST: jaeger
-      JAEGER_AGENT_PORT: 6831
+      OTEL_EXPORTER_OTLP_PORT: 4318
       ENVIRONMENT: development
       REGISTRY_URL: http://registry:8000
       PAYMENT_URL: http://payment:8001
@@ -236,14 +254,9 @@ services:
       COLLECTOR_ZIPKIN_HOST_PORT: 9411
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
-      - "5775:5775/udp"
-      - "6831:6831/udp"
-      - "6832:6832/udp"
-      - "5778:5778"
-      - "16686:16686"
-      - "14268:14268"
-      - "14250:14250"
-      - "9411:9411"
+      - "16686:16686"   # UI
+      - "4317:4317"     # OTLP/gRPC (for tooling run outside compose)
+      - "4318:4318"     # OTLP/HTTP — what the services export to
     volumes:
       - jaeger_data:/badger
     networks:
@@ -272,9 +285,13 @@ services:
 
 volumes:
   postgres_data:
+    name: agentnet_postgres_data   # pinned: pre-rename local data keeps working
   redis_data:
+    name: agentnet_redis_data
   jaeger_data:
+    name: agentnet_jaeger_data
 
 networks:
   agentnet-network:
+    name: agentnet-local
     driver: bridge

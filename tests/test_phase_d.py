@@ -79,7 +79,10 @@ def test_d3_worker_raises_on_metrics_port_collision():
 def test_d4_dockerfile_uses_proxy_headers(dockerfile):
     text = _read(dockerfile)
     assert "--proxy-headers" in text
-    assert "--forwarded-allow-ips" in text
+    # The trusted-proxy list is FORWARDED_ALLOW_IPS at deploy time (uvicorn
+    # env var, default loopback). A wildcard baked into the image would let
+    # any peer spoof X-Forwarded-For/Proto on a directly published port.
+    assert '"--forwarded-allow-ips", "*"' not in text
 
 
 def test_d4_agent_card_uses_forwarded_headers():
@@ -152,7 +155,7 @@ def test_e6_platform_fee_min_callee_share():
 @pytest.mark.parametrize(
     "compose",
     [
-        "docker-compose.prod.yml",
+        "deploy/legacy-vps/docker-compose.prod.yml",
         "docker-compose.staging.yml",
     ],
 )
@@ -179,7 +182,7 @@ def test_e3_no_werewolf_static():
 
 
 def test_e3_compose_no_werewolf_env():
-    for c in ("docker-compose.yml", "docker-compose.prod.yml", "docker-compose.staging.yml"):
+    for c in ("docker-compose.yml", "deploy/legacy-vps/docker-compose.prod.yml", "docker-compose.staging.yml"):
         text = _read(c)
         assert "WEREWOLF_STATE_FILE" not in text, f"{c} still references werewolf"
         assert "werewolf_data:/app/werewolf_data" not in text
@@ -189,7 +192,7 @@ def test_e3_compose_no_werewolf_env():
 
 
 def test_e2_caddyfile_subdomain_blocks():
-    text = _read("deploy/Caddyfile")
+    text = _read("deploy/legacy-vps/Caddyfile")
     assert "agentnet.io.vn" in text
     assert "payment.agentnet.io.vn" in text
     assert "staging.agentnet.io.vn" in text

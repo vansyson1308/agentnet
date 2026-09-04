@@ -1,0 +1,29 @@
+# =============================================================================
+# OPT-IN overlay for docker-compose.staging.yml: attach the staging services to
+# an EXTERNAL Docker network where a shared Postgres/Redis already run (for
+# example another Compose project on the same host).
+#
+#   SHARED_INFRA_NETWORK=<existing network name> \
+#   POSTGRES_HOST=<shared postgres container/DNS name> REDIS_HOST=<shared redis name> \
+#   docker compose -f docker-compose.staging.yml -f docker-compose.staging.shared-infra.yml up -d
+#
+# `external: true` means this project NEVER creates or removes that network and
+# `down` cannot touch the infrastructure attached to it. The staging project
+# still owns only agentnet-staging-* containers.
+# =============================================================================
+name: agentnet-staging
+
+services:
+  registry-staging:
+    networks: [staging, shared-infra]
+  payment-staging:
+    networks: [staging, shared-infra]
+  worker-staging:
+    networks: [staging, shared-infra]
+  society-worker-staging:
+    networks: [staging, shared-infra]
+
+networks:
+  shared-infra:
+    external: true
+    name: ${SHARED_INFRA_NETWORK:?SHARED_INFRA_NETWORK must name the existing network of the shared Postgres/Redis}

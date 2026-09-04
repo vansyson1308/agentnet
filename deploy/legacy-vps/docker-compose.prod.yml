@@ -1,3 +1,18 @@
+# =============================================================================
+# LEGACY — DO NOT USE FOR CURRENT DEPLOYMENT
+#
+# Retired single-VPS production overlay. It was only ever valid as
+# `docker compose -f docker-compose.yml -f docker-compose.prod.yml`, i.e. a
+# composite project that also owned every local-development service, and it
+# depended on host-specific files (Caddyfile, /opt/agentnet, .env.production).
+# No production Compose definition is current. See docs/DEPLOYMENT_ARCHITECTURE.md.
+# Rendering this file alone is intentionally impossible: it references the
+# base project's build contexts relative to the repository root and carries
+# the explicit project name below so it can never collide with agentnet-local
+# or agentnet-staging even if someone runs it anyway.
+# =============================================================================
+name: agentnet-legacy-prod
+
 services:
   postgres:
     image: postgres:15-alpine
