@@ -1,12 +1,23 @@
 #!/bin/sh
 # Registry container entrypoint.
 #
-# 1. Fresh DBs are bootstrapped by Postgres' /docker-entrypoint-initdb.d
-#    (it runs services/registry/init-db/*.sql, mounted via compose). After
-#    bootstrap the SQL bundle has installed schemas through 14-spending-cap-fix.sql.
-# 2. We then stamp alembic at the matching baseline so future migrations can
-#    pick up incrementally.
-# 3. `alembic upgrade head` applies any newer migrations on top.
+# Schema lifecycle (docs/DATABASE_SCHEMA_CONTRACT.md):
+# 1. Fresh Postgres *volumes* are bootstrapped by Postgres' own
+#    /docker-entrypoint-initdb.d, which runs services/registry/init-db/*.sql
+#    (mounted via compose). The bundle currently ends at 17-app-tables.sql
+#    and installs the COMPLETE schema.
+# 2. An EMPTY database that never ran the bundle (managed Postgres, a
+#    freshly created DB, CI) gets the same bundle applied here by
+#    `python -m app.db_bootstrap --init-dir "$INIT_DB_DIR"`. INIT_DB_DIR
+#    defaults to /app/init-db (the image copies init-db/ there); a local
+#    checkout can run `INIT_DB_DIR=<checkout>/services/registry/init-db
+#    bash entrypoint.sh true` from services/registry with alembic on PATH.
+#    Migration 0001_baseline is a no-op, so without this step
+#    `alembic upgrade head` would leave zero tables.
+# 3. Either way we then stamp alembic at 0003_spending_cap_fix — the bundle
+#    already contains 13-idempotency.sql / 14-spending-cap-fix.sql
+#    (= migrations 0002/0003) — and `alembic upgrade head` applies 0004..
+#    on top; those migrations are idempotent over the bundle.
 
 set -e
 
@@ -33,8 +44,10 @@ print("postgres did not become reachable in 60s")
 sys.exit(1)
 PY
 
-# Stamp alembic baseline if no version recorded yet (first boot after the
-# SQL bundle ran). After that, only `upgrade head` is needed.
+# Decide how to bring the schema under alembic control:
+#   0  -> alembic_version exists: just `upgrade head`
+#   10 -> schema present (bundle ran) but never stamped: stamp 0003, upgrade
+#   20 -> empty database: bootstrap from /app/init-db, stamp 0003, upgrade
 #
 # NOTE: Python exits 10 or 20 intentionally for the case dispatch below.
 # Wrap with set +e / set -e so the shell captures the exit code instead
@@ -64,6 +77,8 @@ if [ $stamp_code -ne 0 ] && [ $stamp_code -ne 10 ] && [ $stamp_code -ne 20 ]; th
   echo "registry: alembic stamp check failed (exit $stamp_code)"
   exit 1
 fi
+INIT_DB_DIR="${INIT_DB_DIR:-/app/init-db}"
+export INIT_DB_DIR
 case $stamp_code in
   0)
     echo "registry: alembic already stamped — running upgrade"
@@ -73,7 +88,10 @@ case $stamp_code in
     alembic stamp 0003_spending_cap_fix
     ;;
   20)
-    echo "registry: empty DB, alembic upgrade head will create schema (be sure init-db ran)"
+    echo "registry: empty DB — applying init-db bundle from ${INIT_DB_DIR}, then stamping baseline 0003"
+    # Fails hard (set -e) if any bundle file errors; nothing is stamped then.
+    python -m app.db_bootstrap --init-dir "${INIT_DB_DIR}"
+    alembic stamp 0003_spending_cap_fix
     ;;
 esac
 

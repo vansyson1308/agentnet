@@ -4,8 +4,12 @@ from sqlalchemy.orm import sessionmaker
 
 from .config import DATABASE_URL
 
-# Create SQLAlchemy engine
-engine = create_engine(DATABASE_URL)
+# Create SQLAlchemy engine (same resilience settings as the registry).
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,  # Detect stale connections before use
+    pool_recycle=3600,   # Recycle connections after 1 hour (prevent PG idle kill)
+)
 
 # Create sessionmaker
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

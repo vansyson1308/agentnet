@@ -102,10 +102,11 @@ def _bootstrap_schema(dbname: str) -> None:
         cur.execute(SOCIETY_RUNTIME_SQL)
     finally:
         conn.close()
-    # Tables that exist only as ORM models (no init-db DDL, e.g. projects,
-    # scoped_tokens, audit_log): create them so the schema matches a
-    # deployment where the ORM created them. Society tables are untouched
-    # (already present via the SQL above; create_all skips existing tables).
+    # Every table now has DDL in the bundle (projects, scoped_tokens,
+    # audit_log, approval_requests, ... come from 17-app-tables.sql, generated
+    # from app/schema_app_sql.py). create_all is kept as belt and braces only:
+    # it skips existing tables, so on a correctly bootstrapped DB it is a
+    # no-op — tests/test_db_parity.py proves the ORM matches the DDL.
     from sqlalchemy import create_engine
 
     from services.registry.app import models as _models
@@ -383,3 +384,27 @@ def agent_token(db, make_agent):
 
 def auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def payment_client(db, SessionLocal):
+    """Payment-service TestClient with its get_db bound to the same scratch
+    database (registry and payment map the same tables). Startup hooks are
+    not run."""
+    from fastapi.testclient import TestClient
+
+    from services.payment.app.database import get_db as payment_get_db
+    from services.payment.app.main import app as payment_app
+
+    def _override():
+        s = SessionLocal()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    payment_app.dependency_overrides[payment_get_db] = _override
+    try:
+        yield TestClient(payment_app)
+    finally:
+        payment_app.dependency_overrides.pop(payment_get_db, None)

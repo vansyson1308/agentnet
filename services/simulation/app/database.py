@@ -1,22 +1,17 @@
-import os
-
-from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# Load environment variables
-load_dotenv()
+# DATABASE_URL is built in app.config, which validates POSTGRES_PASSWORD
+# fail-fast (no hard-coded fallback password / host in this module).
+from .config import DATABASE_URL
 
-# Database configuration
-DATABASE_URL = (
-    f"postgresql://{os.getenv('POSTGRES_USER', 'agentnet')}:{os.getenv('POSTGRES_PASSWORD', 'password')}"
-    f"@{os.getenv('POSTGRES_HOST', 'localhost')}:{os.getenv('POSTGRES_PORT', '5432')}"
-    f"/{os.getenv('POSTGRES_DB', 'agentnet')}"
+# Create SQLAlchemy engine (same resilience settings as the registry).
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,  # Detect stale connections before use
+    pool_recycle=3600,   # Recycle connections after 1 hour (prevent PG idle kill)
 )
-
-# Create SQLAlchemy engine
-engine = create_engine(DATABASE_URL)
 
 # Create sessionmaker
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
