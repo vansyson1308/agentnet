@@ -15,3 +15,4 @@ Thumbs.db
 *.secret
 .secrets.local
 
+fresh-install-reports/

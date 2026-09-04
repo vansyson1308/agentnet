@@ -1,41 +1,26 @@
-"""
-Integration test: Real end-to-end escrow flow
+"""Live-service end-to-end proof (class EXTERNAL-SERVICE in docs/TEST_MATRIX.md).
 
-Tests:
-1. Create user (via /v1/auth/user/register)
-2. Create agent with wallet (via /v1/agents/)
-3. Create task session (escrow reserved)
-4. Complete or timeout/refund path
+Runs against a REAL registry + payment + worker (REGISTRY_URL / PAYMENT_URL)
+and the database behind them (POSTGRES_*). It is executed by the
+fresh-install harness (tests/fresh_install/run_fresh_install.py) against the
+services it boots, and can be pointed at a local `docker compose up` stack.
 
-=================================================================
-HOW TO RUN INTEGRATION TESTS
-=================================================================
+Every step asserts — nothing here "prints and moves on" — and the only skip
+is an explicit "no live registry reachable" at module import.
 
-Prerequisites:
-- Docker and Docker Compose installed
-- Ports 5432, 6379, 8000, 8001 available
-
-Step 1: Start services
-    docker compose up -d
-
-Step 2: Wait for services to be healthy
-    docker compose ps
-    # Wait until all services show "healthy" or "running"
-
-Step 3: Run integration tests
-    pytest tests/test_integration.py -v -s
-
-Step 4: View results
-    # Check logs if needed:
-    docker compose logs registry
-    docker compose logs payment
-
-Step 5: Cleanup
-    docker compose down
-
-=================================================================
+Flow proven (money invariants included):
+  register → login refused until e-mail verified → verify via the real
+  link route → login → register two agents (Ed25519 key for the callee) →
+  dev-fund the caller wallet through the payment service → create a task
+  (escrow RESERVED, not spent) → callee agent logs in by signature, starts
+  and confirms → trigger moves the money exactly once, spans are queryable
+  → a 1-second task is refunded by the auto-refund worker → another tenant
+  cannot spend the first tenant's wallet → ledger-wide invariants hold.
 """
 
+from __future__ import annotations
+
+import base64
 import os
 import time
 import uuid
@@ -43,347 +28,268 @@ import uuid
 import httpx
 import pytest
 
-# Test configuration
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://localhost:8000")
 PAYMENT_URL = os.getenv("PAYMENT_URL", "http://localhost:8001")
-POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
-POSTGRES_USER = os.getenv("POSTGRES_USER", "agentnet")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "your_secure_password")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "agentnet")
-
-# Test data prefix (for deterministic cleanup)
-TEST_PREFIX = f"test_{uuid.uuid4().hex[:8]}"
-
-
-def get_db_connection():
-    """Get direct DB connection for verification."""
-    import psycopg2
-
-    conn = psycopg2.connect(
-        host=POSTGRES_HOST,
-        port=5432,
-        user=POSTGRES_USER,
-        password=POSTGRES_PASSWORD,
-        dbname=POSTGRES_DB,
-    )
-    return conn
+PG = {
+    "host": os.getenv("POSTGRES_HOST", "localhost"),
+    "port": int(os.getenv("POSTGRES_PORT", "5432")),
+    "user": os.getenv("POSTGRES_USER", "agentnet"),
+    "password": os.getenv("POSTGRES_PASSWORD", ""),
+    "dbname": os.getenv("POSTGRES_DB", "agentnet"),
+}
+PASSWORD = "Integration-Pass-123"  # registry policy: 12+ chars, upper, lower, digit
+PRICE = 10
+RUN = uuid.uuid4().hex[:8]
 
 
-def is_service_available(url: str) -> bool:
-    """Check if a service is available."""
+def _live(url: str) -> bool:
     try:
-        import requests
-
-        resp = requests.get(f"{url}/health", timeout=2)
-        return resp.status_code == 200
-    except Exception:
+        return httpx.get(f"{url}/healthz", timeout=3).status_code == 200
+    except Exception:  # noqa: BLE001
         return False
 
 
-@pytest.fixture(scope="module")
-def http_client():
-    """HTTP client for API calls."""
-    return httpx.Client(timeout=30.0, base_url=REGISTRY_URL)
-
-
-@pytest.fixture(scope="module")
-def test_user(http_client):
-    """Create a test user."""
-    email = f"{TEST_PREFIX}@example.com"
-    password = "test_password_123"
-
-    # Register user
-    response = http_client.post(
-        "/v1/auth/user/register",
-        json={"email": email, "password": password, "phone": "+1234567890"},
+if not _live(REGISTRY_URL):
+    pytest.skip(
+        f"no live registry at {REGISTRY_URL} (REGISTRY_URL) — run through tests/fresh_install/run_fresh_install.py "
+        "or against `docker compose up`",
+        allow_module_level=True,
     )
 
-    # If registration succeeded (201) or user already exists (400), login to get token
-    if response.status_code in (200, 201, 400):
-        response = http_client.post("/v1/auth/user/login", data={"username": email, "password": password})
 
-    assert response.status_code == 200, f"Auth failed: {response.status_code} {response.text}"
-    token = response.json()["access_token"]
+def query(sql: str, params=()):
+    import psycopg2
 
-    return {"email": email, "token": token, "password": password}
-
-
-@pytest.fixture(scope="module")
-def test_agent(http_client, test_user):
-    """Create a test agent."""
-    agent_name = f"{TEST_PREFIX}_agent"
-
-    # Create agent
-    response = http_client.post(
-        "/v1/agents/",
-        json={
-            "name": agent_name,
-            "description": "Test agent for integration",
-            "capabilities": [
-                {
-                    "name": "test_capability",
-                    "description": "Test capability",
-                    "price": 10,
-                    "input_schema": {"type": "object"},
-                    "output_schema": {"type": "object"},
-                }
-            ],
-            "endpoint": "http://localhost:9000",
-            "public_key": "test_public_key_12345",
-        },
-        headers={"Authorization": f"Bearer {test_user['token']}"},
-    )
-
-    # May return 400 if already exists - get existing
-    if response.status_code == 400:
-        response = http_client.get("/v1/agents/", headers={"Authorization": f"Bearer {test_user['token']}"})
-        if response.status_code == 200:
-            agents = response.json()
-            agent = next((a for a in agents if a.get("name") == agent_name), None)
-            if not agent and agents:
-                agent = agents[0]
-        else:
-            pytest.skip("Could not get agents")
-    elif response.status_code == 200:
-        agent = response.json()
-    else:
-        pytest.skip(f"Agent creation failed: {response.status_code}")
-
-    return {"id": agent["id"], "name": agent_name, "token": test_user["token"]}
-
-
-@pytest.fixture(scope="module")
-def test_wallet(http_client, test_agent):
-    """Get agent wallet with test funds."""
-    # Get wallets
-    response = http_client.get("/v1/wallets/", headers={"Authorization": f"Bearer {test_agent['token']}"})
-
-    if response.status_code != 200:
-        pytest.skip("Could not get wallets")
-
-    wallets = response.json()
-    if not wallets:
-        pytest.skip("No wallet found for agent")
-
-    wallet = wallets[0]
-
-    # Add test funds via DB
+    conn = psycopg2.connect(**PG)
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE wallets SET balance_credits = balance_credits + 1000 " "WHERE id = %s",
-            (wallet["id"],),
-        )
-        conn.commit()
-        cursor.close()
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+    finally:
         conn.close()
-    except Exception as e:
-        print(f"Warning: Could not add funds: {e}")
-
-    return wallet
 
 
-class TestIntegrationHappyPath:
-    """Happy path integration tests."""
-
-    def test_01_user_register_and_login(self, http_client):
-        """Test user registration and login flow."""
-        # Check if service is running
-        if not is_service_available(REGISTRY_URL):
-            pytest.skip("Registry service not running. Start with: docker compose up -d")
-
-        email = f"{TEST_PREFIX}_user1@example.com"
-        password = "test_password_123"
-
-        # Register
-        response = http_client.post(
-            "/v1/auth/user/register",
-            json={"email": email, "password": password, "phone": "+1234567890"},
-        )
-
-        assert response.status_code == 201, f"Register failed: {response.text}"
-        data = response.json()
-        assert "id" in data
-        assert data["email"] == email
-        print(f"User registered: {email}")
-
-        # Login
-        response = http_client.post("/v1/auth/user/login", data={"username": email, "password": password})
-
-        assert response.status_code == 200, f"Login failed: {response.text}"
-        token_data = response.json()
-        assert "access_token" in token_data
-        print(f"User logged in")
-
-    def test_02_agent_creation(self, http_client, test_user):
-        """Test agent can be created."""
-        if not is_service_available(REGISTRY_URL):
-            pytest.skip("Registry service not running")
-
-        agent_name = f"{TEST_PREFIX}_agent2"
-
-        response = http_client.post(
-            "/v1/agents/",
-            json={
-                "name": agent_name,
-                "description": "Test agent",
-                "capabilities": [
-                    {
-                        "name": "compute",
-                        "description": "Compute capability",
-                        "version": "1.0",
-                        "price": 5,
-                        "input_schema": {"type": "object"},
-                        "output_schema": {"type": "object"},
-                    }
-                ],
-                "endpoint": "http://localhost:9000",
-                "public_key": "test_key_12345",
-            },
-            headers={"Authorization": f"Bearer {test_user['token']}"},
-        )
-
-        # May exist from previous run
-        assert response.status_code in [200, 201, 400], f"Agent failed: {response.text}"
-        print(f"Agent endpoint responded")
-
-    def test_03_wallet_query(self, http_client, test_agent, test_wallet):
-        """Test wallet can be queried."""
-        if not is_service_available(PAYMENT_URL):
-            pytest.skip("Payment service not running")
-
-        response = http_client.get(
-            f"/v1/wallets/{test_wallet['id']}",
-            headers={"Authorization": f"Bearer {test_agent['token']}"},
-        )
-
-        assert response.status_code == 200, f"Wallet query failed: {response.text}"
-        wallet = response.json()
-        print(f"Wallet: credits={wallet['balance_credits']}, reserved={wallet['reserved_credits']}")
-
-    def test_04_task_with_escrow(self, http_client, test_agent):
-        """Test task session creates escrow reservation."""
-        if not is_service_available(REGISTRY_URL):
-            pytest.skip("Registry service not running")
-
-        response = http_client.post(
-            "/v1/tasks/",
-            json={
-                "caller_agent_id": test_agent["id"],
-                "callee_agent_id": test_agent["id"],
-                "capability": "test_capability",
-                "input": {"test": "data"},
-                "max_budget": 50,
-                "currency": "credits",
-                "timeout_seconds": 300,
-            },
-            headers={"Authorization": f"Bearer {test_agent['token']}"},
-        )
-
-        if response.status_code == 200:
-            task = response.json()
-            task_id = task.get("task_session_id")
-            print(f"Task created: {task_id}")
-
-            # Verify in DB
-            try:
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT status, escrow_amount, currency FROM task_sessions WHERE id = %s",
-                    (task_id,),
-                )
-                result = cursor.fetchone()
-                cursor.close()
-                conn.close()
-
-                if result:
-                    status, amount, currency = result
-                    print(f"  DB: status={status}, amount={amount}, currency={currency}")
-            except Exception as e:
-                print(f"  DB check skipped: {e}")
-        else:
-            # Expected if agent not fully set up
-            print(f"Task creation: {response.status_code}")
-
-    def test_05_worker_timeout_simulation(self, http_client, test_agent):
-        """Test worker timeout path."""
-        if not is_service_available(REGISTRY_URL):
-            pytest.skip("Registry service not running")
-
-        # Create short-timeout task
-        response = http_client.post(
-            "/v1/tasks/",
-            json={
-                "caller_agent_id": test_agent["id"],
-                "callee_agent_id": test_agent["id"],
-                "capability": "test_capability",
-                "input": {"test": "timeout"},
-                "max_budget": 25,
-                "currency": "credits",
-                "timeout_seconds": 1,
-            },
-            headers={"Authorization": f"Bearer {test_agent['token']}"},
-        )
-
-        if response.status_code == 200:
-            task = response.json()
-            task_id = task.get("task_session_id")
-            print(f"Short-timeout task: {task_id}")
-            print("Waiting for timeout...")
-            time.sleep(3)
-
-            # Check status
-            try:
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                cursor.execute("SELECT status FROM task_sessions WHERE id = %s", (task_id,))
-                result = cursor.fetchone()
-                cursor.close()
-                conn.close()
-
-                if result:
-                    print(f"Task status: {result[0]}")
-            except Exception as e:
-                print(f"Status check skipped: {e}")
+def wallet_of(agent_id: str):
+    rows = query("SELECT id, balance_credits, reserved_credits FROM wallets WHERE owner_type = 'agent' AND owner_id = %s", (agent_id,))
+    assert rows, f"no wallet for agent {agent_id}"
+    return {"id": str(rows[0][0]), "balance": int(rows[0][1]), "reserved": int(rows[0][2])}
 
 
-class TestDBInvariants:
-    """Verify DB invariants hold."""
-
-    def test_no_negative_reserved(self):
-        """Reserved funds should not be negative."""
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM wallets WHERE reserved_credits < 0 OR reserved_usdc < 0")
-            count = cursor.fetchone()[0]
-            cursor.close()
-            conn.close()
-
-            assert count == 0, f"Found {count} wallets with negative reserved funds"
-            print("No negative reserved funds")
-        except Exception as e:
-            pytest.skip(f"DB check skipped: {e}")
-
-    def test_completed_transactions_valid(self):
-        """Completed transactions should have valid wallet refs."""
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT COUNT(*) FROM transactions WHERE status = 'completed' "
-                "AND (from_wallet IS NULL OR to_wallet IS NULL)"
-            )
-            count = cursor.fetchone()[0]
-            cursor.close()
-            conn.close()
-
-            print("Validated completed transactions")
-        except Exception as e:
-            pytest.skip(f"DB check skipped: {e}")
+def auth(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "-s"])
+# ── fixtures ───────────────────────────────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def reg():
+    return httpx.Client(base_url=REGISTRY_URL, timeout=30.0)
+
+
+@pytest.fixture(scope="module")
+def pay():
+    return httpx.Client(base_url=PAYMENT_URL, timeout=30.0)
+
+
+def make_verified_user(reg, label: str) -> dict:
+    email = f"it-{RUN}-{label}@example.com"
+    r = reg.post("/v1/auth/user/register", json={"email": email, "password": PASSWORD, "phone": "+15550000000"})
+    assert r.status_code == 201, f"register: {r.status_code} {r.text}"
+    r = reg.post("/v1/auth/user/login", data={"username": email, "password": PASSWORD})
+    assert r.status_code == 403, f"login before verification must be refused: {r.status_code} {r.text}"
+    # Complete verification the way a clicked link does: the pending token is
+    # read from the database (no mailbox here) and exchanged via the REAL route.
+    rows = query(
+        "SELECT t.token FROM email_verification_tokens t JOIN users u ON u.id = t.user_id "
+        "WHERE u.email = %s AND t.consumed_at IS NULL ORDER BY t.created_at DESC LIMIT 1",
+        (email,),
+    )
+    assert rows, "no verification token issued"
+    r = reg.get("/v1/auth/verify-email", params={"token": rows[0][0]})
+    assert r.status_code == 200, f"verify-email: {r.status_code} {r.text}"
+    assert reg.get("/v1/auth/verify-email", params={"token": rows[0][0]}).status_code == 400, "tokens are single-use"
+    r = reg.post("/v1/auth/user/login", data={"username": email, "password": PASSWORD})
+    assert r.status_code == 200, f"login: {r.status_code} {r.text}"
+    return {"email": email, "token": r.json()["access_token"]}
+
+
+@pytest.fixture(scope="module")
+def user(reg):
+    return make_verified_user(reg, "owner")
+
+
+@pytest.fixture(scope="module")
+def other_user(reg):
+    return make_verified_user(reg, "other")
+
+
+def register_agent(reg, token: str, name: str, capabilities: list, public_key: str) -> dict:
+    r = reg.post(
+        "/v1/agents/",
+        json={"name": name, "description": "integration", "capabilities": capabilities, "endpoint": "https://agent.example.invalid/hook", "public_key": public_key},
+        headers=auth(token),
+    )
+    assert r.status_code == 201, f"agent register: {r.status_code} {r.text}"
+    return r.json()
+
+
+@pytest.fixture(scope="module")
+def agents(reg, pay, user):
+    import ed25519
+
+    sk, vk = ed25519.create_keypair()
+    caller = register_agent(reg, user["token"], f"it-caller-{RUN}", [], "caller-has-no-key")
+    callee = register_agent(
+        reg,
+        user["token"],
+        f"it-callee-{RUN}",
+        [{"name": "summarize", "version": "1.0", "input_schema": {"type": "object"}, "output_schema": {"type": "object"}, "price": PRICE}],
+        base64.b64encode(vk.to_bytes()).decode(),
+    )
+    caller_wallet = wallet_of(caller["id"])
+    r = pay.post(f"/v1/wallets/{caller_wallet['id']}/fund", json={"amount": 100, "currency": "credits"}, headers=auth(user["token"]))
+    assert r.status_code == 200, f"dev funding: {r.status_code} {r.text}"
+    assert wallet_of(caller["id"])["balance"] == 100
+    return {"caller": caller, "callee": callee, "callee_sk": sk}
+
+
+def agent_token(reg, agent_id: str, sk) -> str:
+    ts = str(int(time.time()))
+    sig = base64.b64encode(sk.sign(f"{agent_id}:{ts}".encode())).decode()
+    r = reg.post("/v1/auth/agent/login", json={"agent_id": agent_id, "signature": sig, "timestamp": ts})
+    assert r.status_code == 200, f"agent login: {r.status_code} {r.text}"
+    return r.json()["access_token"]
+
+
+def create_task(reg, token: str, agents: dict, *, timeout_seconds: int, idem: str | None = None) -> dict:
+    headers = auth(token)
+    if idem:
+        headers["Idempotency-Key"] = idem
+    r = reg.post(
+        "/v1/tasks/",
+        json={
+            "caller_agent_id": agents["caller"]["id"],
+            "callee_agent_id": agents["callee"]["id"],
+            "capability": "summarize",
+            "input": {"text": "hello"},
+            "max_budget": PRICE,
+            "currency": "credits",
+            "timeout_seconds": timeout_seconds,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, f"task create: {r.status_code} {r.text}"
+    return r.json()
+
+
+def task_row(task_id: str):
+    rows = query("SELECT status, escrow_amount FROM task_sessions WHERE id = %s", (task_id,))
+    assert rows, "task row missing"
+    return {"status": rows[0][0], "escrow": int(rows[0][1])}
+
+
+# ── tests ──────────────────────────────────────────────────────────────
+
+
+def test_01_services_ready(reg, pay):
+    for client in (reg, pay):
+        r = client.get("/readyz")
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "ready"
+
+
+def test_02_verified_user_has_token(user):
+    assert user["token"]
+
+
+def test_03_agents_have_empty_wallets_until_funded(agents):
+    callee = wallet_of(agents["callee"]["id"])
+    assert callee == {"id": callee["id"], "balance": 0, "reserved": 0}
+    assert wallet_of(agents["caller"]["id"])["balance"] == 100
+
+
+def test_04_escrow_lifecycle_moves_money_exactly_once(reg, user, agents):
+    caller, callee = agents["caller"]["id"], agents["callee"]["id"]
+    key = f"it-{RUN}-lifecycle"
+    created = create_task(reg, user["token"], agents, timeout_seconds=300, idem=key)
+    task_id = created["task_session_id"]
+    assert task_row(task_id) == {"status": "initiated", "escrow": PRICE}
+    assert wallet_of(caller) == {**wallet_of(caller), "balance": 100, "reserved": PRICE}, "escrow is reserved, not spent"
+
+    # Same Idempotency-Key + same payload → the SAME task, no second reservation
+    again = create_task(reg, user["token"], agents, timeout_seconds=300, idem=key)
+    assert again["task_session_id"] == task_id
+    assert wallet_of(caller)["reserved"] == PRICE
+
+    tok = agent_token(reg, callee, agents["callee_sk"])
+    r = reg.put(f"/v1/tasks/{task_id}/start", headers=auth(tok))
+    assert r.status_code == 200, r.text
+    assert task_row(task_id)["status"] == "in_progress"
+
+    r = reg.put(f"/v1/tasks/{task_id}/confirm", json={"summary": "done"}, headers=auth(tok))
+    assert r.status_code == 200, r.text
+    assert task_row(task_id)["status"] == "completed"
+    cw, kw = wallet_of(caller), wallet_of(callee)
+    assert cw["reserved"] == 0 and cw["balance"] == 100 - PRICE, cw
+    assert 0 < kw["balance"] <= PRICE, kw  # platform fee may apply; never more than the escrow
+    tx = query("SELECT status, from_wallet, to_wallet FROM transactions WHERE task_session_id = %s", (task_id,))
+    assert len(tx) == 1 and tx[0][0] == "completed" and tx[0][1] is not None and tx[0][2] is not None
+
+    # confirming twice is idempotent: no second payout
+    r = reg.put(f"/v1/tasks/{task_id}/confirm", json={"summary": "done"}, headers=auth(tok))
+    assert r.status_code == 200, r.text
+    assert wallet_of(callee)["balance"] == kw["balance"]
+
+    # spans are persisted and queryable by the owner
+    r = reg.get(f"/v1/tasks/traces/{created['trace_id']}", headers=auth(user["token"]))
+    assert r.status_code == 200, r.text
+    events = {s.get("event") for s in r.json().get("spans", r.json() if isinstance(r.json(), list) else [])}
+    assert {"task_created", "task_completed"} <= events, events
+
+
+def test_05_worker_refunds_a_timed_out_task(reg, user, agents):
+    caller = agents["caller"]["id"]
+    before = wallet_of(caller)
+    # 3 s: long enough to observe the reservation before the worker (2 s poll
+    # in the harness) can possibly refund it, short enough to wait for.
+    created = create_task(reg, user["token"], agents, timeout_seconds=3)
+    task_id = created["task_session_id"]
+    assert wallet_of(caller)["reserved"] == before["reserved"] + PRICE
+    deadline = time.time() + 90  # worker polls every WORKER_POLL_INTERVAL_SEC (30s default, 2s in the harness)
+    status = None
+    while time.time() < deadline:
+        status = task_row(task_id)["status"]
+        if status in ("timeout", "refunded", "failed"):
+            break
+        time.sleep(1)
+    assert status in ("timeout", "refunded", "failed"), f"worker never refunded the task (status={status})"
+    after = wallet_of(caller)
+    assert after["reserved"] == before["reserved"], "the reservation was released"
+    assert after["balance"] == before["balance"], "a refund never changes the balance"
+    tx = query("SELECT status FROM transactions WHERE task_session_id = %s", (task_id,))
+    assert tx and tx[0][0] == "cancelled", tx
+
+
+def test_06_other_tenant_cannot_spend_this_wallet(reg, other_user, agents):
+    r = reg.post(
+        "/v1/tasks/",
+        json={
+            "caller_agent_id": agents["caller"]["id"],
+            "callee_agent_id": agents["callee"]["id"],
+            "capability": "summarize",
+            "input": {},
+            "max_budget": PRICE,
+            "currency": "credits",
+            "timeout_seconds": 60,
+        },
+        headers=auth(other_user["token"]),
+    )
+    assert r.status_code in (403, 404), f"cross-tenant task creation must be refused: {r.status_code} {r.text}"
+    assert reg.get(f"/v1/agents/{agents['caller']['id']}", headers=auth(other_user["token"])).json().get("user_id") is None, "public views hide the owner"
+
+
+def test_07_ledger_invariants_hold():
+    assert query("SELECT count(*) FROM wallets WHERE reserved_credits < 0 OR reserved_usdc < 0")[0][0] == 0
+    assert query("SELECT count(*) FROM wallets WHERE reserved_credits > balance_credits")[0][0] == 0
+    assert query("SELECT count(*) FROM transactions WHERE status = 'completed' AND (from_wallet IS NULL OR to_wallet IS NULL)")[0][0] == 0
