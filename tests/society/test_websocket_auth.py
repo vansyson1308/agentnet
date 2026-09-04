@@ -90,3 +90,33 @@ def test_public_feed_never_carries_message_bodies(api_client, make_agent):
 
     src = open(chat_mod.__file__, encoding="utf-8").read()
     assert '"content": msg.content' not in src.split("manager.broadcast(")[1].split(")")[0]
+
+
+def test_open_agent_socket_holds_no_transaction_open(api_client, make_agent, SessionLocal, monkeypatch, engine, db):
+    """§14 (found by a hung TRUNCATE in the suite): a connected agent must not
+    pin an idle-in-transaction Postgres connection between frames — that
+    blocks DDL/VACUUM and exhausts the pool with a handful of agents."""
+    from sqlalchemy import text
+
+    monkeypatch.setattr("services.registry.app.database.SessionLocal", SessionLocal)
+    a = make_agent("WS_TX")
+    agent_id = str(a.id)  # read BEFORE rollback: expired attributes would re-open a transaction on the fixture session
+    tok = create_agent_token(a.id).access_token
+    db.rollback()  # the fixture session's own refresh() must not count
+
+    def idle_in_tx() -> list:
+        with engine.connect() as conn:
+            return [
+                (row[0], row[1][:160])
+                for row in conn.execute(
+                    text("SELECT pid, query FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction' AND pid <> pg_backend_pid()")
+                )
+            ]
+
+    with api_client.websocket_connect(f"/v1/ws/agent/{agent_id}?token={tok}") as ws:
+        ws.send_text(json.dumps({"jsonrpc": "2.0", "id": "1", "method": "ping"}))
+        assert _rpc_reply(ws, "1").get("id") == "1"
+        ws.send_text("{not json")
+        assert _frame_with(ws, "error")["error"]["code"] == -32700
+        assert idle_in_tx() == [], "socket left a transaction open between frames"
+    assert idle_in_tx() == [], "socket left a transaction open after disconnect"

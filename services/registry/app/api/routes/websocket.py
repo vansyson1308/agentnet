@@ -82,6 +82,13 @@ async def websocket_endpoint(
     if not connection_id:
         return
 
+    # The dependency session lives as long as the socket. A transaction must
+    # NEVER stay open while we wait for the next frame: one idle-in-transaction
+    # Postgres connection per connected agent pins snapshots, blocks
+    # DDL/TRUNCATE/VACUUM and exhausts the pool. Every frame's work is
+    # committed (or rolled back) before we go back to waiting.
+    db.commit()
+
     try:
         # Handle incoming messages
         while True:
@@ -98,11 +105,13 @@ async def websocket_endpoint(
                 # ``(message, agent_id, db)`` which raised a TypeError on
                 # every WS frame, leaving agents unable to interact.
                 response = await manager.handle_message(message, db, connection_id)
+                db.commit()
 
                 # Send response back to the sender
                 if response:
                     await websocket.send_json(response)
             except json.JSONDecodeError:
+                db.rollback()
                 logger.error(f"Invalid JSON from agent {agent_id}: {data}")
                 await websocket.send_json(
                     {
@@ -111,6 +120,7 @@ async def websocket_endpoint(
                     }
                 )
             except Exception as e:
+                db.rollback()
                 logger.error(f"Error handling message from agent {agent_id}: {e}")
                 await websocket.send_json(
                     {
@@ -123,10 +133,14 @@ async def websocket_endpoint(
                 )
     except WebSocketDisconnect:
         # Disconnect the agent
+        db.rollback()
         manager.disconnect(connection_id, db)
     except Exception as e:
         logger.error(f"WebSocket error for agent {agent_id}: {e}")
+        db.rollback()
         manager.disconnect(connection_id, db)
+    finally:
+        db.rollback()  # never leave the pooled connection in a transaction
 
 
 @router.websocket("/tasks/timeline")
@@ -153,6 +167,9 @@ async def task_timeline_endpoint(
         await websocket.close(code=1008, reason="Authentication error")
         return
 
+    # Authentication was the only database work; end that transaction before
+    # the (potentially hours-long) event loop below.
+    db.rollback()
     await websocket.accept()
     task_timeline_feeds.add(websocket)
     logger.info("Task timeline WebSocket connected")

@@ -164,6 +164,10 @@ def clean_db(engine):
     from sqlalchemy import text
 
     with engine.begin() as conn:
+        # A leaked idle-in-transaction session (e.g. a cancelled TestClient
+        # websocket task) would otherwise block this TRUNCATE forever and hang
+        # the whole suite; fail fast and loudly instead.
+        conn.execute(text("SET LOCAL lock_timeout = '30s'"))
         conn.execute(text("TRUNCATE TABLE " + ", ".join(TRUNCATE_TABLES) + " RESTART IDENTITY CASCADE"))
     yield
 
@@ -342,8 +346,11 @@ def api_client(db, SessionLocal):
     from services.registry.app.database import get_db
     from services.registry.app.main import app
 
+    opened = []
+
     def _override():
         s = SessionLocal()
+        opened.append(s)
         try:
             yield s
         finally:
@@ -354,6 +361,14 @@ def api_client(db, SessionLocal):
         yield TestClient(app)
     finally:
         app.dependency_overrides.pop(get_db, None)
+        # Starlette's TestClient may cancel a websocket app task before
+        # FastAPI runs the dependency teardown; close whatever is left so no
+        # pooled connection stays idle-in-transaction into the next test.
+        for s in opened:
+            try:
+                s.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 @pytest.fixture
