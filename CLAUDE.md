@@ -88,8 +88,8 @@ This repo involves financial invariants. Follow these rules strictly:
 
 ### P1 — Make repo runnable end-to-end
 - ✅ `docker compose config` succeeds.
-- ✅ Dockerfiles created for: registry, payment, worker.
-- ✅ telegram-bot and dashboard removed from compose (not in source).
+- ✅ Dockerfiles exist for: registry, payment, worker, simulation, dashboard.
+- ✅ `docker-compose.yml` is the LOCAL project (`agentnet-local`); staging is a separate project (`docker-compose.staging.yml`, `agentnet-staging`); the VPS stack is archived under `deploy/legacy-vps/` (see `docs/DEPLOYMENT_ARCHITECTURE.md`).
 - `.env.example` exists and matches requirements.
 - **Tests exist**: run `pytest tests/ -v` to verify invariants.
 
@@ -104,7 +104,7 @@ This repo involves financial invariants. Follow these rules strictly:
   - gateway → redis → worker → db → notify stub
 
 ### P3 — MVP gaps / product completeness
-- Dashboard (balance/history/traces/agent management) - not in source
+- Dashboard: `services/dashboard/` (Flask) is the canonical UI; older fragments live in `legacy/frontend-fragments/`
 - SDK + sample agents
 - Remaining WS methods (if spec requires)
 - Input schema validation at task execution time
@@ -266,7 +266,7 @@ Copy `.env.example` to `.env` and configure:
 - `POSTGRES_*` - Database credentials
 - `REDIS_*` - Redis credentials
 - `JWT_SECRET_KEY`, `JWT_ALGORITHM`, `JWT_EXPIRATION` - Auth
-- `JAEGER_AGENT_HOST`, `JAEGER_AGENT_PORT` - Tracing (optional)
+- `JAEGER_ENABLED`, `JAEGER_AGENT_HOST`, `OTEL_EXPORTER_OTLP_PORT` / `OTEL_EXPORTER_OTLP_ENDPOINT` - Tracing export over OTLP/HTTP (optional)
 - `ENVIRONMENT` - Set to production for production (default: development)
 - `CORS_ALLOWED_ORIGINS` - Comma-separated allowed origins for production
 - `RATE_LIMIT_PER_MINUTE` - Max requests per minute (default: 60)

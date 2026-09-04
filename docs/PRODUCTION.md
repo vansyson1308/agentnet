@@ -22,13 +22,18 @@ enforces this with `require_env()`.
 | `POSTGRES_PASSWORD` | every service | strong random string |
 | `REDIS_HOST` / `REDIS_PORT` | every service | `redis.internal` / `6379` |
 | `REDIS_PASSWORD` | every service | strong random string |
-| `CORS_ALLOWED_ORIGINS` | registry, payment, simulation, society | comma-separated, e.g. `https://app.agentnet.io,https://admin.agentnet.io` |
+| `CORS_ALLOWED_ORIGINS` | registry, payment, simulation, society | comma-separated, e.g. `https://app.example.org,https://admin.example.org` |
+| `PUBLIC_BASE_URL` | registry | the public origin of the registry API (verification links, agent card) |
+| `FORWARDED_ALLOW_IPS` | registry, payment, simulation (uvicorn) | the platform proxy's IP/CIDR list; default `127.0.0.1`; never `*` on a directly reachable port |
+| `INTERNAL_WORKER_TOKEN` | payment (worker-only `/approval_requests/worker/expire`) | `openssl rand -hex 32` |
+| `INIT_DB_DIR` | registry entrypoint, optional | `/app/init-db` (bootstrap bundle for an EMPTY managed database) |
 | `RATE_LIMIT_USER_PER_MIN` | registry (optional) | `100` |
 | `RATE_LIMIT_AGENT_PER_MIN` | registry (optional) | `300` |
 | `JAEGER_ENABLED` | every service (optional) | `true` |
-| `JAEGER_AGENT_HOST` / `JAEGER_AGENT_PORT` | every service | `jaeger.internal` / `6831` |
+| `JAEGER_AGENT_HOST` / `OTEL_EXPORTER_OTLP_PORT` (or `OTEL_EXPORTER_OTLP_ENDPOINT`) | every service | `otel-collector.internal` / `4318` — spans are exported over OTLP/HTTP; any OTLP backend works |
 | `LOG_LEVEL` | optional, default `INFO` | `INFO` |
 | `WORKER_METRICS_PORT` | worker, optional, default `9100` | `9100` |
+| `WORKER_POLL_INTERVAL_SEC` | worker, optional, default `30` (floor `1`) | `30` |
 | `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL_NAME` | simulation only | provider-specific |
 
 The repo ships `.env.example` with the complete list. NEVER deploy with

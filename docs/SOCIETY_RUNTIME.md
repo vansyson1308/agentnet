@@ -161,11 +161,11 @@ Stuck run: leases expire (`SOCIETY_RUN_LEASE_SECONDS`) and the run is re-claimed
 
 `docker-compose.staging.yml` carries `society-worker-staging` (registry image, `agentnet_staging`, runtime and code
 loop OFF by default, no docker socket, no published ports, healthcheck on the internal metrics port; credential only
-from the host environment). `deploy/runbook-staging.sh` asserts alembic head `0008_society_phase2`, runs
-`deploy/society-migration-check.sh` (fresh + upgrade + downgrade round-trip on scratch databases) and
-`deploy/society-staging-smoke.py`; `deploy/society-staging-redteam.py` and `python -m app.society.canary` drive the
+from the host environment). Staging is its own Compose project (`docker compose -f docker-compose.staging.yml`,
+never stacked on `docker-compose.yml`); after `up`, run `deploy/society-migration-check.sh` (fresh + upgrade +
+downgrade round-trip on scratch databases) and `deploy/society-staging-smoke.py`; `deploy/society-staging-redteam.py` and `python -m app.society.canary` drive the
 live-model canaries. Full procedure, GO/NO-GO and failure policy: `docs/SOCIETY_LIVE_MODEL_RUNBOOK.md`. What was
-actually proven (and what was blocked): `docs/SOCIETY_LIVE_PROOF.md`. Production compose has no society service.
+actually proven (and what was blocked): `docs/SOCIETY_LIVE_PROOF.md`. No production Compose definition is current (the retired VPS overlay is archived under `deploy/legacy-vps/`).
 
 ## Known limitations
 

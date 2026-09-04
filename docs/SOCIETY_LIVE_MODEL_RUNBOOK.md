@@ -19,57 +19,29 @@ Companion documents: `docs/SOCIETY_RUNTIME.md` (architecture), ADR-0002 (decisio
 | NO FAKE AUTONOMY | `canary run/observe` refuse `scripted`/`fake`; a report FAILs if any completed run carries another provider; nobody writes Builder output or QA/Security verdicts by hand |
 | Operator authority is server-side | `users.society_role` + one dependency (`operator_auth`); user JWTs only; scoped `spt_` and agent tokens are 403 |
 | Runtime OFF by default | `SOCIETY_RUNTIME_ENABLED` / `SOCIETY_AUTONOMOUS_CODE_ENABLED` default `false` in every compose file; the worker idles and touches nothing |
-| Production untouched | `docker-compose.prod.yml` has no society service and no `SOCIETY_*` variable (`tests/test_society_staging_compose.py`) |
+| Production untouched | no production Compose definition is current (the old overlay is retired under `deploy/legacy-vps/`, LEGACY); production autonomous deploy is not a setting | `tests/test_compose_topology.py`, `config.py` |
 
 ---
 
-## 1. Staging deployment (on the staging host)
+## 1. Staging deployment (standalone Compose project — see `docs/DEPLOYMENT_ARCHITECTURE.md`)
 
 ```bash
-cd /opt/agentnet && git fetch && git checkout main && git pull
-# .env additions (values from the secret store — never from git):
-#   SOCIETY_OPERATOR_BOOTSTRAP_EMAILS=<first operator email>
-#   SOCIETY_RUNTIME_ENABLED=false            # flip to true only for the canary window
-#   SOCIETY_MODEL_PROVIDER=scripted          # openai_compatible only after preflight is READY
-#   SOCIETY_MODEL_BASE_URL= / SOCIETY_MODEL_NAME= / SOCIETY_MODEL_API_KEY=   (rotated, never leaked)
-bash deploy/runbook-staging.sh
+# on the chosen staging host / container platform; secrets from its environment, never from git
+git fetch && git checkout main && git pull
+export POSTGRES_HOST=... POSTGRES_USER=... POSTGRES_PASSWORD=... POSTGRES_DB=agentnet_staging \
+       REDIS_HOST=... REDIS_PASSWORD=... JWT_SECRET_KEY=... FLASK_SECRET_KEY=... \
+       CORS_ALLOWED_ORIGINS=https://<staging-host> PUBLIC_BASE_URL=https://<staging-host> \
+       SOCIETY_OPERATOR_BOOTSTRAP_EMAILS=<first-operator@example>
+docker compose -f docker-compose.staging.yml config > /dev/null      # renders only with the full env
+docker compose -f docker-compose.staging.yml up -d --build           # project agentnet-staging only
+bash deploy/society-migration-check.sh --mode local                  # or --mode docker with your containers
+SOCIETY_SMOKE_TOKEN=<operator JWT> python3 deploy/society-staging-smoke.py --api http://localhost:8100 --inject
 ```
 
-`deploy/runbook-staging.sh` now also:
-
-1. asserts `alembic current` inside `agentnet-staging-registry` is `0008_society_phase2`;
-2. runs `deploy/society-migration-check.sh --mode docker` — fresh bundle path, upgrade path
-   (0004→0008), idempotent second upgrade, downgrade/upgrade round-trip, on scratch databases;
-3. waits for `agentnet-staging-society-worker` to be healthy (internal `:9101/metrics`);
-4. runs `deploy/society-staging-smoke.py` (`--inject` when `SOCIETY_SMOKE_TOKEN` is set).
-
-The society worker gets the repository bind-mounted at `/workspace/repo` and a named volume for
-worktrees; it never publishes a port and never sees a docker socket.
-
-### 1.1 First operator
-
-```bash
-# bootstrap (email must be in SOCIETY_OPERATOR_BOOTSTRAP_EMAILS on registry-staging), then make it durable:
-docker exec agentnet-staging-registry python -m app.society.operator <email> operator
-# afterwards the allowlist can be emptied; assign more roles via POST /v1/society/operators
-```
-
-Get a user JWT for that operator through the normal login (`POST /v1/auth/user/login`) and keep it in
-the environment as `SOCIETY_SMOKE_TOKEN` / `SOCIETY_REDTEAM_TOKEN` / `SOCIETY_CANARY_TOKEN`. Tokens are
-never printed by any script.
-
-### 1.2 Seed and verify
-
-```bash
-docker exec agentnet-staging-registry python -m app.society.seed          # idempotent; keeps operator gates
-SOCIETY_SMOKE_TOKEN=... python3 deploy/society-staging-smoke.py --api http://localhost:8100 \
-    --expect-runtime off --inject --metrics-probe 127.0.0.1:9101
-```
-
-With the runtime off the injected `staging.canary.signal` must persist as `pending` and appear on
-the public story without its payload (checks C11a–C11c).
-
----
+The society worker (`agentnet-staging-society-worker`) idles until `SOCIETY_RUNTIME_ENABLED=true` is in
+its environment; it gets the repository bind-mounted at `/workspace/repo` (read for worktrees) and a
+named volume for workspaces. `docker compose -f docker-compose.staging.yml down` stops only the
+`agentnet-staging-*` containers (proven by `tests/test_compose_topology.py`).
 
 ## 2. Live-model preflight
 
