@@ -241,5 +241,7 @@ jobs:
           SHARED_INFRA_NETWORK=render-overlay docker compose -f docker-compose.staging.yml -f docker-compose.staging.shared-infra.yml config > /dev/null
       - name: Compose topology tests need only the CLI (ownership proven on rendered config)
         run: |
-          pip install pytest pyyaml
+          # the plugins pytest.ini configures (asyncio_mode, timeout) must be present:
+          # an unknown ini option is an error under the warning policy
+          pip install pytest==9.1.1 pytest-asyncio==1.4.0 pytest-timeout==2.4.0 pyyaml
           pytest tests/test_compose_topology.py -v -rs

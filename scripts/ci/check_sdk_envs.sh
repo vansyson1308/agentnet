@@ -8,7 +8,9 @@ cd "$(dirname "$0")/../.."
 PY="${PYTHON:-python3}"
 WORK="${SDK_ENV_ROOT:-.sdk-envs}"
 mkdir -p "$WORK"
-for spec in "websockets==12.0" "websockets>=17,<18"; do
+# "websockets" alone resolves to the newest release this interpreter supports
+# (17.x needs Python >= 3.11; on the images' 3.10 that is 16.x).
+for spec in "websockets==12.0" "websockets<18"; do
     name="$(echo "$spec" | tr -c 'a-z0-9\n' '_')"
     venv="$WORK/$name"
     echo "== SDK with $spec"
@@ -16,9 +18,8 @@ for spec in "websockets==12.0" "websockets>=17,<18"; do
     "$PY" -m venv "$venv"
     "$venv/bin/pip" install -q --upgrade pip
     # sdk/python/setup.py runtime deps + the test tooling pytest.ini expects
-    # (pytest-timeout for `timeout =`, pydantic/sqlalchemy so the warning
-    # filters' categories resolve).
-    "$venv/bin/pip" install -q "httpx==0.28.1" "pydantic==2.13.5" "sqlalchemy==2.0.23" \
+    # (pytest-asyncio for asyncio_mode, pytest-timeout for `timeout =`).
+    "$venv/bin/pip" install -q "httpx==0.28.1" "pydantic==2.13.5" \
         "pytest==9.1.1" "pytest-asyncio==1.4.0" "pytest-timeout==2.4.0" "$spec"
     "$venv/bin/python" -c "import websockets; print('   websockets', websockets.__version__)"
     "$venv/bin/python" -m pytest -p no:cacheprovider tests/test_sdk.py -q
