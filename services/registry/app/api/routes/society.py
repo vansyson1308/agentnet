@@ -677,7 +677,7 @@ def inject_event(body: EventInject, response: Response, db: Session = Depends(ge
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"event type not in the world-event allowlist: {sorted(settings.ingress_event_allowlist)}")
     raw_size = len(json.dumps(body.payload, ensure_ascii=False, default=str).encode("utf-8"))
     if raw_size > settings.ingress_max_payload_bytes:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=f"payload {raw_size} bytes exceeds {settings.ingress_max_payload_bytes}")
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=f"payload {raw_size} bytes exceeds {settings.ingress_max_payload_bytes}")
 
     # Idempotent redelivery short-circuits before any limit is consumed.
     if body.idempotency_key:

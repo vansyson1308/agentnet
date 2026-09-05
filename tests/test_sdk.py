@@ -161,3 +161,131 @@ def test_package_imports_without_websockets():
     pkg = importlib.import_module("agentnet")
     assert pkg.AgentNetClient is not None
     # AgentWebSocketClient may be None if `websockets` isn't installed.
+
+
+# ─── WebSocket client: one adapter, two supported websockets APIs ──────────────
+#
+# agentnet/ws.py supports websockets 12 (classic asyncio client) and >= 13 (the
+# new asyncio client, default since 14.0, where the classic one is deprecated).
+# These tests run a real local WebSocket server built from whichever
+# implementation is installed and exercise connect / send / recv / close /
+# reconnect / auth headers end to end. scripts/ci/check_sdk_envs.sh runs this
+# file at websockets 12.0 AND the current release.
+
+import asyncio
+import ast
+import contextlib
+
+
+@contextlib.asynccontextmanager
+async def _echo_server(seen):
+    websockets = pytest.importorskip("websockets")
+
+    async def handler(conn):
+        request = getattr(conn, "request", None)  # new API: conn.request; classic: request_headers/path
+        headers = request.headers if request is not None else conn.request_headers
+        seen["connections"] = seen.get("connections", 0) + 1
+        seen["authorization"] = headers.get("Authorization")
+        seen["path"] = request.path if request is not None else conn.path
+        try:
+            async for message in conn:
+                await conn.send(message)  # echo
+        except Exception:  # noqa: BLE001 - server side of a closed socket
+            return
+
+    try:
+        from websockets.asyncio.server import serve  # websockets >= 13
+    except ImportError:
+        serve = websockets.serve  # websockets 12: classic server
+    async with serve(handler, "127.0.0.1", 0) as server:
+        port = next(iter(server.sockets)).getsockname()[1]
+        yield f"http://127.0.0.1:{port}"
+
+
+async def _first_message(client):
+    stream = client.recv()
+    try:
+        return await asyncio.wait_for(stream.__anext__(), 5)
+    finally:
+        await stream.aclose()
+
+
+@pytest.mark.timeout(60)
+async def test_ws_connect_send_recv_close():
+    from agentnet import ws as wsmod
+
+    seen = {}
+    async with _echo_server(seen) as url:
+        async with wsmod.AgentWebSocketClient(registry_url=url, agent_id="agent-1", token="t0k") as client:
+            assert client.connected
+            assert wsmod.CLIENT_API in ("asyncio", "classic")
+            await client.task_start("task-1")
+            msg = await _first_message(client)
+            assert msg["jsonrpc"] == "2.0" and msg["method"] == "task_start"
+            assert msg["params"] == {"task_id": "task-1"}
+            await client.execute(callee_agent_id="callee", capability="cap", input_data={"q": 1}, max_budget=5)
+            msg = await _first_message(client)
+            assert msg["method"] == "execute" and msg["to"] == "callee" and msg["idempotency_key"]
+        assert not client.connected
+        assert seen["connections"] == 1
+        assert seen["path"].endswith("/v1/ws/agent/agent-1?token=t0k")
+    with pytest.raises(RuntimeError):
+        await client.task_start("after-close")
+
+
+@pytest.mark.timeout(60)
+async def test_ws_reconnect_is_idempotent_and_headers_reach_the_server():
+    from agentnet import ws as wsmod
+
+    seen = {}
+    async with _echo_server(seen) as url:
+        client = wsmod.AgentWebSocketClient(
+            registry_url=url, agent_id="agent-2", token="t", headers={"Authorization": "Bearer abc"}
+        )
+        await client.connect()
+        await client.connect()  # a live connection is kept
+        assert seen["connections"] == 1
+        assert seen["authorization"] == "Bearer abc"
+        await client.reconnect()
+        assert seen["connections"] == 2
+        await client.task_confirm("task-9", {"ok": True})
+        msg = await _first_message(client)
+        assert msg["method"] == "task_confirm" and msg["params"]["output"] == {"ok": True}
+        await client.close()
+        assert not client.connected
+        await client.close()  # idempotent
+
+
+@pytest.mark.timeout(60)
+async def test_ws_recv_ends_cleanly_when_the_server_goes_away():
+    from agentnet.ws import connect_agent
+
+    seen = {}
+    server = _echo_server(seen)
+    url = await server.__aenter__()
+    client_cm = connect_agent(registry_url=url, agent_id="agent-3", token="t")
+    client = await client_cm.__aenter__()
+    try:
+        await client.task_fail("task-3", "boom")
+        assert (await _first_message(client))["params"]["error_message"] == "boom"
+        await server.__aexit__(None, None, None)  # server closes every connection
+        remaining = [m async for m in client.recv()]  # ConnectionClosed is swallowed → generator ends
+        assert remaining == []
+    finally:
+        await client_cm.__aexit__(None, None, None)
+    assert not client.connected
+
+
+def test_sdk_and_examples_never_import_deprecated_websockets_namespaces():
+    """websockets.legacy and websockets.client.WebSocketClientProtocol warn
+    on >= 14; the adapter in agentnet/ws.py is the only place allowed to know
+    about client APIs and it only touches websockets.asyncio.client."""
+    repo = pathlib.Path(__file__).resolve().parent.parent
+    files = [repo / "sdk/python/agentnet/ws.py", repo / "examples/agent_sdk.py", repo / "examples/reference_agent.py"]
+    for path in files:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                assert not node.module.startswith(("websockets.legacy", "websockets.client")), f"{path}: {node.module}"
+            if isinstance(node, ast.Attribute) and node.attr == "WebSocketClientProtocol":
+                raise AssertionError(f"{path}: deprecated WebSocketClientProtocol attribute access")

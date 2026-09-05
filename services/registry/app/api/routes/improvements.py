@@ -8,7 +8,7 @@ task ships (status == 'completed').
 
 Lifecycle:
     PROPOSED -> UNDER_REVIEW -> APPROVED -> CONVERTED_TO_TASK -> IMPLEMENTED
-                              \-> REJECTED (terminal)
+                              `-> REJECTED (terminal)
 
 Auth model:
 - READ is public.

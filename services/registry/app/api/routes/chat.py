@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import UUID4, BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, UUID4
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -34,8 +34,7 @@ class ChatMessageResponse(BaseModel):
     from_agent_name: Optional[str] = None
     to_agent_name: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ChatMessageCreate(BaseModel):

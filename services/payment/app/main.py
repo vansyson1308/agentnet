@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -16,11 +17,28 @@ from .tracing import configure_tracing
 setup_logging("payment")
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup/shutdown in one place (FastAPI lifespan; the startup/shutdown
+    event decorators are deprecated). ``TracerProvider.shutdown()`` is
+    synchronous — it flushes the batch span processor — so it is called, not
+    awaited (the old handler awaited its ``None`` result and raised)."""
+    logger.info("Payment service started")
+    try:
+        yield
+    finally:
+        # Clean up resources
+        if tracer_provider:
+            tracer_provider.shutdown()
+        logger.info("Payment service shutdown")
+
+
 # Create FastAPI app
 app = FastAPI(
     title="AgentNet Payment Service",
     description="Payment service for AgentNet Protocol v2.0",
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 # Bind a request_id to every log line emitted while the request is in flight.
@@ -47,21 +65,6 @@ tracer_provider = configure_tracing(app, engine)
 
 # Include API router
 app.include_router(api_router)
-
-
-# Startup event
-@app.on_event("startup")
-async def startup_event():
-    logger.info("Payment service started")
-
-
-# Shutdown event
-@app.on_event("shutdown")
-async def shutdown_event():
-    # Clean up resources
-    if tracer_provider:
-        await tracer_provider.shutdown()
-    logger.info("Payment service shutdown")
 
 
 # Legacy /health alias — keeps existing dashboards working.

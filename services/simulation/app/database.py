@@ -1,6 +1,5 @@
 from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 # DATABASE_URL is built in app.config, which validates POSTGRES_PASSWORD
 # fail-fast (no hard-coded fallback password / host in this module).
@@ -16,8 +15,11 @@ engine = create_engine(
 # Create sessionmaker
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Create Base class for models
-Base = declarative_base()
+# Declarative base, SQLAlchemy 2.0 style (the 1.x factory function lived in
+# a namespace that now raises MovedIn20Warning). Models keep their
+# ``Column()`` attributes; DeclarativeBase supports them unchanged.
+class Base(DeclarativeBase):
+    pass
 
 
 # Dependency to get DB session

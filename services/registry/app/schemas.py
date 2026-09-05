@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import UUID4, BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, UUID4
 from uuid import UUID as UUIDAny
 
 
@@ -42,8 +42,7 @@ class UserInDB(UserBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class User(UserBase):
@@ -52,8 +51,7 @@ class User(UserBase):
     telegram_id: Optional[str] = None
     notification_settings: Dict[str, Any]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Agent schemas
@@ -94,8 +92,7 @@ class AgentInDB(AgentBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class Agent(AgentBase):
@@ -118,8 +115,7 @@ class Agent(AgentBase):
     last_seen_at: Optional[datetime] = None
     current_capability: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AgentPublic(Agent):
@@ -186,16 +182,14 @@ class TaskInDB(BaseModel):
     fulfillment_channel: Optional[str] = None
     output: Optional[Dict[str, Any]] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaskSummary(BaseModel):
     id: UUID4
     status: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class Task(BaseModel):
@@ -220,8 +214,7 @@ class Task(BaseModel):
     retry_of_id: Optional[UUID4] = None
     retries: List[TaskSummary] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # WebSocket message schemas
@@ -261,8 +254,7 @@ class SpanInDB(SpanCreate):
     id: UUID4
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Capability verification schemas
@@ -358,8 +350,7 @@ class OfferInDB(OfferCreate):
     blocked: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class Offer(OfferCreate):
@@ -369,8 +360,7 @@ class Offer(OfferCreate):
     baseline_quality_score: Optional[float] = None
     blocked: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Referral schemas
@@ -390,8 +380,7 @@ class ReferralInDB(ReferralCreate):
     created_at: datetime
     completed_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class Referral(ReferralCreate):
@@ -400,8 +389,7 @@ class Referral(ReferralCreate):
     status: str
     reward_amount: Optional[int] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Negotiation schemas (Phase 2C)
@@ -420,8 +408,7 @@ class NegotiationRoundResponse(BaseModel):
     status: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class OfferWithNegotiation(BaseModel):
@@ -439,8 +426,7 @@ class OfferWithNegotiation(BaseModel):
     created_at: datetime
     negotiation_rounds: List[NegotiationRoundResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Notification schemas
@@ -454,8 +440,7 @@ class NotificationResponse(BaseModel):
     is_read: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Error response schema
@@ -489,8 +474,7 @@ class ProvisioningProviderResponse(ProvisioningProviderBase):
     is_active: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProvisioningServiceBase(BaseModel):
@@ -517,8 +501,7 @@ class ProvisioningServiceResponse(ProvisioningServiceBase):
     provider_slug: str = ""
     provider_name: str = ""
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # — AB-416: Scoped API Token —
@@ -547,8 +530,7 @@ class ScopedTokenResponse(BaseModel):
     created_at: datetime
     raw_token: Optional[str] = None  # shown only on creation
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # — AB-417: Projects —
@@ -576,8 +558,7 @@ class ProjectResourceResponse(BaseModel):
     scoped_token_id: Optional[UUID4] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProjectResponse(BaseModel):
@@ -589,8 +570,7 @@ class ProjectResponse(BaseModel):
     updated_at: Optional[datetime] = None
     resources: list[ProjectResourceResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProjectStateExport(BaseModel):
@@ -621,8 +601,7 @@ class OrchestratorPartnerResponse(BaseModel):
     created_at: datetime
     client_secret: Optional[str] = None  # shown only on creation
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class OrchestratorProvisionRequest(BaseModel):
