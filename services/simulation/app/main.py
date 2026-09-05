@@ -6,6 +6,7 @@ Integrates with AgentNet's agent registry, social graph, and escrow system.
 """
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -21,11 +22,31 @@ from .tracing import configure_tracing
 setup_logging("simulation")
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup/shutdown in one place (FastAPI lifespan; the startup/shutdown
+    event decorators are deprecated). Config validation only warns — the
+    service runs without an LLM key. ``TracerProvider.shutdown()`` is
+    synchronous, so it is called, not awaited."""
+    errors = SimulationConfig.validate()
+    if errors:
+        for err in errors:
+            logger.warning(f"Config warning: {err}")
+    logger.info("Simulation service started")
+    try:
+        yield
+    finally:
+        if tracer_provider:
+            tracer_provider.shutdown()
+        logger.info("Simulation service shutdown")
+
+
 # Create FastAPI app
 app = FastAPI(
     title="AgentNet Simulation Service",
     description="Swarm intelligence simulation powered by MiroFish/OASIS engine",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Bind a request_id to every log line.
@@ -43,22 +64,6 @@ tracer_provider = configure_tracing(app, engine)
 
 # Include API router
 app.include_router(api_router)
-
-
-@app.on_event("startup")
-async def startup_event():
-    errors = SimulationConfig.validate()
-    if errors:
-        for err in errors:
-            logger.warning(f"Config warning: {err}")
-    logger.info("Simulation service started")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    if tracer_provider:
-        await tracer_provider.shutdown()
-    logger.info("Simulation service shutdown")
 
 
 @app.get("/health")

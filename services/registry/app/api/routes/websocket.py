@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from ...auth import get_current_user_or_agent, verify_token
 from ...database import get_db
+from ...models import User
 from ...websocket_manager import manager
 
 # Import event bus for subscribing to task state changes
@@ -81,6 +82,13 @@ async def websocket_endpoint(
     if not connection_id:
         return
 
+    # The dependency session lives as long as the socket. A transaction must
+    # NEVER stay open while we wait for the next frame: one idle-in-transaction
+    # Postgres connection per connected agent pins snapshots, blocks
+    # DDL/TRUNCATE/VACUUM and exhausts the pool. Every frame's work is
+    # committed (or rolled back) before we go back to waiting.
+    db.commit()
+
     try:
         # Handle incoming messages
         while True:
@@ -97,11 +105,13 @@ async def websocket_endpoint(
                 # ``(message, agent_id, db)`` which raised a TypeError on
                 # every WS frame, leaving agents unable to interact.
                 response = await manager.handle_message(message, db, connection_id)
+                db.commit()
 
                 # Send response back to the sender
                 if response:
                     await websocket.send_json(response)
             except json.JSONDecodeError:
+                db.rollback()
                 logger.error(f"Invalid JSON from agent {agent_id}: {data}")
                 await websocket.send_json(
                     {
@@ -110,6 +120,7 @@ async def websocket_endpoint(
                     }
                 )
             except Exception as e:
+                db.rollback()
                 logger.error(f"Error handling message from agent {agent_id}: {e}")
                 await websocket.send_json(
                     {
@@ -122,31 +133,43 @@ async def websocket_endpoint(
                 )
     except WebSocketDisconnect:
         # Disconnect the agent
+        db.rollback()
         manager.disconnect(connection_id, db)
     except Exception as e:
         logger.error(f"WebSocket error for agent {agent_id}: {e}")
+        db.rollback()
         manager.disconnect(connection_id, db)
+    finally:
+        db.rollback()  # never leave the pooled connection in a transaction
 
 
-@router.websocket("/ws/tasks/timeline")
+@router.websocket("/tasks/timeline")
 async def task_timeline_endpoint(
     websocket: WebSocket,
     token: str = Query(...),
+    db: Session = Depends(get_db),
 ):
-    """WebSocket endpoint for live task execution timeline.
+    """WebSocket endpoint for the live, platform-wide task timeline.
 
-    Pushes task state change events to authenticated dashboard clients.
-    Events include: task_id, agent_name, escrow_amount, current_state,
-    previous_state, duration, timestamp.
+    The stream carries every task's agent names and escrow amounts, so it
+    is an OPERATOR view: a user session token with the society operator
+    role is required (agent and scoped tokens are refused).
     """
-    # Authenticate via token
+    from ...society.operator_auth import is_operator
+
     try:
-        verify_token(token)  # raises exception on invalid token
+        token_data = verify_token(token, db=db)
+        user = db.query(User).filter(User.id == token_data.user_id).first() if token_data.user_id and token_data.scoped_token_id is None else None
+        if user is None or not is_operator(user):
+            raise PermissionError("operator role required")
     except Exception as e:
-        logger.error(f"Timeline WebSocket authentication error: {e}")
+        logger.warning(f"Timeline WebSocket refused: {e}")
         await websocket.close(code=1008, reason="Authentication error")
         return
 
+    # Authentication was the only database work; end that transaction before
+    # the (potentially hours-long) event loop below.
+    db.rollback()
     await websocket.accept()
     task_timeline_feeds.add(websocket)
     logger.info("Task timeline WebSocket connected")

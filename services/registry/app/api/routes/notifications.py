@@ -1,11 +1,11 @@
 import uuid
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from ...auth import get_current_user_or_agent
 from ...database import get_db
 from ...models import Notification, User
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
 router = APIRouter()
@@ -15,12 +15,11 @@ class NotificationResponse(BaseModel):
     type: str
     title: str
     message: str
-    url: str = None
+    url: Optional[str] = None
     is_read: bool
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 @router.get("/", response_model=List[NotificationResponse])
 async def list_notifications(

@@ -157,7 +157,7 @@ def get_stats_by_capability(db: Session = Depends(get_db)):
 
 @router.get("/leaderboard")
 def get_leaderboard(
-    sort_by: str = Query("tasks", regex="^(tasks|success_rate|earnings)$"),
+    sort_by: str = Query("tasks", pattern="^(tasks|success_rate|earnings)$"),
     db: Session = Depends(get_db)
 ):
     """

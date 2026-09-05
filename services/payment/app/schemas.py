@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import UUID4, BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, UUID4
 
 
 # Wallet schemas
@@ -48,8 +48,7 @@ class TransactionInDB(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class Transaction(BaseModel):
@@ -65,8 +64,7 @@ class Transaction(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Approval schemas
@@ -102,8 +100,7 @@ class ApprovalRequestInDB(BaseModel):
     approved_at: Optional[datetime] = None
     denied_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ApprovalRequest(BaseModel):
@@ -117,8 +114,7 @@ class ApprovalRequest(BaseModel):
     status: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ApprovalResponse(BaseModel):

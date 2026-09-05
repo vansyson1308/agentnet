@@ -77,6 +77,16 @@ REDIS_PORT = os.getenv("REDIS_PORT", "6379")
 REDIS_PASSWORD = require_env("REDIS_PASSWORD", dev_default=_DEV_REDIS_PASSWORD)
 REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/0"
 
+# Postgres — same shape as registry/payment/worker config.py. The password
+# goes through require_env so a non-development deployment cannot start with
+# a missing or placeholder password (database.py used to hard-code a fallback).
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "agentnet")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "agentnet")
+POSTGRES_PASSWORD = require_env("POSTGRES_PASSWORD", dev_default=_DEV_POSTGRES_PASSWORD)
+DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+
 
 class SimulationConfig:
     """Configuration for the simulation service."""

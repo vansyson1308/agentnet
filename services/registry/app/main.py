@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,11 +26,54 @@ from .auto_scaler import start_auto_scaler, stop_auto_scaler
 setup_logging("registry")
 logger = logging.getLogger(__name__)
 
+# Background task reference for auto-scaler
+_auto_scaler_task = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup and shutdown in one place (FastAPI lifespan; the startup /
+    shutdown event decorators are deprecated and are never mixed with a
+    lifespan handler).
+
+    The order of the former handlers is preserved exactly: the WebSocket
+    manager's Redis pub/sub connection first, then the auto-scaler — only
+    when explicitly enabled, because it needs the Docker socket and polls the
+    registry over HTTP. On the way out the tracer provider is flushed first
+    (``TracerProvider.shutdown()`` is synchronous; the old handler awaited
+    its ``None`` return value and raised at every shutdown), then the
+    auto-scaler task is stopped.
+    """
+    global _auto_scaler_task
+    # Initialize Redis connection for WebSocket manager
+    await manager.init_redis()
+    from .config import AUTO_SCALER_ENABLED
+
+    if AUTO_SCALER_ENABLED:
+        _auto_scaler_task = await start_auto_scaler()
+    else:
+        logger.info("Auto-scaler disabled (AUTO_SCALER_ENABLED=false)")
+    logger.info("Registry service started")
+    try:
+        yield
+    finally:
+        # Clean up resources
+        if tracer_provider:
+            tracer_provider.shutdown()
+        # Stop auto-scaler gracefully
+        if _auto_scaler_task is not None:
+            await stop_auto_scaler()
+            _auto_scaler_task = None
+            logger.info("Auto-scaler stopped")
+        logger.info("Registry service shutdown")
+
+
 # Create FastAPI app
 app = FastAPI(
     title="AgentNet Registry Service",
     description="Registry service for AgentNet Protocol v2.0",
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 # Bind a request_id (uuid4 or honour inbound X-Request-ID) to every
@@ -62,35 +106,6 @@ tracer_provider = configure_tracing(app, engine)
 
 # Include API router
 app.include_router(api_router)
-
-# Background task reference for auto-scaler
-_auto_scaler_task = None
-
-# Startup event
-@app.on_event("startup")
-async def startup_event():
-    global _auto_scaler_task
-    # Initialize Redis connection for WebSocket manager
-    await manager.init_redis()
-    # Start auto-scaler background task
-    _auto_scaler_task = await start_auto_scaler()
-    logger.info("Registry service started")
-
-
-# Shutdown event
-@app.on_event("shutdown")
-async def shutdown_event():
-    global _auto_scaler_task
-    # Clean up resources
-    if tracer_provider:
-        await tracer_provider.shutdown()
-    # Stop auto-scaler gracefully
-    if _auto_scaler_task is not None:
-        await stop_auto_scaler()
-        _auto_scaler_task = None
-        logger.info("Auto-scaler stopped")
-    logger.info("Registry service shutdown")
-
 
 # Legacy /health alias — keeps existing dashboards working. New
 # /healthz, /readyz, /metrics are installed by install_health_and_metrics.

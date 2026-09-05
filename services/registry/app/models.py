@@ -3,6 +3,7 @@ import uuid
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Column,
     Date,
@@ -14,6 +15,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.dialects.postgresql import UUID
@@ -24,8 +26,29 @@ from .database import Base
 
 
 def _enum_column(enum_cls, **kwargs):
-    """Create an enum column that uses string values (not enum names)."""
+    """Create an enum column that uses string values (not enum names).
+
+    ``native_enum=False`` is deliberate: the database enum types
+    (``agent_status``, ``task_status``, ...) are created by
+    ``init-db/01-init.sql`` and are the source of truth; the ORM only binds
+    the string values and never emits ``CREATE TYPE``. Label parity between
+    the DB types and these Python enums is asserted by
+    ``tests/test_db_parity.py``. See docs/DATABASE_SCHEMA_CONTRACT.md.
+    """
     return Column(Enum(enum_cls, native_enum=False, values_callable=lambda x: [e.value for e in x]), **kwargs)
+
+
+# Timestamp conventions (docs/DATABASE_SCHEMA_CONTRACT.md):
+#   * the core tables created by init-db/01..07 (users, agents, wallets,
+#     task_sessions, spans, transactions, referrals, offers,
+#     negotiation_rounds, agent_interactions, notifications) use naive
+#     ``TIMESTAMP`` -> ``NaiveTimestamp`` below;
+#   * everything added later (email tokens, stories, goals, memory,
+#     improvements, reputation history, society runtime, app tables) uses
+#     ``TIMESTAMPTZ`` -> ``TzTimestamp``.
+# The ORM mirrors the DB here; it never changes the DB type.
+NaiveTimestamp = DateTime(timezone=False)
+TzTimestamp = DateTime(timezone=True)
 
 
 # Enum classes
@@ -182,8 +205,8 @@ class User(Base):
     kyc_status = _enum_column(KYCStatus, default="pending")
     telegram_id = Column(String)
     notification_settings = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(NaiveTimestamp, server_default=func.now())
+    updated_at = Column(NaiveTimestamp, server_default=func.now(), onupdate=func.now())
 
     # Relationships
     agents = relationship("Agent", back_populates="user", cascade="all, delete-orphan")
@@ -211,14 +234,20 @@ class Agent(Base):
     total_tasks_timeout = Column(Integer, default=0)
     success_rate = Column(Float, default=0.0)  # completed / total
     avg_response_time_ms = Column(Integer, default=0)
-    total_volume_credits = Column(Integer, default=0)
+    total_volume_credits = Column(BigInteger, default=0)
     reputation_tier = Column(String, default="unranked")  # unranked/bronze/silver/gold/diamond
-    reputation_updated_at = Column(DateTime(timezone=True))
+    reputation_updated_at = Column(NaiveTimestamp)
+    # Heartbeat / presence (init-db/08-heartbeat.sql). Written by
+    # websocket_manager on connect/disconnect, read by fleet/stats routes
+    # and the worker's stale-presence sweep.
+    is_online = Column(Boolean, default=False, server_default=text("false"))
+    last_seen_at = Column(TzTimestamp)
+    current_capability = Column(String)
     # Mission + active goal (Phase: agent-goals-and-self-improvement)
     mission = Column(Text)
     current_goal_id = Column(UUID(as_uuid=True), ForeignKey("goals.id", ondelete="SET NULL"))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(NaiveTimestamp, server_default=func.now())
+    updated_at = Column(NaiveTimestamp, server_default=func.now(), onupdate=func.now())
 
     # Relationships
     user = relationship("User", back_populates="agents")
@@ -255,18 +284,20 @@ class Wallet(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     owner_type = _enum_column(WalletOwnerType, nullable=False)
     owner_id = Column(UUID(as_uuid=True), nullable=False)
-    balance_credits = Column(Integer, nullable=False, default=0)
+    # Money columns are BIGINT in the DB (init-db/01-init.sql); Python still
+    # sees plain ints. Balances are mutated ONLY by the DB triggers.
+    balance_credits = Column(BigInteger, nullable=False, default=0)
     balance_usdc = Column(Numeric(20, 6), nullable=False, default=0)
-    reserved_credits = Column(Integer, nullable=False, default=0)
+    reserved_credits = Column(BigInteger, nullable=False, default=0)
     reserved_usdc = Column(Numeric(20, 6), nullable=False, default=0)
-    spending_cap = Column(Integer, nullable=False, default=1000)
-    daily_spent = Column(Integer, nullable=False, default=0)
-    daily_reset_at = Column(DateTime(timezone=True), server_default=func.now())
+    spending_cap = Column(BigInteger, nullable=False, default=1000)
+    daily_spent = Column(BigInteger, nullable=False, default=0)
+    daily_reset_at = Column(NaiveTimestamp, server_default=func.now())
     allowance_parent_id = Column(UUID(as_uuid=True), ForeignKey("wallets.id"))
-    auto_approve_threshold = Column(Integer, default=10)
+    auto_approve_threshold = Column(BigInteger, default=10)
     whitelist = Column(JSON, default=[])
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(NaiveTimestamp, server_default=func.now())
+    updated_at = Column(NaiveTimestamp, server_default=func.now(), onupdate=func.now())
 
     # Relationships
     outgoing_transactions = relationship(
@@ -294,13 +325,13 @@ class TaskSession(Base):
     capability = Column(String, nullable=False)
     input = Column(JSON)
     input_hash = Column(String)
-    escrow_amount = Column(Integer, nullable=False)
+    escrow_amount = Column(BigInteger, nullable=False)
     currency = _enum_column(CurrencyType, nullable=False, default="credits")
     status = _enum_column(TaskStatus, default="initiated")
-    timeout_at = Column(DateTime(timezone=True), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    completed_at = Column(DateTime(timezone=True))
-    refund_at = Column(DateTime(timezone=True))
+    timeout_at = Column(NaiveTimestamp, nullable=False)
+    created_at = Column(NaiveTimestamp, server_default=func.now())
+    completed_at = Column(NaiveTimestamp)
+    refund_at = Column(NaiveTimestamp)
     error_message = Column(Text)
     fulfillment_channel = Column(String)  # 'websocket', 'webhook', 'internal'
     output = Column(JSON)
@@ -327,9 +358,9 @@ class Span(Base):
     capability = Column(String)
     duration_ms = Column(Integer)
     status = _enum_column(SpanStatus)
-    credits_used = Column(Integer)
+    credits_used = Column(BigInteger)
     extra_data = Column(JSON, default={})
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(NaiveTimestamp, server_default=func.now())
 
     # Relationships
     agent = relationship("Agent", back_populates="spans")
@@ -342,12 +373,12 @@ class Transaction(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     from_wallet = Column(UUID(as_uuid=True), ForeignKey("wallets.id"))
     to_wallet = Column(UUID(as_uuid=True), ForeignKey("wallets.id"))
-    amount = Column(Integer, nullable=False)
+    amount = Column(BigInteger, nullable=False)
     currency = _enum_column(CurrencyType, nullable=False, default="credits")
     status = _enum_column(TransactionStatus, default="pending")
     type = _enum_column(TransactionType, nullable=False)
     task_session_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id"))
-    platform_fee = Column(Integer, default=0)
+    platform_fee = Column(BigInteger, default=0)
     platform_fee_rate = Column(Numeric(5, 4), default=0.025)
     extra_data = Column(JSON, default={})
     # Idempotency: Idempotency-Key from the inbound HTTP/WS request, scoped
@@ -355,8 +386,8 @@ class Transaction(Base):
     # A retry with the same key returns the existing row instead of creating
     # a duplicate transaction (and therefore a duplicate escrow lock).
     idempotency_key = Column(String(64), unique=True, nullable=True, index=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    completed_at = Column(DateTime(timezone=True))
+    created_at = Column(NaiveTimestamp, server_default=func.now())
+    completed_at = Column(NaiveTimestamp)
 
     # Relationships
     from_wallet_rel = relationship("Wallet", foreign_keys=[from_wallet], back_populates="outgoing_transactions")
@@ -372,10 +403,10 @@ class Referral(Base):
     inviter_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
     invitee_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
     status = _enum_column(ReferralStatus, default="pending")
-    reward_amount = Column(Integer)
+    reward_amount = Column(BigInteger)
     device_fingerprint = Column(String)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    completed_at = Column(DateTime(timezone=True))
+    created_at = Column(NaiveTimestamp, server_default=func.now())
+    completed_at = Column(NaiveTimestamp)
 
     # Relationships
     inviter_agent = relationship("Agent", foreign_keys=[inviter_agent_id], back_populates="inviter_referrals")
@@ -392,13 +423,13 @@ class Offer(Base):
     core_task_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id"))
     title = Column(String, nullable=False)
     description = Column(Text)
-    price = Column(Integer, nullable=False)
+    price = Column(BigInteger, nullable=False)
     currency = _enum_column(CurrencyType, nullable=False, default="credits")
-    expires_at = Column(DateTime(timezone=True), nullable=False)
+    expires_at = Column(NaiveTimestamp, nullable=False)
     status = _enum_column(OfferStatus, default="pending")
     baseline_quality_score = Column(Float)
     blocked = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(NaiveTimestamp, server_default=func.now())
 
     # Relationships
     from_agent = relationship("Agent", foreign_keys=[from_agent_id], back_populates="sent_offers")
@@ -414,13 +445,13 @@ class NegotiationRound(Base):
     __tablename__ = "negotiation_rounds"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    offer_id = Column(UUID(as_uuid=True), ForeignKey("offers.id"), nullable=False)
+    offer_id = Column(UUID(as_uuid=True), ForeignKey("offers.id", ondelete="CASCADE"), nullable=False)
     round_number = Column(Integer, nullable=False)
     proposed_by_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=False)
-    proposed_price = Column(Integer, nullable=False)
+    proposed_price = Column(BigInteger, nullable=False)
     proposed_terms = Column(Text)
     status = _enum_column(OfferStatus, default="pending")  # pending/accepted/rejected
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(NaiveTimestamp, server_default=func.now())
 
     # Relationships
     offer = relationship("Offer", back_populates="negotiation_rounds")
@@ -430,15 +461,21 @@ class NegotiationRound(Base):
 # AgentInteraction model (Phase 3A — Social Graph)
 class AgentInteraction(Base):
     __tablename__ = "agent_interactions"
+    __table_args__ = (
+        UniqueConstraint(
+            "from_agent_id", "to_agent_id", "interaction_type",
+            name="agent_interactions_from_agent_id_to_agent_id_interaction_type_key",
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     from_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
     to_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
     interaction_type = _enum_column(InteractionType, nullable=False)
     count = Column(Integer, nullable=False, default=1)
-    total_volume = Column(Integer, nullable=False, default=0)
-    last_interaction_at = Column(DateTime(timezone=True), server_default=func.now())
-    first_interaction_at = Column(DateTime(timezone=True), server_default=func.now())
+    total_volume = Column(BigInteger, nullable=False, default=0)
+    last_interaction_at = Column(NaiveTimestamp, nullable=False, server_default=func.now())
+    first_interaction_at = Column(NaiveTimestamp, nullable=False, server_default=func.now())
 
     # Relationships
     from_agent = relationship("Agent", foreign_keys=[from_agent_id])
@@ -447,14 +484,18 @@ class AgentInteraction(Base):
 
 # AgentReputationHistory model — daily snapshots of agent reputation metrics
 class AgentReputationHistory(Base):
+    """Daily reputation snapshot. Mirrors init-db/08-reputation-history.sql:
+    the primary key is the composite ``(agent_id, snapshot_date)`` (no
+    surrogate ``id``), which is what ``reputation.record_reputation_snapshot``
+    upserts on (``ON CONFLICT (agent_id, snapshot_date)``)."""
+
     __tablename__ = "agent_reputation_history"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
-    snapshot_date = Column(Date, nullable=False)
+    agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True)
+    snapshot_date = Column(Date, primary_key=True)
     reputation_tier = Column(String, nullable=False)
-    success_rate = Column(Float, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    success_rate = Column(Float, nullable=False, default=0.0, server_default=text("0.0"))
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
 
     # Relationship
     agent = relationship("Agent")
@@ -465,13 +506,13 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     type = Column(String, nullable=False)
     title = Column(String, nullable=False)
     message = Column(Text, nullable=False)
     url = Column(String)
     is_read = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(NaiveTimestamp, server_default=func.now())
 
     user = relationship("User", back_populates="notifications")
 
@@ -487,7 +528,7 @@ class AuditLog(Base):
     target_id = Column(String, nullable=True)
     payload_summary = Column(Text, nullable=True)
     success = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(TzTimestamp, server_default=func.now())
 
 
 # Story model
@@ -496,11 +537,11 @@ class Story(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     content = Column(Text, nullable=False)
-    mood = Column(String, nullable=False, default="neutral")
+    mood = Column(String(32), default="neutral")
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"), nullable=True)
     is_published = Column(Boolean, default=True)
     displayed_count = Column(Integer, default=0)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(TzTimestamp, server_default=func.now())
 
     # Relationship
     agent = relationship("Agent")
@@ -511,11 +552,11 @@ class EmailVerificationToken(Base):
     __tablename__ = "email_verification_tokens"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     token = Column(String, nullable=False, unique=True)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    consumed_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(TzTimestamp, nullable=False)
+    consumed_at = Column(TzTimestamp, nullable=True)
+    created_at = Column(TzTimestamp, server_default=func.now())
 
     # Relationship
     user = relationship("User")
@@ -534,7 +575,7 @@ class AgentChat(Base):
     msg_metadata = Column(JSON, default={})
     thread_id = Column(UUID(as_uuid=True), nullable=False)
     is_read = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(TzTimestamp, server_default=func.now())
 
     # Relationships
     from_agent = relationship("Agent", foreign_keys=[from_agent_id])
@@ -567,10 +608,10 @@ class Goal(Base):
     status = _enum_column(GoalStatus, nullable=False, default="active")
     success_criteria = Column(PG_JSONB, nullable=False, default=list)
     parent_goal_id = Column(UUID(as_uuid=True), ForeignKey("goals.id", ondelete="SET NULL"))
-    target_date = Column(DateTime(timezone=True))
-    completed_at = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    target_date = Column(TzTimestamp)
+    completed_at = Column(TzTimestamp)
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+    updated_at = Column(TzTimestamp, nullable=False, server_default=func.now(), onupdate=func.now())
 
     # Relationships
     parent = relationship("Goal", remote_side=[id], backref="children")
@@ -601,8 +642,8 @@ class ImprovementProposal(Base):
     importance = Column(Integer, nullable=False, default=50)
     source_task_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id", ondelete="SET NULL"))
     converted_task_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id", ondelete="SET NULL"))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+    updated_at = Column(TzTimestamp, nullable=False, server_default=func.now(), onupdate=func.now())
 
     # Relationships
     proposed_by_agent = relationship("Agent", foreign_keys=[proposed_by_agent_id])
@@ -627,7 +668,7 @@ class MemoryItem(Base):
     tags = Column(PG_JSONB, nullable=False, default=list)
     source_task_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id", ondelete="SET NULL"))
     importance = Column(Integer, nullable=False, default=50)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
 
     # Relationships
     agent = relationship("Agent", foreign_keys=[agent_id])
@@ -636,6 +677,9 @@ class MemoryItem(Base):
 
 # ─────────────────────────────────────────────────────────────────────────
 # AgentNet Provisioning Protocol (APP) — AB-415 through AB-418
+# DDL for these tables (+ audit_log, orchestrator_partners and the payment
+# service's approval_requests) lives in app/schema_app_sql.py — migration
+# 0009 and init-db/17-app-tables.sql are generated from it.
 # ─────────────────────────────────────────────────────────────────────────
 
 
@@ -650,7 +694,7 @@ class ProvisioningProvider(Base):
     website = Column(String)
     logo_url = Column(String)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(TzTimestamp, server_default=func.now())
 
     services = relationship("ProvisioningService", back_populates="provider", cascade="all, delete-orphan")
 
@@ -671,7 +715,7 @@ class ProvisioningService(Base):
     required_params = Column(PG_JSONB, default=[])  # ["domain_name", "zone_id"]
     output_params = Column(PG_JSONB, default={})  # {"api_token": "...", "nameservers": [...]}
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(TzTimestamp, server_default=func.now())
 
     provider = relationship("ProvisioningProvider", back_populates="services")
 
@@ -692,10 +736,10 @@ class ScopedToken(Base):
     spending_cap = Column(Integer, nullable=False, default=100)
     total_spent = Column(Integer, nullable=False, default=0)
     allowed_actions = Column(PG_JSONB, default=[])  # ["read", "write", "deploy", "delete"]
-    expires_at = Column(DateTime(timezone=True))
+    expires_at = Column(TzTimestamp)
     is_revoked = Column(Boolean, default=False)
-    revoked_at = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    revoked_at = Column(TzTimestamp)
+    created_at = Column(TzTimestamp, server_default=func.now())
 
     agent = relationship("Agent", foreign_keys=[agent_id])
     project = relationship("Project", foreign_keys=[project_id], back_populates="scoped_tokens")
@@ -709,8 +753,8 @@ class Project(Base):
     name = Column(String, nullable=False)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"))
     description = Column(Text)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(TzTimestamp, server_default=func.now())
+    updated_at = Column(TzTimestamp, server_default=func.now(), onupdate=func.now())
 
     agent = relationship("Agent", foreign_keys=[agent_id])
     resources = relationship("ProjectResource", back_populates="project", cascade="all, delete-orphan")
@@ -728,7 +772,7 @@ class ProjectResource(Base):
     provider = Column(String)  # cloudflare, vultr, github, huggingface
     status = Column(String, default="provisioned")  # provisioned, active, error, destroyed
     scoped_token_id = Column(UUID(as_uuid=True), ForeignKey("scoped_tokens.id", ondelete="SET NULL"))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(TzTimestamp, server_default=func.now())
 
     project = relationship("Project", back_populates="resources")
 
@@ -747,7 +791,7 @@ class OrchestratorPartner(Base):
     client_id = Column(String, unique=True, nullable=False)
     client_secret_hash = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(TzTimestamp, server_default=func.now())
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -846,9 +890,9 @@ class SocietyEvent(Base):
     dispatch_note = Column(Text)
     trace_id = Column(UUID(as_uuid=True))
     source_run_id = Column(UUID(as_uuid=True))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    dispatched_at = Column(DateTime(timezone=True))
-    processed_at = Column(DateTime(timezone=True))
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+    dispatched_at = Column(TzTimestamp)
+    processed_at = Column(TzTimestamp)
 
     cause = relationship("SocietyEvent", remote_side=[id], backref="effects")
     runs = relationship("AgentRun", back_populates="event")
@@ -863,6 +907,7 @@ class AgentRun(Base):
     """
 
     __tablename__ = "agent_runs"
+    __table_args__ = (UniqueConstraint("agent_id", "event_id", name="uq_agent_runs_agent_event"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
@@ -870,12 +915,12 @@ class AgentRun(Base):
     role = Column(String(64))
     status = _enum_column(AgentRunStatus, nullable=False, default="queued")
     worker_id = Column(String(128))
-    lease_expires_at = Column(DateTime(timezone=True))
+    lease_expires_at = Column(TzTimestamp)
     attempt = Column(Integer, nullable=False, default=0)
     max_attempts = Column(Integer, nullable=False, default=3)
-    not_before = Column(DateTime(timezone=True))
-    started_at = Column(DateTime(timezone=True))
-    completed_at = Column(DateTime(timezone=True))
+    not_before = Column(TzTimestamp)
+    started_at = Column(TzTimestamp)
+    completed_at = Column(TzTimestamp)
     model_provider = Column(String(64))
     model_name = Column(String(128))
     prompt_version = Column(String(32))
@@ -893,12 +938,12 @@ class AgentRun(Base):
     model_retries = Column(Integer, nullable=False, default=0)
     model_timeouts = Column(Integer, nullable=False, default=0)
     error = Column(Text)
-    sleep_until = Column(DateTime(timezone=True))
+    sleep_until = Column(TzTimestamp)
     correlation_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     trace_id = Column(UUID(as_uuid=True))
     span_id = Column(UUID(as_uuid=True))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+    updated_at = Column(TzTimestamp, nullable=False, server_default=func.now(), onupdate=func.now())
 
     agent = relationship("Agent", foreign_keys=[agent_id])
     event = relationship("SocietyEvent", back_populates="runs")
@@ -911,6 +956,7 @@ class AgentIntent(Base):
     crash cannot double-apply a side effect."""
 
     __tablename__ = "agent_intents"
+    __table_args__ = (UniqueConstraint("run_id", "seq", name="uq_agent_intents_run_seq"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id = Column(UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False)
@@ -925,11 +971,11 @@ class AgentIntent(Base):
     execution_status = _enum_column(IntentExecutionStatus, nullable=False, default="pending")
     result = Column(PG_JSONB, nullable=False, default=dict)
     error = Column(Text)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    executed_at = Column(DateTime(timezone=True))
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+    executed_at = Column(TzTimestamp)
     # Resume lease: an APPROVED intent is claimed by exactly one worker.
     resume_worker_id = Column(String(128))
-    resume_lease_expires_at = Column(DateTime(timezone=True))
+    resume_lease_expires_at = Column(TzTimestamp)
     resume_attempt = Column(Integer, nullable=False, default=0)
 
     run = relationship("AgentRun", back_populates="intents")
@@ -952,12 +998,12 @@ class IntentApproval(Base):
     decision = _enum_column(ApprovalDecision, nullable=False)
     reason = Column(Text)
     original_policy_reason = Column(Text)
-    decided_at = Column(DateTime(timezone=True), server_default=func.now())
-    resumed_at = Column(DateTime(timezone=True))
-    executed_at = Column(DateTime(timezone=True))
+    decided_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+    resumed_at = Column(TzTimestamp)
+    executed_at = Column(TzTimestamp)
     final_state = Column(String(32))
     resume_error = Column(Text)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
 
     intent = relationship("AgentIntent", back_populates="approval")
     decided_by = relationship("User", foreign_keys=[decided_by_user_id])
@@ -983,10 +1029,10 @@ class AgentCapabilityGrant(Base):
     max_task_escrow_credits = Column(Integer, nullable=False, default=0)
     wake_cooldown_seconds = Column(Integer, nullable=False, default=30)
     enabled = Column(Boolean, nullable=False, default=True)
-    paused_until = Column(DateTime(timezone=True))
+    paused_until = Column(TzTimestamp)
     consecutive_failures = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+    updated_at = Column(TzTimestamp, nullable=False, server_default=func.now(), onupdate=func.now())
 
     agent = relationship("Agent", foreign_keys=[agent_id])
 
@@ -1024,8 +1070,8 @@ class CodeCandidate(Base):
     security_report = Column(PG_JSONB, nullable=False, default=dict)
     requires_security_review = Column(Boolean, nullable=False, default=False)
     error = Column(Text)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+    updated_at = Column(TzTimestamp, nullable=False, server_default=func.now(), onupdate=func.now())
 
     proposal = relationship("ImprovementProposal", foreign_keys=[proposal_id])
     task = relationship("TaskSession", foreign_keys=[task_id])

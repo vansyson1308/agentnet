@@ -14,14 +14,13 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
-    Enum,
     Float,
     ForeignKey,
     Integer,
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ENUM, JSONB, UUID
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -90,8 +89,12 @@ class SimSession(Base):
     task_session_id = Column(UUID(as_uuid=True), nullable=True)  # FK to escrow
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
+    # The ``sim_status`` enum TYPE is created by init-db/06-simulation.sql and
+    # is the source of truth. Use the PG-dialect ENUM explicitly: the generic
+    # ``sqlalchemy.Enum`` silently drops ``create_type``, so this service could
+    # otherwise emit ``CREATE TYPE`` from ``create_all`` (see tests/test_db_parity.py).
     status = Column(
-        Enum(
+        ENUM(
             SimStatus,
             name="sim_status",
             create_type=False,

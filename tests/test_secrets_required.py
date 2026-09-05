@@ -30,6 +30,7 @@ def clean_env(monkeypatch):
         "JWT_SECRET_KEY",
         "REDIS_PASSWORD",
         "POSTGRES_PASSWORD",
+        "INTERNAL_WORKER_TOKEN",
     ):
         monkeypatch.delenv(key, raising=False)
     yield monkeypatch
@@ -68,6 +69,7 @@ class TestRequireEnv:
         clean_env.setenv("JWT_SECRET_KEY", "your_jwt_secret_key")
         clean_env.setenv("REDIS_PASSWORD", "your_redis_password")
         clean_env.setenv("POSTGRES_PASSWORD", "your_secure_password")
+        clean_env.setenv("INTERNAL_WORKER_TOKEN", "internal-worker-token")
         sys.modules.pop(module_path, None)
         with pytest.raises(RuntimeError, match="placeholder|not set"):
             importlib.import_module(module_path)
@@ -79,10 +81,13 @@ class TestRequireEnv:
         clean_env.setenv("JWT_SECRET_KEY", real_secret)
         clean_env.setenv("REDIS_PASSWORD", "real-redis-password-abc123")
         clean_env.setenv("POSTGRES_PASSWORD", "real-postgres-password-xyz789")
+        clean_env.setenv("INTERNAL_WORKER_TOKEN", "real-internal-worker-token-123")  # payment: worker-only routes
         cfg = _reload_config(module_path)
         if hasattr(cfg, "JWT_SECRET_KEY"):
             assert cfg.JWT_SECRET_KEY == real_secret
         assert cfg.REDIS_PASSWORD == "real-redis-password-abc123"
+        if hasattr(cfg, "INTERNAL_WORKER_TOKEN"):
+            assert cfg.INTERNAL_WORKER_TOKEN == "real-internal-worker-token-123"
 
     def test_dev_mode_passes_through_leftover_defaults(self, clean_env, module_path):
         """In development, the value from compose/.env passes through as-is.
@@ -102,3 +107,40 @@ class TestRequireEnv:
         assert cfg.REDIS_PASSWORD == "your_redis_password"
         if hasattr(cfg, "JWT_SECRET_KEY"):
             assert cfg.JWT_SECRET_KEY == "your_jwt_secret_key"
+
+
+class TestPublicBaseUrlValidation:
+    """Phase 2.5 §24: a malformed public origin fails fast instead of
+    being embedded in verification links."""
+
+    def _reload(self, clean_env, **env):
+        clean_env.setenv("ENVIRONMENT", env.pop("ENVIRONMENT", "development"))
+        for k, v in env.items():
+            clean_env.setenv(k, v)
+        return _reload_config("services.registry.app.config")
+
+    def test_dev_defaults_to_localhost(self, clean_env):
+        clean_env.delenv("PUBLIC_BASE_URL", raising=False)
+        cfg = self._reload(clean_env)
+        assert cfg.PUBLIC_BASE_URL == "http://localhost:8000"
+
+    def test_bare_hostname_is_rejected(self, clean_env):
+        with pytest.raises(RuntimeError, match="absolute http"):
+            self._reload(clean_env, PUBLIC_BASE_URL="api.example.org")
+
+    def test_plain_http_is_rejected_outside_development(self, clean_env):
+        real = "f" * 64
+        with pytest.raises(RuntimeError, match="https"):
+            self._reload(
+                clean_env,
+                ENVIRONMENT="staging",
+                PUBLIC_BASE_URL="http://api.example.org",
+                JWT_SECRET_KEY=real,
+                REDIS_PASSWORD="real-redis-password-abc123",
+                POSTGRES_PASSWORD="real-postgres-password-xyz789",
+            )
+
+    def test_https_origin_is_accepted_and_normalised(self, clean_env):
+        cfg = self._reload(clean_env, PUBLIC_BASE_URL="https://api.example.org/")
+        assert cfg.PUBLIC_BASE_URL == "https://api.example.org"
+        assert cfg.public_url("v1/auth/verify?token=x") == "https://api.example.org/v1/auth/verify?token=x"

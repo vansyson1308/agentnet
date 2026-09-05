@@ -1,26 +1,59 @@
-# AgentNet Staging — shares Postgres + Redis with prod (different DB
-# schema agentnet_staging). Lives on the existing agentnet network.
-# Ports offset by +100 so prod and staging coexist on the same host.
+# =============================================================================
+# AgentNet STAGING — standalone Compose project `agentnet-staging`
+#
+#   docker compose -f docker-compose.staging.yml config          # render/validate
+#   docker compose -f docker-compose.staging.yml up -d --build   # project name comes from `name:` below
+#   docker compose -f docker-compose.staging.yml down            # removes ONLY agentnet-staging resources
+#
+# Design rules (tests/test_compose_topology.py enforces them):
+#   * This file is complete on its own. NEVER combine it with docker-compose.yml:
+#     multiple -f files form ONE composite application, so the merged project
+#     would own the local/prod services too.
+#   * Postgres and Redis are EXTERNAL, managed dependencies addressed by
+#     POSTGRES_HOST / REDIS_HOST (no container-name defaults, no lifecycle
+#     ownership here). To reach infra that lives on another Compose project's
+#     network on the same host, add the opt-in overlay
+#     docker-compose.staging.shared-infra.yml.
+#   * Every container is named agentnet-staging-*; no docker socket; no
+#     published Society metrics port; Society runtime and autonomous code loop
+#     OFF unless the operator sets them; no model credential default.
+#   * Secrets come only from the deployment environment (.env on the host or
+#     the platform's secret store). `:?` makes `docker compose config` fail fast
+#     when a required value is missing.
+# =============================================================================
+name: agentnet-staging
+
+x-staging-db: &staging-db
+  POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST must point at the managed staging database}
+  POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+  POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+  POSTGRES_DB: ${POSTGRES_DB:-agentnet_staging}
+
+x-staging-redis: &staging-redis
+  REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must point at the managed staging Redis}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+
+x-staging-common: &staging-common
+  JAEGER_ENABLED: "false"
+  ENVIRONMENT: staging
+  # Which peers' X-Forwarded-* headers uvicorn trusts (the platform proxy).
+  # Default loopback = trust nobody on the published port.
+  FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
+
 services:
   registry-staging:
     build: ./services/registry
     container_name: agentnet-staging-registry
     environment:
-      POSTGRES_HOST: agentnet-postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: agentnet_staging
-      REDIS_HOST: agentnet-redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      <<: [*staging-db, *staging-redis, *staging-common]
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
       JWT_ALGORITHM: HS256
       JWT_EXPIRATION: 3600
-      JAEGER_ENABLED: "false"
-      ENVIRONMENT: staging
-      CORS_ALLOWED_ORIGINS: "https://staging.agentnet.io.vn,http://localhost:8180"
-      RATE_LIMIT_PER_MINUTE: 60
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required (comma-separated public origins)}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
       # Society API (operator surfaces + world-event ingress). The runtime
       # itself lives in society-worker-staging; the API only reads state,
       # records approvals and accepts allow-listed world events.
@@ -31,9 +64,8 @@ services:
       SOCIETY_INGRESS_MAX_PER_ACTOR_PER_HOUR: ${SOCIETY_INGRESS_MAX_PER_ACTOR_PER_HOUR:-30}
       SOCIETY_INGRESS_MAX_PER_HOUR: ${SOCIETY_INGRESS_MAX_PER_HOUR:-120}
     ports:
-      - "8100:8000"
-    # Inherits Dockerfile CMD which already runs uvicorn with
-    # --proxy-headers --forwarded-allow-ips '*'.
+      - "${STAGING_REGISTRY_PORT:-8100}:8000"
+    # Inherits Dockerfile CMD (uvicorn with --proxy-headers --forwarded-allow-ips '*').
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=2).status==200 else 1)\""]
       interval: 30s
@@ -42,28 +74,19 @@ services:
       start_period: 60s
     restart: unless-stopped
     networks:
-      - agentnet_agentnet-network
+      - staging
 
   payment-staging:
     build: ./services/payment
     container_name: agentnet-staging-payment
     environment:
-      POSTGRES_HOST: agentnet-postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: agentnet_staging
-      REDIS_HOST: agentnet-redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      <<: [*staging-db, *staging-redis, *staging-common]
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
       JWT_ALGORITHM: HS256
       JWT_EXPIRATION: 3600
-      JAEGER_ENABLED: "false"
-      ENVIRONMENT: staging
-      CORS_ALLOWED_ORIGINS: "https://staging.agentnet.io.vn,http://localhost:8180"
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS is required (comma-separated public origins)}
     ports:
-      - "8101:8001"
+      - "${STAGING_PAYMENT_PORT:-8101}:8001"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/healthz', timeout=2).status==200 else 1)\""]
       interval: 30s
@@ -72,35 +95,23 @@ services:
       start_period: 30s
     restart: unless-stopped
     networks:
-      - agentnet_agentnet-network
+      - staging
 
   worker-staging:
     build: ./services/worker
     container_name: agentnet-staging-worker
     environment:
-      POSTGRES_HOST: agentnet-postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: agentnet_staging
-      REDIS_HOST: agentnet-redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      JAEGER_ENABLED: "false"
-      ENVIRONMENT: staging
-      # Avoid prom port collision with prod worker (which already binds 9100
-      # on its own container's loopback; both are isolated, but if anyone
-      # ever exposes them they need different host ports).
-      WORKER_METRICS_PORT: 9100
+      <<: [*staging-db, *staging-redis, *staging-common]
+      WORKER_METRICS_PORT: 9100   # container-internal; never published
     command: python -m app.worker
     restart: unless-stopped
     networks:
-      - agentnet_agentnet-network
+      - staging
 
   # Autonomous Society Runtime worker (staging). OFF by default: with
   # SOCIETY_RUNTIME_ENABLED unset the process idles and touches nothing.
   # Hard rules: no docker socket, no published ports (metrics stay on the
-  # compose network), no production settings, and the production deploy
+  # project network), no production settings, and the production deploy
   # intent is not a setting at all (hard OFF in code).
   society-worker-staging:
     build: ./services/registry
@@ -108,21 +119,12 @@ services:
     entrypoint: []
     command: python -m app.society.worker
     environment:
-      POSTGRES_HOST: agentnet-postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: agentnet_staging
-      REDIS_HOST: agentnet-redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
-      JAEGER_ENABLED: "false"
-      ENVIRONMENT: staging
+      <<: [*staging-db, *staging-redis, *staging-common]
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
       SOCIETY_RUNTIME_ENABLED: ${SOCIETY_RUNTIME_ENABLED:-false}
       SOCIETY_AUTONOMOUS_CODE_ENABLED: ${SOCIETY_AUTONOMOUS_CODE_ENABLED:-false}
       SOCIETY_STAGING_DEPLOY_ENABLED: "false"
-      # Live model: credential comes from the host .env / secret store only.
+      # Live model: credential comes from the deployment environment only.
       # Never commit it; `python -m app.society.canary preflight` refuses
       # credentials that ever appeared in git history.
       SOCIETY_MODEL_PROVIDER: ${SOCIETY_MODEL_PROVIDER:-scripted}
@@ -150,7 +152,7 @@ services:
       GIT_CONFIG_VALUE_0: "*"
     volumes:
       - ./:/workspace/repo
-      - society_workspaces_staging:/var/lib/agentnet-society/workspaces
+      - society_workspaces:/var/lib/agentnet-society/workspaces
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:9101/metrics', timeout=2).status==200 else 1)\""]
       interval: 30s
@@ -159,7 +161,7 @@ services:
       start_period: 30s
     restart: unless-stopped
     networks:
-      - agentnet_agentnet-network
+      - staging
 
   dashboard-staging:
     build: ./services/dashboard
@@ -168,11 +170,11 @@ services:
       REGISTRY_URL: http://agentnet-staging-registry:8000
       PAYMENT_URL: http://agentnet-staging-payment:8001
       DASHBOARD_PORT: 8080
-      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY}
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:?FLASK_SECRET_KEY is required}
       BEHIND_PROXY: "true"
       ENVIRONMENT: staging
     ports:
-      - "8180:8080"
+      - "${STAGING_DASHBOARD_PORT:-8180}:8080"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz', timeout=2).status==200 else 1)\""]
       interval: 30s
@@ -181,11 +183,11 @@ services:
       start_period: 30s
     restart: unless-stopped
     networks:
-      - agentnet_agentnet-network
+      - staging
 
 volumes:
-  society_workspaces_staging:
+  society_workspaces:   # rendered as agentnet-staging_society_workspaces
 
 networks:
-  agentnet_agentnet-network:
-    external: true
+  staging:              # rendered as agentnet-staging_staging; owned by this project only
+    driver: bridge

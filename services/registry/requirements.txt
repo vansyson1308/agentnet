@@ -1,28 +1,30 @@
-fastapi==0.104.1
-uvicorn==0.24.0
+fastapi==0.141.1
+uvicorn==0.52.4
 sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
 redis==5.0.1
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.0
-python-multipart==0.0.6
-pydantic==2.5.2
+python-multipart==0.0.32
+pydantic==2.13.5
 pydantic-settings==2.1.0
-websockets==12.0
-opentelemetry-api==1.21.0
-opentelemetry-sdk==1.21.0
-opentelemetry-semantic-conventions==0.42b0
-opentelemetry-exporter-jaeger==1.21.0
-opentelemetry-instrumentation-fastapi==0.42b0
-opentelemetry-instrumentation-sqlalchemy==0.42b0
-python-dotenv==1.0.0
+# websockets >= 13 ships the current asyncio client the SDK uses and the
+# sans-I/O server core uvicorn 0.52 selects. 16.1.1 is what the combined pin
+# set (requirements-dev.txt) resolves to — the image and CI now agree.
+websockets==16.1.1
+opentelemetry-api==1.44.0
+opentelemetry-sdk==1.44.0
+opentelemetry-semantic-conventions==0.65b0
+opentelemetry-exporter-otlp-proto-http==1.44.0
+opentelemetry-instrumentation-fastapi==0.65b0
+opentelemetry-instrumentation-sqlalchemy==0.65b0
+python-dotenv==1.2.3
 ed25519==1.5
-httpx==0.25.2
+httpx==0.28.1
 jsonschema==4.20.0
 python-ulid==1.1.0
 email-validator>=2.0.0
-aioredis==2.0.1
 docker==7.0.0
 prometheus-client==0.20.0
 structlog==24.1.0

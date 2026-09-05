@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
 import redis.asyncio as redis
@@ -51,7 +51,8 @@ PLAZA_CHAT_BUBBLE_DURATION = 5.0  # seconds chat bubbles stay visible
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
-        self.agent_connections: Dict[str, str] = {}  # agent_id -> connection_id
+        self.agent_connections: Dict[str, str] = {}
+        self.connection_scoped_tokens: dict = {}  # agent_id -> connection_id
         self.redis_client = None
         self.pubsub = None
         # Plaza state
@@ -112,10 +113,13 @@ class ConnectionManager:
             connection_id = str(uuid.uuid4())
             self.active_connections[connection_id] = websocket
             self.agent_connections[str(agent.id)] = connection_id
+            # Remember whether this connection authenticated with a scoped
+            # token so the money plane can enforce allowed_actions/cap.
+            self.connection_scoped_tokens[connection_id] = token_data.scoped_token_id
 
             # Mark agent as online on WebSocket connect
             agent.is_online = True
-            agent.last_seen_at = datetime.utcnow()
+            agent.last_seen_at = datetime.now(timezone.utc)  # column is TIMESTAMPTZ
             db.commit()
 
             logger.info(f"Agent {agent.id} connected with connection ID {connection_id}")
@@ -150,6 +154,7 @@ class ConnectionManager:
                     break
 
             del self.active_connections[connection_id]
+            self.connection_scoped_tokens.pop(connection_id, None)
 
             if agent_id:
                 del self.agent_connections[agent_id]
@@ -160,7 +165,7 @@ class ConnectionManager:
                         agent = db.query(Agent).filter(Agent.id == agent_id).first()
                         if agent:
                             agent.is_online = False
-                            agent.last_seen_at = datetime.utcnow()
+                            agent.last_seen_at = datetime.now(timezone.utc)  # column is TIMESTAMPTZ
                             db.commit()
                             # Broadcast offline status
                             asyncio.create_task(
@@ -298,6 +303,16 @@ class ConnectionManager:
     ) -> Optional[dict]:
         _uuid = uuid_mod
         _Agent = agent_model
+
+        # Scoped-token guard (parity with REST /tasks): every money method
+        # needs the `execute` action; `execute` also charges the cap inside
+        # this transaction so a failed escrow rolls the charge back.
+        scoped_id = self.connection_scoped_tokens.get(self.agent_connections.get(str(agent_id)))
+        if scoped_id is not None and method != "ping":
+            from .authz import scoped_action_allowed_by_id
+
+            if not scoped_action_allowed_by_id(db, scoped_id, "execute"):
+                return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32003, "message": "scoped token does not allow action 'execute'"}}
         _TaskStatus = task_status_enum
         ExecuteParams = exec_params_cls
         EscrowError = escrow_err
@@ -339,6 +354,10 @@ class ConnectionManager:
             if not callee_id:
                 return _err(-32602, "Missing callee_agent_id")
             try:
+                if scoped_id is not None:
+                    from .authz import reserve_scoped_spend_by_id
+
+                    reserve_scoped_spend_by_id(db, scoped_id, exec_params.payment.max_budget)
                 task_session, _tx = create_task_with_escrow(
                     db=db,
                     caller_agent=agent,
@@ -351,7 +370,11 @@ class ConnectionManager:
                     idempotency_key=idem_key,
                 )
             except EscrowError as e:
+                db.rollback()
                 return _err(-32000, str(e))
+            except PermissionError as e:
+                db.rollback()
+                return _err(-32003, str(e))
 
             dispatch = {
                 "jsonrpc": "2.0",

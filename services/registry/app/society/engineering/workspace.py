@@ -106,9 +106,14 @@ def branch_name(settings: SocietySettings, candidate_id: uuid.UUID) -> str:
 
 
 def is_protected(rel_path: str) -> bool:
-    p = rel_path.replace(os.sep, "/")
-    for pat in PROTECTED_PATTERNS:
-        if fnmatch.fnmatch(p, pat) or fnmatch.fnmatch(p, "*/" + pat) or p.startswith(pat.rstrip("*")):
+    """Case-insensitive on purpose: the worktree may live on a
+    case-insensitive filesystem (macOS/Windows) where ``.ENV`` opens
+    ``.env``. ``fnmatch.fnmatch`` is case-sensitive on POSIX, so we fold
+    both sides ourselves."""
+    p = rel_path.replace(os.sep, "/").lower()
+    for raw in PROTECTED_PATTERNS:
+        pat = raw.lower()
+        if fnmatch.fnmatchcase(p, pat) or fnmatch.fnmatchcase(p, "*/" + pat) or p.startswith(pat.rstrip("*")):
             return True
     return False
 
@@ -118,7 +123,9 @@ def contained_path(ws_root: pathlib.Path, rel_path: str) -> pathlib.Path:
     if not rel_path or rel_path.startswith(("/", "~")) or "\\" in rel_path or "\0" in rel_path:
         raise WorkspaceError(f"path not allowed: {rel_path!r}")
     parts = pathlib.PurePosixPath(rel_path).parts
-    if any(p in ("..", ".") for p in parts):
+    if not parts or any(p in ("..", ".") for p in parts):
+        # "" / "." / "./" collapse to the workspace root itself, which is a
+        # directory, never a file a candidate may write.
         raise WorkspaceError(f"path traversal rejected: {rel_path!r}")
     root = ws_root.resolve()
     target = (root / rel_path)

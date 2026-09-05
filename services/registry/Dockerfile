@@ -11,17 +11,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc python3-dev
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir alembic==1.13.1
 
-# Copy application code + alembic config + entrypoint.
+# Copy application code + alembic config + entrypoint. init-db/ is copied
+# too so the entrypoint can bootstrap an EMPTY database (managed Postgres
+# never runs /docker-entrypoint-initdb.d) via `python -m app.db_bootstrap`.
 COPY app /app/app
 COPY alembic.ini /app/alembic.ini
 COPY migrations /app/migrations
+COPY init-db /app/init-db
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 8000
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-# --proxy-headers + --forwarded-allow-ips '*' so request.url / request.scheme
-# pick up the X-Forwarded-* headers Caddy injects in front of us. Without
-# this the agent-card endpoint advertises an internal http URL.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# --proxy-headers lets request.url / request.scheme / request.client follow
+# X-Forwarded-* — but ONLY from peers listed in FORWARDED_ALLOW_IPS (uvicorn
+# reads that env var; default 127.0.0.1). Set it to your platform's proxy
+# address range at deploy time. Never '*' on a directly reachable port: that
+# would let any client spoof its IP (rate-limit bypass) and scheme.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]

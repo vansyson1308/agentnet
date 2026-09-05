@@ -22,13 +22,10 @@ help:
 	@echo "  make demo          Run end-to-end demo"
 
 install:
-	@echo "Installing dependencies..."
-	cd services/registry && pip install -r requirements.txt
-	cd services/payment && pip install -r requirements.txt
-	cd services/worker && pip install -r requirements.txt
-	cd services/dashboard && pip install -r requirements.txt
+	@echo "Installing dependencies (one resolver pass over every service's pins + test tooling)..."
+	pip install -r requirements-dev.txt
+	pip check
 	cd sdk/python && pip install -e .
-	pip install pytest pytest-cov black isort flake8
 
 # ─────────────────────────────────────────────────────────
 # Lint & Format
@@ -61,9 +58,24 @@ test-ci:
 # Docker Compose
 # ─────────────────────────────────────────────────────────
 
+# Throwaway values so the staging project renders. Generated per run so no
+# credential-shaped literal ever lives in the repository (secret scanners
+# rightly flag those); they are never used against a real service.
+RENDER_ENV = POSTGRES_HOST=db.invalid POSTGRES_USER=render POSTGRES_PASSWORD=$$(openssl rand -hex 8) \
+	REDIS_HOST=redis.invalid REDIS_PASSWORD=$$(openssl rand -hex 8) JWT_SECRET_KEY=$$(openssl rand -hex 16) \
+	FLASK_SECRET_KEY=$$(openssl rand -hex 16) CORS_ALLOWED_ORIGINS=https://staging.invalid
+
 compose-validate:
-	@echo "Validating docker-compose..."
-	docker compose config
+	@echo "Validating LOCAL compose project (agentnet-local)..."
+	docker compose -f docker-compose.yml config > /dev/null
+	@echo "Validating STAGING compose project (agentnet-staging; throwaway env, render only)..."
+	$(RENDER_ENV) docker compose -f docker-compose.staging.yml config > /dev/null
+	@echo "Validating STAGING + shared-infra overlay..."
+	SHARED_INFRA_NETWORK=render-overlay $(RENDER_ENV) docker compose -f docker-compose.staging.yml -f docker-compose.staging.shared-infra.yml config > /dev/null
+	@echo "compose projects OK (local + staging are separate projects; see tests/test_compose_topology.py)"
+
+compose-staging-config:
+	docker compose -f docker-compose.staging.yml config
 
 compose-up:
 	@echo "Starting services..."

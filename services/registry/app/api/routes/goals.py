@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from ...auth import get_current_user
+from ...authz import require_operator_user
 from ...database import get_db
 from ...models import (
     Agent,
@@ -69,6 +70,7 @@ def _check_transition(current: GoalStatus, target: GoalStatus) -> None:
 
 def _ensure_owner(db: Session, current_user: User, owner_type: GoalOwnerType, owner_id: uuid.UUID) -> None:
     if owner_type == GoalOwnerType.SOCIETY:
+        require_operator_user(current_user, detail="society-scope goals are managed by operators (or the runtime)")
         return
     if owner_type == GoalOwnerType.USER:
         if owner_id != current_user.id:

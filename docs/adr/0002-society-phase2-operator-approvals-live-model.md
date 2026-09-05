@@ -102,7 +102,7 @@ missing or compromised credential yields `LIVE MODEL BLOCKED — NO SAFE CREDENT
 `docker-compose.staging.yml` adds `society-worker-staging` (registry image, `agentnet_staging` DB,
 `SOCIETY_RUNTIME_ENABLED` and `SOCIETY_AUTONOMOUS_CODE_ENABLED` default `false`, no docker socket,
 no published ports, healthcheck on the internal metrics port, credential only from the host
-environment). `docker-compose.prod.yml` has no society service and no `SOCIETY_*` variable;
+environment). The production overlay of that time carried no society service and no `SOCIETY_*` variable (it has since been retired to `deploy/legacy-vps/`, ADR-0003);
 `tests/test_society_staging_compose.py` enforces both. Production deploy remains a hard `False` in
 code, not a setting. Migrations are proven on fresh and upgrade paths by
 `deploy/society-migration-check.sh` (also downgrade/upgrade round-trip).

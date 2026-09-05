@@ -63,6 +63,11 @@ This repo involves financial invariants. Follow these rules strictly:
 
 ### Secrets
 - Never commit secrets. Keep `.env.example` updated whenever env vars change.
+
+### Warnings and dependency coherence (Phase 2.6)
+- `pytest.ini` turns repo-owned deprecation classes into errors (unknown marks, Pydantic V1 `class Config`, `on_event`, `regex=`, `MovedIn20Warning`, deprecated `websockets` namespaces, invalid escapes). Fix the cause; never add a blanket ignore. Third-party ignores are narrow and documented in ADR-0003 D8.
+- Every service pins its runtime; `requirements-dev.txt` includes all of them in one resolver pass. `scripts/ci/check_service_envs.sh` proves each service alone on the images' Python 3.10 — a shared library must resolve to one version everywhere.
+- FastAPI apps use one `lifespan` (no `@app.on_event`); models use `model_config = ConfigDict(...)`; `Base` is a `DeclarativeBase`.
 - `tests/test_no_hardcoded_secrets.py` scans for provider keys / password literals / secret env defaults.
 
 ### Autonomous Society Runtime (services/registry/app/society)
@@ -88,8 +93,8 @@ This repo involves financial invariants. Follow these rules strictly:
 
 ### P1 — Make repo runnable end-to-end
 - ✅ `docker compose config` succeeds.
-- ✅ Dockerfiles created for: registry, payment, worker.
-- ✅ telegram-bot and dashboard removed from compose (not in source).
+- ✅ Dockerfiles exist for: registry, payment, worker, simulation, dashboard.
+- ✅ `docker-compose.yml` is the LOCAL project (`agentnet-local`); staging is a separate project (`docker-compose.staging.yml`, `agentnet-staging`); the VPS stack is archived under `deploy/legacy-vps/` (see `docs/DEPLOYMENT_ARCHITECTURE.md`).
 - `.env.example` exists and matches requirements.
 - **Tests exist**: run `pytest tests/ -v` to verify invariants.
 
@@ -104,7 +109,7 @@ This repo involves financial invariants. Follow these rules strictly:
   - gateway → redis → worker → db → notify stub
 
 ### P3 — MVP gaps / product completeness
-- Dashboard (balance/history/traces/agent management) - not in source
+- Dashboard: `services/dashboard/` (Flask) is the canonical UI; older fragments live in `legacy/frontend-fragments/`
 - SDK + sample agents
 - Remaining WS methods (if spec requires)
 - Input schema validation at task execution time
@@ -170,6 +175,9 @@ python -m app.worker
 ### 5.3 Testing / Verification
 
 ```bash
+# One authoritative dev/test set (every service's pins in ONE resolver pass + pytest-timeout)
+pip install -r requirements-dev.txt
+
 # Run all tests
 pytest tests/ -v
 
@@ -266,7 +274,7 @@ Copy `.env.example` to `.env` and configure:
 - `POSTGRES_*` - Database credentials
 - `REDIS_*` - Redis credentials
 - `JWT_SECRET_KEY`, `JWT_ALGORITHM`, `JWT_EXPIRATION` - Auth
-- `JAEGER_AGENT_HOST`, `JAEGER_AGENT_PORT` - Tracing (optional)
+- `JAEGER_ENABLED`, `JAEGER_AGENT_HOST`, `OTEL_EXPORTER_OTLP_PORT` / `OTEL_EXPORTER_OTLP_ENDPOINT` - Tracing export over OTLP/HTTP (optional)
 - `ENVIRONMENT` - Set to production for production (default: development)
 - `CORS_ALLOWED_ORIGINS` - Comma-separated allowed origins for production
 - `RATE_LIMIT_PER_MINUTE` - Max requests per minute (default: 60)

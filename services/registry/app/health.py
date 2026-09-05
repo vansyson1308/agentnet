@@ -20,6 +20,8 @@ simulation services since each replica scrapes its own ``/metrics``.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import time
 from typing import Optional
 
@@ -47,6 +49,8 @@ from .database import engine
 # Counter object back from the registry.
 # ---------------------------------------------------------------------------
 
+
+logger = logging.getLogger(__name__)
 
 def _counter(name: str, doc: str, labels: list[str]) -> Counter:
     existing = getattr(REGISTRY, "_names_to_collectors", {}).get(name)
@@ -151,14 +155,16 @@ def make_health_router(service_name: str) -> APIRouter:
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
         except Exception as e:  # broad on purpose — any DB error = not ready
-            errs.append(f"db: {e}")
+            logger.warning("readiness: database check failed: %s", e)
+            errs.append("db")
 
         client: Optional[redis.Redis] = None
         try:
             client = redis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
             await asyncio.wait_for(client.ping(), timeout=2.0)
         except Exception as e:
-            errs.append(f"redis: {e}")
+            logger.warning("readiness: redis check failed: %s", e)
+            errs.append("redis")
         finally:
             if client is not None:
                 try:
@@ -168,7 +174,7 @@ def make_health_router(service_name: str) -> APIRouter:
 
         if errs:
             return Response(
-                content='{"status":"not_ready","errors":' + str(errs) + "}",
+                content=json.dumps({"status": "not_ready", "failing": errs}),
                 status_code=503,
                 media_type="application/json",
             )

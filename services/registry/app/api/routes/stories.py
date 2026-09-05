@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import UUID4, BaseModel
+from pydantic import BaseModel, ConfigDict, UUID4
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -29,8 +29,7 @@ class StoryResponse(BaseModel):
     displayed_count: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StoryCreate(BaseModel):

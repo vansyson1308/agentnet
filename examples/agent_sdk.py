@@ -102,7 +102,9 @@ class AgentSDK:
         self.api_key = api_key
         self.endpoint = endpoint or f"https://agent-sdk.local/{name}"
         self.agent_id: Optional[str] = None
-        self.ws: Optional[websockets.WebSocketClientProtocol] = None
+        # Connection object of whichever websockets client API is installed
+        # (``websockets.WebSocketClientProtocol`` is a deprecated alias since 14.0).
+        self.ws: Optional[Any] = None
         self.running = True
         self._task_id_counter = 0
 

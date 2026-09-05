@@ -23,11 +23,18 @@ Usage::
         await ws.task_confirm("...", output={"result": "ok"})
         async for msg in ws.recv():
             await on_message(msg)
+
+Supported ``websockets`` releases: ``>=12,<18`` (``agentnet[ws]``). The
+package rewrote its asyncio client in 13.0 and deprecated the original one
+in 14.0 (``websockets.legacy`` / ``websockets.client.WebSocketClientProtocol``
+now warn). :func:`_client_connect` is the ONE place that knows about the two
+APIs — the rest of this module only relies on the behaviour they share:
+``await connect(url)`` → connection, ``send``, ``async for`` iteration,
+``close`` and ``websockets.exceptions.ConnectionClosed``.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 from contextlib import asynccontextmanager
@@ -35,10 +42,46 @@ from typing import Any, AsyncIterator, Dict, Optional
 
 try:
     import websockets
-    from websockets.client import WebSocketClientProtocol
+    from websockets.exceptions import ConnectionClosed
 except ImportError:  # pragma: no cover
     websockets = None
-    WebSocketClientProtocol = Any  # type: ignore
+
+    class ConnectionClosed(Exception):  # type: ignore[no-redef]
+        """Placeholder so the module imports without ``websockets``."""
+
+
+#: The websockets client API this process ended up with: ``"asyncio"``
+#: (websockets >= 13, ``websockets.asyncio.client``) or ``"classic"``
+#: (websockets 12, ``websockets.connect`` — not deprecated at that version).
+CLIENT_API: Optional[str] = None
+
+
+def _client_connect(url: str, headers: Optional[Dict[str, str]] = None):
+    """Return the connect awaitable for whichever client API is installed.
+
+    * websockets >= 13: ``websockets.asyncio.client.connect`` — the current
+      implementation (default since 14.0); extra request headers are passed
+      as ``additional_headers``.
+    * websockets 12: ``websockets.connect`` — the classic implementation,
+      not deprecated at that version; the same headers are ``extra_headers``.
+
+    Never imports ``websockets.legacy`` or ``websockets.client``, so no
+    deprecated namespace is touched on any supported release.
+    """
+    global CLIENT_API
+    if websockets is None:  # pragma: no cover - guarded by the constructor
+        raise ImportError("websockets is not installed")
+    try:
+        from websockets.asyncio.client import connect  # websockets >= 13
+    except ImportError:
+        CLIENT_API = "classic"
+        if headers:
+            return websockets.connect(url, extra_headers=headers)
+        return websockets.connect(url)
+    CLIENT_API = "asyncio"
+    if headers:
+        return connect(url, additional_headers=headers)
+    return connect(url)
 
 
 def _registry_to_ws(registry_url: str) -> str:
@@ -58,6 +101,7 @@ class AgentWebSocketClient:
         registry_url: str,
         agent_id: str,
         token: str,
+        headers: Optional[Dict[str, str]] = None,
     ) -> None:
         if websockets is None:
             raise ImportError(
@@ -66,16 +110,34 @@ class AgentWebSocketClient:
             )
         ws_base = _registry_to_ws(registry_url.rstrip("/"))
         self._url = f"{ws_base}/v1/ws/agent/{agent_id}?token={token}"
-        self._conn: Optional[WebSocketClientProtocol] = None
+        self._headers = dict(headers) if headers else None
+        self._conn: Optional[Any] = None
 
-    async def __aenter__(self) -> "AgentWebSocketClient":
-        self._conn = await websockets.connect(self._url)
+    @property
+    def connected(self) -> bool:
+        return self._conn is not None
+
+    async def connect(self) -> "AgentWebSocketClient":
+        """Open the connection (idempotent: a live connection is kept)."""
+        if self._conn is None:
+            self._conn = await _client_connect(self._url, self._headers)
         return self
 
+    async def close(self) -> None:
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            await conn.close()
+
+    async def reconnect(self) -> "AgentWebSocketClient":
+        """Drop the current connection (if any) and open a fresh one."""
+        await self.close()
+        return await self.connect()
+
+    async def __aenter__(self) -> "AgentWebSocketClient":
+        return await self.connect()
+
     async def __aexit__(self, exc_type, exc, tb) -> None:
-        if self._conn is not None:
-            await self._conn.close()
-            self._conn = None
+        await self.close()
 
     async def _send(self, message: Dict[str, Any]) -> None:
         if self._conn is None:
@@ -142,7 +204,7 @@ class AgentWebSocketClient:
         )
 
     async def recv(self) -> AsyncIterator[Dict[str, Any]]:
-        """Yield decoded JSON messages from the registry forever."""
+        """Yield decoded JSON messages from the registry until the connection closes."""
         if self._conn is None:
             raise RuntimeError("Not connected")
         try:
@@ -153,16 +215,16 @@ class AgentWebSocketClient:
                     yield json.loads(raw)
                 except json.JSONDecodeError:
                     continue
-        except websockets.ConnectionClosed:
+        except ConnectionClosed:
             return
 
 
 @asynccontextmanager
 async def connect_agent(
-    *, registry_url: str, agent_id: str, token: str
+    *, registry_url: str, agent_id: str, token: str, headers: Optional[Dict[str, str]] = None
 ) -> AsyncIterator[AgentWebSocketClient]:
     """Convenience wrapper so callers can ``async with connect_agent(...) as ws:``."""
     async with AgentWebSocketClient(
-        registry_url=registry_url, agent_id=agent_id, token=token
+        registry_url=registry_url, agent_id=agent_id, token=token, headers=headers
     ) as ws:
         yield ws

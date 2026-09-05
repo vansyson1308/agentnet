@@ -29,8 +29,15 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/v1/auth/user/login")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against a hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verify a password against a hash. Accounts without a usable hash
+    (placeholder/system users) can never log in — that is a clean 401, not
+    a 500 from passlib's UnknownHashError."""
+    if not plain_password or not hashed_password:
+        return False
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except (ValueError, TypeError):
+        return False
 
 
 def get_password_hash(password: str) -> str:
@@ -146,19 +153,30 @@ def verify_token(token: str, db: Optional[Session] = None) -> TokenData:
         raise credentials_exception
 
 
+SCOPED_TOKEN_NOT_A_USER = "scoped tokens are agent-scoped and cannot act as a user"
+
+
+def _attach_scope(db: Session, agent: Agent, token_data: TokenData) -> Agent:
+    """Remember the scoped token a request came in with (transient attribute,
+    never persisted) so money paths can enforce allowed_actions/spending_cap."""
+    spt = None
+    if token_data.scoped_token_id is not None:
+        spt = db.query(ScopedToken).filter(ScopedToken.id == token_data.scoped_token_id).first()
+    setattr(agent, "scoped_token", spt)
+    return agent
+
+
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
-    """Get the current user from a JWT or scoped token."""
+    """Get the current user from a USER JWT.
+
+    Scoped ``spt_`` tokens are refused here: they are minted per agent and
+    must never resolve to the owning user's full authority (that would let
+    anyone holding an agent token manage the owner's account, wallets and
+    every other agent)."""
     token_data = verify_token(token, db=db)
 
-    # Scoped token: resolve user via agent
-    if token_data.scoped_token_id is not None and token_data.agent_id is not None:
-        agent = db.query(Agent).filter(Agent.id == token_data.agent_id).first()
-        if agent is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-        user = db.query(User).filter(User.id == agent.user_id).first()
-        if user is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-        return user
+    if token_data.scoped_token_id is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=SCOPED_TOKEN_NOT_A_USER)
 
     if token_data.user_id is None:
         raise HTTPException(
@@ -191,7 +209,7 @@ async def get_current_agent(token: str = Depends(oauth2_scheme), db: Session = D
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
-    return agent
+    return _attach_scope(db, agent, token_data)
 
 
 async def get_current_user_or_agent(
@@ -205,7 +223,7 @@ async def get_current_user_or_agent(
         agent = db.query(Agent).filter(Agent.id == token_data.agent_id).first()
         if agent is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-        return agent
+        return _attach_scope(db, agent, token_data)
 
     if token_data.user_id is not None:
         user = db.query(User).filter(User.id == token_data.user_id).first()
@@ -225,8 +243,41 @@ async def get_current_user_or_agent(
         )
 
 
+AGENT_LOGIN_MAX_SKEW_SECONDS = int(os.getenv("AGENT_LOGIN_MAX_SKEW_SECONDS", "300"))
+
+
+def _parse_login_timestamp(timestamp: str) -> Optional[datetime]:
+    """Accept a unix epoch (seconds, optionally fractional) or ISO-8601."""
+    ts = (timestamp or "").strip()
+    if not ts:
+        return None
+    try:
+        return datetime.fromtimestamp(float(ts), tz=timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        pass
+    try:
+        parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def login_timestamp_is_fresh(timestamp: str, *, now: Optional[datetime] = None) -> bool:
+    """A signed login is only valid for a short window around *now*; otherwise a
+    captured signature could be replayed forever (the signed message is
+    ``agent_id:timestamp`` and carries no nonce)."""
+    parsed = _parse_login_timestamp(timestamp)
+    if parsed is None:
+        return False
+    now = now or datetime.now(timezone.utc)
+    return abs((now - parsed).total_seconds()) <= AGENT_LOGIN_MAX_SKEW_SECONDS
+
+
 def get_agent_by_signature(agent_id: str, signature: str, timestamp: str, db: Session) -> Optional[Agent]:
-    """Get an agent by ID and verify its signature."""
+    """Get an agent by ID and verify its signature (fresh timestamp required)."""
+    if not login_timestamp_is_fresh(timestamp):
+        return None
+
     agent = db.query(Agent).filter(Agent.id == agent_id).first()
 
     if agent is None:

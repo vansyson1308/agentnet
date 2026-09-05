@@ -7,7 +7,6 @@ from .graph import router as graph_router
 from .offers import router as offers_router
 from .tasks import router as tasks_router
 from .websocket import router as websocket_router
-from .health import router as health_router
 
 from .notifications import router as notifications_router
 from .stats import router as stats_router
@@ -36,7 +35,6 @@ router.include_router(websocket_router, prefix="/ws", tags=["websocket"])
 router.include_router(stats_router, prefix="/stats", tags=["stats"])
 router.include_router(stories_router, prefix="/stories", tags=["stories"])
 router.include_router(chat_router, prefix="/chat", tags=["chat"])
-router.include_router(health_router, prefix="/v1/health", tags=["health"])
 # Phase: agent-goals-and-self-improvement
 router.include_router(goals_router, prefix="/goals", tags=["goals"])
 router.include_router(improvements_router, prefix="/improvements", tags=["improvements"])

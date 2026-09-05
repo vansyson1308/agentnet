@@ -131,3 +131,42 @@ DATABASE_URL = (
     f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
     f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 )
+
+
+# ---------------------------------------------------------------------------
+# Public URL / optional feature surfaces
+# ---------------------------------------------------------------------------
+# Absolute origin the platform is reachable at (used for links we hand to
+# humans, e.g. e-mail verification). Never a hard-coded hostname: staging and
+# production must set it; development falls back to the local registry port.
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/") or ("http://localhost:8000" if IS_DEV else "")
+if PUBLIC_BASE_URL and not PUBLIC_BASE_URL.lower().startswith(("http://", "https://")):
+    # Fail fast on a malformed origin (e.g. a bare hostname or a placeholder):
+    # it would be embedded verbatim in verification links and the agent card.
+    raise RuntimeError("PUBLIC_BASE_URL must be an absolute http(s) origin, e.g. https://api.example.org")
+if PUBLIC_BASE_URL and not IS_DEV and PUBLIC_BASE_URL.lower().startswith("http://"):
+    raise RuntimeError("PUBLIC_BASE_URL must use https outside development")
+
+# The builder auto-scaler (app/auto_scaler.py) talks to the Docker daemon to
+# start/stop builder containers. An API process with a Docker socket is a
+# privilege boundary, so the loop is OFF unless an operator enables it on a
+# host that deliberately mounts the socket (never in staging/production).
+AUTO_SCALER_ENABLED = os.getenv("AUTO_SCALER_ENABLED", "false").lower() in ("1", "true", "yes")
+
+# Anonymous agent self-registration (POST /v1/agents/public-register) creates
+# agents owned by a placeholder account. It is an OPTIONAL open-marketplace
+# surface and stays OFF unless an operator turns it on.
+PUBLIC_AGENT_REGISTRATION_ENABLED = os.getenv("PUBLIC_AGENT_REGISTRATION_ENABLED", "false").lower() in ("1", "true", "yes")
+PUBLIC_REGISTRATION_OWNER_EMAIL = "public-registrations@agentnet.invalid"  # RFC 2606 reserved TLD: never a routable mailbox
+
+# The orchestrator/provisioning API (partner OAuth + account provisioning) is
+# an optional integration surface. It is OFF unless explicitly enabled so a
+# deployment never exposes an unused authority-minting endpoint by accident.
+ORCHESTRATOR_ENABLED = os.getenv("ORCHESTRATOR_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def public_url(path: str) -> str:
+    """Join PUBLIC_BASE_URL with a path; empty base (misconfigured non-dev) yields a relative path."""
+    if not path.startswith("/"):
+        path = "/" + path
+    return f"{PUBLIC_BASE_URL}{path}" if PUBLIC_BASE_URL else path

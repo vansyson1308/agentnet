@@ -177,3 +177,54 @@ class TestRateLimitConfiguration:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
+
+
+class TestClientIdentityIsNotSpoofable:
+    """Phase 2.5 §9/§14: the unauthenticated bucket key must come from the
+    peer address uvicorn vouches for, never from a header the caller
+    controls. Otherwise one client gets a fresh bucket per request by
+    rotating X-Forwarded-For (login/register brute force)."""
+
+    def _limiter(self):
+        import sys
+
+        sys.path.insert(0, "services/registry")
+        from services.registry.app.api.rate_limiter import RateLimitMiddleware
+
+        return RateLimitMiddleware(app=None, default_rate=10, default_burst=10, agent_rate=10, agent_burst=10)
+
+    def _request(self, headers: dict, client=("203.0.113.9", 1234)):
+        from starlette.requests import Request
+
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/v1/auth/login",
+            "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+            "client": client,
+            "query_string": b"",
+        }
+        return Request(scope)
+
+    def test_forwarded_for_header_does_not_change_the_key(self):
+        limiter = self._limiter()
+        base = limiter._get_client_key(self._request({}))
+        spoofed = [limiter._get_client_key(self._request({"X-Forwarded-For": f"198.51.100.{i}"})) for i in range(5)]
+        assert set(spoofed) == {base}, "a caller-controlled header must not mint new buckets"
+        assert base == "203.0.113.9"
+
+    def test_bearer_token_keys_by_token_not_ip(self):
+        limiter = self._limiter()
+        a = limiter._get_client_key(self._request({"Authorization": "Bearer tok-a"}, client=("1.1.1.1", 1)))
+        b = limiter._get_client_key(self._request({"Authorization": "Bearer tok-a"}, client=("2.2.2.2", 1)))
+        c = limiter._get_client_key(self._request({"Authorization": "Bearer tok-b"}, client=("1.1.1.1", 1)))
+        assert a == b != c
+        assert "tok-a" not in a, "the key is a digest, the token itself is never used as a key"
+
+    def test_rate_limiter_source_never_parses_forwarded_headers(self):
+        import pathlib
+
+        for svc in ("registry", "payment"):
+            text = pathlib.Path(f"services/{svc}/app/api/rate_limiter.py").read_text(encoding="utf-8")
+            body = "\n".join(line for line in text.splitlines() if not line.strip().startswith("#") and '"""' not in line)
+            assert 'headers.get("X-Forwarded-For"' not in body, svc

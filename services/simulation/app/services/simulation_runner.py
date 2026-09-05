@@ -11,10 +11,9 @@ Results are written to sim_results table only.
 
 import asyncio
 import logging
-import os
 import random
 import uuid
-from datetime import datetime, timezone
+
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -53,115 +52,12 @@ REDDIT_ACTIONS = [
 FAILURE_ACTIONS = {"DISLIKE_POST", "DISLIKE_COMMENT", "DO_NOTHING"}
 
 
-def _seed_simulated_agents(
-    db: Session,
-    profiles: List[Dict[str, Any]],
-    platform: str,
-    scenario: Optional[str] = None,
-) -> None:
-    """
-    Seed each simulated agent with a mission text and 1-2 active goals.
-    Called once per simulation when SIMULATION_PRODUCE_GOALS=1.
-    """
-    goal_templates = [
-        "Increase engagement on my posts",
-        "Build a following in the {platform} community",
-        "Share insights about {topic}",
-        "Network with like-minded users",
-        "Learn from trending discussions about {topic}",
-        "Promote creative content",
-        "Establish authority in {topic} discussions",
-        "Find collaborators for a project",
-    ]
-    topic = scenario if scenario else "social media trends"
-
-    for profile in profiles:
-        agent_name = profile.get("name", f"agent_{profile.get('user_id', 0)}")
-        agent_id = uuid.uuid5(uuid.NAMESPACE_DNS, agent_name)
-
-        # Mission (a single goal with mission-like description)
-        mission_text = (
-            f"Simulated agent '{agent_name}' on {platform}. "
-            f"Scenario: {scenario if scenario else 'general social simulation'}. "
-            "Goals are generated automatically."
-        )
-        mission_goal = Goal(
-            id=uuid.uuid4(),
-            owner_type="AGENT",
-            owner_id=agent_id,
-            goal_type="MISSION",
-            description=mission_text,
-            status="ACTIVE",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
-        db.add(mission_goal)
-
-        # 1-2 additional active goals
-        num_extra_goals = random.randint(1, 2)
-        for _ in range(num_extra_goals):
-            template = random.choice(goal_templates)
-            goal_text = template.format(platform=platform, topic=topic)
-            extra_goal = Goal(
-                id=uuid.uuid4(),
-                owner_type="AGENT",
-                owner_id=agent_id,
-                goal_type="GOAL",
-                description=goal_text,
-                status="ACTIVE",
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-            )
-            db.add(extra_goal)
-
-    db.commit()
-
-
-def _record_simulated_action(
-    db: Session,
-    profile: Dict[str, Any],
-    action: str,
-    platform: str,
-    step: int,
-    traits: Dict[str, Any],
-) -> None:
-    """
-    Write a MemoryItem (AGENT scope) for the simulated callee, and
-    on failures also write one ImprovementProposal.
-    Called for each step when SIMULATION_PRODUCE_GOALS=1.
-    """
-    agent_name = profile.get("name", f"agent_{profile.get('user_id', 0)}")
-    agent_id = uuid.uuid5(uuid.NAMESPACE_DNS, agent_name)
-
-    memory_text = (
-        f"Step {step}: Agent '{agent_name}' performed action '{action}' "
-        f"on {platform}. Traits: {traits}."
-    )
-    memory = MemoryItem(
-        id=uuid.uuid4(),
-        owner_type="AGENT",
-        owner_id=agent_id,
-        scope="AGENT",
-        content=memory_text,
-        created_at=datetime.now(timezone.utc),
-    )
-    db.add(memory)
-
-    if action in FAILURE_ACTIONS:
-        proposal_text = (
-            f"Improve agent '{agent_name}' response on {platform}: "
-            f"Action '{action}' at step {step} indicates a negative outcome. "
-            "Consider adjusting response strategy to increase engagement."
-        )
-        proposal = ImprovementProposal(
-            id=uuid.uuid4(),
-            owner_type="AGENT",
-            owner_id=agent_id,
-            description=proposal_text,
-            status="OPEN",
-            created_at=datetime.now(timezone.utc),
-        )
-        db.add(proposal)
+# NOTE (Phase 2.5): the former SIMULATION_PRODUCE_GOALS feature (seeding goals,
+# memory items and improvement proposals for simulated agents) was removed. It
+# referenced registry models this service never imported (NameError at runtime)
+# with column names that do not exist in the schema, and its synthetic agent ids
+# would have violated the agents(id) foreign keys. Simulations only write sim_*
+# tables; goals/memory/proposals belong to real agents through the registry API.
 
 
 async def run_simulation(
@@ -222,17 +118,10 @@ async def _run_builtin_simulation(
     traits and behavioral tendencies. Uses LLM for content generation
     if configured, otherwise generates template-based content.
 
-    When SIMULATION_PRODUCE_GOALS=1, also seeds each simulated agent
-    with a mission, active goals, and records MemoryItems/ImprovementProposals.
     """
     actions = TWITTER_ACTIONS if platform == "twitter" else REDDIT_ACTIONS
     all_results = []
 
-    produce_goals = os.environ.get("SIMULATION_PRODUCE_GOALS", "0") == "1"
-
-    # Seed simulated agents with mission and goals if enabled
-    if produce_goals:
-        _seed_simulated_agents(db, profiles, platform, scenario)
 
     for step in range(num_steps):
         step_results = []
@@ -274,12 +163,6 @@ async def _run_builtin_simulation(
                     "content": content,
                 }
             )
-
-            # If producing goals, also write MemoryItem and possibly ImprovementProposal
-            if produce_goals:
-                _record_simulated_action(
-                    db, profile, action, platform, step, traits
-                )
 
         all_results.extend(step_results)
 

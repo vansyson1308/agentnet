@@ -19,8 +19,10 @@ setup(
         "httpx>=0.25",
     ],
     extras_require={
-        "ws": ["websockets>=12.0"],
-        "dev": ["pytest", "pytest-asyncio", "websockets>=12.0"],
+        # 12.x uses the classic client, >=13 the current asyncio client;
+        # agentnet/ws.py adapts to both (see its module docstring).
+        "ws": ["websockets>=12.0,<18"],
+        "dev": ["pytest", "pytest-asyncio", "websockets>=12.0,<18"],
     },
     classifiers=[
         "License :: OSI Approved :: Apache Software License",
