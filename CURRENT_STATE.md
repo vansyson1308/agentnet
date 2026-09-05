@@ -17,6 +17,18 @@ the code and tests win and this file is stale — fix it in the same change.
 | A2A v1 migration | **NOT STARTED** (`app/a2a.py` still emits a v0.3-shaped card; readiness plan is written only after a live-model GO) |
 | Final managed hosting | **NOT SELECTED** (`docs/DEPLOYMENT_ARCHITECTURE.md`, `docs/VERCEL_COMPATIBILITY.md`) |
 
+Pre-live foundation status (Phase 2.6). READY means the repository is clean and proven — every
+CI job green, no repo-owned warning, no known Critical/High defect — not that anything is deployed:
+
+```
+PRE-LIVE FOUNDATION: READY
+LIVE MODEL CREDENTIAL: NOT PROVIDED
+LIVE MODEL CANARY: NOT RUN
+HOSTING: NOT SELECTED
+A2A V1 MIGRATION: NOT STARTED
+PRODUCTION SOCIETY: OFF
+```
+
 ## Services (what actually runs)
 
 | Service | Path | Entry | Port (local) | Purpose |
