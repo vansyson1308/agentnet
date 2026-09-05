@@ -136,7 +136,7 @@ jobs:
         run: |
           pip install -r requirements-dev.txt
           pip check
-          python -c "import pytest_timeout; print('pytest-timeout', pytest_timeout.__version__)"
+          python -c "import importlib.metadata as m; print('pytest-timeout', m.version('pytest-timeout'))"
       - name: Bootstrap the shared test database from the init-db bundle (fail hard)
         working-directory: services/registry
         run: python -m app.db_bootstrap --init-dir init-db
@@ -203,7 +203,7 @@ jobs:
         run: |
           pip install -r requirements-dev.txt
           pip check
-          python -c "import pytest_timeout; print('pytest-timeout', pytest_timeout.__version__)"
+          python -c "import importlib.metadata as m; print('pytest-timeout', m.version('pytest-timeout'))"
       - name: Fresh-install proof (empty DB and pre-society snapshot)
         run: pytest tests/test_fresh_install.py -v -rs --junitxml=fresh-install-report.xml
       - name: No skips allowed here
