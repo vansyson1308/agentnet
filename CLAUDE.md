@@ -63,6 +63,11 @@ This repo involves financial invariants. Follow these rules strictly:
 
 ### Secrets
 - Never commit secrets. Keep `.env.example` updated whenever env vars change.
+
+### Warnings and dependency coherence (Phase 2.6)
+- `pytest.ini` turns repo-owned deprecation classes into errors (unknown marks, Pydantic V1 `class Config`, `on_event`, `regex=`, `MovedIn20Warning`, deprecated `websockets` namespaces, invalid escapes). Fix the cause; never add a blanket ignore. Third-party ignores are narrow and documented in ADR-0003 D8.
+- Every service pins its runtime; `requirements-dev.txt` includes all of them in one resolver pass. `scripts/ci/check_service_envs.sh` proves each service alone on the images' Python 3.10 — a shared library must resolve to one version everywhere.
+- FastAPI apps use one `lifespan` (no `@app.on_event`); models use `model_config = ConfigDict(...)`; `Base` is a `DeclarativeBase`.
 - `tests/test_no_hardcoded_secrets.py` scans for provider keys / password literals / secret env defaults.
 
 ### Autonomous Society Runtime (services/registry/app/society)
@@ -170,6 +175,9 @@ python -m app.worker
 ### 5.3 Testing / Verification
 
 ```bash
+# One authoritative dev/test set (every service's pins in ONE resolver pass + pytest-timeout)
+pip install -r requirements-dev.txt
+
 # Run all tests
 pytest tests/ -v
 

@@ -1,4 +1,4 @@
-# AgentNet — current state (truth as of 2026-09-04, Phase 2.5)
+# AgentNet — current state (truth as of 2026-09-05, Phase 2.6)
 
 This file replaces the earlier machine-specific snapshot. It describes the repository as
 the running code, schema and tests define it. When something here disagrees with the code,
@@ -62,7 +62,17 @@ Evidence: `tests/society/test_authz_registry.py`, `tests/society/test_authz_paym
 
 The web stack runs on supported releases (FastAPI 0.141 / Starlette 1.6 / pydantic 2.13 /
 python-multipart 0.0.32 / python-jose 3.5 / OpenTelemetry 1.44) and `pip-audit` on every service
-requirement set is a CI gate (ADR-0003 D6). Spans are exported over OTLP/HTTP to Jaeger or any
+requirement set is a CI gate (ADR-0003 D6). Active code uses the supported APIs of that stack:
+one FastAPI `lifespan` per app (no `@app.on_event`), Pydantic `ConfigDict` (no V1 inner `Config`),
+SQLAlchemy `DeclarativeBase`, `Query(pattern=)`, and an SDK WebSocket client that runs on websockets
+12 through the current release without touching a deprecated namespace. `pytest.ini` turns every
+one of those deprecation classes into an error, so none can silently return; only two narrow,
+documented third-party warnings are ignored (ADR-0003 D8). Dependency graphs are coherent by
+construction: `requirements-dev.txt` resolves every service's pins in one pass, each service is
+also proven ALONE on the images' Python 3.10 (`scripts/ci/check_service_envs.sh`) and inside its
+built image (`scripts/ci/check_images.sh`), and shared runtime libraries must agree across services.
+Service images run `python:3.10-slim` (dashboard 3.11); a jump to 3.13 requires the passlib review
+in ADR-0003 D8. Spans are exported over OTLP/HTTP to Jaeger or any
 OTLP backend (`JAEGER_ENABLED`, `JAEGER_AGENT_HOST`, `OTEL_EXPORTER_OTLP_PORT` /
 `OTEL_EXPORTER_OTLP_ENDPOINT`); the deprecated Jaeger thrift exporter is gone. Both workers stop
 gracefully on SIGTERM, survive database and Redis outages without busy-looping, and reconnect to
@@ -73,9 +83,10 @@ Redis when it returns (`tests/test_worker_lifecycle.py`, `tests/society/test_wor
 `pytest tests --ignore=tests/test_integration.py` is the CI scope (PostgreSQL-backed; see
 `.github/workflows/ci.yml`). `tests/test_integration.py` needs running services and is run by the
 fresh-install harness (`tests/fresh_install/`). Society, authorization, schema-parity and compose
-topology suites all run in CI; `scripts/ci/check_skips.py` fails the build on any unexplained skip.
-The classification of every test file is `docs/TEST_MATRIX.md`; counts and the exact commands are
-in the Phase 2.5 report.
+topology suites all run in CI; `scripts/ci/check_skips.py` fails the build on any unexplained skip;
+`@pytest.mark.timeout` is enforced by `pytest-timeout` (a missing plugin is a collection error, not a
+warning) under a 900 s global cap. The classification of every test file is `docs/TEST_MATRIX.md`;
+counts and the exact commands are in the Phase 2.6 report.
 
 ## Known, intentional limitations
 

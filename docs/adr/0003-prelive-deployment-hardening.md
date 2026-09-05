@@ -106,6 +106,66 @@ platform proxy's address range. The registry rate limiter keys unauthenticated c
 address uvicorn vouches for and never parses `X-Forwarded-For` itself; a caller-controlled header can
 therefore no longer mint a fresh rate-limit bucket per request.
 
+### D8 — Warning policy, dependency coherence and the runtime contract (Phase 2.6)
+
+The final pre-merge cleanup removed every repo-owned deprecation that the pinned stack reports and
+made the test infrastructure truthful:
+
+- **Deprecated APIs migrated.** Pydantic V1-style inner `class Config` (33 models, one `orm_mode`) →
+  `model_config = ConfigDict(from_attributes=True)`; FastAPI `@app.on_event` → one `lifespan` per
+  application (registry, payment, simulation) with the original ordering kept and a real bug fixed on
+  the way — the old shutdown handlers awaited the synchronous `TracerProvider.shutdown()` and raised
+  at every shutdown; `Query(regex=)` → `Query(pattern=)`; Starlette's renamed status constants;
+  `declarative_base()` from `sqlalchemy.ext.declarative` → `class Base(DeclarativeBase)` in all four
+  services (models keep their `Column()` attributes; metadata identity is asserted by
+  `tests/test_sqlalchemy_base.py` and the real-Postgres parity suite); the SDK WebSocket client no
+  longer imports `websockets.client`/`websockets.legacy` — `agentnet/ws.py` has ONE adapter for the
+  classic (12.x) and current (≥ 13) client APIs and is tested end to end at both ends
+  (`scripts/ci/check_sdk_envs.sh`).
+- **`@pytest.mark.timeout` is real.** `pytest-timeout` is part of `requirements-dev.txt`, `pytest.ini`
+  sets a 900 s global cap, and `tests/test_pytest_timeout_plugin.py` proves the plugin is loaded and
+  kills a hanging test. Unknown marks are errors, so a missing plugin can never turn the marker into a
+  silent no-op again.
+- **Warning gate.** `pytest.ini` turns the migrated classes into errors (unknown marks, Pydantic
+  V1 config, `MovedIn20Warning`, `on_event`, `regex=`, deprecated status constants, deprecated
+  `websockets` namespaces, invalid escape sequences); the lint job additionally force-recompiles the
+  tree with `-W error`. Third-party warnings are ignored one at a time, narrowly, and only these two:
+  `passlib.utils` importing the stdlib `crypt` module (deprecated on 3.11, guarded, unused by bcrypt —
+  see the runtime contract below) and Starlette 1.6's `anyio.abc.BlockingPortal` alias in its
+  TestClient (starlette-side; no fix in the pinned release; test-only). GitHub-hosted runner notices
+  (Redis `vm.overcommit_memory` in an ephemeral service container) are environment facts, not
+  AgentNet warnings, and are left alone.
+- **Dependency coherence.** CI used to install five requirement files one after another into one
+  interpreter, so a later service could replace an earlier service's pin silently: the registry pins
+  `websockets`, the simulation's unpinned LLM dependencies dragged it from 12 to 16, and the suite
+  ran on a version the registry image never shipped. `requirements-dev.txt` is now the ONE test/dev
+  set (it includes every service's requirements, so a conflicting pin fails the single resolver
+  pass), CI runs `pip check`, the simulation's LLM dependencies are pinned, `bcrypt` is pinned next to
+  `passlib` everywhere, and `scripts/ci/check_service_envs.sh` installs each service ALONE on the
+  images' Python 3.10, `pip check`s it, import-smokes it (including a bcrypt hash/verify) and fails if
+  a shared runtime library resolves to different versions across services. `scripts/ci/check_images.sh`
+  repeats the import smoke inside the built images. The first isolated run immediately paid for
+  itself: the dashboard image's requirement set listed an unused `httpx` and not the `requests` its
+  API client imports — the image could not start alone, and no union-environment test could have
+  noticed. It now pins `flask` and `requests`.
+- **Runtime contract.** Service images run `python:3.10-slim` (dashboard 3.11); the CI suite runs on
+  3.11 and the isolation job on 3.10. `passlib` 1.7.4 is unmaintained but its `crypt` import is
+  guarded and bcrypt never needs it — `tests/test_runtime_contract.py` proves hashing with `crypt`
+  absent (Python 3.13 semantics) and pins the interpreter versions, so a jump to 3.13 is a deliberate,
+  reviewed change (replace passlib with `bcrypt` directly at that point; existing `$2b$` hashes stay
+  valid). `bcrypt` stays at 4.0.0: passlib 1.7.4 reads `bcrypt.__about__` (gone in 4.1) and bcrypt 5
+  changed the >72-byte probe it relies on.
+- **`PYSEC-2026-1325` (ecdsa) revalidated.** Still no fixed release; `ecdsa` remains python-jose's
+  fallback backend for EC signatures only, AgentNet signs and verifies with `HS256`
+  (`JWT_ALGORITHM`, `jwt.decode(..., algorithms=[JWT_ALGORITHM])`), so the timing side channel has no
+  reachable surface. Owner: registry/payment maintainers; review at the next python-jose or ecdsa
+  release; nothing else is ignored.
+- **GitHub Actions on Node 24.** `actions/checkout@v6`, `actions/setup-python@v6`,
+  `actions/upload-artifact@v6`, `docker/setup-buildx-action@v4` (each `action.yml` declares
+  `using: node24`; the inputs the workflow uses are unchanged). Permissions stay `contents: read`.
+  The Postgres service healthchecks name the database they probe (`-d agentnet_test` / `-d postgres`),
+  which ends the `FATAL: database "agentnet" does not exist` line every 5 s in the service logs.
+
 ## Consequences
 
 - Operators must set managed-infra endpoints and secrets in the platform environment; staging refuses
