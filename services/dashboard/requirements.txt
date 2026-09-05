@@ -1,2 +1,8 @@
-flask>=3.0.0
-httpx>=0.27.0
+# Pinned like every other service (Phase 2.6 §7). The dashboard talks to the
+# registry/payment APIs with `requests` (app/api_client.py); the isolated
+# per-service proof (scripts/ci/check_service_envs.sh) caught that this file
+# once listed an unused httpx instead — the union CI environment had requests
+# only through the registry's docker SDK, so the dashboard image alone could
+# not start.
+flask==3.1.3
+requests==2.34.2

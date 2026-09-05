@@ -1,28 +1,30 @@
-# Development and testing dependencies for AgentNet
-# Install with: pip install -r requirements-dev.txt
+# Development and test dependencies for AgentNet.
+#
+# This is the ONE authoritative test/dev set. It resolves every service's
+# pinned requirements in a SINGLE pip pass, so a conflicting pin between two
+# services fails `pip install -r requirements-dev.txt` loudly instead of a
+# later `pip install -r services/<x>/requirements.txt` silently replacing an
+# earlier service's version (Phase 2.6 §7 — that is how CI once ran the
+# registry code on websockets 16 while the image shipped 12). CI installs
+# exactly this file and then runs `pip check`; scripts/ci/check_service_envs.sh
+# additionally proves each service in its own isolated environment.
+#
+#   pip install -r requirements-dev.txt
+-r services/registry/requirements.txt
+-r services/payment/requirements.txt
+-r services/worker/requirements.txt
+-r services/simulation/requirements.txt
+-r services/dashboard/requirements.txt
 
-# Core dependencies (from registry service - FastAPI based)
-fastapi==0.104.1
-uvicorn==0.24.0
-sqlalchemy==2.0.23
-psycopg2-binary==2.9.9
-redis==5.0.1
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-bcrypt==4.0.0
-python-multipart==0.0.6
-pydantic==2.5.2
-pydantic-settings==2.1.0
-python-dotenv==1.0.0
-httpx==0.25.2
-email-validator>=2.0.0
+# Testing — pytest-timeout makes @pytest.mark.timeout real (pytest.ini turns
+# unknown marks into errors) and `timeout = 900` in pytest.ini caps every test.
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-timeout==2.4.0
+pytest-cov==7.1.0
+PyYAML>=6.0  # compose topology guard tests
 
-# Testing
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
-
-# Linting & Formatting
+# Linting & formatting (advisory in CI, see .github/workflows/ci.yml)
 black>=23.0.0
 isort>=5.12.0
 flake8>=6.0.0
-PyYAML>=6.0  # compose topology guard tests (tests/test_society_staging_compose.py)

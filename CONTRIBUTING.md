@@ -51,12 +51,10 @@ python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # or: venv\Scripts\activate  # Windows
 
-# Install dependencies
-pip install -r services/registry/requirements.txt
-pip install -r services/payment/requirements.txt
-
-# Install dev dependencies
-pip install pytest pytest-cov black flake8
+# Install every service's pins + test tooling in ONE resolver pass
+# (pytest-timeout, pytest-asyncio, pytest-cov, black, isort, flake8 included)
+pip install -r requirements-dev.txt
+pip check
 
 # Copy environment file
 cp .env.example .env

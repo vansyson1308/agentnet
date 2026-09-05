@@ -18,10 +18,12 @@ opentelemetry-instrumentation-sqlalchemy==0.65b0
 python-dotenv==1.2.3
 httpx==0.28.1
 email-validator>=2.0.0
-# MiroFish pipeline dependencies
-openai>=1.0.0
-langchain>=0.1.0
-langchain-openai>=0.0.5
-zep-python>=2.0.0
+# MiroFish pipeline dependencies — pinned to what the combined pin set
+# resolves to (Phase 2.6 §7). Unpinned floats let the CI environment drift
+# from the registry image (they dragged websockets from 12 to 16).
+openai==3.8.0
+langchain==1.4.0
+langchain-openai==1.6.0
+zep-python==2.0.2
 prometheus-client==0.20.0
 structlog==24.1.0

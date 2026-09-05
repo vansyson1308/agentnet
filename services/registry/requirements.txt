@@ -9,7 +9,10 @@ bcrypt==4.0.0
 python-multipart==0.0.32
 pydantic==2.13.5
 pydantic-settings==2.1.0
-websockets==12.0
+# websockets >= 13 ships the current asyncio client the SDK uses and the
+# sans-I/O server core uvicorn 0.52 selects. 16.1.1 is what the combined pin
+# set (requirements-dev.txt) resolves to — the image and CI now agree.
+websockets==16.1.1
 opentelemetry-api==1.44.0
 opentelemetry-sdk==1.44.0
 opentelemetry-semantic-conventions==0.65b0

@@ -22,13 +22,10 @@ help:
 	@echo "  make demo          Run end-to-end demo"
 
 install:
-	@echo "Installing dependencies..."
-	cd services/registry && pip install -r requirements.txt
-	cd services/payment && pip install -r requirements.txt
-	cd services/worker && pip install -r requirements.txt
-	cd services/dashboard && pip install -r requirements.txt
+	@echo "Installing dependencies (one resolver pass over every service's pins + test tooling)..."
+	pip install -r requirements-dev.txt
+	pip check
 	cd sdk/python && pip install -e .
-	pip install pytest pytest-cov black isort flake8
 
 # ─────────────────────────────────────────────────────────
 # Lint & Format
