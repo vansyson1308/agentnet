@@ -21,15 +21,19 @@ jobs:
     name: Lint (runtime-failure classes are fatal)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install black isort flake8
       # Hard gate: syntax errors, undefined names, unused-import shadowing,
       # invalid escapes — the classes that fail at runtime.
       - name: flake8 runtime-failure gate
-        run: flake8 services/ tests/ sdk/ examples/ --select=E9,F63,F7,F82,F821,F823 --max-line-length=120
+        run: flake8 services/ tests/ sdk/ examples/ scripts/ --select=E9,F63,F7,F82,F821,F823 --max-line-length=120
+      # Compile-time warnings (invalid escape sequences, ...) are errors. -f
+      # forces a recompile so a cached .pyc can never hide one.
+      - name: compile with warnings as errors
+        run: python -W error -m compileall -q -f services/ sdk/ examples/ tests/ scripts/
       # Style is reported, not enforced (no large reformat by design).
       - name: style report (advisory)
         run: |
@@ -40,8 +44,8 @@ jobs:
     name: Dependency audit (pip-audit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install pip-audit
@@ -56,6 +60,29 @@ jobs:
             pip-audit -r "$req" --desc off --progress-spinner off --ignore-vuln PYSEC-2026-1325
           done
 
+  dependency-coherence:
+    name: Per-service isolated environments (pip check + import smoke on the images' Python 3.10)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"   # what services/*/Dockerfile ship (python:3.10-slim)
+      - name: Build deps for ed25519 / psycopg2
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc libffi-dev python3-dev
+      # The union interpreter is never the sole compatibility proof: every
+      # service's requirements.txt is installed ALONE (exactly what its image
+      # does), `pip check`ed, import-smoked, and shared runtime pins must
+      # resolve identically across services.
+      - name: Each service in its own environment
+        run: bash scripts/ci/check_service_envs.sh
+      # The SDK supports websockets 12 (classic client) through the current
+      # release (asyncio client); prove both ends, not just the union env.
+      - name: SDK at its minimum and current websockets
+        run: bash scripts/ci/check_sdk_envs.sh
+
   test:
     name: Unit + PostgreSQL-backed + Society + migrations + compose topology
     runs-on: ubuntu-latest
@@ -69,7 +96,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U agentnet"
+          --health-cmd "pg_isready -U agentnet -d agentnet_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
@@ -95,24 +122,21 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret-key-32-chars-minimum-length-required
       JAEGER_ENABLED: "false"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0   # the Builder sandbox + canary history scan need real git history
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Build deps for ed25519 / psycopg2
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends gcc libffi-dev python3-dev postgresql-client
-      - name: Install every service's requirements
+      - name: Install the authoritative dev/test set (one resolver pass over every service pin)
         run: |
-          pip install -r services/registry/requirements.txt
-          pip install -r services/payment/requirements.txt
-          pip install -r services/worker/requirements.txt
-          pip install -r services/simulation/requirements.txt
-          pip install -r services/dashboard/requirements.txt
-          pip install pytest pytest-asyncio pytest-cov httpx pyyaml
+          pip install -r requirements-dev.txt
+          pip check
+          python -c "import pytest_timeout; print('pytest-timeout', pytest_timeout.__version__)"
       - name: Bootstrap the shared test database from the init-db bundle (fail hard)
         working-directory: services/registry
         run: python -m app.db_bootstrap --init-dir init-db
@@ -130,7 +154,7 @@ jobs:
         run: python examples/demo_autonomous_society.py
       - name: Upload coverage + report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: test-reports
           path: |
@@ -150,7 +174,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U agentnet"
+          --health-cmd "pg_isready -U agentnet -d postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
@@ -164,10 +188,10 @@ jobs:
       AGENTNET_FRESH_INSTALL: "1"
       AGENTNET_FRESH_INSTALL_REPORT_DIR: fresh-install-reports
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Runtime deps (redis-server is started privately by the harness)
@@ -175,18 +199,16 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends gcc libffi-dev python3-dev redis-server postgresql-client
           sudo systemctl stop redis-server || true
-      - name: Install every service's requirements
+      - name: Install the authoritative dev/test set (one resolver pass over every service pin)
         run: |
-          pip install -r services/registry/requirements.txt
-          pip install -r services/payment/requirements.txt
-          pip install -r services/worker/requirements.txt
-          pip install -r services/simulation/requirements.txt
-          pip install pytest pytest-asyncio httpx pyyaml
+          pip install -r requirements-dev.txt
+          pip check
+          python -c "import pytest_timeout; print('pytest-timeout', pytest_timeout.__version__)"
       - name: Fresh-install proof (empty DB and pre-society snapshot)
         run: pytest tests/test_fresh_install.py -v -rs --junitxml=fresh-install-report.xml
       - name: No skips allowed here
         run: python scripts/ci/check_skips.py fresh-install-report.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: fresh-install-report
@@ -198,10 +220,14 @@ jobs:
     name: Images build + compose projects render
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
       - run: docker compose build --parallel
         timeout-minutes: 15
+      # What ships is proven, not inferred: import each service's entry
+      # module inside its built image (entrypoint bypassed, no DB/Redis).
+      - name: Import smoke inside the built images
+        run: bash scripts/ci/check_images.sh
       - name: Validate compose projects (local, demo overlay, staging, staging+shared-infra)
         run: |
           docker compose -f docker-compose.yml config > /dev/null
