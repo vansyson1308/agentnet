@@ -33,7 +33,7 @@ Railway CLI; the engineering session never needs a token pasted into it.
 | --- | --- | --- | --- | --- | --- | --- |
 | `postgres` | managed PostgreSQL | — | private | — | — | managed |
 | `redis` | managed Redis | — | private | — | — | managed |
-| `registry` | `services/registry` (Dockerfile) | image `CMD` (uvicorn, `--proxy-headers`); **pre-deploy** `sh -c 'SKIP_DB_BOOTSTRAP=false /app/entrypoint.sh true'` | **public** (generated domain) | 8000 | `/readyz` | — |
+| `registry` | `services/registry` (Dockerfile) | image `CMD` (uvicorn, `--proxy-headers`); **pre-deploy** `sh -c 'SKIP_DB_BOOTSTRAP=false /app/entrypoint.sh true && python -m app.society.seed'` (schema + idempotent fleet seed) | **public** (generated domain) | 8000 | `/readyz` | — |
 | `payment` | `services/payment` | image `CMD` | private | 8001 | `/readyz` | — |
 | `worker` | `services/worker` | image `CMD` | private | 9100 | `/metrics` | — |
 | `dashboard` | `services/dashboard` | image `CMD` (`flask run`) | **public** (generated domain) | 8080 | `/healthz` | — |
@@ -132,6 +132,7 @@ tracebacks. A healthcheck passing is a deploy gate, not monitoring — restarts 
 ```bash
 railway logs -s registry | grep -E "alembic|db_bootstrap|SKIP_DB_BOOTSTRAP"   # pre-deploy: bootstrap/upgrade; runtime: SKIP line
 railway ssh -s registry -- sh -c 'cd /app && alembic current'                  # 0010_self_development (head)
+railway logs -s registry | grep "society seed report"                         # pre-deploy: fleet created once, reused afterwards
 railway ssh -s society-worker -- sh -c 'echo SKIP_DB_BOOTSTRAP=$SKIP_DB_BOOTSTRAP'   # true
 railway logs -s society-worker | grep -c alembic                                     # 0
 ```

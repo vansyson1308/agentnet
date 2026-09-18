@@ -50,9 +50,9 @@ The existing Dockerfiles are used; the registry image additionally copies the bo
 
 ### D3 — Exactly one migration owner
 
-The registry's pre-deploy command `sh -c 'SKIP_DB_BOOTSTRAP=false /app/entrypoint.sh true'`
-bootstraps an empty database and runs `alembic upgrade head` (head `0010_self_development`) in a
-separate container before the new deployment starts; a non-zero exit blocks the deployment
+The registry's pre-deploy command `sh -c 'SKIP_DB_BOOTSTRAP=false /app/entrypoint.sh true && python -m app.society.seed'`
+bootstraps an empty database, runs `alembic upgrade head` (head `0010_self_development`) and the
+idempotent Society fleet seed in a separate container before the new deployment starts; a non-zero exit blocks the deployment
 (`set -e`). Every other container built from the registry image — the registry's own runtime
 container and the society worker — starts with `SKIP_DB_BOOTSTRAP=true`, which makes
 `entrypoint.sh` exec its command without touching the schema, so a society-worker restart can never
