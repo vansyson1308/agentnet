@@ -18,7 +18,7 @@ Safety properties (all tested in tests/society/test_engineering.py):
 
 from __future__ import annotations
 
-import fnmatch
+import hashlib
 import logging
 import os
 import pathlib
@@ -30,39 +30,18 @@ from typing import Iterable, List, Sequence
 
 from ..config import SocietySettings
 from ..intents import FileEdit
+from ..risk import NEVER_WRITE_PATTERNS, is_never_writable
 
 logger = logging.getLogger(__name__)
 
 GIT_AUTHOR = ("AgentNet Society Builder", "society-builder@agentnet.local")
 
-# Paths the autonomous Builder may NEVER write, whatever the spec says.
-# Deny-list is evaluated with fnmatch on the POSIX relative path.
-PROTECTED_PATTERNS: Sequence[str] = (
-    ".env*",
-    ".git/*",
-    ".github/*",
-    ".gitignore",
-    "*.pem",
-    "*.key",
-    "*secret*",
-    "*/secrets/*",
-    "docker-compose*.yml",
-    "deploy/*",
-    "*/Dockerfile",
-    "Dockerfile",
-    "*requirements*.txt",
-    "services/registry/init-db/*",
-    "services/registry/migrations/*",
-    "services/*/app/config.py",
-    "services/*/app/auth.py",
-    "services/*/app/security.py",
-    "services/registry/app/task_service.py",
-    "services/registry/app/task_contract.py",
-    "services/payment/*",
-    "services/registry/app/society/*",
-    "tests/society/*",
-    "sdk/*",
-)
+# Paths the autonomous Builder may NEVER write, whatever the spec says:
+# secret material and git internals (risk.NEVER_WRITE_PATTERNS). Everything
+# else is writable and classified by the TRUSTED risk tier (risk.py): RED
+# surfaces (society runtime, auth, payment, migrations, deploy, CI...) may be
+# proposed but always need Security + human approval before promotion.
+PROTECTED_PATTERNS: Sequence[str] = tuple(NEVER_WRITE_PATTERNS)
 
 
 class WorkspaceError(Exception):
@@ -106,16 +85,10 @@ def branch_name(settings: SocietySettings, candidate_id: uuid.UUID) -> str:
 
 
 def is_protected(rel_path: str) -> bool:
-    """Case-insensitive on purpose: the worktree may live on a
-    case-insensitive filesystem (macOS/Windows) where ``.ENV`` opens
-    ``.env``. ``fnmatch.fnmatch`` is case-sensitive on POSIX, so we fold
-    both sides ourselves."""
-    p = rel_path.replace(os.sep, "/").lower()
-    for raw in PROTECTED_PATTERNS:
-        pat = raw.lower()
-        if fnmatch.fnmatchcase(p, pat) or fnmatch.fnmatchcase(p, "*/" + pat) or p.startswith(pat.rstrip("*")):
-            return True
-    return False
+    """NEVER-writable path (secret material, git internals). Case-insensitive
+    on purpose: the worktree may live on a case-insensitive filesystem where
+    ``.ENV`` opens ``.env`` (risk.is_never_writable folds case)."""
+    return is_never_writable(rel_path.replace(os.sep, "/"))
 
 
 def contained_path(ws_root: pathlib.Path, rel_path: str) -> pathlib.Path:
@@ -212,6 +185,21 @@ def diff_stat(ws: Workspace) -> str:
 
 def diff_text(ws: Workspace, max_chars: int = 20000) -> str:
     return _git(["diff", f"{ws.base_sha}..HEAD"], cwd=ws.path)[:max_chars]
+
+
+def diff_identity(ws: Workspace) -> tuple[str, int]:
+    """(sha256 of the canonical diff, number of +/- lines). Whitespace-only
+    hunks still count as lines; format-only churn is judged by the caller."""
+    diff = _git(["diff", f"{ws.base_sha}..HEAD"], cwd=ws.path)
+    lines = [ln for ln in diff.splitlines() if (ln.startswith("+") or ln.startswith("-")) and not ln.startswith(("+++", "---"))]
+    canon = "\n".join(lines)
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest(), len(lines)
+
+
+def is_format_only(ws: Workspace) -> bool:
+    """True when the diff changes nothing but whitespace/blank lines."""
+    diff = _git(["diff", "--ignore-all-space", "--ignore-blank-lines", f"{ws.base_sha}..HEAD"], cwd=ws.path)
+    return not any(ln.startswith(("+", "-")) and not ln.startswith(("+++", "---")) for ln in diff.splitlines())
 
 
 def head_sha(ws: Workspace) -> str:

@@ -74,6 +74,28 @@ class EventType:
     STAGING_CANARY_SIGNAL = "staging.canary.signal"
     RUN_DEAD = "run.dead"
     LOOP_BREAKER_TRIPPED = "loop_breaker.tripped"
+    # Phase 3 — self-development
+    REPO_READ_RESULT = "repo.read.result"            # targeted wake: the reading agent's next engineering turn
+    ENGINEERING_TURNS_EXHAUSTED = "engineering.turns_exhausted"
+    PROMOTION_REQUESTED = "promotion.requested"
+    PROMOTION_VALIDATING = "promotion.validating"
+    PROMOTION_BRANCH_READY = "promotion.branch_ready"
+    PROMOTION_PR_OPEN = "promotion.pr_open"
+    PROMOTION_CI_PENDING = "promotion.ci_pending"
+    PROMOTION_CI_PASSED = "promotion.ci_passed"
+    PROMOTION_CI_FAILED = "promotion.ci_failed"
+    PROMOTION_AWAITING_APPROVAL = "promotion.awaiting_approval"
+    PROMOTION_MERGE_ELIGIBLE = "promotion.merge_eligible"
+    PROMOTION_MERGED = "promotion.merged"
+    PROMOTION_REJECTED = "promotion.rejected"
+    PROMOTION_SUPERSEDED = "promotion.superseded"
+    PROMOTION_BLOCKED_EXTERNAL = "promotion.blocked_external"
+    EXPERIMENT_REQUESTED = "experiment.requested"
+    EXPERIMENT_FINISHED = "experiment.finished"
+    ROLLBACK_RECOMMENDED = "rollback.recommended"
+    DEPLOYMENT_REQUESTED = "deployment.requested"
+    DEPLOYMENT_BLOCKED = "deployment.blocked"
+    DEPLOYMENT_REFUSED = "deployment.refused"
 
 
 def utcnow() -> datetime:

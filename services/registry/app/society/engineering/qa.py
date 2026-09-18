@@ -32,6 +32,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Sequence
 
 from ..config import SocietySettings
+from ..risk import assess as assess_risk
 from .workspace import Workspace, diff_text, is_protected
 
 logger = logging.getLogger(__name__)
@@ -103,10 +104,12 @@ def static_security_scan(ws: Workspace, changed: Sequence[str]) -> List[str]:
     findings: List[str] = []
     for rel in changed:
         if is_protected(rel):
-            findings.append(f"protected path changed: {rel}")
+            findings.append(f"never-writable path changed: {rel}")
         if RISKY_PATH_RE.search(rel):
             findings.append(f"risky surface touched: {rel}")
     diff = diff_text(ws)
+    for never in assess_risk(list(changed), diff).never_findings:
+        findings.append(f"NEVER: {never}")
     added = [ln[1:] for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++")]
     for ln in added:
         for pat in SECRET_PATTERNS:
@@ -180,7 +183,9 @@ def evaluate_candidate(settings: SocietySettings, ws: Workspace, spec: Dict, cha
     off_list = [c for c in changed if c not in allowed]
     checks.append(Check("allow_list", not off_list, "; ".join(off_list) if off_list else "all changed files are on files_allowed"))
     protected = [c for c in changed if is_protected(c)]
-    checks.append(Check("protected_paths", not protected, "; ".join(protected) if protected else "no protected path touched"))
+    checks.append(Check("protected_paths", not protected, "; ".join(protected) if protected else "no never-writable path touched"))
+    risk = assess_risk(list(changed), diff_text(ws), spec_kind=str(spec.get("kind") or ""))
+    checks.append(Check("no_never_findings", not risk.never_findings, "; ".join(risk.never_findings) if risk.never_findings else f"trusted risk tier {risk.tier.value}"))
 
     # 3. Builder may not modify the tests that judge it
     test_paths = set()
@@ -225,4 +230,5 @@ def evaluate_candidate(settings: SocietySettings, ws: Workspace, spec: Dict, cha
     report_dict = report.to_dict()
     report_dict["static_findings"] = findings
     report.__dict__["static_findings"] = findings  # exposed for the executor
+    report.__dict__["risk_tier"] = risk.tier.value
     return report

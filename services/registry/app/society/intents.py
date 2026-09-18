@@ -62,6 +62,18 @@ class IntentType(str, enum.Enum):
     EVALUATE_CODE_CANDIDATE = "EVALUATE_CODE_CANDIDATE"
     SECURITY_REVIEW_CANDIDATE = "SECURITY_REVIEW_CANDIDATE"
     REQUEST_STAGING_DEPLOY = "REQUEST_STAGING_DEPLOY"
+    # ── repository intelligence (LOW, read-only, bounded, audited) ──
+    LIST_REPO_TREE = "LIST_REPO_TREE"
+    SEARCH_REPO = "SEARCH_REPO"
+    READ_REPO_FILE = "READ_REPO_FILE"
+    READ_REPO_RANGE = "READ_REPO_RANGE"
+    READ_DIFF = "READ_DIFF"
+    READ_CANDIDATE_STATE = "READ_CANDIDATE_STATE"
+    # ── promotion / evaluation requests (MEDIUM; the controller decides) ──
+    REQUEST_PR_PROMOTION = "REQUEST_PR_PROMOTION"
+    REQUEST_MERGE_EVALUATION = "REQUEST_MERGE_EVALUATION"
+    REQUEST_STAGING_EVALUATION = "REQUEST_STAGING_EVALUATION"
+    RECORD_EVALUATION_RECOMMENDATION = "RECORD_EVALUATION_RECOMMENDATION"
     # ── HIGH: recognised, never auto-executed ──
     REQUEST_PRODUCTION_DEPLOY = "REQUEST_PRODUCTION_DEPLOY"
     SHELL_EXEC = "SHELL_EXEC"
@@ -92,6 +104,16 @@ FORBIDDEN_INTENT_TYPES = frozenset(
     }
 )
 ALLOWED_INTENT_TYPES = frozenset(t for t in IntentType if t not in FORBIDDEN_INTENT_TYPES)
+REPO_READ_INTENT_TYPES = frozenset(
+    {
+        IntentType.LIST_REPO_TREE,
+        IntentType.SEARCH_REPO,
+        IntentType.READ_REPO_FILE,
+        IntentType.READ_REPO_RANGE,
+        IntentType.READ_DIFF,
+        IntentType.READ_CANDIDATE_STATE,
+    }
+)
 
 
 class _Strict(BaseModel):
@@ -139,6 +161,19 @@ class UpdateGoalPayload(_Strict):
     note: Optional[str] = Field(None, max_length=MAX_TEXT)
 
 
+class ProposalEvidence(_Strict):
+    """What the Scout actually observed. Required for signal-driven
+    proposals so 'an event exists' never becomes 'work exists'."""
+
+    signal: str = Field(..., min_length=1, max_length=128)
+    baseline: Optional[str] = Field(None, max_length=200)
+    observed: Optional[str] = Field(None, max_length=200)
+    window: Optional[str] = Field(None, max_length=120)
+    sample_size: Optional[int] = Field(None, ge=0)
+    actionable_reason: str = Field(..., min_length=1, max_length=1000)
+    prior_open_proposals: List[str] = Field(default_factory=list, max_length=10)
+
+
 class CreateImprovementPayload(_Strict):
     title: str = Field(..., min_length=1, max_length=MAX_TITLE)
     problem: str = Field(..., min_length=1, max_length=MAX_TEXT)
@@ -149,6 +184,7 @@ class CreateImprovementPayload(_Strict):
     importance: int = Field(50, ge=0, le=100)
     target_scope: Literal["agent", "platform"] = "platform"
     source_task_id: Optional[uuid.UUID] = None
+    evidence: Optional[ProposalEvidence] = None
 
 
 class ReviewImprovementPayload(_Strict):
@@ -213,6 +249,10 @@ class CodeChangeSpec(_Strict):
     acceptance_tests: List[str] = Field(default_factory=list, max_length=20)
     must_compile: bool = True
     kind: Literal["docs", "test_fixture", "code"] = "docs"
+    # Self-development link: what metric/effect the change is expected to move
+    # (anti-busywork requires it for code candidates; fitness records it).
+    expected_effect: Optional[str] = Field(None, max_length=1000)
+    signal: Optional[str] = Field(None, max_length=128)
 
     @field_validator("files_allowed", "acceptance_tests")
     @classmethod
@@ -233,12 +273,21 @@ class RequestCodeChangePayload(_Strict):
 
 
 class FileEdit(_Strict):
+    # File content is byte-exact: the shared ``str_strip_whitespace`` would
+    # silently drop the trailing newline of every submitted file (a
+    # whitespace-only diff on an otherwise identical file — busywork the
+    # model never asked for). Only the path is stripped, by its validator.
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
     path: str = Field(..., min_length=1, max_length=255)
     content: str = Field(..., max_length=200_000)
 
     @field_validator("path")
     @classmethod
     def _safe_path(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("empty path")
         if v.startswith("/") or ".." in v.split("/") or v.startswith("~") or "\\" in v or "\0" in v:
             raise ValueError(f"unsafe path: {v!r}")
         return v
@@ -258,6 +307,58 @@ class SecurityReviewPayload(_Strict):
     candidate_id: uuid.UUID
     verdict: Literal["pass", "fail"]
     findings: List[str] = Field(default_factory=list, max_length=20)
+
+
+def _repo_path_ok(v: str) -> str:
+    if v.startswith("/") or ".." in v.split("/") or v.startswith("~") or "\\" in v or "\0" in v or len(v) > 255:
+        raise ValueError(f"unsafe path: {v!r}")
+    return v
+
+
+class RepoTreePayload(_Strict):
+    path: str = Field("", max_length=255)
+    depth: int = Field(2, ge=1, le=4)
+    candidate_id: Optional[uuid.UUID] = None  # None = trusted base checkout
+
+    @field_validator("path")
+    @classmethod
+    def _p(cls, v: str) -> str:
+        return _repo_path_ok(v) if v else v
+
+
+class RepoSearchPayload(_Strict):
+    pattern: str = Field(..., min_length=1, max_length=200)
+    glob: Optional[str] = Field(None, max_length=120)
+    regex: bool = False
+    max_results: int = Field(40, ge=1, le=40)
+    candidate_id: Optional[uuid.UUID] = None
+
+
+class RepoReadFilePayload(_Strict):
+    path: str = Field(..., min_length=1, max_length=255)
+    max_bytes: int = Field(32000, ge=256, le=32000)
+    candidate_id: Optional[uuid.UUID] = None
+
+    _p = field_validator("path")(classmethod(lambda cls, v: _repo_path_ok(v)))
+
+
+class RepoReadRangePayload(_Strict):
+    path: str = Field(..., min_length=1, max_length=255)
+    start: int = Field(1, ge=1)
+    end: int = Field(..., ge=1)
+    candidate_id: Optional[uuid.UUID] = None
+
+    _p = field_validator("path")(classmethod(lambda cls, v: _repo_path_ok(v)))
+
+
+class PromotionRefPayload(_Strict):
+    promotion_id: uuid.UUID
+
+
+class EvaluationRecommendationPayload(_Strict):
+    experiment_id: uuid.UUID
+    recommendation: Literal["promote", "reject", "rollback", "inconclusive"]
+    summary: str = Field(..., min_length=1, max_length=MAX_TEXT)
 
 
 class OpaquePayload(_Strict):
@@ -289,6 +390,16 @@ PAYLOAD_MODELS: Dict[IntentType, type] = {
     IntentType.EVALUATE_CODE_CANDIDATE: CandidateRefPayload,
     IntentType.SECURITY_REVIEW_CANDIDATE: SecurityReviewPayload,
     IntentType.REQUEST_STAGING_DEPLOY: CandidateRefPayload,
+    IntentType.LIST_REPO_TREE: RepoTreePayload,
+    IntentType.SEARCH_REPO: RepoSearchPayload,
+    IntentType.READ_REPO_FILE: RepoReadFilePayload,
+    IntentType.READ_REPO_RANGE: RepoReadRangePayload,
+    IntentType.READ_DIFF: CandidateRefPayload,
+    IntentType.READ_CANDIDATE_STATE: CandidateRefPayload,
+    IntentType.REQUEST_PR_PROMOTION: CandidateRefPayload,
+    IntentType.REQUEST_MERGE_EVALUATION: PromotionRefPayload,
+    IntentType.REQUEST_STAGING_EVALUATION: PromotionRefPayload,
+    IntentType.RECORD_EVALUATION_RECOMMENDATION: EvaluationRecommendationPayload,
 }
 for _t in FORBIDDEN_INTENT_TYPES:
     PAYLOAD_MODELS[_t] = OpaquePayload
@@ -434,6 +545,8 @@ __all__ = [
     "IntentType",
     "ALLOWED_INTENT_TYPES",
     "FORBIDDEN_INTENT_TYPES",
+    "REPO_READ_INTENT_TYPES",
+    "ProposalEvidence",
     "IntentSpec",
     "AgentDecision",
     "ValidatedIntent",
