@@ -90,6 +90,7 @@ MODEL_PROVIDERS = ("scripted", "openai_compatible", "fake")
 OUTPUT_FORMATS = ("auto", "json_object", "json_schema")
 MODEL_TIERS = ("fast", "strong")
 PROMOTION_PROVIDERS = ("disabled", "fake", "github")
+GITHUB_CREDENTIAL_PROVIDERS = ("disabled", "static", "app")
 DEPLOYMENT_PROVIDERS = ("disabled", "fake")
 
 
@@ -213,6 +214,14 @@ class SocietySettings:
     github_repository: str = field(default_factory=lambda: os.getenv("SOCIETY_GITHUB_REPOSITORY", ""))
     github_base_branch: str = field(default_factory=lambda: os.getenv("SOCIETY_GITHUB_BASE_BRANCH", "main"))
     github_api_url: str = field(default_factory=lambda: os.getenv("SOCIETY_GITHUB_API_URL", "https://api.github.com"))
+    # ── GitHub credential boundary (Promotion Controller process ONLY; see
+    # society/github_credentials.py). Settings hold identifiers and a file
+    # PATH — never key material or a token. ``disabled`` = inert.
+    github_credential_provider: str = field(default_factory=lambda: os.getenv("SOCIETY_GITHUB_CREDENTIAL_PROVIDER", "disabled").strip().lower())
+    github_app_id: str = field(default_factory=lambda: os.getenv("SOCIETY_GITHUB_APP_ID", "").strip())
+    github_installation_id: str = field(default_factory=lambda: os.getenv("SOCIETY_GITHUB_INSTALLATION_ID", "").strip())
+    github_app_private_key_file: str = field(default_factory=lambda: os.getenv("SOCIETY_GITHUB_APP_PRIVATE_KEY_FILE", "").strip())
+    github_token_refresh_margin_seconds: int = field(default_factory=lambda: _int("SOCIETY_GITHUB_TOKEN_REFRESH_MARGIN_SECONDS", 300, minimum=30))
     deployment_provider: str = field(default_factory=lambda: os.getenv("SOCIETY_DEPLOYMENT_PROVIDER", "disabled").strip().lower())
     fitness_test_timeout_seconds: int = field(default_factory=lambda: _int("SOCIETY_FITNESS_TEST_TIMEOUT_SECONDS", 300, minimum=10))
     promotion_lease_seconds: int = field(default_factory=lambda: _int("SOCIETY_PROMOTION_LEASE_SECONDS", 300, minimum=10))
@@ -243,6 +252,9 @@ class SocietySettings:
         if self.promotion_provider not in PROMOTION_PROVIDERS:
             logger.warning("society config: unknown SOCIETY_PROMOTION_PROVIDER=%r; using 'disabled' (fail closed)", self.promotion_provider)
             object.__setattr__(self, "promotion_provider", "disabled")
+        if self.github_credential_provider not in GITHUB_CREDENTIAL_PROVIDERS:
+            logger.warning("society config: unknown SOCIETY_GITHUB_CREDENTIAL_PROVIDER=%r; using 'disabled' (fail closed)", self.github_credential_provider)
+            object.__setattr__(self, "github_credential_provider", "disabled")
         if self.deployment_provider not in DEPLOYMENT_PROVIDERS:
             logger.warning("society config: unknown SOCIETY_DEPLOYMENT_PROVIDER=%r; using 'disabled' (fail closed)", self.deployment_provider)
             object.__setattr__(self, "deployment_provider", "disabled")
@@ -305,6 +317,13 @@ def validate_settings(s: "SocietySettings") -> list:
         problems.append("SOCIETY_AUTO_MERGE_ENABLED=true with the GitHub provider is refused in this phase (Level 3 is not exercised)")
     if s.promotion_provider == "github" and (not s.github_repository.strip() or "/" not in s.github_repository):
         problems.append("SOCIETY_GITHUB_REPOSITORY (owner/repo) is required when SOCIETY_PROMOTION_PROVIDER=github")
+    if s.github_credential_provider == "app":
+        if not s.github_app_id or not s.github_installation_id:
+            problems.append("SOCIETY_GITHUB_APP_ID and SOCIETY_GITHUB_INSTALLATION_ID are required when SOCIETY_GITHUB_CREDENTIAL_PROVIDER=app")
+        if not s.github_app_private_key_file and not os.getenv("SOCIETY_GITHUB_APP_PRIVATE_KEY_PEM"):
+            problems.append("SOCIETY_GITHUB_APP_PRIVATE_KEY_FILE (preferred, platform-mounted) or SOCIETY_GITHUB_APP_PRIVATE_KEY_PEM must be provided to the controller process when SOCIETY_GITHUB_CREDENTIAL_PROVIDER=app")
+    if s.github_app_private_key_file and s.github_app_private_key_file.lstrip().startswith("-----"):
+        problems.append("SOCIETY_GITHUB_APP_PRIVATE_KEY_FILE must be a file path, never key material")
     if s.model_provider == LIVE_PROVIDER_NAME and env != "development":
         url = (s.model_base_url or "").strip()
         if not url.startswith("https://"):
