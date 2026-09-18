@@ -153,9 +153,11 @@ jobs:
       # Self-development gates (Phase 3): named so a failure is visible at a glance.
       # They are part of the full suite above; this re-runs them as explicit gates
       # with deterministic fakes only (no DeepSeek, no GitHub App, no hosting).
-      - name: Self-development gates (repo intelligence, risk/meta-change, promotion, fitness, provider contract, secret boundary)
+      - name: Self-development gates (repo intelligence, risk/meta-change, promotion, fitness, provider contract, secret boundary, one control plane, credential boundary, config parity)
         run: |
           pytest -q -p no:cacheprovider \
+            tests/test_config_parity.py tests/test_worker_lifecycle.py \
+            tests/society/test_single_control_plane.py tests/society/test_github_credentials_and_push.py \
             tests/society/test_repo_intel.py tests/society/test_risk_and_meta_change.py \
             tests/society/test_promotion.py tests/society/test_fitness.py \
             tests/society/test_memory_provenance.py tests/society/test_telemetry_scout_budget.py \

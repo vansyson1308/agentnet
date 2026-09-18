@@ -26,7 +26,6 @@ from .models import (
     Wallet,
 )
 from .logging_config import setup_logging
-from .reflection_loop import convert_proposals_to_backlog, run_reflection_loop
 from .tracing import configure_tracing, get_tracer
 
 # ---------------------------------------------------------------------------
@@ -572,10 +571,11 @@ async def main(stop_event: Optional[asyncio.Event] = None):
     last_crawl_time = datetime.utcnow()
     # Last time simulation timeouts were checked (every 60s)
     last_sim_timeout_time = datetime.utcnow()
-    # Last time reflection loop generated improvement proposals
-    # (Phase: agent-goals-and-self-improvement; default 5 min cadence)
-    reflection_interval_sec = max(30, int(os.getenv("REFLECTION_LOOP_INTERVAL_SEC", "300")))
-    last_reflection_time = datetime.utcnow() - timedelta(seconds=reflection_interval_sec)
+    # NOTE (Phase 3.1): the legacy reflection loop (failed task -> proposal ->
+    # file backlog) no longer runs here. The Autonomous Society Runtime
+    # (services/registry/app/society: world.py ingests task outcomes, the
+    # Scout proposes with evidence, the Governor reviews) is the ONE
+    # self-improvement control plane. Archived: legacy/hermes/worker_reflection_loop.py.
 
     while not stop_event.is_set():
         try:
@@ -617,25 +617,6 @@ async def main(stop_event: Optional[asyncio.Event] = None):
                 if (now - last_crawl_time).total_seconds() >= 3600:
                     await crawl_agent_cards(db)
                     last_crawl_time = now
-
-                # Reflection loop: turn fresh failed/timeout/refunded
-                # tasks into ImprovementProposal rows for the lab.
-                # Idempotent — never duplicates a proposal for a task.
-                if (now - last_reflection_time).total_seconds() >= reflection_interval_sec:
-                    try:
-                        with tracer.start_as_current_span("reflection_loop"):
-                            created = run_reflection_loop(db)
-                        if created:
-                            logger.info(f"reflection_loop: generated {created} proposals")
-                        # Convert PROPOSED proposals into backlog items
-                        # so the planner picks them up on the next tick
-                        backlogged = convert_proposals_to_backlog(db)
-                        if backlogged:
-                            logger.info(f"reflection_loop: converted {backlogged} proposals to backlog items")
-                    except Exception as e:
-                        logger.error(f"reflection_loop error: {e}")
-                        db.rollback()
-                    last_reflection_time = now
 
             finally:
                 # Close the database session

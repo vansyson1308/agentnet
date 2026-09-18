@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Retired — Phase 3.1 pre-deploy boundary closure
+
+- **One self-improvement control plane.** The worker's reflection loop
+  (`REFLECTION_LOOP_*`, failed task → `ImprovementProposal`) and its
+  `AGENT_BACKLOG.md` bridge (`PROPOSED` → `CONVERTED_TO_TASK` by file
+  append) no longer run: they competed with the Autonomous Society Runtime,
+  which owns the proposal lifecycle (world ingestion → Scout → Governor →
+  Architect → Builder → QA → Security → promotion → fitness). Archived as
+  `legacy/hermes/worker_reflection_loop.py` and `legacy/hermes/AGENT_BACKLOG.md`.
+  Historical rows already in `CONVERTED_TO_TASK` because of the bridge are
+  left untouched (see `docs/SOCIETY_RUNTIME.md`).
+- **Synthetic activity retired from the active tree.** `agents/poll_agent.py`
+  (one task every 30 s "to create activity"), `echo_agent.py` and
+  `storyteller_agent.py` moved to `legacy/synthetic-agents/`; nothing starts
+  them.
+- **GitHub credential boundary.** The promotion controller's GitHub provider
+  authenticates `git push` through a temporary `GIT_ASKPASS` helper (no token
+  in the remote URL, argv or repository config) and obtains credentials from
+  a `GitHubCredentialProvider` (`disabled` default, `static` for operators,
+  `app` = GitHub App JWT → short-lived installation token with in-memory
+  cache, refresh and single-flight). Implemented and tested with fakes; no
+  App is configured.
+- **Staging configuration contract** exposes the Phase-3 runtime settings
+  (`docker-compose.staging.yml`); `tests/test_config_parity.py` keeps
+  `SocietySettings`, `.env.example`, the staging compose file and
+  `docs/DEPLOYMENT_ARCHITECTURE.md` in sync.
+
 ### Added — Agent goals and self-improvement loop
 
 The biggest gap surfaced in `CURRENT_STATE.md` was: agents had capabilities,

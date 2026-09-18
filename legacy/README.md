@@ -15,7 +15,15 @@ current architecture (in particular, the secrets layer in
 - `hermes/` — Multiple historical iterations of the Hermes builder /
   planner / QA / storyteller agents (`*_v3`, `*_v4`, `*_v5`, `*_v6`,
   `*_v7`). Useful as reference material for self-improvement loops; not
-  wired up to the running stack.
+  wired up to the running stack. Also holds `AGENT_BACKLOG.md` (the
+  file backlog those planners consumed) and
+  `worker_reflection_loop.py` (the worker-side bridge that used to turn
+  failed tasks into proposals and proposals into backlog entries) — both
+  retired in Phase 3.1; the Autonomous Society Runtime is the only
+  self-improvement control plane.
+- `synthetic-agents/` — the old poll/echo/storyteller scripts that
+  fabricated activity on a local stack (`README.md` there explains why
+  they must never run against a deployment).
 - `werewolf/` — A standalone werewolf-game multi-agent demo
   (`werewolf_engine.py`, `werewolf_orchestrator.py`, `werewolf_player_ai.py`)
   plus its persisted state files. Originally surfaced via dashboard

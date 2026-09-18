@@ -1,0 +1,31 @@
+{
+  "name": "main protection (AgentNet)",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": [],
+  "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+  "rules": [
+    {"type": "deletion"},
+    {"type": "non_fast_forward"},
+    {"type": "pull_request", "parameters": {
+      "required_approving_review_count": 0,
+      "dismiss_stale_reviews_on_push": true,
+      "require_code_owner_review": false,
+      "require_last_push_approval": false,
+      "required_review_thread_resolution": true,
+      "allowed_merge_methods": ["squash", "merge", "rebase"]
+    }},
+    {"type": "required_status_checks", "parameters": {
+      "strict_required_status_checks_policy": true,
+      "do_not_enforce_on_create": false,
+      "required_status_checks": [
+        {"context": "Lint (runtime-failure classes are fatal)", "integration_id": 15368},
+        {"context": "Dependency audit (pip-audit)", "integration_id": 15368},
+        {"context": "Per-service isolated environments (pip check + import smoke on the images' Python 3.10)", "integration_id": 15368},
+        {"context": "Unit + PostgreSQL-backed + Society + migrations + compose topology", "integration_id": 15368},
+        {"context": "Fresh install → migrate → run → E2E → restart (persistence)", "integration_id": 15368},
+        {"context": "Images build + compose projects render", "integration_id": 15368}
+      ]
+    }}
+  ]
+}

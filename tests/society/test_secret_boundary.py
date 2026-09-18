@@ -14,6 +14,7 @@ import pytest
 SOCIETY = pathlib.Path(__file__).resolve().parent.parent.parent / "services" / "registry" / "app" / "society"
 SENTINELS = {
     "SOCIETY_GITHUB_TOKEN": "ghs_SENTINEL_github_token_value_000",
+    "SOCIETY_GITHUB_APP_PRIVATE_KEY_PEM": "-----BEGIN RSA PRIVATE KEY-----SENTINELKEYMATERIAL-----END RSA PRIVATE KEY-----",
     "SOCIETY_MODEL_API_KEY": "sk-SENTINEL-model-key-value-000000",
     "POSTGRES_PASSWORD": "pg-SENTINEL-password",
     "REDIS_PASSWORD": "redis-SENTINEL-password",
@@ -22,22 +23,29 @@ SENTINELS = {
 }
 
 
-def test_github_token_env_is_read_only_inside_the_github_provider():
+def test_github_secrets_are_read_only_inside_the_credential_module():
     hits = {}
     for f in SOCIETY.rglob("*.py"):
         text = f.read_text(encoding="utf-8")
-        if "SOCIETY_GITHUB_TOKEN" in text:
-            hits[f.name] = text.count("SOCIETY_GITHUB_TOKEN")
-    assert set(hits) <= {"promotion_github.py", "risk.py"}, hits  # risk.py only names it in a NEVER pattern
-    src = (SOCIETY / "promotion_github.py").read_text()
-    assert "os.getenv(TOKEN_ENV" in src and "self.token" not in src and "self._token =" not in src
+        for name in ("SOCIETY_GITHUB_TOKEN", "SOCIETY_GITHUB_APP_PRIVATE_KEY_PEM", "x-access-token"):
+            if re.search(rf"(?<![A-Z0-9_]){re.escape(name)}(?![A-Z0-9_])", text):
+                hits.setdefault(f.name, []).append(name)
+    # risk.py only names the token in a NEVER pattern; config.py only names the PEM env in a validation message
+    assert set(hits) <= {"github_credentials.py", "risk.py", "config.py"}, hits
+    assert hits.get("config.py", []) == ["SOCIETY_GITHUB_APP_PRIVATE_KEY_PEM"], hits.get("config.py")
+    cred_src = (SOCIETY / "github_credentials.py").read_text()
+    assert "os.getenv(TOKEN_ENV" in cred_src and "os.getenv(PRIVATE_KEY_PEM_ENV" in cred_src
+    prov_src = (SOCIETY / "promotion_github.py").read_text()
+    for forbidden in ("os.getenv(", "x-access-token:", "@github.com", "self.token", "self._token ="):
+        assert forbidden not in prov_src, forbidden
+    assert "GIT_ASKPASS" in prov_src and "credential.helper=" in prov_src
 
 
 def test_cognition_and_context_modules_never_touch_github_or_deploy_credentials():
-    for name in ("cognition.py", "context.py", "worker.py", "executor.py", "policy.py", "fitness.py", "promotion.py", "router.py", "telemetry.py", "repo_intel.py"):
+    for name in ("cognition.py", "context.py", "worker.py", "executor.py", "policy.py", "fitness.py", "promotion.py", "router.py", "telemetry.py", "repo_intel.py", "approvals.py", "seed.py", "world.py", "canary.py"):
         text = (SOCIETY / name).read_text()
         assert "SOCIETY_GITHUB_TOKEN" not in text and "GITHUB_TOKEN" not in text, name
-        assert "x-access-token" not in text, name
+        assert "x-access-token" not in text and "PRIVATE_KEY" not in text and "github_credentials" not in text, name
 
 
 @pytest.mark.timeout(300)
@@ -95,15 +103,21 @@ def test_cognition_works_without_the_github_token(monkeypatch):
     reset_settings_cache()
     s = SocietySettings()
     assert get_model(s).provider == "scripted"
-    assert not any("GITHUB" in k for k in vars(s)), "settings hold no GitHub credential field"
+    for k in vars(s):
+        assert k not in ("github_token", "github_app_private_key", "github_app_private_key_pem", "github_jwt", "github_installation_token"), f"settings hold no credential field: {k}"
+        assert not str(getattr(s, k)).lstrip().startswith("-----BEGIN"), k
+    assert s.github_credential_provider == "disabled" and s.github_app_private_key_file == ""
     from services.registry.app.society.promotion_github import GitHubPromotionProvider
     from services.registry.app.society.promotion import ProviderUnavailable
 
     monkeypatch.setenv("SOCIETY_GITHUB_REPOSITORY", "example/repo")
-    reset_settings_cache()
-    p = GitHubPromotionProvider(SocietySettings())
-    with pytest.raises(ProviderUnavailable):
-        p.get_pr_state(type("P", (), {"external_pr_number": 1})())
+    for provider in ("disabled", "static"):
+        monkeypatch.setenv("SOCIETY_GITHUB_CREDENTIAL_PROVIDER", provider)
+        reset_settings_cache()
+        p = GitHubPromotionProvider(SocietySettings())
+        with pytest.raises(ProviderUnavailable):
+            p.get_pr_state(type("P", (), {"external_pr_number": 1})())
+        assert "SENTINEL" not in repr(p)
     reset_settings_cache()
 
 

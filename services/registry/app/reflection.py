@@ -9,9 +9,11 @@ No DB writes happen here. Callers are:
   POST /v1/improvements/reflect — the dashboard previews an
   auto-generated proposal before saving.
 
-- services/worker/app/reflection_loop.py
-  Background loop scans newly-FAILED tasks every 5 min and persists a
-  proposal for each (idempotent on source_task_id).
+(The worker-side background loop that used to persist a proposal per failed
+task was retired in Phase 3.1 — archived as
+legacy/hermes/worker_reflection_loop.py. Autonomous proposals now come only
+from the Society runtime: world.py ingests task outcomes and the Scout
+proposes with evidence.)
 
 V1 is template-based. The function signature is shaped to drop in an
 LLM call in v2 without changing callers.

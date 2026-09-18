@@ -24,7 +24,9 @@ DEEPSEEK_MODEL = "deepseek-chat"
 LLM_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
 # Redis URL để publish story chapters
-REDIS_URL = "redis://:agentnet_redis_pass_2026@127.0.0.1:6379/0"
+REDIS_URL = os.getenv("REDIS_URL", "")
+if not REDIS_URL:
+    raise SystemExit("REDIS_URL env var is required (never hard-code credentials)")
 
 
 class Storyteller:
