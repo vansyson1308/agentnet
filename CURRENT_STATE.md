@@ -1,4 +1,4 @@
-# AgentNet — current state (truth as of 2026-09-18, Phase 3.1)
+# AgentNet — current state (truth as of 2026-09-18, Phase 4)
 
 This file replaces the earlier machine-specific snapshot. It describes the repository as
 the running code, schema and tests define it. When something here disagrees with the code,
@@ -17,10 +17,10 @@ the code and tests win and this file is stale — fix it in the same change.
 | One self-improvement control plane | **DONE (Phase 3.1)** — the worker's reflection loop and `AGENT_BACKLOG.md` bridge are archived under `legacy/hermes/`; synthetic poll/echo/storyteller agents under `legacy/synthetic-agents/`; `tests/society/test_single_control_plane.py` |
 | `main` ruleset | **OWNER ACTION REQUIRED** — the API refused ruleset creation from the session proxy (403); exact body in `deploy/github/main-ruleset.json` |
 | Live model | **NOT YET PROVEN** — no credential provided; `python -m app.society.canary preflight` reports `LIVE MODEL BLOCKED — NO SAFE CREDENTIAL` |
-| Staging deployment | **not running anywhere**; `docker-compose.staging.yml` is a standalone project ready for the chosen host |
+| Staging deployment | **Railway selected — repository adapted, bring-up BLOCKED (external)**: `.railway/railway.ts` (staging-only IaC), one migration owner (`SKIP_DB_BOOTSTRAP`), society volume bootstrap script, `X-Real-IP` trust middleware, runbook `docs/RAILWAY_STAGING.md`, ADR-0006. Nothing exists on Railway yet: no Railway endpoint or connector is reachable from the engineering session (runbook §19 has the two unblock actions). `docker-compose.staging.yml` remains the Compose alternative |
 | Production deployment | **none**; the retired VPS artifacts are quarantined under `deploy/legacy-vps/` |
 | A2A v1 migration | **NOT STARTED** (`app/a2a.py` still emits a v0.3-shaped card; readiness plan is written only after a live-model GO) |
-| Final managed hosting | **NOT SELECTED** (`docs/DEPLOYMENT_ARCHITECTURE.md`, `docs/VERCEL_COMPATIBILITY.md`) |
+| Final managed hosting | **Railway (staging) SELECTED — NOT YET DEPLOYED** (`docs/RAILWAY_STAGING.md`, ADR-0006; `docs/DEPLOYMENT_ARCHITECTURE.md` §7) |
 
 Self-development status (Phase 3). PROVEN means the mechanics are exercised by deterministic
 tests and the demo — not that any model, GitHub App or host has been connected:
@@ -32,7 +32,10 @@ SHADOW PR PROMOTION: PROVEN
 OFFLINE FITNESS: PROVEN
 LIVE MODEL: NOT YET PROVEN
 REAL SOCIETY GITHUB APP: NOT YET CONFIGURED
-HOSTING: NOT DEPLOYED
+HOSTING: RAILWAY STAGING SELECTED, NOT DEPLOYED
+MANAGED STAGING: PARTIAL / BLOCKED (Railway unreachable from the engineering session)
+PRODUCTION DEPLOYMENT: NOT STARTED
+DNS CHANGED: NO
 A2A V1: NOT STARTED
 PRODUCTION SOCIETY: OFF
 LEGACY FILE BACKLOG: RETIRED FROM ACTIVE RUNTIME
@@ -54,7 +57,7 @@ claimed only after their prerequisites (App, credential, host) exist; level 5 (p
 | registry | `services/registry` | `uvicorn app.main:app` (entrypoint bootstraps/migrates the DB) | 8000 | users/agents/auth, tasks + escrow, offers, chat, goals/memory/improvements, WebSocket, society API |
 | payment | `services/payment` | `uvicorn app.main:app` | 8001 | wallets, transactions, approval requests |
 | worker | `services/worker` | `python -m app.worker` | metrics only | auto-refund timeouts, daily resets, reputation, offline detection, card crawling, simulation timeouts — no self-improvement logic (the legacy reflection/backlog bridge was retired in Phase 3.1) |
-| society-worker | registry image | `python -m app.society.worker` | metrics only (internal) | Autonomous Society Runtime (cognition + Promotion Controller + fitness engine + telemetry producers); idles unless `SOCIETY_RUNTIME_ENABLED=true`; never holds a GitHub or deploy credential in the cognition path |
+| society-worker | registry image | `python -m app.society.worker` (on Railway: `sh /app/start-society-railway.sh` bootstraps the volume checkout first) | metrics only (internal) | Autonomous Society Runtime (cognition + Promotion Controller + fitness engine + telemetry producers); idles unless `SOCIETY_RUNTIME_ENABLED=true`; never holds a GitHub or deploy credential in the cognition path |
 | simulation | `services/simulation` | `uvicorn app.main:app` | 8002 | MiroFish swarm simulation (own `sim_*` tables) |
 | dashboard | `services/dashboard` | Flask | 8080 | **the canonical UI** (Jinja templates); React fragments under `legacy/frontend-fragments/` are unbuildable history |
 
@@ -120,6 +123,9 @@ counts and the exact commands are in the Phase 2.6 report.
 
 ## Known, intentional limitations
 
+* The Railway staging environment does not exist yet: the engineering session cannot reach any Railway host and
+  has no Railway connector (ADR-0006 D11). The proxy spoof test of ADR-0006 D5 (`TRUST_X_REAL_IP`) is therefore
+  specified but not yet run against a live edge; the middleware is proven only by unit tests.
 * Live-model canaries, soak and GO/NO-GO are blocked on a rotated credential and a staging host. The DeepSeek
   key was never provided in Phase 3 (`DEEPSEEK KEY: NOT PROVIDED`, `DEEPSEEK LIVE CALL: NOT RUN`); provider
   compatibility is proven only against a fake transport (`tests/society/test_deepseek_contract.py`).
