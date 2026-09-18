@@ -70,10 +70,11 @@ export default defineRailway((ctx) => {
   // ── registry: public API; owns the schema through its pre-deploy step ──
   const registry = service("registry", {
     source: github(REPO, { branch: BRANCH, rootDirectory: "services/registry" }),
-    // One deployment path owns bootstrap + `alembic upgrade head`; it runs in a
-    // separate container before the new deployment starts and must exit non-zero
-    // on failure. The runtime container then starts with SKIP_DB_BOOTSTRAP=true.
-    preDeploy: "sh -c 'SKIP_DB_BOOTSTRAP=false /app/entrypoint.sh true'",
+    // One deployment path owns bootstrap + `alembic upgrade head` + the
+    // idempotent Society fleet seed; it runs in a separate container before the
+    // new deployment starts and must exit non-zero on failure. The runtime
+    // container then starts with SKIP_DB_BOOTSTRAP=true.
+    preDeploy: "sh -c 'SKIP_DB_BOOTSTRAP=false /app/entrypoint.sh true && python -m app.society.seed'",
     healthcheck: "/readyz",
     healthcheckTimeout: 300,
     env: {

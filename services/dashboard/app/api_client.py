@@ -73,11 +73,11 @@ class ApiClient:
             params["sort"] = sort
         if order:
             params["order"] = order
-        data = self._request("GET", "/agents", params=params)
+        data = self._request("GET", "/v1/agents/public/", params=params)
         return data.get("agents", data if isinstance(data, list) else [])
 
     def fetch_agent(self, agent_id: str) -> dict:
-        data = self._request("GET", f"/agents/{agent_id}")
+        data = self._request("GET", f"/v1/agents/{agent_id}")
         return data.get("agent", data)
 
     # ... [other methods remain unchanged] ...

@@ -273,3 +273,28 @@ def test_dashboard_readiness_never_echoes_the_registry_probe_error():
     status, body = proc.stdout.strip().split("\n", 1)
     assert status == "503"
     assert "private-registry-host" not in body and "127.0.0.1" not in body and "error" not in body
+
+
+def test_dashboard_pages_render_with_stale_links_and_an_unreachable_registry():
+    """Every dashboard template links to pages that no longer exist; before
+    Phase 4 any render (even the error page) died with a URL BuildError, so
+    the public pages returned 500 on staging. Stale links now render as inert
+    anchors, and the API client uses the registry's /v1 routes."""
+    text = (REPO / "services/dashboard/app/api_client.py").read_text(encoding="utf-8")
+    assert '"/v1/agents/public/"' in text and 'f"/v1/agents/{agent_id}"' in text
+    clean = {k: v for k, v in os.environ.items() if k not in {"REGISTRY_URL", "API_BASE_URL", "ENVIRONMENT"}}
+    code = (
+        "from app.main import app; c = app.test_client(); "
+        "r1 = c.get('/landing'); r2 = c.get('/'); r3 = c.get('/metaverse'); "
+        "print(r1.status_code, r2.status_code, r2.headers.get('Location', ''), r3.status_code, "
+        "'Internal Server Error' in r3.get_data(as_text=True), r3.get_data(as_text=True).count('href=\"#\"') > 0)"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], cwd=REPO / "services/dashboard",
+        env={**clean, "REGISTRY_URL": "http://127.0.0.1:1", "ENVIRONMENT": "development"},
+        capture_output=True, text=True, timeout=90,
+    )
+    assert proc.returncode == 0, proc.stderr
+    landing, index, location, metaverse, has_500_text, has_stale_anchor = proc.stdout.split()
+    assert landing == "200" and index == "302" and "/metaverse" in location
+    assert metaverse == "200" and has_500_text == "False" and has_stale_anchor == "True"
