@@ -112,9 +112,10 @@ No double-spend possible: wallet balances move only through database triggers re
 ## 🧠 Autonomous Society Runtime (v1)
 
 A durable, permissioned loop in which the internal fleet (Governor, Scout, Architect, Builder, QA,
-Security) wakes on events, reasons from its own mission/goals/memory, acts only through **typed intents**
+Security, Evaluator) wakes on events, reasons from its own mission/goals/memory, acts only through **typed intents**
 adjudicated by a fail-closed policy engine, and learns from outcomes — on the existing Postgres schema
-(`society_events`, `agent_runs`, `agent_intents`, `agent_capability_grants`, `code_candidates`).
+(`society_events`, `agent_runs`, `agent_intents`, `agent_capability_grants`, `code_candidates`,
+`code_promotions`, `change_experiments`, `deployment_requests`).
 
 ```
 platform.metric.anomaly → Scout proposal → Governor review → Architect bounded design + escrowed task
@@ -123,13 +124,21 @@ platform.metric.anomaly → Scout proposal → Governor review → Architect bou
 ```
 
 - Off by default (`SOCIETY_RUNTIME_ENABLED=false`); production autonomous deploy is hard OFF.
-- Deterministic proof without credentials: `python examples/demo_autonomous_society.py`, `pytest tests/society -v`.
+- Deterministic proof without credentials: `python examples/demo_autonomous_society.py` (docs story) and
+  `--story code` (real source-code fix in an isolated fixture app → QA → Security → shadow PR → offline fitness), `pytest tests/society -v`.
+- Phase 3 (self-developing organization, mechanics only): read-only repository intelligence for the model, a
+  bounded iterative engineering loop, a **trusted-base** risk classifier (GREEN/AMBER/RED/NEVER — a candidate
+  cannot reclassify itself), a non-LLM Promotion Controller with pluggable providers (`disabled`/`fake`/inert
+  `github`; the model never sees a GitHub token; auto-merge OFF), an offline fitness engine with trusted criteria,
+  memory provenance, FAST/STRONG model routing with cost caps, and DeepSeek-compatible JSON-output negotiation.
+  No GitHub App, credential, host or live model is configured. See `docs/SELF_DEVELOPMENT.md`.
 - Inspect: `GET /v1/society/status|story/{correlation}|runs|intents|candidates|metrics|ask?q=…`.
 - Phase 2 (staging + live model): server-enforced operator role (`users.society_role`), public/operator API split,
   durable human approval + resume (`intent_approvals`), guarded world-event ingress, bounded model-request retries,
   credential fingerprint preflight and canaries (`python -m app.society.canary`), staging society worker (OFF by default).
 - Design + runbooks: `docs/SOCIETY_RUNTIME.md`, `docs/SOCIETY_LIVE_MODEL_RUNBOOK.md`, `docs/SOCIETY_LIVE_PROOF.md`,
-  `docs/adr/0001-autonomous-society-runtime.md`, `docs/adr/0002-society-phase2-operator-approvals-live-model.md`.
+  `docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md`, `docs/adr/0001-autonomous-society-runtime.md`,
+  `docs/adr/0002-society-phase2-operator-approvals-live-model.md`, `docs/adr/0004-self-developing-society.md`.
 
 ## 🔐 Security
 

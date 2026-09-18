@@ -12,7 +12,7 @@ schema. It is enforced by `tests/test_db_parity.py` (run in CI) and
 |---|---|---|
 | `services/registry/init-db/*.sql` (the *bundle*, `01-init.sql` … `17-app-tables.sql`) | **Full bootstrap** of an empty database, applied in lexical order | Column types, nullability, defaults, constraints, indexes, triggers, enum types, seed rows (admin/platform users, platform wallet) |
 | `services/registry/migrations/versions/*.py` (alembic) | **Incremental** changes for databases that already ran the bundle | The *delta* between bundle snapshots; never rewrites core tables |
-| `services/registry/app/society/schema_sql.py`, `services/registry/app/schema_app_sql.py` | **Single-source DDL modules** | The society runtime tables (bundle file 16, migrations 0007/0008) and the application tables (bundle file 17, migration 0009). The bundle files are *generated* from these modules and must stay byte-identical |
+| `services/registry/app/society/schema_sql.py`, `services/registry/app/schema_app_sql.py` | **Single-source DDL modules** | The society runtime tables (bundle file 16, migrations 0007/0008/0010 — Phase 3 promotion/experiment/deployment tables and candidate/run/memory columns are `SOCIETY_PHASE3_SQL`) and the application tables (bundle file 17, migration 0009). The bundle files are *generated* from these modules and must stay byte-identical |
 | Service ORMs (`services/*/app/models.py`) | Typed access to the schema above | Nothing on the DB side. An ORM never creates schema in a deployment (`create_all` is not called by any service) — the DDL is the truth and the ORM mirrors it |
 
 ### How a database gets its schema
@@ -44,7 +44,7 @@ asserts head after the first run and a no-op second run.
 
 Why stamp **0003**: `0001_baseline` is a deliberate no-op, `0002`/`0003` mirror
 bundle files `13-idempotency.sql`/`14-spending-cap-fix.sql`, and every later
-migration (`0004`..`0009`) uses `IF NOT EXISTS` / `CREATE OR REPLACE` so it is a
+migration (`0004`..`0010`) uses `IF NOT EXISTS` / `CREATE OR REPLACE` so it is a
 no-op over a bundle that already contains the same objects.
 
 **Both paths converge.** `tests/test_db_parity.py` builds one scratch database
@@ -53,9 +53,9 @@ from the whole bundle and another from bundle files `01..15` + `alembic stamp
 default/length/precision, primary keys, unique/check/FK constraints, indexes,
 triggers, enum labels) and asserts the snapshots are identical; it also proves
 alembic is a schema no-op on top of the bundle and that `downgrade
-0008_society_phase2 → upgrade head` round-trips. `deploy/society-migration-check.sh
---mode local|docker` proves the same on a host (fresh + upgrade paths, expected
-head `0009_app_tables`).
+0008_society_phase2 → upgrade head` and `downgrade 0009_app_tables → upgrade head`
+round-trip. `deploy/society-migration-check.sh --mode local|docker` proves the same on
+a host (fresh + upgrade paths, expected head `0010_self_development`).
 
 ## 2. ORM rules
 
@@ -208,7 +208,7 @@ owns or subsets the table. The parity test fails if the two paths diverge.
 POSTGRES_HOST=127.0.0.1 POSTGRES_USER=agentnet POSTGRES_PASSWORD="" JAEGER_ENABLED=false \
   pytest tests/test_db_parity.py tests/society/test_schema_and_migrations.py -q
 
-# fresh + upgrade paths on scratch databases, expected head 0009_app_tables
+# fresh + upgrade paths on scratch databases, expected head 0010_self_development
 bash deploy/society-migration-check.sh --mode local
 
 # bootstrap an empty database exactly like the entrypoint does

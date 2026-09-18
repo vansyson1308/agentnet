@@ -20,3 +20,4 @@ fresh-install-reports/
 # local virtualenvs created by scripts/ci/check_service_envs.sh and check_sdk_envs.sh
 .service-envs/
 .sdk-envs/
+dump.rdb

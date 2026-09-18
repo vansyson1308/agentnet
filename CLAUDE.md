@@ -78,7 +78,8 @@ This repo involves financial invariants. Follow these rules strictly:
 - Approvals: `society/approvals.py` decides and resumes the PERSISTED intent (model never re-called), re-runs the full policy with `approval_granted=True` and fails closed. Forbidden HIGH intents are never approvable.
 - Live model: `python -m app.society.canary preflight` before any real-model run; a credential that ever appeared in git history is compromised (fingerprint denylist + history scan). NO FAKE AUTONOMY — never present `ScriptedRoleModel`/`FakeModel` output as live proof; the canary refuses them.
 - `seed_society` unions operator gates (`approval_required_intents`) instead of resetting them; the canary seeds only a missing fleet.
-- See `docs/SOCIETY_RUNTIME.md`, `docs/SOCIETY_LIVE_MODEL_RUNBOOK.md`, ADR-0001 and ADR-0002.
+- Phase 3 self-development: `risk.py`, `fitness.py` (`TRUSTED_CRITERIA`) and `promotion.py` are TRUSTED BASE code — every promotion/fitness decision is evaluated from the running revision, never from the candidate worktree; a candidate that edits them is still classified by the old rules (regression tests in `tests/society/test_risk_and_meta_change.py`, `test_fitness.py`). Promotion/merge/deploy intents only *request*; the controller decides. `SOCIETY_AUTO_MERGE_ENABLED` stays `false` by default and no intent may change it. `SOCIETY_GITHUB_TOKEN` is read only inside `promotion_github.py`; never add it (or any credential) to the model context (`tests/society/test_secret_boundary.py`). Repo intelligence is read-only, bounded and returns untrusted data (`repo_intel.py`). Schema: `SOCIETY_PHASE3_SQL` + migration `0010_self_development`.
+- See `docs/SOCIETY_RUNTIME.md`, `docs/SELF_DEVELOPMENT.md`, `docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md`, `docs/SOCIETY_LIVE_MODEL_RUNBOOK.md`, ADR-0001, ADR-0002 and ADR-0004.
 
 ---
 
@@ -194,6 +195,7 @@ pytest tests/test_task_contract.py -v           # Task contracts & state machine
 pytest tests/test_approval_workflow.py -v         # Approval workflow tests
 pytest tests/society -v                          # Autonomous Society Runtime (needs Postgres; skips with reason otherwise)
 python examples/demo_autonomous_society.py       # Deterministic society E2E (one event -> Scout..QA -> READY)
+python examples/demo_autonomous_society.py --story code   # Real source-code candidate -> shadow PR -> offline fitness (fakes only)
 
 # Or use Makefile
 make test        # Run tests

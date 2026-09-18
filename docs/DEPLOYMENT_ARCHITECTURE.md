@@ -37,6 +37,7 @@ Neither performs writes.
 | PUBLIC_URL / CORS | `PUBLIC_BASE_URL`, `CORS_ALLOWED_ORIGINS`, `BEHIND_PROXY`, `FORWARDED_ALLOW_IPS`, `RATE_LIMIT_*` | no hostname is hard-coded anywhere in the services. `FORWARDED_ALLOW_IPS` (uvicorn, default `127.0.0.1`) is the ONLY place that decides whose `X-Forwarded-*` headers are trusted: set it to the platform proxy's address range; the images no longer bake in `*`, and the rate limiter keys unauthenticated callers by the peer address uvicorn vouches for (never by a header) |
 | MODEL_PROVIDER | `SOCIETY_MODEL_PROVIDER`, `SOCIETY_MODEL_NAME`, `SOCIETY_MODEL_BASE_URL`, `SOCIETY_MODEL_API_KEY`, `SOCIETY_MODEL_*` | credential from the platform secret store only; `python -m app.society.canary preflight` refuses leaked keys |
 | SOCIETY_RUNTIME | `SOCIETY_RUNTIME_ENABLED`, `SOCIETY_AUTONOMOUS_CODE_ENABLED`, `SOCIETY_STAGING_DEPLOY_ENABLED`, budgets/limits, `SOCIETY_OPERATOR_BOOTSTRAP_EMAILS`, `SOCIETY_REPO_ROOT`, `SOCIETY_WORKSPACE_ROOT`, `SOCIETY_METRICS_PORT` | everything autonomous defaults OFF; production autonomous deploy is not a setting |
+| SOCIETY_SELF_DEVELOPMENT (Phase 3) | `SOCIETY_MODEL_OUTPUT_FORMAT` (`auto`\|`json_object`\|`json_schema`), `SOCIETY_MODEL_FAST_NAME`/`SOCIETY_MODEL_STRONG_NAME` (router tiers; provider names are config, never code), `SOCIETY_MAX_*_COST_USD`, engineering bounds (`SOCIETY_MAX_ENGINEERING_TURNS`, `SOCIETY_MAX_REPO_READS_*`, `SOCIETY_MAX_REPO_BYTES_PER_RUN`, `SOCIETY_MAX_SEARCH_RESULTS`), change budgets (`SOCIETY_MAX_AUTONOMOUS_CANDIDATES_PER_DAY`, `SOCIETY_MAX_RED_CANDIDATES_PER_DAY`, `SOCIETY_MAX_PROMOTIONS_PER_DAY`, `SOCIETY_MAX_OPEN_AUTONOMOUS_PRS`, `SOCIETY_MAX_FILES_PER_CANDIDATE`, `SOCIETY_MAX_DIFF_LINES`), `SOCIETY_PROMOTION_PROVIDER` (`disabled`\|`fake`\|`github`), `SOCIETY_AUTO_MERGE_ENABLED`, `SOCIETY_GITHUB_REPOSITORY`/`_BASE_BRANCH`/`_API_URL`, `SOCIETY_DEPLOYMENT_PROVIDER` (`disabled`\|`fake`), `SOCIETY_FITNESS_TEST_TIMEOUT_SECONDS`, `SOCIETY_PROMOTION_LEASE_SECONDS`/`_MAX_ATTEMPTS`/`_POLL_INTERVAL_SECONDS` | `SOCIETY_GITHUB_TOKEN` (short-lived GitHub App installation token) is read ONLY inside the Promotion Controller's GitHub provider — inject it into the controller process, never into the cognition worker or the model context; promotion defaults to `disabled`, auto-merge to `false` (refused with the `github` provider); deployment defaults to `disabled` (`blocked_external`), production is refused |
 | OBSERVABILITY | `JAEGER_ENABLED`, `JAEGER_AGENT_HOST`, `OTEL_EXPORTER_OTLP_PORT`/`OTEL_EXPORTER_OTLP_ENDPOINT` (OTLP/HTTP export to Jaeger or any OTLP backend), `LOG_LEVEL`, `WORKER_METRICS_PORT`, `WORKER_POLL_INTERVAL_SEC` (auto-refund worker cadence, floor 1s) | logs are structured and never contain tokens/keys; `/readyz` reports only component names (`db`, `redis`), never connection errors |
 | OPTIONAL SURFACES | `ORCHESTRATOR_ENABLED` (partner provisioning API, default off), `PUBLIC_AGENT_REGISTRATION_ENABLED` (anonymous agent self-registration, default off), `AUTO_SCALER_ENABLED` (Docker-socket builder auto-scaler, default off; never on a managed host), `ENVIRONMENT` (`development` \| `staging` \| `production`) | non-development fails fast on missing/placeholder secrets |
 
@@ -114,9 +115,12 @@ Matrix and evidence: `tests/society/test_authz_registry.py`, `tests/society/test
 
 The Builder needs a writable checkout (`SOCIETY_REPO_ROOT`), the `git` binary, an isolated
 worktree per candidate on `agentnet-auto/<id>` branches under `SOCIETY_WORKSPACE_ROOT`, and
-the ability to run QA subprocesses. It never pushes, merges, touches protected paths, or
+the ability to run QA subprocesses. It never pushes, merges, touches NEVER-write paths, or
 mutates the checkout it branches from. On a managed platform this means a persistent volume
-(or a persistent worker VM), not a serverless function.
+(or a persistent worker VM), not a serverless function. Pushing a candidate branch
+(`agentnet-auto/<candidate-id>`) and opening a PR is the Promotion Controller's job through a
+`PromotionProvider`; the future `github` provider needs the Society GitHub App identity and a
+network path to the GitHub API from the controller process only (`docs/GITHUB_PROMOTION.md`).
 
 ## 6. Local development
 
