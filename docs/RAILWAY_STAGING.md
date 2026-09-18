@@ -384,9 +384,10 @@ Both runs are on `main` `ae42d7a177a8c94eb33636a91d700b4e6eed9520` (CI run 96 gr
 | §16 `SECRET LEAK CHECK: PASS` | PASS (filters empty, full logs read) | PASS (validator run 2 logs read: `CHECK` lines only) |
 | §17 resource sanity | recorded (§17): idle memory 0.03–0.09 GB per service, volume 0.12 GB, no restart loop | unchanged |
 
-Post-restart health matrix: a third validator deployment (`VALIDATOR_RUN=4`, operator `staging-operator` — its
-hourly quota had lapsed) was run after both restart cycles and the redeploy; its result is recorded in the
-Phase 4 final report and must read `VALIDATION RESULT: GREEN (26 checks)` for the verdict below to stand.
+Post-restart health matrix: a third validator deployment (`04f03d10`, `VALIDATOR_RUN=4`, operator
+`staging-operator` — its hourly quota had lapsed) ran at 16:55 UTC after both restart cycles, the fresh
+deployment and the redeploy: `H01`–`H08`, `S01`–`S02`, `O01a`–`O02`, `U01a`–`U02`, `M01`, `R01` (`ALL DEFENDED`),
+`C01`–`C04`, `P01 PASS baseline first 429 at #75, forged first 429 at #1` — `VALIDATION RESULT: GREEN (26 checks)`.
 
 Only two consecutive clean runs on the same `main` commit yield `MANAGED STAGING — GREEN`; anything less stays
 `PARTIAL / BLOCKED` with the failing row named. **Verdict: `MANAGED STAGING — GREEN`.**
