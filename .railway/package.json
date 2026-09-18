@@ -1,0 +1,12 @@
+{
+  "name": "agentnet-railway-iac",
+  "private": true,
+  "description": "Type definitions for the Railway Infrastructure-as-Code file; no runtime code.",
+  "devDependencies": {
+    "railway": "^3.11.0",
+    "typescript": "^5.4.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit --strict --module esnext --moduleResolution bundler --target es2022 --types node railway.ts"
+  }
+}

@@ -6,8 +6,9 @@ provider is deliberately **not selected** here. The retired single-VPS/SSH model
 under `deploy/legacy-vps/` and refuses to run.
 
 Current truth: Society deterministic/runtime mechanics **PROVEN**; Phase 2 safety hardening
-**PROVEN**; live model **NOT YET PROVEN**; A2A v1 migration **NOT STARTED**; final managed
-hosting **NOT SELECTED**.
+**PROVEN**; live model **NOT YET PROVEN**; A2A v1 migration **NOT STARTED**; managed staging
+hosting **Railway — SELECTED, NOT YET DEPLOYED** (Phase 4: repository adapted and merged; the bring-up is
+blocked until the engineering session can reach Railway — `docs/RAILWAY_STAGING.md` §19, ADR-0006).
 
 ## 1. Components and what each one needs
 
@@ -15,8 +16,8 @@ hosting **NOT SELECTED**.
 | --- | --- | --- | --- |
 | **Registry API** (`services/registry`, FastAPI, `/v1/*`) | stateless HTTP + WebSocket (`/v1/ws/*`) | PostgreSQL, Redis (pub/sub for agent WebSockets), `JWT_SECRET_KEY`, `CORS_ALLOWED_ORIGINS`, `PUBLIC_BASE_URL`; runs `alembic upgrade head` (and bootstraps an empty database) at start | filesystem beyond `/tmp`; inbound ports other than HTTP |
 | **Payment API** (`services/payment`, FastAPI) | stateless HTTP | PostgreSQL, Redis, same `JWT_SECRET_KEY` as the registry, `INTERNAL_WORKER_TOKEN` for the worker endpoint | writable disk |
-| **Dashboard** (`services/dashboard`, Flask + Jinja; the **canonical** UI) | stateless HTTP | `REGISTRY_URL`, `PAYMENT_URL`, `FLASK_SECRET_KEY`; `BEHIND_PROXY=true` behind a reverse proxy | its own database |
-| **Background worker** (`services/worker`, `python -m app.worker`) | one long-lived process | PostgreSQL, Redis; restarts freely (idempotent polling: auto-refund timeouts, daily resets) | public inbound port (metrics on `WORKER_METRICS_PORT`, container-internal) |
+| **Dashboard** (`services/dashboard`, Flask + Jinja; the **canonical** UI) | stateless HTTP | `REGISTRY_URL` (the registry is the only backend it calls; `API_BASE_URL` is the legacy alias), `FLASK_SECRET_KEY`; `BEHIND_PROXY=true` behind a reverse proxy | its own database; a payment URL (`PAYMENT_URL` in the compose files is unused) |
+| **Background worker** (`services/worker`, `python -m app.worker`) | one long-lived process | PostgreSQL, Redis, `REGISTRY_API_URL` (presence checks); restarts freely (idempotent polling: auto-refund timeouts, daily resets) | public inbound port (metrics on `WORKER_METRICS_PORT`, container-internal); the payment service or `INTERNAL_WORKER_TOKEN` (it never calls payment) |
 | **Society runtime worker** (`python -m app.society.worker`, registry image) | one long-lived process (or a durable workflow executor) that blocks on `LISTEN society_wake` and polls as fallback | PostgreSQL (LISTEN/NOTIFY, `FOR UPDATE SKIP LOCKED`), outbound HTTPS to the model provider, secret injection for `SOCIETY_MODEL_API_KEY`, restart semantics (leases expire, runs are re-claimed), logs + Prometheus metrics on a private port | public inbound port; Redis; a docker socket |
 | **Builder workspace** (inside the society worker, only when `SOCIETY_AUTONOMOUS_CODE_ENABLED=true`) | filesystem + `git` binary | a writable checkout to branch from (`SOCIETY_REPO_ROOT`), a writable workspace root for isolated worktrees, QA subprocess execution (`python -m pytest`) | write access to the deployed checkout's `main`; `git push` (never happens) |
 | **Durable database** | PostgreSQL 15+ (15/16 exercised) | managed backups, one database per environment (`agentnet_staging`, …) | co-location with the app |
@@ -129,3 +130,19 @@ network path to the GitHub API from the controller process only (`docs/GITHUB_PR
 stack under the implicit project name `agentnet`, stop it once with
 `docker compose -p agentnet down` (container names are daemon-global); your data volumes
 keep their historic names (`agentnet_postgres_data`, …) and are reused.
+
+## 7. Managed staging on Railway (Phase 4)
+
+The hosting-neutral contract above maps onto Railway without code forks; the decisions are ADR-0006 and the
+operator runbook is `docs/RAILWAY_STAGING.md`. Summary of the mapping:
+
+| Concern | Railway staging |
+| --- | --- |
+| Declaration | `.railway/railway.ts` (IaC DSL, staging-only guard, no secret values); config-as-code is deprecated and unused |
+| Services | managed `postgres` + `redis` (private, reference variables only); `registry` and `dashboard` public on Railway-generated domains; `payment`, `worker`, `society-worker` private (`<service>.railway.internal`) |
+| Schema owner | the registry pre-deploy command `sh -c 'SKIP_DB_BOOTSTRAP=false /app/entrypoint.sh true'`; every runtime container of the registry image starts with `SKIP_DB_BOOTSTRAP=true` and never migrates (local Compose: unset, unchanged) |
+| Society workspace | one volume at `/workspace`; `services/registry/start-society-railway.sh` clones/reuses a credential-free public checkout, aligns it to `RAILWAY_GIT_COMMIT_SHA`, prunes stale worktree metadata only, then execs the worker (idle, `SOCIETY_RUNTIME_ENABLED=false`, metrics on 9101) |
+| Client address | `TRUST_X_REAL_IP=true` on the registry (`app/proxy_headers.py`): `X-Real-IP` from Railway's edge; `X-Forwarded-For` never trusted; `FORWARDED_ALLOW_IPS` stays default — `*` would let callers mint rate-limit buckets |
+| Secrets | shared variables `JWT_SECRET_KEY`, `FLASK_SECRET_KEY`, `INTERNAL_WORKER_TOKEN` (generated locally, stored only in Railway); no model key, no GitHub credential |
+| Deploy gate | autodeploy from `main` + Wait for CI; healthchecks `/readyz` (registry, payment), `/healthz` (dashboard), `/metrics` (worker, society-worker); restart policy `Always` where the plan allows |
+| Not done | nothing exists on Railway yet (`MANAGED STAGING — PARTIAL / BLOCKED`); no production environment; no DNS change |

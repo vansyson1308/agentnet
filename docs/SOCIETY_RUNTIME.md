@@ -134,7 +134,7 @@ docker compose up -d society-worker
 docker compose logs -f society-worker
 
 # 3b. operator roles (durable; bootstrap the FIRST one with SOCIETY_OPERATOR_BOOTSTRAP_EMAILS)
-python -m app.society.operator you@example.com operator
+python -m app.society.operator_auth you@example.com operator
 curl -X POST http://localhost:8000/v1/society/operators -H "Authorization: Bearer $OPERATOR_JWT" \
      -H 'Content-Type: application/json' -d '{"email":"webhook@example.com","role":"event_producer"}'
 

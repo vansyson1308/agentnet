@@ -16,11 +16,26 @@ class AuthRequiredError(APIError):
     def __init__(self, message="Authentication required"):
         super().__init__(message, status_code=401)
 
+def resolve_registry_base_url() -> str:
+    """The registry origin the dashboard talks to (the only backend it calls).
+
+    ``REGISTRY_URL`` is the documented contract — every compose file and the
+    managed-platform topology (.railway/railway.ts) set it. ``API_BASE_URL`` is
+    the legacy name this module read before Phase 4 and still wins when
+    ``REGISTRY_URL`` is unset. Development falls back to localhost.
+    """
+    for name in ("REGISTRY_URL", "API_BASE_URL"):
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return "http://localhost:8000"
+
+
 class ApiClient:
     """Client for the AgentNet backend API."""
 
     def __init__(self, base_url=None):
-        self.base_url = base_url or os.getenv("API_BASE_URL", "http://localhost:8000")
+        self.base_url = base_url or resolve_registry_base_url()
         self.session = requests.Session()
         self.session.headers.update({
             "Content-Type": "application/json",

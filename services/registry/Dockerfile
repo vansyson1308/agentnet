@@ -19,7 +19,12 @@ COPY alembic.ini /app/alembic.ini
 COPY migrations /app/migrations
 COPY init-db /app/init-db
 COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# Society worker runtime bootstrap for platforms with a persistent volume
+# (Railway): clones/refreshes the trusted repository checkout on the volume at
+# container start (volumes are not mounted at build or pre-deploy time), then
+# execs the worker. No secrets; public HTTPS clone.
+COPY start-society-railway.sh /app/start-society-railway.sh
+RUN chmod +x /app/entrypoint.sh /app/start-society-railway.sh
 
 EXPOSE 8000
 
