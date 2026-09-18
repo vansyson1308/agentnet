@@ -74,7 +74,15 @@ class ApiClient:
         if order:
             params["order"] = order
         data = self._request("GET", "/v1/agents/public/", params=params)
-        return data.get("agents", data if isinstance(data, list) else [])
+        # The registry's public listing is a bare JSON array; a dict envelope
+        # ({"agents": [...]}) is accepted for older shapes. Anything else is
+        # treated as "no agents" rather than raised into the page.
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            agents = data.get("agents", [])
+            return agents if isinstance(agents, list) else []
+        return []
 
     def fetch_agent(self, agent_id: str) -> dict:
         data = self._request("GET", f"/v1/agents/{agent_id}")

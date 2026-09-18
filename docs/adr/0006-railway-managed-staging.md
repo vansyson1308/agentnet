@@ -1,7 +1,8 @@
 # ADR-0006 — Managed staging on Railway (Phase 4)
 
 Status: accepted (2026-09-18) · Refines ADR-0003 (hosting-neutral contract) and ADR-0005 D3 (staging
-contract). Bring-up: **BLOCKED — external** (D11); repository side complete.
+contract). Bring-up: **DONE — `MANAGED STAGING — GREEN`** (D12; the D11 blocker was lifted the same day by the
+Railway connector); repository side complete.
 
 ## Context
 
@@ -154,11 +155,12 @@ is egress-blocked, and no `gh` or browser session exists. Status stays
 `MAIN RULESET: OWNER ACTION REQUIRED` with the exact payload in `deploy/github/main-ruleset.json`;
 the code-layer refusals of ADR-0005 D7 remain the control.
 
-### D11 — Blocker and resumption
+### D11 — Blocker and resumption (historical; superseded by D12 the same day)
 
-Verdict `MANAGED STAGING — PARTIAL / BLOCKED`. Everything that does not need Railway is done and
-merged; nothing was created on Railway because no Railway endpoint is reachable and no Railway tool
-is enabled in the session. Either remedy unblocks the bring-up without any secret being pasted:
+Verdict at the time of writing: `MANAGED STAGING — PARTIAL / BLOCKED`. Everything that does not need
+Railway was done and merged; nothing had been created on Railway because no Railway endpoint was
+reachable and no Railway tool was enabled in the session. Either remedy unblocks the bring-up without
+any secret being pasted:
 
 1. connect the **Railway** connector in claude.ai (OAuth to Railway's MCP server, served through
    Anthropic's MCP proxy, so the container egress policy does not apply), or
@@ -167,6 +169,36 @@ is enabled in the session. Either remedy unblocks the bring-up without any secre
    `railway login --browserless` pairing when asked.
 
 Then `docs/RAILWAY_STAGING.md` is executed top to bottom, twice (§20), before `GREEN` is claimed.
+
+### D12 — Bring-up outcome (2026-09-18, connector)
+
+Remedy 1 of D11 happened: the Railway connector was connected, the owner created the `staging` environment
+and approved the Hobby plan, and the runbook was executed through the connector. Decisions taken while
+executing, all of which keep D1–D10 intact:
+
+* **Secrets are Railway-generated** (`${{secret(64, "abcdef0123456789")}}` shared variables) instead of
+  `openssl rand` on a laptop: no value ever exists outside Railway's store and the connector only returns
+  variable names. D7 unchanged in substance.
+* **Pre-deploy also seeds the fleet**: `… && python -m app.society.seed` after `alembic upgrade head`. The seed
+  is idempotent (unions operator gates, reuses existing agents) and runs in the same single migration-owner step,
+  so D3's "exactly one owner" still holds and runtime containers still never touch the schema.
+* **Validation runs inside the environment**: egress from the engineering session to `*.up.railway.app` stays
+  blocked, so `deploy/railway/validate_staging.py` runs as a `staging-validator` service (registry image, clones
+  `main`, private DNS to every service, database checks with the `POSTGRES_*` references, an operator per run,
+  spoof test through the public edge). It is a validation harness, not a runtime dependency: no domain, no
+  Society flag, `ON_FAILURE` restarts.
+* **Three allow-listed operators** on `staging.agentnet.io.vn` (`EmailStr` rejects special-use domains) so
+  consecutive validations use distinct ingress actors; the red-team burst spends an actor's hourly quota.
+* **Wait for CI is an owner action**: `source.checkSuites` does not persist through the connector or the
+  Railway agent; the repository's own merge discipline is the gate until the owner flips it in the dashboard.
+* **Redeploy semantics**: a fresh deployment is produced by a variable write with a new value; `redeploy`
+  copies the last successful snapshot and refuses a `SKIPPED` latest record; `restart-service` keeps the
+  rendered environment. Documented in the runbook so no one "restarts" to pick up a config change.
+* **Not run** (need `railway ssh`, which the connector lacks): the volume marker file and the `kill 1` crash
+  test; replaced by the bootstrap's `cloning` / `reusing persistent checkout` log lines across a restart and a
+  fresh deployment, and by the `ALWAYS` restart policy.
+
+Evidence: `docs/RAILWAY_STAGING.md` (inventory, per-section "as executed" notes, §20 table).
 
 ## Official documentation consulted (source `railwayapp/docs@63cab08`, 2026-09-17)
 
@@ -197,5 +229,6 @@ published source repository.
   commit; candidate work survives restarts on the volume; the runtime stays OFF.
 * Client-IP trust is explicit and testable per platform (`TRUST_X_REAL_IP`); the rate-limit bypass
   that `FORWARDED_ALLOW_IPS=*` would have created is documented and rejected.
-* Nothing exists on Railway yet; the first bring-up is a human-unblocked action that follows
-  `docs/RAILWAY_STAGING.md` verbatim and ends with two consecutive full validations.
+* The staging environment exists and is `GREEN` (D12): two consecutive full validations on the same
+  `main` commit through the in-environment validator, restart / persistence / rollback / secret-leak /
+  resource proofs recorded in `docs/RAILWAY_STAGING.md`; production remains `NOT STARTED`, DNS unchanged.

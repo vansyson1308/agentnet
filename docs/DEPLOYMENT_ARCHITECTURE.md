@@ -7,8 +7,8 @@ under `deploy/legacy-vps/` and refuses to run.
 
 Current truth: Society deterministic/runtime mechanics **PROVEN**; Phase 2 safety hardening
 **PROVEN**; live model **NOT YET PROVEN**; A2A v1 migration **NOT STARTED**; managed staging
-hosting **Railway — SELECTED, NOT YET DEPLOYED** (Phase 4: repository adapted and merged; the bring-up is
-blocked until the engineering session can reach Railway — `docs/RAILWAY_STAGING.md` §19, ADR-0006).
+hosting **Railway — DEPLOYED, `MANAGED STAGING — GREEN`** (Phase 4: project `AgentNet` / environment `staging`,
+two consecutive full validations on `main` ae42d7a — `docs/RAILWAY_STAGING.md`, ADR-0006 D12; production: none).
 
 ## 1. Components and what each one needs
 
@@ -145,4 +145,4 @@ operator runbook is `docs/RAILWAY_STAGING.md`. Summary of the mapping:
 | Client address | `TRUST_X_REAL_IP=true` on the registry (`app/proxy_headers.py`): `X-Real-IP` from Railway's edge; `X-Forwarded-For` never trusted; `FORWARDED_ALLOW_IPS` stays default — `*` would let callers mint rate-limit buckets |
 | Secrets | shared variables `JWT_SECRET_KEY`, `FLASK_SECRET_KEY`, `INTERNAL_WORKER_TOKEN` (generated locally, stored only in Railway); no model key, no GitHub credential |
 | Deploy gate | autodeploy from `main` + Wait for CI; healthchecks `/readyz` (registry, payment), `/healthz` (dashboard), `/metrics` (worker, society-worker); restart policy `Always` where the plan allows |
-| Not done | nothing exists on Railway yet (`MANAGED STAGING — PARTIAL / BLOCKED`); no production environment; no DNS change |
+| State | `MANAGED STAGING — GREEN` (2026-09-18): project `AgentNet`, environment `staging`, two consecutive full validations from the in-environment `staging-validator` on `main` ae42d7a — `docs/RAILWAY_STAGING.md` (inventory at the top, evidence per section, §20 table). Not done: *Wait for CI* (owner action), production environment (none), DNS (unchanged) |

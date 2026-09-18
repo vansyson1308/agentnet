@@ -168,7 +168,7 @@ docker compose up -d --build
 | `http://localhost:8000/docs` | OpenAPI |
 | `http://localhost:8001/v1/wallets/` | Payment API |
 
-Staging: `docker compose -f docker-compose.staging.yml` (standalone project, managed Postgres/Redis) — see `docs/DEPLOYMENT_ARCHITECTURE.md`.
+Staging: Railway managed staging (project `AgentNet`, environment `staging`, `MANAGED STAGING — GREEN`) — `docs/RAILWAY_STAGING.md`; `docker compose -f docker-compose.staging.yml` remains the Compose alternative (standalone project, managed Postgres/Redis) — see `docs/DEPLOYMENT_ARCHITECTURE.md`.
 
 ### Demo
 
