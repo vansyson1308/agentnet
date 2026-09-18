@@ -58,10 +58,11 @@ def test_society_ddl_applies_twice(society_db_url, engine):
         n = conn.execute(
             text(
                 "SELECT count(*) FROM information_schema.tables WHERE table_name IN "
-                "('society_events','agent_runs','agent_intents','agent_capability_grants','code_candidates')"
+                "('society_events','agent_runs','agent_intents','agent_capability_grants','code_candidates',"
+                "'code_promotions','change_experiments','deployment_requests')"
             )
         ).scalar()
-    assert n == 5
+    assert n == 8
 
 
 def _alembic(env: dict, *args: str) -> subprocess.CompletedProcess:
@@ -111,9 +112,10 @@ def test_alembic_upgrade_persists_and_is_idempotent(society_db_url):
     assert "0006_email_verified -> 0007_society_runtime" in first.stderr + first.stdout
     assert "0007_society_runtime -> 0008_society_phase2" in first.stderr + first.stdout
     assert "0008_society_phase2 -> 0009_app_tables" in first.stderr + first.stdout
+    assert "0009_app_tables -> 0010_self_development" in first.stderr + first.stdout
 
     current = _alembic(env, "current")
-    assert "0009_app_tables" in current.stdout + current.stderr, "alembic_version was not persisted"
+    assert "0010_self_development" in current.stdout + current.stderr, "alembic_version was not persisted"
 
     second = _alembic(env, "upgrade", "head")
     assert second.returncode == 0, second.stderr
@@ -122,7 +124,7 @@ def test_alembic_upgrade_persists_and_is_idempotent(society_db_url):
 
 @pytest.mark.parametrize(
     "table",
-    ["society_events", "agent_runs", "agent_intents", "agent_capability_grants", "code_candidates", "intent_approvals"],
+    ["society_events", "agent_runs", "agent_intents", "agent_capability_grants", "code_candidates", "intent_approvals", "code_promotions", "change_experiments", "deployment_requests", "memory_items"],
 )
 def test_orm_models_match_database_columns(engine, table):
     """Every ORM column exists in the DB and vice versa (catches SQL/ORM drift)."""

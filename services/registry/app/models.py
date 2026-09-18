@@ -669,10 +669,22 @@ class MemoryItem(Base):
     source_task_id = Column(UUID(as_uuid=True), ForeignKey("task_sessions.id", ondelete="SET NULL"))
     importance = Column(Integer, nullable=False, default=50)
     created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+    # Provenance + freshness (Phase 3). Memory is evidence, never policy: no
+    # runtime decision reads these rows for permissions. ``validation_state``
+    # is set only by trusted code (evaluation outcomes), never by an intent.
+    source_type = Column(String(32), nullable=False, default="legacy")      # run|experiment|promotion|operator|legacy
+    source_id = Column(UUID(as_uuid=True))
+    correlation_id = Column(UUID(as_uuid=True))
+    author_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"))
+    confidence = Column(Integer, nullable=False, default=50)
+    validation_state = Column(String(16), nullable=False, default="unvalidated")  # unvalidated|validated|refuted
+    expires_at = Column(TzTimestamp)
+    superseded_by = Column(UUID(as_uuid=True), ForeignKey("memory_items.id", ondelete="SET NULL"))
 
     # Relationships
     agent = relationship("Agent", foreign_keys=[agent_id])
     source_task = relationship("TaskSession", foreign_keys=[source_task_id])
+    author_agent = relationship("Agent", foreign_keys=[author_agent_id])
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -937,6 +949,13 @@ class AgentRun(Base):
     model_requests = Column(Integer, nullable=False, default=0)
     model_retries = Column(Integer, nullable=False, default=0)
     model_timeouts = Column(Integer, nullable=False, default=0)
+    # Model routing / cost governor (Phase 3): which logical tier served the
+    # run and why; provider-reported cache usage; output-format negotiation.
+    model_tier = Column(String(16))
+    route_reason = Column(String(255))
+    tokens_cached = Column(Integer)
+    output_format = Column(String(16))
+    format_fallbacks = Column(Integer, nullable=False, default=0)
     error = Column(Text)
     sleep_until = Column(TzTimestamp)
     correlation_id = Column(UUID(as_uuid=True), nullable=False, index=True)
@@ -1069,6 +1088,13 @@ class CodeCandidate(Base):
     qa_report = Column(PG_JSONB, nullable=False, default=dict)
     security_report = Column(PG_JSONB, nullable=False, default=dict)
     requires_security_review = Column(Boolean, nullable=False, default=False)
+    # Phase 3: trusted risk tier (written only by the promotion controller from
+    # the base classifier), diff identity for anti-busywork, engineering bounds.
+    risk_tier = Column(String(16))
+    diff_hash = Column(String(64))
+    diff_lines = Column(Integer, nullable=False, default=0)
+    engineering_turns = Column(Integer, nullable=False, default=0)
+    repo_reads = Column(Integer, nullable=False, default=0)
     error = Column(Text)
     created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
     updated_at = Column(TzTimestamp, nullable=False, server_default=func.now(), onupdate=func.now())
@@ -1079,3 +1105,161 @@ class CodeCandidate(Base):
     builder_run = relationship("AgentRun", foreign_keys=[builder_run_id])
     qa_run = relationship("AgentRun", foreign_keys=[qa_run_id])
     security_run = relationship("AgentRun", foreign_keys=[security_run_id])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Phase 3 — self-development: promotion, fitness experiments, deployment
+# requests. DDL: app/society/schema_sql.py (SOCIETY_PHASE3_SQL, migration 0010).
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class RiskTier(str, enum.Enum):
+    """Trusted change-risk tier (society/risk.py). Computed from the BASE
+    revision's classifier, never from the candidate branch."""
+
+    GREEN = "green"
+    AMBER = "amber"
+    RED = "red"
+    NEVER = "never"
+
+
+class PromotionStatus(str, enum.Enum):
+    REQUESTED = "requested"
+    VALIDATING = "validating"
+    BRANCH_READY = "branch_ready"
+    PR_OPEN = "pr_open"
+    CI_PENDING = "ci_pending"
+    CI_PASSED = "ci_passed"
+    CI_FAILED = "ci_failed"
+    AWAITING_APPROVAL = "awaiting_approval"
+    MERGE_ELIGIBLE = "merge_eligible"
+    MERGED = "merged"
+    REJECTED = "rejected"
+    SUPERSEDED = "superseded"
+    BLOCKED_EXTERNAL = "blocked_external"   # no provider configured; nothing published
+
+
+class ExperimentStatus(str, enum.Enum):
+    PLANNED = "planned"
+    BASELINE = "baseline"
+    CANDIDATE = "candidate"
+    EVALUATING = "evaluating"
+    PASS = "pass"
+    FAIL = "fail"
+    INCONCLUSIVE = "inconclusive"
+
+
+class DeploymentRequestStatus(str, enum.Enum):
+    REQUESTED = "requested"
+    BLOCKED_EXTERNAL = "blocked_external"   # no hosting provider configured
+    IN_PROGRESS = "in_progress"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    ROLLED_BACK = "rolled_back"
+    REFUSED = "refused"                     # e.g. production: recorded, never executed
+
+
+class CodePromotion(Base):
+    """Durable promotion record: READY candidate -> branch -> PR -> CI ->
+    evaluation -> merge eligibility. Only the deterministic promotion
+    controller writes it; an intent can only request one."""
+
+    __tablename__ = "code_promotions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    candidate_id = Column(UUID(as_uuid=True), ForeignKey("code_candidates.id", ondelete="CASCADE"), nullable=False)
+    correlation_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    risk_tier = Column(String(16), nullable=False)
+    base_sha = Column(String(64))
+    candidate_sha = Column(String(64))
+    previous_good_sha = Column(String(64))
+    provider = Column(String(32), nullable=False)
+    external_branch = Column(String(255))
+    external_pr_number = Column(Integer)
+    external_pr_url = Column(String(512))
+    status = _enum_column(PromotionStatus, nullable=False, default="requested")
+    ci_state = Column(String(32))
+    merge_state = Column(String(32))
+    approved_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    approval_at = Column(TzTimestamp)
+    merged_sha = Column(String(64))
+    failure_reason = Column(Text)
+    eligibility = Column(PG_JSONB, nullable=False, default=dict)
+    evidence = Column(PG_JSONB, nullable=False, default=dict)
+    requested_by_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"))
+    requested_by_run_id = Column(UUID(as_uuid=True))
+    worker_id = Column(String(128))
+    lease_expires_at = Column(TzTimestamp)
+    attempt = Column(Integer, nullable=False, default=0)
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+    updated_at = Column(TzTimestamp, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    candidate = relationship("CodeCandidate", foreign_keys=[candidate_id])
+    approved_by = relationship("User", foreign_keys=[approved_by_user_id])
+
+
+class ChangeExperiment(Base):
+    """Fitness evaluation of one candidate against the trusted baseline.
+    ``criteria_snapshot`` is the PRE-change trusted criteria the decision was
+    computed with; ``evaluation_mode`` is 'offline' until a staging host exists."""
+
+    __tablename__ = "change_experiments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    candidate_id = Column(UUID(as_uuid=True), ForeignKey("code_candidates.id", ondelete="CASCADE"), nullable=False)
+    promotion_id = Column(UUID(as_uuid=True), ForeignKey("code_promotions.id", ondelete="SET NULL"))
+    correlation_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    baseline_sha = Column(String(64))
+    candidate_sha = Column(String(64))
+    environment = Column(String(32), nullable=False, default="offline")
+    evaluation_mode = Column(String(32), nullable=False, default="offline")
+    status = _enum_column(ExperimentStatus, nullable=False, default="planned")
+    criteria_snapshot = Column(PG_JSONB, nullable=False, default=dict)
+    baseline_metrics = Column(PG_JSONB, nullable=False, default=dict)
+    candidate_metrics = Column(PG_JSONB, nullable=False, default=dict)
+    hard_gate_results = Column(PG_JSONB, nullable=False, default=list)
+    metric_deltas = Column(PG_JSONB, nullable=False, default=dict)
+    decision = Column(String(16))
+    confidence = Column(String(16))
+    rollback_recommended = Column(Boolean, nullable=False, default=False)
+    recommendation = Column(PG_JSONB, nullable=False, default=dict)
+    evidence = Column(PG_JSONB, nullable=False, default=dict)
+    requested_by_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"))
+    worker_id = Column(String(128))
+    lease_expires_at = Column(TzTimestamp)
+    attempt = Column(Integer, nullable=False, default=0)
+    error = Column(Text)
+    started_at = Column(TzTimestamp)
+    finished_at = Column(TzTimestamp)
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+    updated_at = Column(TzTimestamp, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    candidate = relationship("CodeCandidate", foreign_keys=[candidate_id])
+    promotion = relationship("CodePromotion", foreign_keys=[promotion_id])
+
+
+class DeploymentRequest(Base):
+    """Durable staging/rollback request behind a DeploymentProvider. With no
+    provider configured the request is BLOCKED_EXTERNAL (never fake success).
+    Production requests are recorded as REFUSED — no executor exists."""
+
+    __tablename__ = "deployment_requests"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    candidate_id = Column(UUID(as_uuid=True), ForeignKey("code_candidates.id", ondelete="SET NULL"))
+    promotion_id = Column(UUID(as_uuid=True), ForeignKey("code_promotions.id", ondelete="SET NULL"))
+    correlation_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    environment = Column(String(32), nullable=False)
+    kind = Column(String(16), nullable=False, default="deploy")
+    target_sha = Column(String(64))
+    provider = Column(String(32), nullable=False)
+    status = _enum_column(DeploymentRequestStatus, nullable=False, default="requested")
+    external_ref = Column(String(255))
+    note = Column(Text)
+    rollback_of = Column(UUID(as_uuid=True), ForeignKey("deployment_requests.id", ondelete="SET NULL"))
+    requested_by_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"))
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+    updated_at = Column(TzTimestamp, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    candidate = relationship("CodeCandidate", foreign_keys=[candidate_id])
+    promotion = relationship("CodePromotion", foreign_keys=[promotion_id])
