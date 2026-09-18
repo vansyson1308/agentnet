@@ -18,6 +18,7 @@ quality. Nothing here touches GitHub or the developer's checkout.
 from __future__ import annotations
 
 import asyncio
+import pathlib
 import subprocess
 import uuid
 
@@ -165,6 +166,13 @@ def test_one_anomaly_becomes_a_real_code_fix_shadow_pr_and_fitness_verdict(db, S
 
     task = db.query(TaskSession).one()
     assert _ev(task.status) == "completed" and task.escrow_amount == 10
+
+    # ── no legacy side effect (Phase 3.1): one signal -> one DB/event-driven workstream ──
+    assert db.query(ImprovementProposal).count() == 1, "one signal produced exactly one proposal"
+    assert db.query(TaskSession).count() == 1, "only the Architect's escrowed Builder task exists (no synthetic poller tasks)"
+    assert not list(pathlib.Path(code_repo).rglob("AGENT_BACKLOG.md")) and not list(pathlib.Path(code_settings.workspace_root).rglob("AGENT_BACKLOG.md"))
+    assert not (pathlib.Path(__file__).resolve().parent.parent.parent / "AGENT_BACKLOG.md").exists()
+    assert db.query(SocietyEvent).filter(SocietyEvent.event_type == EventType.PROPOSAL_CREATED).count() == 1
 
 
 @pytest.mark.timeout(600)

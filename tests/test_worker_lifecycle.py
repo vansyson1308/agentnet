@@ -84,8 +84,9 @@ def _quiet(mod, monkeypatch, sessions, *, db_fail=False, redis_factory=None):
 
     monkeypatch.setattr(mod, "process_timed_out_tasks", _process)
     monkeypatch.setattr(mod, "process_offline_agents", _noop)
-    monkeypatch.setattr(mod, "run_reflection_loop", lambda db: 0)
-    monkeypatch.setattr(mod, "convert_proposals_to_backlog", lambda db: 0)
+    # Phase 3.1: the legacy reflection/backlog bridge is retired from the
+    # worker; the Society runtime is the only self-improvement control plane.
+    assert not hasattr(mod, "run_reflection_loop") and not hasattr(mod, "convert_proposals_to_backlog")
     monkeypatch.setattr(mod, "WORKER_POLL_INTERVAL_SEC", 0.02)
 
 

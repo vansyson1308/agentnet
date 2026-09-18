@@ -1,3 +1,19 @@
+"""ARCHIVED (Phase 3.1) — formerly services/worker/app/reflection_loop.py.
+
+This was the legacy self-improvement bridge: the general worker scanned
+failed/timeout/refunded tasks, created ImprovementProposal rows, and then
+rewrote every PROPOSED proposal into AGENT_BACKLOG.md (status ->
+CONVERTED_TO_TASK) for the Hermes planner. It competed with the Autonomous
+Society Runtime, which now owns that lifecycle end to end (world.py ingests
+task outcomes; the Scout proposes with evidence; the Governor reviews; the
+Architect/Builder/QA/Security/Promotion/Fitness pipeline follows).
+
+Nothing imports this file. It is kept for reference only; the runtime copy
+was removed from services/worker/app and the worker no longer calls it.
+The pure preview helper the dashboard uses lives in
+services/registry/app/reflection.py (no DB writes, no backlog file).
+"""
+# flake8: noqa
 """Reflection loop — turns failed/timeout/refunded tasks into structured
 :class:`ImprovementProposal` rows the lab can review.
 

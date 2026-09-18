@@ -132,7 +132,7 @@ def test_gitignore_excludes_env_files(entry):
 
 
 def test_sample_agents_require_password_from_env():
-    for rel in ("agents/echo_agent.py", "agents/poll_agent.py"):
+    for rel in ("legacy/synthetic-agents/echo_agent.py", "legacy/synthetic-agents/poll_agent.py"):
         src = _read(REPO / rel)
         assert 'os.getenv("AGENT_PASSWORD"' in src, rel
         assert re.search(r'AGENT_PASSWORD\s*=\s*"[^"]+"', src) is None, f"{rel} still hard-codes a password"

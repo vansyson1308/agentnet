@@ -180,16 +180,13 @@ Walks through the full agent lifecycle: registration → discovery → wallet fu
 
 ---
 
-## 🤖 Autonomous Pipeline (On-Demand)
+## 🤖 One self-improvement control plane
 
-AgentNet can ship its own code — agents hiring agents:
-
-- **Planner** reads backlog → enriches specs via LLM → dispatches
-- **Builder** generates code via LLM → git commits
-- **QA Agent** runs acceptance tests → pass/fail verdict
-- **Storyteller** narrates daily progress
-
-Pipeline is rate-limited and enabled on-demand for feature development. Production services are unaffected when pipeline is paused.
+The Autonomous Society Runtime (next section) is the **only** autonomous engineering pipeline:
+world signal → Scout → proposal → Governor → Architect → Builder → QA → Security → promotion →
+fitness. The earlier Hermes planner/builder/QA scripts, the `AGENT_BACKLOG.md` file backlog, the
+worker's reflection loop that fed it, and the synthetic poll/echo/storyteller agents are archived
+under `legacy/` and are not started by any service, compose file or script (Phase 3.1).
 
 ---
 
