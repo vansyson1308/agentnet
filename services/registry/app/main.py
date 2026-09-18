@@ -18,6 +18,7 @@ from .security import setup_cors, setup_security_headers
 from .tracing import configure_tracing
 from .websocket_manager import manager
 from .api.rate_limiter import add_rate_limiter, RateLimitMiddleware
+from .proxy_headers import EdgeClientAddressMiddleware, trust_x_real_ip_enabled
 from .auto_scaler import start_auto_scaler, stop_auto_scaler
 
 # Configure structured logging — JSON in prod, console in dev. Must run
@@ -96,6 +97,13 @@ app.add_middleware(
     redis_url=_os.getenv("REDIS_URL_RATE_LIMIT") or _REDIS_URL,
 )
 setup_security_headers(app)
+
+# Managed platform edge (ADR-0006 D5): when the port is reachable only through
+# an edge that sets X-Real-IP (Railway), take the client address from it. Added
+# AFTER the rate limiter so it wraps it (Starlette: last added = outermost).
+# X-Forwarded-For stays untrusted — FORWARDED_ALLOW_IPS keeps its default.
+if trust_x_real_ip_enabled():
+    app.add_middleware(EdgeClientAddressMiddleware)
 
 # Health, readiness, Prometheus metrics — mount BEFORE the API router
 # so the /metrics middleware sees every request.
