@@ -21,6 +21,18 @@
 
 set -e
 
+# Managed platforms (docs/RAILWAY_STAGING.md): exactly ONE deployment step owns
+# the schema — the registry's pre-deploy command runs this script with a no-op
+# command. Every other container built from this image (the society worker,
+# the registry's own runtime container after pre-deploy) starts with
+# SKIP_DB_BOOTSTRAP=true and must never touch the schema, so a restart of the
+# society worker can never race or re-run a migration. Local Compose and the
+# fresh-install proof leave the variable unset (default: bootstrap + migrate).
+if [ "${SKIP_DB_BOOTSTRAP:-false}" = "true" ]; then
+  echo "registry: SKIP_DB_BOOTSTRAP=true — schema bootstrap/migrations are owned by another deployment step; starting: $*"
+  exec "$@"
+fi
+
 # Wait for Postgres — docker-compose's depends_on with healthcheck already
 # does this, but be defensive in case the script is run outside compose.
 echo "registry: waiting for postgres..."
