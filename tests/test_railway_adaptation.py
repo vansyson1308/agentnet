@@ -298,3 +298,39 @@ def test_dashboard_pages_render_with_stale_links_and_an_unreachable_registry():
     landing, index, location, metaverse, has_500_text, has_stale_anchor = proc.stdout.split()
     assert landing == "200" and index == "302" and "/metaverse" in location
     assert metaverse == "200" and has_500_text == "False" and has_stale_anchor == "True"
+
+
+def test_dashboard_metaverse_renders_the_registry_public_listing():
+    """The registry's public listing is a bare JSON array (``List[AgentPublic]``).
+    On staging the dashboard answered 200 but logged ``'list' object has no
+    attribute 'get'`` and rendered the error flash instead of the fleet; the
+    client now accepts both the array and a ``{"agents": [...]}`` envelope."""
+    clean = {k: v for k, v in os.environ.items() if k not in {"REGISTRY_URL", "API_BASE_URL", "ENVIRONMENT"}}
+    code = (
+        "import json, threading\n"
+        "from http.server import BaseHTTPRequestHandler, HTTPServer\n"
+        "AGENT = {'id': 'a1', 'name': 'Society_Scout', 'description': 'scout', 'capabilities': ['recon'],\n"
+        "         'success_rate': 0.5, 'total_tasks_completed': 1, 'total_tasks_failed': 0, 'total_tasks_timeout': 0,\n"
+        "         'reputation_tier': 'bronze'}\n"
+        "class H(BaseHTTPRequestHandler):\n"
+        "    def do_GET(self):\n"
+        "        body = json.dumps([AGENT] if self.path.startswith('/v1/agents/public/') else {}).encode()\n"
+        "        self.send_response(200); self.send_header('content-type', 'application/json'); self.end_headers(); self.wfile.write(body)\n"
+        "    def log_message(self, *a): pass\n"
+        "srv = HTTPServer(('127.0.0.1', 0), H); threading.Thread(target=srv.serve_forever, daemon=True).start()\n"
+        "import os; os.environ['REGISTRY_URL'] = 'http://127.0.0.1:%d' % srv.server_port\n"
+        "from app.main import app\n"
+        "from app.api_client import api_client\n"
+        "print(api_client.fetch_agents()[0]['name'])\n"
+        "r = app.test_client().get('/metaverse'); body = r.get_data(as_text=True)\n"
+        "print(r.status_code, 'Society_Scout' in body, 'An error occurred while loading the command center' in body)\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], cwd=REPO / "services/dashboard",
+        env={**clean, "ENVIRONMENT": "development"},
+        capture_output=True, text=True, timeout=90,
+    )
+    assert proc.returncode == 0, proc.stderr
+    first_name, status, has_agent, has_error_flash = proc.stdout.split()
+    assert first_name == "Society_Scout"
+    assert status == "200" and has_agent == "True" and has_error_flash == "False"

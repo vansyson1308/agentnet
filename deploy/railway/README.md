@@ -27,4 +27,4 @@ cd .railway && npm install && cd .. && railway config plan && railway config app
 # per service: generated domain (registry, dashboard only), Wait for CI, watch paths, restart policy, pre-deploy timeout
 ```
 
-Status: `MANAGED STAGING — PARTIAL / BLOCKED` — see `docs/RAILWAY_STAGING.md` §19 for the exact unblock.
+Status: `MANAGED STAGING — GREEN` (2026-09-18, `main` ae42d7a) — `docs/RAILWAY_STAGING.md` has the live inventory, the evidence per section and the §20 validation table; `validate_staging.py` is what the `staging-validator` service runs.

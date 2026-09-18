@@ -17,10 +17,10 @@ the code and tests win and this file is stale — fix it in the same change.
 | One self-improvement control plane | **DONE (Phase 3.1)** — the worker's reflection loop and `AGENT_BACKLOG.md` bridge are archived under `legacy/hermes/`; synthetic poll/echo/storyteller agents under `legacy/synthetic-agents/`; `tests/society/test_single_control_plane.py` |
 | `main` ruleset | **OWNER ACTION REQUIRED** — the API refused ruleset creation from the session proxy (403); exact body in `deploy/github/main-ruleset.json` |
 | Live model | **NOT YET PROVEN** — no credential provided; `python -m app.society.canary preflight` reports `LIVE MODEL BLOCKED — NO SAFE CREDENTIAL` |
-| Staging deployment | **Railway selected — repository adapted, bring-up BLOCKED (external)**: `.railway/railway.ts` (staging-only IaC), one migration owner (`SKIP_DB_BOOTSTRAP`), society volume bootstrap script, `X-Real-IP` trust middleware, runbook `docs/RAILWAY_STAGING.md`, ADR-0006. Nothing exists on Railway yet: no Railway endpoint or connector is reachable from the engineering session (runbook §19 has the two unblock actions). `docker-compose.staging.yml` remains the Compose alternative |
+| Staging deployment | **Railway managed staging — GREEN** (2026-09-18, `main` ae42d7a): project `AgentNet`, environment `staging`, Postgres + Redis (private), registry + dashboard on Railway-generated domains, payment / worker / society-worker private, one `society-workspace` volume, registry pre-deploy as the only migration owner (`0010_self_development`, fleet seed), `TRUST_X_REAL_IP` spoof test PASS at the live edge, Society flags OFF, scripted model only. Two consecutive full validations by the in-environment `staging-validator` (`deploy/railway/validate_staging.py`, 26 checks each, distinct operators) plus restart / persistence / rollback / secret-leak / resource proofs — `docs/RAILWAY_STAGING.md` §20. Open owner action: *Wait for CI* on each service (the flag does not persist through the connector). `docker-compose.staging.yml` remains the Compose alternative |
 | Production deployment | **none**; the retired VPS artifacts are quarantined under `deploy/legacy-vps/` |
 | A2A v1 migration | **NOT STARTED** (`app/a2a.py` still emits a v0.3-shaped card; readiness plan is written only after a live-model GO) |
-| Final managed hosting | **Railway (staging) SELECTED — NOT YET DEPLOYED** (`docs/RAILWAY_STAGING.md`, ADR-0006; `docs/DEPLOYMENT_ARCHITECTURE.md` §7) |
+| Final managed hosting | **Railway (staging) — DEPLOYED AND VALIDATED** (`docs/RAILWAY_STAGING.md`, ADR-0006 D12; `docs/DEPLOYMENT_ARCHITECTURE.md` §7); production: none |
 
 Self-development status (Phase 3). PROVEN means the mechanics are exercised by deterministic
 tests and the demo — not that any model, GitHub App or host has been connected:
@@ -32,8 +32,13 @@ SHADOW PR PROMOTION: PROVEN
 OFFLINE FITNESS: PROVEN
 LIVE MODEL: NOT YET PROVEN
 REAL SOCIETY GITHUB APP: NOT YET CONFIGURED
-HOSTING: RAILWAY STAGING SELECTED, NOT DEPLOYED
-MANAGED STAGING: PARTIAL / BLOCKED (Railway unreachable from the engineering session)
+HOSTING: RAILWAY STAGING DEPLOYED (project AgentNet / environment staging)
+MANAGED STAGING: GREEN (two consecutive full validations on main ae42d7a)
+STAGING OPERATOR: CREATED
+SECRET LEAK CHECK: PASS
+DEEPSEEK KEY PRESENT: NO
+SOCIETY GITHUB SECRET PRESENT: NO
+WAIT FOR CI ON RAILWAY: OWNER ACTION REQUIRED
 PRODUCTION DEPLOYMENT: NOT STARTED
 DNS CHANGED: NO
 A2A V1: NOT STARTED
@@ -123,9 +128,11 @@ counts and the exact commands are in the Phase 2.6 report.
 
 ## Known, intentional limitations
 
-* The Railway staging environment does not exist yet: the engineering session cannot reach any Railway host and
-  has no Railway connector (ADR-0006 D11). The proxy spoof test of ADR-0006 D5 (`TRUST_X_REAL_IP`) is therefore
-  specified but not yet run against a live edge; the middleware is proven only by unit tests.
+* Railway staging (ADR-0006 D12): *Wait for CI* is not yet switched on (the flag does not persist through the
+  connector — owner action in the dashboard); the dashboard runs Flask's development server behind Railway's
+  edge (a WSGI server is a follow-up); stale dashboard template links render as inert `#` anchors; the `kill 1`
+  crash test and the volume marker file of the runbook need `railway ssh` and were not run — the restart policy
+  (`ALWAYS`) and the bootstrap's `reusing persistent checkout` log lines are the evidence instead.
 * Live-model canaries, soak and GO/NO-GO are blocked on a rotated credential and a staging host. The DeepSeek
   key was never provided in Phase 3 (`DEEPSEEK KEY: NOT PROVIDED`, `DEEPSEEK LIVE CALL: NOT RUN`); provider
   compatibility is proven only against a fake transport (`tests/society/test_deepseek_contract.py`).
