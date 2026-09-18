@@ -139,14 +139,14 @@ railway logs -s society-worker | grep -c alembic                                
 ## 9. Staging operator (structural; the token is never reported)
 
 SMTP is not wired, so email verification is completed on the staging database. The registry allow-lists two
-bootstrap operators (`SOCIETY_OPERATOR_BOOTSTRAP_EMAILS=staging-operator@agentnet.local,staging-operator-b@agentnet.local`)
-so that two consecutive validations use distinct ingress actors (the red-team burst consumes an actor's hourly quota).
+bootstrap operators (`SOCIETY_OPERATOR_BOOTSTRAP_EMAILS=staging-operator@staging.agentnet.io.vn,staging-operator-b@staging.agentnet.io.vn`)
+so that two consecutive validations use distinct ingress actors (the red-team burst consumes an actor's hourly quota). The addresses are synthetic strings on the project's own staging subdomain: pydantic's email validator rejects special-use domains such as `.local`, `.invalid` and `.test`, and no mail is ever sent.
 The in-Railway validator (§21) performs these steps itself; by hand they are:
 
 ```bash
-curl -sS -X POST $R/v1/auth/register -H 'content-type: application/json' -d '{"email":"staging-operator@agentnet.local","password":"<local-only>"}'
-railway connect postgres            # psql: UPDATE users SET is_email_verified = true WHERE email = 'staging-operator@agentnet.local';
-curl -sS -X POST $R/v1/auth/user/login -H 'content-type: application/json' -d '{"email":"staging-operator@agentnet.local","password":"<local-only>"}'
+curl -sS -X POST $R/v1/auth/register -H 'content-type: application/json' -d '{"email":"staging-operator@staging.agentnet.io.vn","password":"<local-only>"}'
+railway connect postgres            # psql: UPDATE users SET is_email_verified = true WHERE email = 'staging-operator@staging.agentnet.io.vn';
+curl -sS -X POST $R/v1/auth/user/login -H 'content-type: application/json' -d '{"email":"staging-operator@staging.agentnet.io.vn","password":"<local-only>"}'
 ```
 
 Keep the returned `access_token` in the shell only (`export SOCIETY_SMOKE_TOKEN=…`). A durable role for a real
@@ -271,7 +271,7 @@ shared secret `STAGING_VALIDATOR_SECRET` (`${{secret(64, "abcdef0123456789")}}`,
 `deploy/railway/validate_staging.py` runs §7 (public through the edge, private through private DNS), §8 (on the
 database), §9, §10, the core smoke and §11, prints `CHECK <id> PASS|FAIL …` lines and `VALIDATION RESULT: GREEN|RED`,
 then keeps the container alive so `railway restart -s staging-validator` (or the connector's restart) is run 2. Run 2
-uses the second allow-listed operator (`VALIDATOR_OPERATOR_EMAIL=staging-operator-b@agentnet.local`). §13–§17
+uses the second allow-listed operator (`VALIDATOR_OPERATOR_EMAIL=staging-operator-b@staging.agentnet.io.vn`). §13–§17
 stay connector/CLI steps (logs, restart, redeploy, metrics). No secret ever reaches the logs.
 
 ## 20. Two consecutive full validations (required for GREEN)

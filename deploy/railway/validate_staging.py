@@ -208,8 +208,8 @@ def main() -> int:
     worker_metrics = env("WORKER_METRICS_URL", "http://worker.railway.internal:9100/metrics")
     society_metrics = env("SOCIETY_METRICS_URL", "http://society-worker.railway.internal:9101/metrics")
     secret = env("STAGING_VALIDATOR_SECRET")
-    op_email = env("VALIDATOR_OPERATOR_EMAIL", "staging-operator@agentnet.local")
-    user_email = env("VALIDATOR_USER_EMAIL", "staging-user@agentnet.local")
+    op_email = env("VALIDATOR_OPERATOR_EMAIL", "staging-operator@staging.agentnet.io.vn")
+    user_email = env("VALIDATOR_USER_EMAIL", "staging-user@staging.agentnet.io.vn")
     expected_head = env("EXPECTED_ALEMBIC_HEAD", "0010_self_development")
 
     sys.stdout.write(
