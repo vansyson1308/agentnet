@@ -149,7 +149,8 @@ def ensure_user(rep: Report, code: str, api: str, email: str, password: str) -> 
     created = st == 201
     exists = st == 400 and "already registered" in body.lower()
     if not (created or exists):
-        rep.record(f"{code}a", False, f"register {email.split('@')[0]}: HTTP {st}")
+        # the body is the API's validation/error text (never a credential)
+        rep.record(f"{code}a", False, f"register {email.split('@')[0]}: HTTP {st} {body[:120]!r}")
         return None
     rep.record(f"{code}a", True, f"register {email.split('@')[0]}: {'created' if created else 'exists'}")
     try:
