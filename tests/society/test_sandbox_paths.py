@@ -26,12 +26,20 @@ ESCAPES = [
     "",
     "docs/\x00hidden.md",
 ]
+# NEVER-writable (secret material, git internals): refused by the workspace outright.
 PROTECTED = [
     ".env",
     ".env.local",
     ".ENV.example",  # patterns are matched case-insensitively for dotfiles
     ".git/config",
     ".git/hooks/pre-commit",
+    "docs/secrets/notes.md",
+    "keys/server.pem",
+    "id_rsa.key",
+    "deploy/tls/client.p12",
+]
+# RED tier (writable as a PROPOSAL, always Security + human gated, never auto-merged).
+RED_SURFACES = [
     ".github/workflows/ci.yml",
     "services/registry/app/config.py",
     "services/registry/app/auth.py",
@@ -40,11 +48,7 @@ PROTECTED = [
     "services/registry/migrations/versions/0099_evil.py",
     "docker-compose.staging.yml",
     "deploy/legacy-vps/runbook-prod.sh",
-    "sdk/python/agentnet/client.py",
     "tests/society/conftest.py",
-    "docs/secrets/notes.md",
-    "keys/server.pem",
-    "id_rsa.key",
     "requirements.txt",
     "services/worker/requirements-dev.txt",
 ]
@@ -61,6 +65,14 @@ def test_paths_that_leave_the_worktree_are_refused(tmp_path, rel):
 @pytest.mark.parametrize("rel", PROTECTED)
 def test_protected_paths_are_recognised(rel):
     assert is_protected(rel), rel
+
+
+@pytest.mark.parametrize("rel", RED_SURFACES)
+def test_red_surfaces_are_proposable_but_classified_red(rel):
+    from services.registry.app.society.risk import tier_for_path
+
+    assert not is_protected(rel), rel
+    assert tier_for_path(rel).value == "red", rel
 
 
 def test_unicode_and_odd_but_contained_names_stay_inside(tmp_path):
@@ -99,7 +111,7 @@ def test_apply_edits_refuses_protected_and_off_list_before_writing(society_setti
         before = sorted(p.relative_to(ws.path).as_posix() for p in ws.path.rglob("*") if p.is_file() and ".git" not in p.parts)
         # FileEdit validates paths itself; model_construct bypasses that layer on
         # purpose so the workspace guard is proven to hold on its own.
-        for bad in (".env", "../escape.md", "docs/../../escape.md", "services/registry/app/auth.py"):
+        for bad in (".env", "../escape.md", "docs/../../escape.md", "keys/id_rsa", "deploy/secrets/token.json"):
             with pytest.raises(WorkspaceError):
                 ws_mod.apply_edits(ws, [FileEdit.model_construct(path=bad, content="x")], allowed=[bad, "docs/ok.md"])
         # allow-list is exact: a legitimate file plus one escape means nothing is written

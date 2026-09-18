@@ -45,7 +45,7 @@ def _decision_transport(calls):
         system = payload["messages"][0]["content"]
         intents = []
         if "Society_Scout" in system:
-            intents = [{"type": "CREATE_IMPROVEMENT", "payload": {"title": "Canary proposal", "problem": "canary signal observed", "proposed_change": "record and observe", "importance": 40}}]
+            intents = [{"type": "CREATE_IMPROVEMENT", "payload": {"title": "Canary proposal", "problem": "canary signal observed", "proposed_change": "record and observe", "importance": 40, "evidence": {"signal": "canary", "baseline": "0", "observed": "1", "window": "event", "sample_size": 1, "actionable_reason": "canary scenario"}}}]
         content = json.dumps({"decision_summary": "canary decision", "intents": intents, "sleep_for_seconds": 0})
         return {"choices": [{"message": {"content": content}}], "usage": {"prompt_tokens": 100, "completion_tokens": 20}}
 

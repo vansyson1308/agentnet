@@ -42,7 +42,7 @@ def _ev(v):
 def test_single_event_drives_full_engineering_loop(db, SessionLocal, society_settings, temp_repo, grants_with_no_cooldown):
     report = seed_society(db)
     grants_with_no_cooldown()
-    assert set(report.agents) == {"governor", "scout", "architect", "builder", "qa", "security"}
+    assert set(report.agents) == {"governor", "scout", "architect", "builder", "qa", "security", "evaluator"}
     # Operator funding (what the dev-only /wallets/{id}/fund endpoint does). The runtime itself never mints.
     from services.registry.app.models import Wallet, WalletOwnerType
 
@@ -121,7 +121,8 @@ def test_single_event_drives_full_engineering_loop(db, SessionLocal, society_set
     for e in events:
         if e.id != ev.id and e.event_type != EventType.LOOP_BREAKER_TRIPPED:
             assert e.causation_id in ids, f"{e.event_type} has no causation inside the correlation"
-            assert e.source_run_id is not None, e.event_type
+            if e.actor_type == "agent":
+                assert e.source_run_id is not None, e.event_type
     assert all(_ev(e.status) in ("processed", "ignored") for e in events), [(e.event_type, _ev(e.status)) for e in events]
 
     # intents were typed, adjudicated and executed

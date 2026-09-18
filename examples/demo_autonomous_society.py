@@ -50,20 +50,50 @@ def main() -> int:
     parser.add_argument("--keep-workspace", action="store_true", help="keep the worktree + agentnet-auto branch")
     parser.add_argument("--json", action="store_true", help="print the correlation story as JSON")
     parser.add_argument("--max-cycles", type=int, default=60)
+    parser.add_argument(
+        "--story",
+        default="docs",
+        choices=["docs", "code"],
+        help="docs: documentation candidate in THIS checkout (default). code: REAL source-code fix in a throw-away copy of "
+        "tests/society/fixtures/code_repo, followed by shadow promotion (fake provider) and an offline fitness experiment.",
+    )
     args = parser.parse_args()
 
     # Flags for THIS process only (never written to .env).
     os.environ["SOCIETY_RUNTIME_ENABLED"] = "true"
     os.environ["SOCIETY_AUTONOMOUS_CODE_ENABLED"] = "true"
     os.environ["SOCIETY_MODEL_PROVIDER"] = args.provider
-    os.environ.setdefault("SOCIETY_REPO_ROOT", str(REPO))
     os.environ.setdefault("JAEGER_ENABLED", "false")
     os.environ.setdefault("ENVIRONMENT", "development")
+    fixture_repo = None
+    if args.story == "code":
+        # A copy of the isolated fixture application (one planted defect) becomes the
+        # society's "repository"; this checkout is never touched by the code story.
+        import shutil
+        import subprocess
+        import tempfile
+
+        fixture_repo = pathlib.Path(tempfile.mkdtemp(prefix="agentnet-society-code-")) / "code_repo"
+        shutil.copytree(REPO / "tests" / "society" / "fixtures" / "code_repo", fixture_repo, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
+        (fixture_repo / "docs" / "society" / "candidates").mkdir(parents=True)
+        (fixture_repo / "docs" / "society" / "candidates" / "README.md").write_text("# candidates\n")
+        genv = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "/tmp"), "GIT_AUTHOR_NAME": "fixture", "GIT_AUTHOR_EMAIL": "fixture@agentnet.local", "GIT_COMMITTER_NAME": "fixture", "GIT_COMMITTER_EMAIL": "fixture@agentnet.local"}
+        for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"], ["git", "commit", "-q", "-m", "fixture: application with one planted defect"]):
+            subprocess.run(cmd, cwd=fixture_repo, env=genv, check=True, capture_output=True)
+        os.environ["SOCIETY_REPO_ROOT"] = str(fixture_repo)
+        os.environ["SOCIETY_WORKSPACE_ROOT"] = str(fixture_repo.parent / "workspaces")
+        os.environ["SOCIETY_PROMOTION_PROVIDER"] = "fake"
+        os.environ["SOCIETY_PROMOTION_POLL_INTERVAL_SECONDS"] = "0"  # fake provider: no external API to spare
+        os.environ["SOCIETY_MAX_CAUSATION_DEPTH"] = os.environ.get("SOCIETY_MAX_CAUSATION_DEPTH", "24")
+        print(f"code story: fixture repository at {fixture_repo} (shadow promotion via the fake provider; nothing touches GitHub)")
+    else:
+        os.environ.setdefault("SOCIETY_REPO_ROOT", str(REPO))
 
     from sqlalchemy import text
 
     from services.registry.app.database import SessionLocal, engine
-    from services.registry.app.models import AgentCapabilityGrant, AgentIntent, AgentRun, CodeCandidate, MemoryItem, SocietyEvent, TaskSession, Wallet, WalletOwnerType
+    from services.registry.app.models import AgentCapabilityGrant, AgentIntent, AgentRun, ChangeExperiment, CodeCandidate, CodePromotion, MemoryItem, SocietyEvent, TaskSession, Wallet, WalletOwnerType
+    from services.registry.app.society.promotion import FakePromotionProvider
     from services.registry.app.society.config import get_settings, reset_settings_cache
     from services.registry.app.society.engineering import workspace as ws_mod
     from services.registry.app.society.events import EventType, emit_event
@@ -94,24 +124,33 @@ def main() -> int:
 
         correlation = uuid.uuid4()
         run_tag = uuid.uuid4().hex[:8]
-        ev = emit_event(
-            db,
-            event_type=EventType.PLATFORM_METRIC_ANOMALY,
-            payload={
+        if args.story == "code":
+            payload = {
+                "metric": "task_failure_rate",
+                "value": 0.38,
+                "threshold": 0.10,
+                "baseline": 0.03,
+                "window_seconds": 3600,
+                "sample_size": 42,
+                "description": "38% of parse-input tasks failed in the last hour: affirmative answers ('yes', 'on') are rejected as false",
+                "suspected_cause": "boolean input parsing treats 'yes'/'on' as false",
+                "symbol": "parse_bool",
+                "severity_score": 75,
+            }
+        else:
+            payload = {
                 "metric": f"task_failure_rate_{run_tag}",
                 "value": 0.42,
                 "threshold": 0.10,
                 "description": "task failure rate above threshold for 15 minutes",
                 "severity_score": 70,
-            },
-            actor_type="system",
-            correlation_id=correlation,
-            idempotency_key=f"demo-anomaly-{run_tag}",
-        )
+            }
+        ev = emit_event(db, event_type=EventType.PLATFORM_METRIC_ANOMALY, payload=payload, actor_type="system", correlation_id=correlation, idempotency_key=f"demo-anomaly-{run_tag}")
         db.commit()
         print(f"\ninjected ONE event: {ev.event_type} id={ev.id} correlation={correlation}\n")
 
-        worker = SocietyWorker(SessionLocal, settings=settings, worker_id=f"demo-{run_tag}")
+        provider = FakePromotionProvider() if args.story == "code" else None
+        worker = SocietyWorker(SessionLocal, settings=settings, worker_id=f"demo-{run_tag}", promotion_provider=provider, telemetry_enabled=False)
         stats = asyncio.run(worker.run_until_idle(max_cycles=args.max_cycles))
         print("worker stats:", json.dumps({k: v for k, v in stats.as_dict().items() if k != "processed_run_ids"}))
 
@@ -134,8 +173,15 @@ def main() -> int:
                 print(f"      intent {i.seq} {i.intent_type:26s} policy={_ev(i.policy_decision):8s} exec={_ev(i.execution_status):9s} {i.error or ''}")
         print()
         for c in cands:
-            print(f"  candidate {str(c.id)[:8]} [{_ev(c.status)}] branch={c.branch_name} files={c.changed_files}")
+            print(f"  candidate {str(c.id)[:8]} [{_ev(c.status)}] tier={c.risk_tier} branch={c.branch_name} files={c.changed_files} reads={c.repo_reads} turns={c.engineering_turns}")
             print(f"      QA: {(c.qa_report or {}).get('summary')}")
+            print(f"      Security: {(c.security_report or {}).get('verdict', 'not required')}")
+        promos = db.query(CodePromotion).filter(CodePromotion.correlation_id == correlation).all()
+        exps = db.query(ChangeExperiment).filter(ChangeExperiment.correlation_id == correlation).all()
+        for pr in promos:
+            print(f"  promotion {str(pr.id)[:8]} [{_ev(pr.status)}] provider={pr.provider} tier={pr.risk_tier} pr={pr.external_pr_number} ci={pr.ci_state} blocking={(pr.eligibility or {}).get('blocking')}")
+        for x in exps:
+            print(f"  experiment {str(x.id)[:8]} [{_ev(x.status)}] mode={x.evaluation_mode} decision={x.decision} confidence={x.confidence} gates_failed={[g['gate'] for g in (x.hard_gate_results or []) if not g.get('passed')]} recommendation={(x.recommendation or {}).get('recommendation')}")
         for t in tasks:
             print(f"  task {str(t.id)[:8]} [{_ev(t.status)}] escrow={t.escrow_amount} caller->callee={str(t.caller_agent_id)[:8]}->{str(t.callee_agent_id)[:8]}")
         for name in ("Society_Architect", "Society_Builder"):
@@ -152,7 +198,17 @@ def main() -> int:
             print(json.dumps({"correlation_id": str(correlation), "events": [e.event_type for e in events], "runs": [(r.role, _ev(r.status)) for r in runs], "candidates": [(str(c.id), _ev(c.status)) for c in cands]}, indent=2))
 
         ready = bool(cands) and _ev(cands[0].status) == "ready"
-        print("\nRESULT:", "PASS — candidate READY, chain reconstructed from durable state" if ready else "FAIL — see intents/errors above")
+        if args.story == "code":
+            shadow_ok = ready and any(_ev(pr.status) == "awaiting_approval" for pr in promos) and any(x.decision == "pass" for x in exps)
+            print(
+                "\nRESULT:",
+                "PASS — real source-code candidate READY, shadow PR awaiting human approval, offline fitness PASS (deterministic mechanics; NOT live-model evidence)"
+                if shadow_ok
+                else "FAIL — see promotion/experiment rows above",
+            )
+            ready = shadow_ok
+        else:
+            print("\nRESULT:", "PASS — candidate READY, chain reconstructed from durable state" if ready else "FAIL — see intents/errors above")
 
         if cands and not args.keep_workspace:
             for c in cands:
@@ -163,6 +219,11 @@ def main() -> int:
                         print(f"cleaned worktree + branch for candidate {str(c.id)[:8]}")
                     except Exception as exc:  # noqa: BLE001
                         print(f"cleanup skipped: {exc}")
+        if fixture_repo is not None and not args.keep_workspace:
+            import shutil
+
+            shutil.rmtree(fixture_repo.parent, ignore_errors=True)
+            print("cleaned the fixture repository copy")
         return 0 if ready else 1
     finally:
         db.close()

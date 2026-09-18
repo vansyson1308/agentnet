@@ -154,14 +154,14 @@ def test_qa_cannot_evaluate_a_candidate_it_built(db, SessionLocal, society_setti
 def test_builder_writing_outside_worktree_or_protected_paths_is_refused(db, SessionLocal, society_settings, grants_with_no_cooldown, temp_repo):
     report = seed_society(db)
     grants_with_no_cooldown()
-    cand = CodeCandidate(id=uuid.uuid4(), correlation_id=uuid.uuid4(), title="t", spec={"files_allowed": ["docs/society/candidates/x.md", ".env", "services/registry/app/config.py"], "acceptance_tests": ["tests/society/acceptance/test_candidate_docs.py"]}, status=CodeCandidateStatus.REQUESTED, requested_by_agent_id=report.agents["architect"])
+    cand = CodeCandidate(id=uuid.uuid4(), correlation_id=uuid.uuid4(), title="t", spec={"files_allowed": ["docs/society/candidates/x.md", ".env", "deploy/secrets/service.key"], "acceptance_tests": ["tests/society/acceptance/test_candidate_docs.py"]}, status=CodeCandidateStatus.REQUESTED, requested_by_agent_id=report.agents["architect"])
     db.add(cand)
     db.commit()
     attempts = [
         [{"path": "../../etc/cron.d/evil", "content": "x"}],
         [{"path": "/etc/passwd", "content": "x"}],
         [{"path": ".env", "content": "JWT_SECRET_KEY=stolen"}],
-        [{"path": "services/registry/app/config.py", "content": "IS_DEV=True"}],
+        [{"path": "deploy/secrets/service.key", "content": "-----BEGIN PRIVATE KEY-----"}],
         [{"path": "docs/society/candidates/x.md", "content": "# ok\n"}, {"path": "docs/other.md", "content": "x"}],
     ]
     model = FakeModel({"Society_Builder": [{"decision_summary": "escape", "intents": [{"type": "SUBMIT_CODE_CANDIDATE", "payload": {"candidate_id": str(cand.id), "edits": e, "summary": "s"}}]} for e in attempts]})
