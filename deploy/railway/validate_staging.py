@@ -145,7 +145,7 @@ def db_connect():
 def ensure_user(rep: Report, code: str, api: str, email: str, password: str) -> Optional[str]:
     """Register (or reuse), mark verified on the staging database (SMTP is not
     wired), log in. Returns the JWT (never printed)."""
-    st, body = http("POST", f"{api}/v1/auth/register", body={"email": email, "password": password})
+    st, body = http("POST", f"{api}/v1/auth/user/register", body={"email": email, "password": password})
     created = st == 201
     exists = st == 400 and "already registered" in body.lower()
     if not (created or exists):
@@ -284,12 +284,14 @@ def main() -> int:
         rep.record("R01", False, "no operator token")
 
     # core application smoke
-    st, body = http("GET", f"{api}/v1/agents/")
+    st, body = http("GET", f"{api}/v1/agents/public/")
     rep.record("C01", st == 200, f"public agent listing HTTP {st}")
     st, body = http("GET", f"{dash}/")
     rep.record("C02", st in (200, 302), f"dashboard / HTTP {st}")
     st, body = http("GET", f"{dash}/landing")
-    rep.record("C03", st in (200, 302), f"dashboard /landing HTTP {st}")
+    rep.record("C03", st == 200, f"dashboard /landing HTTP {st}")
+    st, body = http("GET", f"{dash}/metaverse")
+    rep.record("C04", st == 200 and "Internal Server Error" not in body, f"dashboard /metaverse HTTP {st}")
 
     # §11 proxy-header spoof test (last: it exhausts this client's anonymous bucket for a minute)
     baseline, forged = spoof_test(api, int(env("SPOOF_BASELINE", "220")), int(env("SPOOF_FORGED", "60")))

@@ -57,4 +57,4 @@ def test_validator_never_prints_tokens_or_passwords():
         arg = m.group(1)
         assert "token" not in arg.lower() and "password" not in arg.lower() and "secret\"" not in arg, arg
     assert "--expect-runtime\", \"off\"" in text, "the society runtime is asserted OFF"
-    assert "user/login" in text and "auth/register" in text
+    assert "auth/user/login" in text and "auth/user/register" in text and "/v1/agents/public/" in text

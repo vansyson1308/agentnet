@@ -30,6 +30,22 @@ app.secret_key = _resolve_flask_secret()
 if os.getenv("BEHIND_PROXY", "").lower() == "true":
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
+# The templates still link to pages that were removed from this app (login,
+# register, wallet, tasks, ...). A render must not 500 on such a link — it
+# becomes an inert "#" anchor, logged once per endpoint, until the dashboard
+# pages are rebuilt (tracked separately). Real routes are unaffected.
+_STALE_ENDPOINTS_SEEN: set = set()
+
+
+def _stale_template_link(error, endpoint, values):
+    if endpoint not in _STALE_ENDPOINTS_SEEN:
+        _STALE_ENDPOINTS_SEEN.add(endpoint)
+        app.logger.warning("template links to removed endpoint %r; rendering '#'", endpoint)
+    return "#"
+
+
+app.url_build_error_handlers.append(_stale_template_link)
+
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
