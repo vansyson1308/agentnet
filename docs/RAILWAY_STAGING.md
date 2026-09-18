@@ -138,17 +138,20 @@ railway logs -s society-worker | grep -c alembic                                
 
 ## 9. Staging operator (structural; the token is never reported)
 
-SMTP is not wired, so email verification is completed by the operator on the staging database:
+SMTP is not wired, so email verification is completed on the staging database. The registry allow-lists two
+bootstrap operators (`SOCIETY_OPERATOR_BOOTSTRAP_EMAILS=staging-operator@agentnet.local,staging-operator-b@agentnet.local`)
+so that two consecutive validations use distinct ingress actors (the red-team burst consumes an actor's hourly quota).
+The in-Railway validator (§21) performs these steps itself; by hand they are:
 
 ```bash
-curl -sS -X POST $R/v1/auth/register -H 'content-type: application/json' -d '{"email":"<staging-operator-email>","password":"<local-only>"}'
-railway connect postgres            # psql: UPDATE users SET is_email_verified = true WHERE email = '<staging-operator-email>';
-railway ssh -s registry -- python -m app.society.operator_auth <staging-operator-email> operator
+curl -sS -X POST $R/v1/auth/register -H 'content-type: application/json' -d '{"email":"staging-operator@agentnet.local","password":"<local-only>"}'
+railway connect postgres            # psql: UPDATE users SET is_email_verified = true WHERE email = 'staging-operator@agentnet.local';
+curl -sS -X POST $R/v1/auth/user/login -H 'content-type: application/json' -d '{"email":"staging-operator@agentnet.local","password":"<local-only>"}'
 ```
 
-Alternatively set `SOCIETY_OPERATOR_BOOTSTRAP_EMAILS=<staging-operator-email>` on the registry before its first
-start (bootstraps the first operator only). Log in with `POST /v1/auth/login`; keep the JWT in the shell only
-(`export SOCIETY_SMOKE_TOKEN=…`). The report states `STAGING OPERATOR: CREATED` — never the token.
+Keep the returned `access_token` in the shell only (`export SOCIETY_SMOKE_TOKEN=…`). A durable role for a real
+person is assigned with `railway ssh -s registry -- python -m app.society.operator_auth <email> operator`. The
+report states `STAGING OPERATOR: CREATED` — never the token.
 
 ## 10. Society smoke and red-team (scripted only — `SCRIPTED — NOT LIVE MODEL`, `LIVE MODEL: NOT RUN`)
 
@@ -168,7 +171,7 @@ over `$D`.
 `X-Forwarded-For` is never trusted. The test proves a caller cannot mint fresh rate-limit buckets:
 
 ```bash
-burst() { for i in $(seq 1 60); do curl -s -o /dev/null -w '%{http_code}\n' -X POST $R/v1/auth/login \
+burst() { for i in $(seq 1 60); do curl -s -o /dev/null -w '%{http_code}\n' -X POST $R/v1/auth/user/login \
   -H 'content-type: application/json' "$@" -d '{"email":"nobody@example.invalid","password":"x"}'; done | sort | uniq -c; }
 burst                                                                     # baseline: N×401 then 429s
 burst -H "X-Forwarded-For: 203.0.113.$RANDOM" -H "X-Real-IP: 198.51.100.$RANDOM"   # forged headers
@@ -251,6 +254,25 @@ Railway. One of these user actions lifts it — no token is pasted anywhere:
 2. **Or** allow `railway.com`, `*.railway.com`, `railway.app`, `*.railway.app`, `backboard.railway.com` and
    `*.up.railway.app` in the Claude Code environment's network policy, then re-run the mission and complete the
    `railway login --browserless` pairing code when the session asks for it.
+
+## 21. Running the validations from inside Railway (`staging-validator`)
+
+An operator laptop can run §7–§17 by hand; the reproducible way — and the only way from an engineering session
+whose egress cannot reach `*.up.railway.app` — is the `staging-validator` service: the registry image (root
+directory `/services/registry`) with the start command
+
+```
+sh -c 'rm -rf /tmp/repo && git clone -q --depth 1 --branch "$VALIDATOR_REF" https://github.com/vansyson1308/agentnet.git /tmp/repo && python /tmp/repo/deploy/railway/validate_staging.py; echo "validator finished with exit $?"; exec tail -f /dev/null'
+```
+
+and the variables `REGISTRY_PUBLIC_URL`, `DASHBOARD_PUBLIC_URL`, the `POSTGRES_*` references, the Railway-generated
+shared secret `STAGING_VALIDATOR_SECRET` (`${{secret(64, "abcdef0123456789")}}`, never read back),
+`VALIDATOR_OPERATOR_EMAIL`, `VALIDATOR_USER_EMAIL`, `VALIDATOR_REF=main`, `EXPECTED_ALEMBIC_HEAD`, `REDTEAM_BURST`.
+`deploy/railway/validate_staging.py` runs §7 (public through the edge, private through private DNS), §8 (on the
+database), §9, §10, the core smoke and §11, prints `CHECK <id> PASS|FAIL …` lines and `VALIDATION RESULT: GREEN|RED`,
+then keeps the container alive so `railway restart -s staging-validator` (or the connector's restart) is run 2. Run 2
+uses the second allow-listed operator (`VALIDATOR_OPERATOR_EMAIL=staging-operator-b@agentnet.local`). §13–§17
+stay connector/CLI steps (logs, restart, redeploy, metrics). No secret ever reaches the logs.
 
 ## 20. Two consecutive full validations (required for GREEN)
 
