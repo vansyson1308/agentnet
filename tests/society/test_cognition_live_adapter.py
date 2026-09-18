@@ -59,7 +59,7 @@ GOOD = {"decision_summary": "fine", "intents": [{"type": "WRITE_MEMORY", "payloa
 
 
 def test_success_path_accounts_tokens_cost_and_requests(monkeypatch):
-    settings = _settings(monkeypatch, SOCIETY_MODEL_USD_PER_1K_INPUT="0.01", SOCIETY_MODEL_USD_PER_1K_OUTPUT="0.03")
+    settings = _settings(monkeypatch, SOCIETY_MODEL_USD_PER_1K_INPUT="0.01", SOCIETY_MODEL_USD_PER_1K_OUTPUT="0.03", SOCIETY_MODEL_OUTPUT_FORMAT="json_object")
     seen = []
 
     async def transport(payload):
@@ -146,7 +146,9 @@ def test_json_schema_falls_back_to_json_object_on_400(monkeypatch):
 
     model = OpenAICompatibleModel(settings, transport=transport)
     resp = asyncio.run(model.decide(_context()))
-    assert seen == ["json_schema", "json_object"] and resp.requests == 2 and resp.retries == 1
+    # the capability probe is not an error retry: both HTTP requests are counted, no retry is spent
+    assert seen == ["json_schema", "json_object"] and resp.requests == 2 and resp.retries == 0
+    assert resp.format_fallbacks == 1 and resp.output_format == "json_object"
 
 
 def test_malformed_content_is_a_validation_error_not_a_retry(monkeypatch):

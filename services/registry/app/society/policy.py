@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Agent, AgentCapabilityGrant, AgentRun, AgentRunStatus, IntentRiskClass, PolicyDecision
 from .config import SocietySettings
-from .intents import FORBIDDEN_INTENT_TYPES, IntentType, ValidatedIntent
+from .intents import FORBIDDEN_INTENT_TYPES, REPO_READ_INTENT_TYPES, IntentType, ValidatedIntent
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,16 @@ RISK_BY_TYPE = {
     IntentType.EVALUATE_CODE_CANDIDATE: IntentRiskClass.MEDIUM,
     IntentType.SECURITY_REVIEW_CANDIDATE: IntentRiskClass.MEDIUM,
     IntentType.REQUEST_STAGING_DEPLOY: IntentRiskClass.MEDIUM,
+    IntentType.LIST_REPO_TREE: IntentRiskClass.LOW,
+    IntentType.SEARCH_REPO: IntentRiskClass.LOW,
+    IntentType.READ_REPO_FILE: IntentRiskClass.LOW,
+    IntentType.READ_REPO_RANGE: IntentRiskClass.LOW,
+    IntentType.READ_DIFF: IntentRiskClass.LOW,
+    IntentType.READ_CANDIDATE_STATE: IntentRiskClass.LOW,
+    IntentType.REQUEST_PR_PROMOTION: IntentRiskClass.MEDIUM,
+    IntentType.REQUEST_MERGE_EVALUATION: IntentRiskClass.MEDIUM,
+    IntentType.REQUEST_STAGING_EVALUATION: IntentRiskClass.MEDIUM,
+    IntentType.RECORD_EVALUATION_RECOMMENDATION: IntentRiskClass.LOW,
 }
 for _t in FORBIDDEN_INTENT_TYPES:
     RISK_BY_TYPE[_t] = IntentRiskClass.HIGH
@@ -66,7 +76,10 @@ _CODE_INTENTS = {
     IntentType.REQUEST_QA,
     IntentType.EVALUATE_CODE_CANDIDATE,
     IntentType.SECURITY_REVIEW_CANDIDATE,
-}
+    IntentType.REQUEST_PR_PROMOTION,
+    IntentType.REQUEST_MERGE_EVALUATION,
+    IntentType.RECORD_EVALUATION_RECOMMENDATION,
+} | set(REPO_READ_INTENT_TYPES)
 
 
 def risk_of(intent_type: Optional[IntentType]) -> IntentRiskClass:
@@ -147,7 +160,7 @@ def evaluate_intent(
     # denial reason is precise, but they always win.
     if itype in _CODE_INTENTS and not settings.autonomous_code_enabled:
         return PolicyVerdict(PolicyDecision.DENY, risk, "SOCIETY_AUTONOMOUS_CODE_ENABLED is off")
-    if itype == IntentType.REQUEST_STAGING_DEPLOY and not settings.staging_deploy_enabled:
+    if itype in (IntentType.REQUEST_STAGING_DEPLOY, IntentType.REQUEST_STAGING_EVALUATION) and not settings.staging_deploy_enabled:
         return PolicyVerdict(PolicyDecision.DENY, risk, "SOCIETY_STAGING_DEPLOY_ENABLED is off")
 
     # Payload-level scope checks (typed payload, never free text).
@@ -260,6 +273,10 @@ def check_run_budget(
     agent_spend = spend_today_usd(db, agent_id=agent.id, now=now)
     if agent_spend >= Decimal(str(grant.daily_model_budget_usd)):
         return RunBudgetVerdict(False, f"agent daily model budget exhausted ({agent_spend} USD)")
+
+    corr_spend = Decimal(str(db.query(func.coalesce(func.sum(AgentRun.cost_usd), 0)).filter(AgentRun.correlation_id == run.correlation_id).scalar() or 0))
+    if corr_spend >= settings.max_correlation_cost_usd:
+        return RunBudgetVerdict(False, f"correlation model budget exhausted ({corr_spend} >= {settings.max_correlation_cost_usd} USD)")
 
     last = last_run_started_at(db, agent.id, exclude_run_id=run.id)
     cooldown = int(grant.wake_cooldown_seconds or 0)

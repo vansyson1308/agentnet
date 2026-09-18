@@ -59,7 +59,8 @@ def test_context_contains_identity_mission_goals_memory_messages_and_permissions
     assert "Observe platform behaviour" in ctx.mission
     assert ctx.event["type"] == "platform.metric.anomaly"
     assert ctx.event["payload"]["_untrusted"] is True
-    titles = {m["title"] for m in ctx.memory}
+    titles = {m["data"]["title"] for m in ctx.memory}
+    assert all(m["_untrusted"] is True for m in ctx.memory)
     assert "scout own" in titles and "society lesson" in titles
     assert "arch private" not in titles
     assert len(ctx.messages) == 1 and ctx.messages[0]["_untrusted"] is True
@@ -68,7 +69,7 @@ def test_context_contains_identity_mission_goals_memory_messages_and_permissions
     assert "SHELL_EXEC" not in ctx.permissions["allowed_intents"]
     assert any("cannot change your own permissions" in r for r in ctx.restrictions)
     assert ctx.budget["max_runs_per_hour"] == grant.max_runs_per_hour
-    assert {a["role"] for a in ctx.society_agents} == {"governor", "architect", "builder", "qa", "security"}
+    assert {a["role"] for a in ctx.society_agents} == {"governor", "architect", "builder", "qa", "security", "evaluator"}
 
 
 def test_context_never_leaks_secrets_or_other_agents_private_memory(db, society_settings, monkeypatch):
@@ -103,6 +104,6 @@ def test_context_is_deterministic_and_bounded(db, society_settings, monkeypatch)
     assert c1.digest() == c2.digest()
     assert len(c1.memory) <= LIMIT_MEMORY_AGENT + 5
     assert len(c1.messages) <= LIMIT_MESSAGES
-    assert all(len(m["content"]) <= 601 for m in c1.memory)
+    assert all(len(m["data"]["content"]) <= 601 for m in c1.memory)
     assert c1.event["payload"]["data"].get("_truncated") is True
     assert len(c1.canonical_json()) < 60_000

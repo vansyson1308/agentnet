@@ -3,7 +3,7 @@
 #
 #   FRESH   : full init-db bundle (what a new Postgres volume gets) → stamp 0003 →
 #             `alembic upgrade head` must be idempotent over the already-present
-#             society + app-table DDL and land on 0009_app_tables.
+#             society + app-table DDL and land on 0010_self_development.
 #   UPGRADE : pre-society bundle (init-db minus 16-society-runtime.sql and
 #             17-app-tables.sql) → stamp 0003 → `alembic upgrade head` must run
 #             0007, 0008 and 0009; a second `upgrade head` must be a no-op;
@@ -46,7 +46,7 @@ done
 
 cd "$(dirname "$0")/.."
 INIT_DIR="services/registry/init-db"
-EXPECTED_HEAD="0009_app_tables"
+EXPECTED_HEAD="0010_self_development"
 PG_USER="${POSTGRES_USER:-agentnet}"
 PG_HOST="${POSTGRES_HOST:-127.0.0.1}"
 PG_PORT="${POSTGRES_PORT:-5432}"
@@ -109,7 +109,9 @@ check_schema() {  # check_schema DB
                 approval_requests:amount approval_requests:task_session_id scoped_tokens:token_hash scoped_tokens:project_id \
                 projects:agent_id project_resources:scoped_token_id orchestrator_partners:client_secret_hash \
                 audit_log:action provisioning_providers:slug provisioning_services:provider_id \
-                agents:is_online agents:last_seen_at agents:current_capability; do
+                agents:is_online agents:last_seen_at agents:current_capability \
+                code_candidates:risk_tier code_candidates:diff_hash agent_runs:model_tier memory_items:validation_state memory_items:superseded_by \
+                code_promotions:status code_promotions:external_pr_number change_experiments:decision change_experiments:criteria_snapshot deployment_requests:status; do
         t="${spec%%:*}"; c="${spec##*:}"
         n="$(scalar "$db" "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='$t' AND column_name='$c'")"
         if [[ "$n" == "1" ]]; then ok "$db: $t.$c"; else bad "$db: missing column $t.$c"; fi
@@ -149,7 +151,7 @@ expect_head "$FRESH_DB"
 check_schema "$FRESH_DB"
 expect_noop_upgrade "$FRESH_DB"
 
-echo "→ UPGRADE path: pre-society bundle + alembic 0004..0009"
+echo "→ UPGRADE path: pre-society bundle + alembic 0004..0010"
 create_db "$UPGRADE_DB"
 apply_bundle "$UPGRADE_DB" 1
 n="$(scalar "$UPGRADE_DB" "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='society_events'")"
@@ -160,7 +162,8 @@ run_alembic "$UPGRADE_DB" stamp 0003_spending_cap_fix >/dev/null
 out="$(run_alembic "$UPGRADE_DB" upgrade head)" || { echo "$out"; die "$UPGRADE_DB: alembic upgrade head failed"; }
 [[ "$out" == *"0006_email_verified -> 0007_society_runtime"* ]] && ok "$UPGRADE_DB: ran 0007_society_runtime" || bad "$UPGRADE_DB: 0007 did not run: $out"
 [[ "$out" == *"0007_society_runtime -> 0008_society_phase2"* ]] && ok "$UPGRADE_DB: ran 0008_society_phase2" || bad "$UPGRADE_DB: 0008 did not run: $out"
-[[ "$out" == *"0008_society_phase2 -> $EXPECTED_HEAD"* ]] && ok "$UPGRADE_DB: ran $EXPECTED_HEAD" || bad "$UPGRADE_DB: 0009 did not run: $out"
+[[ "$out" == *"0008_society_phase2 -> 0009_app_tables"* ]] && ok "$UPGRADE_DB: ran 0009_app_tables" || bad "$UPGRADE_DB: 0009 did not run: $out"
+[[ "$out" == *"0009_app_tables -> $EXPECTED_HEAD"* ]] && ok "$UPGRADE_DB: ran $EXPECTED_HEAD" || bad "$UPGRADE_DB: 0010 did not run: $out"
 expect_head "$UPGRADE_DB"
 check_schema "$UPGRADE_DB"
 expect_noop_upgrade "$UPGRADE_DB"
@@ -173,6 +176,8 @@ if [[ "$WITH_DOWNGRADE" == "1" ]]; then
     [[ "$n" == "0" ]] && ok "$UPGRADE_DB: downgrade removed users.society_role" || bad "$UPGRADE_DB: users.society_role survived downgrade"
     n="$(scalar "$UPGRADE_DB" "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('approval_requests','scoped_tokens','projects','audit_log')")"
     [[ "$n" == "0" ]] && ok "$UPGRADE_DB: downgrade removed the 0009 app tables" || bad "$UPGRADE_DB: app tables survived downgrade"
+    n="$(scalar "$UPGRADE_DB" "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('code_promotions','change_experiments','deployment_requests')")"
+    [[ "$n" == "0" ]] && ok "$UPGRADE_DB: downgrade removed the 0010 self-development tables" || bad "$UPGRADE_DB: phase-3 tables survived downgrade"
     out="$(run_alembic "$UPGRADE_DB" upgrade head)" || { echo "$out"; die "$UPGRADE_DB: re-upgrade failed"; }
     expect_head "$UPGRADE_DB"
     check_schema "$UPGRADE_DB"

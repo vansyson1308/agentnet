@@ -39,8 +39,12 @@ from ..models import (
     AgentIntent,
     AgentMessageType,
     AgentRun,
+    ChangeExperiment,
     CodeCandidate,
     CodeCandidateStatus,
+    CodePromotion,
+    IntentExecutionStatus,
+    RiskTier,
     CurrencyType,
     Goal,
     GoalOwnerType,
@@ -57,12 +61,14 @@ from ..models import (
     ProposalStatus,
     SocietyEvent,
 )
+from . import repo_intel
 from .config import SocietySettings
 from .engineering import workspace as ws_mod
 from .engineering.qa import RISKY_PATH_RE, evaluate_candidate, static_security_scan
 from .events import EventType, emit_event, utcnow
 from .ids import candidate_id_for
-from .intents import IntentType, ValidatedIntent
+from .intents import REPO_READ_INTENT_TYPES, IntentType, ValidatedIntent
+from .risk import assess as assess_risk
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +105,7 @@ class ExecContext:
     validated: ValidatedIntent
     heartbeat: Callable[[], None] = lambda: None
     now: datetime = field(default_factory=utcnow)
+    deployment_provider: Any = None   # test injection; production resolves from settings
 
 
 @dataclass
@@ -202,9 +209,17 @@ def _write_memory(ctx: ExecContext) -> ExecOutcome:
         scope=MemoryScope.AGENT if p.scope == "agent" else MemoryScope.SOCIETY,
         title=p.title,
         content=p.content,
-        tags=list(p.tags) + [f"run:{ctx.run.id}"],
+        tags=[tg for tg in p.tags if tg.lower() not in ("policy", "trusted", "validated")] + [f"run:{ctx.run.id}"],
         source_task_id=p.source_task_id,
         importance=p.importance,
+        # Provenance is set by trusted code, never by the payload: an agent
+        # cannot mark its own memory validated/policy.
+        source_type="run",
+        source_id=ctx.run.id,
+        correlation_id=ctx.run.correlation_id,
+        author_agent_id=ctx.agent.id,
+        confidence=min(int(p.importance), 70),
+        validation_state="unvalidated",
     )
     ctx.db.add(item)
     ctx.db.flush()
@@ -300,8 +315,28 @@ def _update_goal(ctx: ExecContext) -> ExecOutcome:
     return ExecOutcome(result={"goal_id": str(goal.id), "changes": changes}, events=[str(ev.id)])
 
 
+WORLD_SIGNAL_EVENTS = frozenset(
+    {
+        EventType.PLATFORM_METRIC_ANOMALY,
+        EventType.PLATFORM_HEALTH_DEGRADED,
+        EventType.USER_FEEDBACK_RECEIVED,
+        EventType.STAGING_CANARY_SIGNAL,
+        EventType.TASK_FAILED,
+        EventType.TASK_TIMEOUT,
+        EventType.QA_FAILED,
+        EventType.AGENT_INACTIVE,
+        EventType.RUN_DEAD,
+    }
+)
+
+
 def _create_improvement(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
+    if ctx.event.event_type in WORLD_SIGNAL_EVENTS and p.evidence is None:
+        # An event existing is not evidence. Signal-driven proposals must say
+        # what was observed, against what baseline, over what window, and why
+        # it is actionable (anti-busywork; docs/SELF_DEVELOPMENT.md).
+        raise ExecutionError("signal-driven proposals must carry evidence (signal, baseline, observed, window, sample, actionable_reason)")
     existing = (
         ctx.db.query(ImprovementProposal)
         .filter(ImprovementProposal.title == p.title, ImprovementProposal.status.in_(_OPEN_PROPOSAL_STATUSES))
@@ -518,12 +553,39 @@ def _get_candidate(ctx: ExecContext, candidate_id: uuid.UUID) -> CodeCandidate:
     return cand
 
 
+def _day_start(now: datetime) -> datetime:
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _candidates_today(ctx: ExecContext, *, red_only: bool = False) -> int:
+    q = ctx.db.query(CodeCandidate).filter(CodeCandidate.created_at >= _day_start(ctx.now))
+    if red_only:
+        q = q.filter(CodeCandidate.risk_tier.in_([RiskTier.RED.value, RiskTier.NEVER.value]))
+    return int(q.count())
+
+
 def _request_code_change(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
     spec = p.spec.model_dump()
     for f in spec["files_allowed"]:
         if ws_mod.is_protected(f):
-            raise ExecutionError(f"spec allows a protected path: {f}")
+            raise ExecutionError(f"spec allows a never-writable path: {f}")
+    if len(spec["files_allowed"]) > ctx.settings.max_files_per_candidate:
+        raise ExecutionError(f"spec allows {len(spec['files_allowed'])} files; change budget is {ctx.settings.max_files_per_candidate} per candidate")
+    # Anti-busywork: every autonomous engineering effort links signal -> proposal
+    # -> expected effect -> acceptance criteria. Docs candidates need the
+    # proposal link; code candidates additionally need an expected effect.
+    if p.proposal_id is None:
+        raise ExecutionError("a code change must link to an improvement proposal (proposal_id); unlinked engineering is busywork")
+    if spec.get("kind") == "code" and not (spec.get("expected_effect") or "").strip():
+        raise ExecutionError("code candidates must state expected_effect (the metric/behaviour the change should move)")
+    if not spec.get("acceptance_tests"):
+        raise ExecutionError("a code change must name acceptance tests; QA never fabricates criteria")
+    prelim = assess_risk(list(spec["files_allowed"]), "", spec_kind=str(spec.get("kind") or ""))
+    if _candidates_today(ctx) >= ctx.settings.max_autonomous_candidates_per_day:
+        raise ExecutionError(f"change budget exhausted: {ctx.settings.max_autonomous_candidates_per_day} autonomous candidates today")
+    if prelim.tier in (RiskTier.RED, RiskTier.NEVER) and _candidates_today(ctx, red_only=True) >= ctx.settings.max_red_candidates_per_day:
+        raise ExecutionError(f"change budget exhausted: {ctx.settings.max_red_candidates_per_day} RED candidates today")
     if p.proposal_id is not None:
         existing = (
             ctx.db.query(CodeCandidate)
@@ -547,7 +609,8 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
         title=p.title,
         spec=spec,
         status=CodeCandidateStatus.REQUESTED,
-        requires_security_review=requires_sec,
+        requires_security_review=requires_sec or prelim.tier in (RiskTier.RED, RiskTier.NEVER),
+        risk_tier=prelim.tier.value,  # preliminary (paths only); the controller re-classifies from the real diff
     )
     ctx.db.add(cand)
     ctx.db.flush()
@@ -595,6 +658,35 @@ def _submit_code_candidate(ctx: ExecContext) -> ExecOutcome:
         cand.error = str(exc)[:2000]
         ctx.db.commit()
         raise ExecutionError(f"workspace refused: {exc}") from exc
+    diff_hash, diff_lines = ws_mod.diff_identity(ws)
+    busywork = None
+    if not changed or diff_lines == 0:
+        busywork = "no-op change: nothing differs from the base revision"
+    elif ws_mod.is_format_only(ws):
+        busywork = "format-only churn: the diff changes whitespace only"
+    elif diff_lines > ctx.settings.max_diff_lines:
+        busywork = f"diff of {diff_lines} lines exceeds the change budget ({ctx.settings.max_diff_lines})"
+    elif len(changed) > ctx.settings.max_files_per_candidate:
+        busywork = f"{len(changed)} files changed; change budget is {ctx.settings.max_files_per_candidate}"
+    else:
+        dup = (
+            ctx.db.query(CodeCandidate)
+            .filter(CodeCandidate.diff_hash == diff_hash, CodeCandidate.id != cand.id, CodeCandidate.status.notin_([CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED]))
+            .first()
+        )
+        if dup is not None:
+            busywork = f"duplicate candidate: identical diff already open as {dup.id}"
+    if busywork:
+        cand.status = CodeCandidateStatus.REJECTED
+        cand.error = busywork
+        cand.diff_hash = diff_hash
+        cand.diff_lines = diff_lines
+        cand.changed_files = changed
+        cand.head_sha = head
+        cand.branch_name = ws.branch
+        ev = _emit(ctx, EventType.CODE_CANDIDATE_REJECTED, {"candidate_id": str(cand.id), "title": cand.title, "branch_name": ws.branch, "head_sha": head, "qa_summary": f"anti-busywork: {busywork}", "proposal_id": str(cand.proposal_id) if cand.proposal_id else None, "busywork": True}, subject_type="code_candidate", subject_id=cand.id, key_suffix="busywork")
+        ctx.db.commit()
+        raise ExecutionError(f"candidate rejected (anti-busywork): {busywork}")
     cand.status = CodeCandidateStatus.BUILT
     cand.branch_name = ws.branch
     cand.workspace_path = str(ws.path)
@@ -603,6 +695,8 @@ def _submit_code_candidate(ctx: ExecContext) -> ExecOutcome:
     cand.diff_stat = stat
     cand.changed_files = changed
     cand.patch_summary = p.summary
+    cand.diff_hash = diff_hash
+    cand.diff_lines = diff_lines
     cand.error = None
     ev = _emit(
         ctx,
@@ -720,12 +814,347 @@ def _security_review_candidate(ctx: ExecContext) -> ExecOutcome:
 
 
 def _request_staging_deploy(ctx: ExecContext) -> ExecOutcome:
+    from . import deployment as dep_mod
+
     p = ctx.validated.payload
     cand = _get_candidate(ctx, p.candidate_id)
     if _ev(cand.status) != CodeCandidateStatus.READY.value:
         raise ExecutionError("only READY candidates can be proposed for staging")
-    ev = _emit(ctx, EventType.STAGING_DEPLOY_REQUESTED, {"candidate_id": str(cand.id), "branch_name": cand.branch_name, "head_sha": cand.head_sha, "note": "recorded only — no deploy is executed by the runtime in v1"}, subject_type="code_candidate", subject_id=cand.id)
-    return ExecOutcome(result={"candidate_id": str(cand.id), "note": "staging deploy request recorded; deployment is a human/CI action in v1"}, events=[str(ev.id)])
+    promo = ctx.db.query(CodePromotion).filter(CodePromotion.candidate_id == cand.id).order_by(CodePromotion.created_at.desc()).first()
+    if promo is None or _ev(promo.status) != "merged":
+        raise ExecutionError("staging deployment requires a MERGED promotion; request promotion first")
+    provider = dep_mod.get_deployment_provider(ctx.settings, override=getattr(ctx, "deployment_provider", None))
+    req = dep_mod.request_deployment(ctx.db, settings=ctx.settings, provider=provider, environment=dep_mod.STAGING, candidate=cand, promotion=promo, correlation_id=ctx.run.correlation_id, target_sha=promo.merged_sha or cand.head_sha, requested_by_agent_id=ctx.agent.id, causation=ctx.event, source_run_id=ctx.run.id)
+    ev = _emit(ctx, EventType.STAGING_DEPLOY_REQUESTED, {"candidate_id": str(cand.id), "promotion_id": str(promo.id), "request_id": str(req.id), "status": _ev(req.status), "note": req.note}, subject_type="deployment_request", subject_id=req.id)
+    return ExecOutcome(result={"candidate_id": str(cand.id), "request_id": str(req.id), "status": _ev(req.status), "note": req.note}, events=[str(ev.id)])
+
+
+# ── promotion / evaluation requests (the controller decides) ─────────
+
+
+def _request_pr_promotion(ctx: ExecContext) -> ExecOutcome:
+    from .promotion import request_promotion
+
+    p = ctx.validated.payload
+    cand = _get_candidate(ctx, p.candidate_id)
+    if _ev(cand.status) != CodeCandidateStatus.READY.value:
+        raise ExecutionError(f"candidate is {_ev(cand.status)}; only READY candidates can be promoted")
+    if ctx.agent.id == cand.builder_agent_id:
+        raise ExecutionError("promotion independence: the Builder cannot request promotion of its own candidate")
+    try:
+        promo, created = request_promotion(ctx.db, settings=ctx.settings, candidate=cand, agent=ctx.agent, run=ctx.run, causation=ctx.event, source_run_id=ctx.run.id)
+    except ValueError as exc:
+        raise ExecutionError(str(exc)) from exc
+    return ExecOutcome(result={"promotion_id": str(promo.id), "candidate_id": str(cand.id), "status": _ev(promo.status), "duplicate": not created, "note": "recorded; the promotion controller validates, publishes and tracks CI — nothing merges automatically"})
+
+
+def _request_merge_evaluation(ctx: ExecContext) -> ExecOutcome:
+    from .fitness import request_experiment
+
+    p = ctx.validated.payload
+    promo = ctx.db.query(CodePromotion).filter(CodePromotion.id == p.promotion_id).with_for_update().first()
+    if promo is None:
+        raise ExecutionError("promotion not found")
+    cand = ctx.db.query(CodeCandidate).filter(CodeCandidate.id == promo.candidate_id).first()
+    if cand is None:
+        raise ExecutionError("candidate not found")
+    if ctx.agent.id in (cand.builder_agent_id, cand.qa_agent_id, cand.security_agent_id):
+        raise ExecutionError("evaluation independence: Builder/QA/Security cannot request the fitness evaluation")
+    if _ev(promo.status) not in ("ci_passed", "awaiting_approval", "merge_eligible", "merged", "pr_open", "ci_pending", "branch_ready", "blocked_external"):
+        raise ExecutionError(f"promotion is {_ev(promo.status)}; nothing to evaluate")
+    exp, created = request_experiment(ctx.db, settings=ctx.settings, promotion=promo, candidate=cand, agent=ctx.agent, causation=ctx.event, source_run_id=ctx.run.id)
+    return ExecOutcome(result={"experiment_id": str(exp.id), "promotion_id": str(promo.id), "status": _ev(exp.status), "duplicate": not created, "mode": exp.evaluation_mode})
+
+
+def _request_staging_evaluation(ctx: ExecContext) -> ExecOutcome:
+    from . import deployment as dep_mod
+
+    p = ctx.validated.payload
+    promo = ctx.db.query(CodePromotion).filter(CodePromotion.id == p.promotion_id).first()
+    if promo is None:
+        raise ExecutionError("promotion not found")
+    if _ev(promo.status) != "merged":
+        raise ExecutionError("staging evaluation requires a MERGED promotion")
+    cand = ctx.db.query(CodeCandidate).filter(CodeCandidate.id == promo.candidate_id).first()
+    provider = dep_mod.get_deployment_provider(ctx.settings, override=getattr(ctx, "deployment_provider", None))
+    req = dep_mod.request_deployment(ctx.db, settings=ctx.settings, provider=provider, environment=dep_mod.STAGING, candidate=cand, promotion=promo, correlation_id=ctx.run.correlation_id, target_sha=promo.merged_sha, requested_by_agent_id=ctx.agent.id, causation=ctx.event, source_run_id=ctx.run.id)
+    return ExecOutcome(result={"request_id": str(req.id), "status": _ev(req.status), "note": req.note, "environment": req.environment})
+
+
+def _record_evaluation_recommendation(ctx: ExecContext) -> ExecOutcome:
+    p = ctx.validated.payload
+    exp = ctx.db.query(ChangeExperiment).filter(ChangeExperiment.id == p.experiment_id).with_for_update().first()
+    if exp is None:
+        raise ExecutionError("experiment not found")
+    if _ev(exp.status) not in ("pass", "fail", "inconclusive"):
+        raise ExecutionError(f"experiment is {_ev(exp.status)}; recommendations are recorded only after the deterministic decision")
+    cand = ctx.db.query(CodeCandidate).filter(CodeCandidate.id == exp.candidate_id).first()
+    if cand is not None and ctx.agent.id in (cand.builder_agent_id, cand.qa_agent_id, cand.security_agent_id):
+        raise ExecutionError("evaluation independence: Builder/QA/Security cannot recommend on their own candidate")
+    # Opinion only: the decision, gates, metrics and criteria stay untouched.
+    exp.recommendation = {"by": ctx.agent.name, "agent_id": str(ctx.agent.id), "run_id": str(ctx.run.id), "recommendation": p.recommendation, "summary": p.summary[:2000], "decision_at_time": exp.decision, "recorded_at": ctx.now.isoformat()}
+    return ExecOutcome(result={"experiment_id": str(exp.id), "recommendation": p.recommendation, "decision": exp.decision, "note": "advisory only; hard gates and the persisted decision are unchanged"})
+
+
+# ── repository intelligence (read-only, bounded, audited) ─────────────
+
+
+def _read_root(ctx: ExecContext, candidate_id: Optional[uuid.UUID]):
+    """Trusted base checkout, or the candidate's isolated worktree."""
+    import pathlib
+
+    if candidate_id is None:
+        return pathlib.Path(ctx.settings.repo_root), None
+    cand = ctx.db.query(CodeCandidate).filter(CodeCandidate.id == candidate_id).first()
+    if cand is None:
+        raise ExecutionError("code candidate not found")
+    try:
+        ws = ws_mod.ensure_workspace(ctx.settings, cand.id)
+    except ws_mod.WorkspaceError as exc:
+        raise ExecutionError(f"workspace unavailable: {exc}") from exc
+    return ws.path, cand
+
+
+def _reads_in_correlation(ctx: ExecContext) -> int:
+    return int(
+        ctx.db.query(AgentIntent.id)
+        .join(AgentRun, AgentRun.id == AgentIntent.run_id)
+        .filter(
+            AgentRun.correlation_id == ctx.run.correlation_id,
+            AgentIntent.intent_type.in_([t.value for t in REPO_READ_INTENT_TYPES]),
+            AgentIntent.execution_status == IntentExecutionStatus.EXECUTED,
+        )
+        .count()
+    )
+
+
+def _bytes_in_run(ctx: ExecContext) -> int:
+    rows = (
+        ctx.db.query(AgentIntent.result)
+        .filter(AgentIntent.run_id == ctx.run.id, AgentIntent.execution_status == IntentExecutionStatus.EXECUTED, AgentIntent.intent_type.in_([t.value for t in REPO_READ_INTENT_TYPES]))
+        .all()
+    )
+    total = 0
+    for (res,) in rows:
+        inner = (res or {}).get("result") or {}
+        total += int(inner.get("bytes") or 0) if isinstance(inner, dict) else 0
+    return total
+
+
+def _check_read_bounds(ctx: ExecContext) -> None:
+    s = ctx.settings
+    if _reads_in_correlation(ctx) >= s.max_repo_reads_per_correlation:
+        raise ExecutionError(f"repository read budget exhausted for this correlation ({s.max_repo_reads_per_correlation})")
+    if _bytes_in_run(ctx) >= s.max_repo_bytes_per_run:
+        raise ExecutionError(f"repository byte budget exhausted for this run ({s.max_repo_bytes_per_run} bytes)")
+
+
+def _turns_used(ctx: ExecContext) -> int:
+    return int(
+        ctx.db.query(SocietyEvent.id)
+        .filter(
+            SocietyEvent.correlation_id == ctx.run.correlation_id,
+            SocietyEvent.event_type == EventType.REPO_READ_RESULT,
+            SocietyEvent.subject_type == "agent",
+            SocietyEvent.subject_id == ctx.agent.id,
+        )
+        .count()
+    )
+
+
+def _correlation_turns(ctx: ExecContext) -> int:
+    return int(
+        ctx.db.query(SocietyEvent.id)
+        .filter(SocietyEvent.correlation_id == ctx.run.correlation_id, SocietyEvent.event_type == EventType.REPO_READ_RESULT)
+        .count()
+    )
+
+
+def _finish_read(ctx: ExecContext, result: repo_intel.ReadResult, cand: Optional[CodeCandidate], *, duplicate: bool = False) -> ExecOutcome:
+    """Persist-able result + ONE targeted wake per run (idempotent) so the
+    agent gets its next engineering turn — unless turns are exhausted or the
+    read was a suppressed duplicate."""
+    out = result.to_dict()
+    out["duplicate"] = duplicate
+    if cand is not None:
+        cand.repo_reads = int(cand.repo_reads or 0) + 1
+    events: List[str] = []
+    s = ctx.settings
+    if duplicate:
+        out["note"] = "identical search already answered in this correlation; no new turn"
+        return ExecOutcome(result=out, events=events)
+    turns = _turns_used(ctx)
+    if turns >= s.max_engineering_turns or _correlation_turns(ctx) >= s.max_correlation_engineering_turns or int(ctx.event.causation_depth or 0) + 1 > s.max_engineering_correlation_depth:
+        out["turns_exhausted"] = True
+        ev = emit_event(
+            ctx.db,
+            event_type=EventType.ENGINEERING_TURNS_EXHAUSTED,
+            payload={"agent": ctx.agent.name, "turns_used": turns, "max": s.max_engineering_turns, "candidate_id": str(cand.id) if cand else None},
+            actor_type="agent",
+            actor_id=ctx.agent.id,
+            correlation_id=ctx.run.correlation_id,
+            idempotency_key=f"turns-exhausted:{ctx.run.correlation_id}:{ctx.agent.id}",
+            source_run_id=ctx.run.id,
+            notify=False,
+        )
+        events.append(str(ev.id))
+        return ExecOutcome(result=out, events=events)
+    preview = json_bounded(out.get("data") or {}, 1800)
+    ev = emit_event(
+        ctx.db,
+        event_type=EventType.REPO_READ_RESULT,
+        payload={
+            "agent": ctx.agent.name,
+            "op": result.op,
+            "path": result.path,
+            "candidate_id": str(cand.id) if cand else None,
+            "intent_id": str(ctx.intent_row.id),
+            "turn": turns + 1,
+            "truncated": result.truncated,
+            "preview": preview,
+        },
+        actor_type="agent",
+        actor_id=ctx.agent.id,
+        subject_type="agent",
+        subject_id=ctx.agent.id,
+        causation=ctx.event,
+        idempotency_key=f"repo-read-result:{ctx.run.id}",
+        source_run_id=ctx.run.id,
+        trace_id=ctx.run.trace_id,
+    )
+    if cand is not None and not getattr(ev, "deduplicated", False):
+        cand.engineering_turns = int(cand.engineering_turns or 0) + 1
+    events.append(str(ev.id))
+    return ExecOutcome(result=out, events=events)
+
+
+def json_bounded(obj: Any, n: int) -> Any:
+    import json as _json
+
+    s = _json.dumps(obj, sort_keys=True, default=str, ensure_ascii=False)
+    return _json.loads(s) if len(s) <= n else {"_truncated": True, "preview": s[: n - 1] + "…"}
+
+
+def _list_repo_tree(ctx: ExecContext) -> ExecOutcome:
+    p = ctx.validated.payload
+    _check_read_bounds(ctx)
+    root, cand = _read_root(ctx, p.candidate_id)
+    try:
+        res = repo_intel.list_tree(root, p.path, depth=p.depth)
+    except repo_intel.RepoReadError as exc:
+        raise ExecutionError(f"read refused: {exc}") from exc
+    return _finish_read(ctx, res, cand)
+
+
+def _search_repo(ctx: ExecContext) -> ExecOutcome:
+    p = ctx.validated.payload
+    _check_read_bounds(ctx)
+    root, cand = _read_root(ctx, p.candidate_id)
+    scope = str(p.candidate_id or "base")
+    key = repo_intel.search_key(p.pattern, p.glob, p.regex, scope)
+    prior = (
+        ctx.db.query(AgentIntent)
+        .join(AgentRun, AgentRun.id == AgentIntent.run_id)
+        .filter(
+            AgentRun.correlation_id == ctx.run.correlation_id,
+            AgentIntent.agent_id == ctx.agent.id,
+            AgentIntent.intent_type == IntentType.SEARCH_REPO.value,
+            AgentIntent.execution_status == IntentExecutionStatus.EXECUTED,
+            AgentIntent.id != ctx.intent_row.id,
+        )
+        .order_by(AgentIntent.executed_at.desc())
+        .limit(20)
+        .all()
+    )
+    for row in prior:
+        inner = (row.result or {}).get("result") or {}
+        if isinstance(inner, dict) and inner.get("search_key") == key:
+            res = repo_intel.ReadResult(op="search", path=inner.get("path") or "", data=inner.get("data") or {}, truncated=bool(inner.get("truncated")), bytes_returned=0)
+            outcome = _finish_read(ctx, res, cand, duplicate=True)
+            outcome.result["search_key"] = key
+            return outcome
+    try:
+        res = repo_intel.search(root, p.pattern, glob=p.glob, regex=p.regex, max_results=min(p.max_results, ctx.settings.max_search_results))
+    except repo_intel.RepoReadError as exc:
+        raise ExecutionError(f"search refused: {exc}") from exc
+    outcome = _finish_read(ctx, res, cand)
+    outcome.result["search_key"] = key
+    return outcome
+
+
+def _read_repo_file(ctx: ExecContext) -> ExecOutcome:
+    p = ctx.validated.payload
+    _check_read_bounds(ctx)
+    root, cand = _read_root(ctx, p.candidate_id)
+    try:
+        res = repo_intel.read_file(root, p.path, max_bytes=p.max_bytes)
+    except repo_intel.RepoReadError as exc:
+        raise ExecutionError(f"read refused: {exc}") from exc
+    return _finish_read(ctx, res, cand)
+
+
+def _read_repo_range(ctx: ExecContext) -> ExecOutcome:
+    p = ctx.validated.payload
+    _check_read_bounds(ctx)
+    root, cand = _read_root(ctx, p.candidate_id)
+    try:
+        res = repo_intel.read_range(root, p.path, p.start, p.end)
+    except repo_intel.RepoReadError as exc:
+        raise ExecutionError(f"read refused: {exc}") from exc
+    return _finish_read(ctx, res, cand)
+
+
+def _read_diff(ctx: ExecContext) -> ExecOutcome:
+    p = ctx.validated.payload
+    _check_read_bounds(ctx)
+    cand = ctx.db.query(CodeCandidate).filter(CodeCandidate.id == p.candidate_id).first()
+    if cand is None:
+        raise ExecutionError("code candidate not found")
+    try:
+        ws = ws_mod.ensure_workspace(ctx.settings, cand.id)
+        diff = ws_mod.diff_text(ws)
+    except ws_mod.WorkspaceError as exc:
+        raise ExecutionError(f"workspace unavailable: {exc}") from exc
+    res = repo_intel.diff_result(diff, list(cand.changed_files or []))
+    return _finish_read(ctx, res, cand)
+
+
+def _read_candidate_state(ctx: ExecContext) -> ExecOutcome:
+    p = ctx.validated.payload
+    cand = ctx.db.query(CodeCandidate).filter(CodeCandidate.id == p.candidate_id).first()
+    if cand is None:
+        raise ExecutionError("code candidate not found")
+    promotions = ctx.db.query(CodePromotion).filter(CodePromotion.candidate_id == cand.id).order_by(CodePromotion.created_at.desc()).limit(3).all()
+    experiments = ctx.db.query(ChangeExperiment).filter(ChangeExperiment.candidate_id == cand.id).order_by(ChangeExperiment.created_at.desc()).limit(3).all()
+    data = {
+        "candidate": {
+            "id": str(cand.id),
+            "title": cand.title,
+            "status": _ev(cand.status),
+            "risk_tier": cand.risk_tier,
+            "branch": cand.branch_name,
+            "base_sha": cand.base_sha,
+            "head_sha": cand.head_sha,
+            "changed_files": list(cand.changed_files or [])[:50],
+            "diff_lines": cand.diff_lines,
+            "qa": {k: (cand.qa_report or {}).get(k) for k in ("verdict", "summary", "attempts", "failures")},
+            "security": {k: (cand.security_report or {}).get(k) for k in ("verdict", "findings", "static_findings")},
+            "error": cand.error,
+        },
+        "promotions": [
+            {"id": str(pr.id), "status": _ev(pr.status), "risk_tier": pr.risk_tier, "ci_state": pr.ci_state, "merge_state": pr.merge_state, "pr_number": pr.external_pr_number, "eligibility": pr.eligibility, "failure_reason": pr.failure_reason}
+            for pr in promotions
+        ],
+        "experiments": [
+            {"id": str(ex.id), "status": _ev(ex.status), "decision": ex.decision, "confidence": ex.confidence, "rollback_recommended": bool(ex.rollback_recommended), "hard_gates": ex.hard_gate_results, "metric_deltas": ex.metric_deltas}
+            for ex in experiments
+        ],
+    }
+    res = repo_intel.ReadResult(op="candidate_state", path=str(cand.id), data=json_bounded(data, 12000), bytes_returned=0)
+    # State reads never spend an engineering turn: no wake event.
+    out = res.to_dict()
+    out["duplicate"] = False
+    return ExecOutcome(result=out)
 
 
 HANDLERS: Dict[IntentType, Callable[[ExecContext], ExecOutcome]] = {
@@ -749,6 +1178,16 @@ HANDLERS: Dict[IntentType, Callable[[ExecContext], ExecOutcome]] = {
     IntentType.EVALUATE_CODE_CANDIDATE: _evaluate_code_candidate,
     IntentType.SECURITY_REVIEW_CANDIDATE: _security_review_candidate,
     IntentType.REQUEST_STAGING_DEPLOY: _request_staging_deploy,
+    IntentType.LIST_REPO_TREE: _list_repo_tree,
+    IntentType.SEARCH_REPO: _search_repo,
+    IntentType.READ_REPO_FILE: _read_repo_file,
+    IntentType.READ_REPO_RANGE: _read_repo_range,
+    IntentType.READ_DIFF: _read_diff,
+    IntentType.READ_CANDIDATE_STATE: _read_candidate_state,
+    IntentType.REQUEST_PR_PROMOTION: _request_pr_promotion,
+    IntentType.REQUEST_MERGE_EVALUATION: _request_merge_evaluation,
+    IntentType.REQUEST_STAGING_EVALUATION: _request_staging_evaluation,
+    IntentType.RECORD_EVALUATION_RECOMMENDATION: _record_evaluation_recommendation,
 }
 
 

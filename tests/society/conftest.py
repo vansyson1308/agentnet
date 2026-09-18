@@ -26,6 +26,12 @@ import uuid
 import pytest
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
+
+# The code fixture repository (fixtures/code_repo) is DATA: it carries a planted
+# defect and its own ``app``/``tests`` packages. It is copied into throw-away
+# git repositories by make_code_repo and must never be collected here (its
+# ``app`` package would shadow services/registry/app on sys.path).
+collect_ignore_glob = ["fixtures/*"]
 REGISTRY_ROOT = REPO / "services" / "registry"
 INIT_DB = REGISTRY_ROOT / "init-db"
 
@@ -48,6 +54,9 @@ TEST_DB = os.getenv("SOCIETY_TEST_DB", "agentnet_society_test")
 # handles the rest). Society tables first, then domain tables the runtime
 # writes through (chat, goals, memory, proposals, tasks, wallets, agents).
 TRUNCATE_TABLES = [
+    "deployment_requests",
+    "change_experiments",
+    "code_promotions",
     "intent_approvals",
     "agent_intents",
     "code_candidates",
@@ -301,6 +310,57 @@ def temp_repo(tmp_path):
     return make_temp_repo(tmp_path)
 
 
+CODE_FIXTURE = REPO / "tests" / "society" / "fixtures" / "code_repo"
+
+
+def make_code_repo(root: pathlib.Path) -> pathlib.Path:
+    """A throw-away git repository holding the isolated fixture application
+    (tests/society/fixtures/code_repo: one planted defect in
+    ``app/textutil.py``). The self-development proof investigates, fixes,
+    tests, reviews, promotes (shadow) and evaluates it here — never in the
+    developer's checkout."""
+    import shutil
+
+    repo = root / "code_repo"
+    shutil.copytree(CODE_FIXTURE, repo, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
+    (repo / "docs" / "society" / "candidates").mkdir(parents=True)
+    (repo / "docs" / "society" / "candidates" / "README.md").write_text("# candidates\n")
+    _git(["init", "-q", "-b", "main"], repo)
+    _git(["add", "-A"], repo)
+    _git(["commit", "-q", "-m", "fixture: application with one planted defect"], repo)
+    return repo
+
+
+@pytest.fixture
+def code_repo(tmp_path):
+    return make_code_repo(tmp_path)
+
+
+@pytest.fixture
+def code_settings(tmp_path, code_repo, monkeypatch):
+    """Runtime settings pointed at the code fixture repository, autonomy ON,
+    shadow promotion through the fake provider, no telemetry noise."""
+    from services.registry.app.society.config import reset_settings_cache, SocietySettings
+
+    monkeypatch.setenv("SOCIETY_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("SOCIETY_AUTONOMOUS_CODE_ENABLED", "true")
+    monkeypatch.setenv("SOCIETY_MODEL_PROVIDER", "scripted")
+    monkeypatch.setenv("SOCIETY_PROMOTION_PROVIDER", "fake")
+    monkeypatch.setenv("SOCIETY_REPO_ROOT", str(code_repo))
+    monkeypatch.setenv("SOCIETY_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("SOCIETY_WAKE_POLL_SECONDS", "1")
+    monkeypatch.setenv("SOCIETY_RETRY_BACKOFF_BASE_SECONDS", "0")
+    monkeypatch.setenv("SOCIETY_QA_TEST_TIMEOUT_SECONDS", "120")
+    monkeypatch.setenv("SOCIETY_FITNESS_TEST_TIMEOUT_SECONDS", "120")
+    monkeypatch.setenv("SOCIETY_PROMOTION_POLL_INTERVAL_SECONDS", "0")  # fake provider: poll every cycle
+    monkeypatch.setenv("SOCIETY_HEARTBEAT_INTERVAL_SECONDS", "0")
+    monkeypatch.setenv("SOCIETY_MAX_CAUSATION_DEPTH", "24")
+    reset_settings_cache()
+    settings = SocietySettings()
+    yield settings
+    reset_settings_cache()
+
+
 @pytest.fixture
 def society_settings(tmp_path, temp_repo, monkeypatch):
     """Runtime settings with autonomy ON, pointing at the temp repo."""
@@ -315,6 +375,7 @@ def society_settings(tmp_path, temp_repo, monkeypatch):
     monkeypatch.setenv("SOCIETY_RETRY_BACKOFF_BASE_SECONDS", "0")
     monkeypatch.setenv("SOCIETY_QA_TEST_TIMEOUT_SECONDS", "120")
     monkeypatch.setenv("SOCIETY_HEARTBEAT_INTERVAL_SECONDS", "0")  # tests enable it explicitly
+    monkeypatch.setenv("SOCIETY_PROMOTION_POLL_INTERVAL_SECONDS", "0")  # fake provider: poll every cycle
     reset_settings_cache()
     settings = SocietySettings()
     yield settings

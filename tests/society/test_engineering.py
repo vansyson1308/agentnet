@@ -51,7 +51,7 @@ def test_workspace_is_a_separate_worktree_on_auto_branch(society_settings, temp_
 
 @pytest.mark.parametrize(
     "bad_path",
-    ["/etc/passwd", "../outside.md", "docs/../../x.md", "~/x", "docs\\x.md", ".env", ".github/workflows/ci.yml", "services/registry/app/config.py", "services/payment/app/main.py", "tests/society/acceptance/test_candidate_docs.py", "services/registry/migrations/versions/0099.py"],
+    ["/etc/passwd", "../outside.md", "docs/../../x.md", "~/x", "docs\\x.md", ".env", ".env.production", "deploy/tls/server.key", "config/secrets/x.json", "id_rsa", "certs/client.pem"],
 )
 def test_path_containment_and_protected_patterns(society_settings, temp_repo, bad_path):
     ws = ws_mod.ensure_workspace(society_settings, uuid.uuid4())

@@ -225,7 +225,7 @@ async def probe_provider(settings: SocietySettings, *, transport: Optional[Calla
         model = OpenAICompatibleModel(settings, transport=transport)
     except ValueError as exc:
         return ProbeResult(False, "misconfigured", error=scrub(str(exc), settings))
-    fmt = model._response_format()
+    fmt = model._response_format("json_object")  # the DeepSeek-documented mode; negotiation happens on real runs
     payload = {
         "model": model.model_name,
         "messages": [

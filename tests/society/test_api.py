@@ -18,7 +18,7 @@ def test_status_and_story_after_a_loop(api_client, db, SessionLocal, society_set
     seed_society(db)
     grants_with_no_cooldown()
     r = api_client.get("/v1/society/status")
-    assert r.status_code == 200 and r.json()["production_deploy_enabled"] is False and r.json()["fleet_size"] == 6
+    assert r.status_code == 200 and r.json()["production_deploy_enabled"] is False and r.json()["fleet_size"] == 7
     corr = uuid.uuid4()
     ev = emit_event(db, event_type=EventType.PLATFORM_METRIC_ANOMALY, payload={"metric": "latency_p99", "severity_score": 65}, correlation_id=corr)
     db.commit()

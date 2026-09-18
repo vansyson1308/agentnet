@@ -1,3 +1,4 @@
+
 -- ============================================================
 -- Autonomous Society Runtime v1 (durable event / run / intent model)
 -- ============================================================
@@ -206,3 +207,131 @@ CREATE INDEX IF NOT EXISTS idx_intent_approvals_decision ON intent_approvals (de
 
 -- Ingress rate limiting counts events per actor per window.
 CREATE INDEX IF NOT EXISTS idx_society_events_actor_created ON society_events (actor_type, actor_id, created_at);
+
+-- ============================================================
+-- Autonomous Society Runtime — Phase 3 (self-development: promotion, fitness, provenance)
+-- ============================================================
+
+-- Candidate identity for anti-busywork and trusted risk classification. risk_tier
+-- is written ONLY by the promotion controller from the trusted base classifier.
+ALTER TABLE code_candidates ADD COLUMN IF NOT EXISTS risk_tier VARCHAR(16);
+ALTER TABLE code_candidates ADD COLUMN IF NOT EXISTS diff_hash VARCHAR(64);
+ALTER TABLE code_candidates ADD COLUMN IF NOT EXISTS diff_lines INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE code_candidates ADD COLUMN IF NOT EXISTS engineering_turns INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE code_candidates ADD COLUMN IF NOT EXISTS repo_reads INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_code_candidates_diff_hash ON code_candidates (diff_hash);
+
+-- Model routing / cost governor accounting per run (no chain-of-thought).
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS model_tier VARCHAR(16);
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS route_reason VARCHAR(255);
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tokens_cached INTEGER;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS output_format VARCHAR(16);
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS format_fallbacks INTEGER NOT NULL DEFAULT 0;
+
+-- Memory provenance + freshness. Nothing is deleted: superseded/expired rows
+-- stay auditable and are only ranked lower at retrieval.
+ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS source_type VARCHAR(32) NOT NULL DEFAULT 'legacy';
+ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS source_id UUID;
+ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS correlation_id UUID;
+ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS author_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL;
+ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS confidence INTEGER NOT NULL DEFAULT 50;
+ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS validation_state VARCHAR(16) NOT NULL DEFAULT 'unvalidated';
+ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE memory_items ADD COLUMN IF NOT EXISTS superseded_by UUID REFERENCES memory_items(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_memory_items_correlation ON memory_items (correlation_id);
+
+-- Promotion record: candidate -> branch -> PR -> CI -> evaluation -> eligibility.
+-- Written only by the deterministic promotion controller; the model can only
+-- REQUEST a promotion. One active promotion per candidate (partial unique index).
+CREATE TABLE IF NOT EXISTS code_promotions (
+    id                      UUID PRIMARY KEY,
+    candidate_id            UUID NOT NULL REFERENCES code_candidates(id) ON DELETE CASCADE,
+    correlation_id          UUID NOT NULL,
+    risk_tier               VARCHAR(16) NOT NULL,
+    base_sha                VARCHAR(64),
+    candidate_sha           VARCHAR(64),
+    previous_good_sha       VARCHAR(64),
+    provider                VARCHAR(32) NOT NULL,
+    external_branch         VARCHAR(255),
+    external_pr_number      INTEGER,
+    external_pr_url         VARCHAR(512),
+    status                  VARCHAR(32) NOT NULL DEFAULT 'requested',
+    ci_state                VARCHAR(32),
+    merge_state             VARCHAR(32),
+    approved_by_user_id     UUID REFERENCES users(id) ON DELETE SET NULL,
+    approval_at             TIMESTAMPTZ,
+    merged_sha              VARCHAR(64),
+    failure_reason          TEXT,
+    eligibility             JSONB NOT NULL DEFAULT '{}'::jsonb,
+    evidence                JSONB NOT NULL DEFAULT '{}'::jsonb,
+    requested_by_agent_id   UUID REFERENCES agents(id) ON DELETE SET NULL,
+    requested_by_run_id     UUID,
+    worker_id               VARCHAR(128),
+    lease_expires_at        TIMESTAMPTZ,
+    attempt                 INTEGER NOT NULL DEFAULT 0,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_code_promotions_status ON code_promotions (status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_code_promotions_correlation ON code_promotions (correlation_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_code_promotions_active_candidate ON code_promotions (candidate_id)
+    WHERE status NOT IN ('rejected', 'superseded', 'merged');
+
+-- Fitness experiment: trusted criteria snapshot + baseline/candidate metrics +
+-- hard gates + decision. evaluation_mode is 'offline' until a staging host exists.
+CREATE TABLE IF NOT EXISTS change_experiments (
+    id                      UUID PRIMARY KEY,
+    candidate_id            UUID NOT NULL REFERENCES code_candidates(id) ON DELETE CASCADE,
+    promotion_id            UUID REFERENCES code_promotions(id) ON DELETE SET NULL,
+    correlation_id          UUID NOT NULL,
+    baseline_sha            VARCHAR(64),
+    candidate_sha           VARCHAR(64),
+    environment             VARCHAR(32) NOT NULL DEFAULT 'offline',
+    evaluation_mode         VARCHAR(32) NOT NULL DEFAULT 'offline',
+    status                  VARCHAR(32) NOT NULL DEFAULT 'planned',
+    criteria_snapshot       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    baseline_metrics        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    candidate_metrics       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    hard_gate_results       JSONB NOT NULL DEFAULT '[]'::jsonb,
+    metric_deltas           JSONB NOT NULL DEFAULT '{}'::jsonb,
+    decision                VARCHAR(16),
+    confidence              VARCHAR(16),
+    rollback_recommended    BOOLEAN NOT NULL DEFAULT FALSE,
+    recommendation          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    evidence                JSONB NOT NULL DEFAULT '{}'::jsonb,
+    requested_by_agent_id   UUID REFERENCES agents(id) ON DELETE SET NULL,
+    worker_id               VARCHAR(128),
+    lease_expires_at        TIMESTAMPTZ,
+    attempt                 INTEGER NOT NULL DEFAULT 0,
+    error                   TEXT,
+    started_at              TIMESTAMPTZ,
+    finished_at             TIMESTAMPTZ,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_change_experiments_status ON change_experiments (status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_change_experiments_candidate ON change_experiments (candidate_id);
+CREATE INDEX IF NOT EXISTS idx_change_experiments_correlation ON change_experiments (correlation_id);
+
+-- Deployment / rollback requests: durable state behind a DeploymentProvider.
+-- Without a configured provider a request is BLOCKED_EXTERNAL, never fake success.
+-- Production requests are recorded only; no executor exists (hard OFF).
+CREATE TABLE IF NOT EXISTS deployment_requests (
+    id                      UUID PRIMARY KEY,
+    candidate_id            UUID REFERENCES code_candidates(id) ON DELETE SET NULL,
+    promotion_id            UUID REFERENCES code_promotions(id) ON DELETE SET NULL,
+    correlation_id          UUID NOT NULL,
+    environment             VARCHAR(32) NOT NULL,
+    kind                    VARCHAR(16) NOT NULL DEFAULT 'deploy',
+    target_sha              VARCHAR(64),
+    provider                VARCHAR(32) NOT NULL,
+    status                  VARCHAR(32) NOT NULL DEFAULT 'requested',
+    external_ref            VARCHAR(255),
+    note                    TEXT,
+    rollback_of             UUID REFERENCES deployment_requests(id) ON DELETE SET NULL,
+    requested_by_agent_id   UUID REFERENCES agents(id) ON DELETE SET NULL,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_deployment_requests_status ON deployment_requests (status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_deployment_requests_correlation ON deployment_requests (correlation_id);

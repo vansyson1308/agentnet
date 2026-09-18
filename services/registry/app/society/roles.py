@@ -36,8 +36,9 @@ ROLE_ARCHITECT = "architect"
 ROLE_BUILDER = "builder"
 ROLE_QA = "qa"
 ROLE_SECURITY = "security"
+ROLE_EVALUATOR = "evaluator"
 
-ALL_ROLES = (ROLE_GOVERNOR, ROLE_SCOUT, ROLE_ARCHITECT, ROLE_BUILDER, ROLE_QA, ROLE_SECURITY)
+ALL_ROLES = (ROLE_GOVERNOR, ROLE_SCOUT, ROLE_ARCHITECT, ROLE_BUILDER, ROLE_QA, ROLE_SECURITY, ROLE_EVALUATOR)
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,15 @@ _LOW_COMMON = (
     IntentType.SEND_MESSAGE.value,
     IntentType.WRITE_MEMORY.value,
     IntentType.SLEEP.value,
+)
+# Bounded, audited, read-only repository intelligence (Phase 3).
+_REPO_READS = (
+    IntentType.LIST_REPO_TREE.value,
+    IntentType.SEARCH_REPO.value,
+    IntentType.READ_REPO_FILE.value,
+    IntentType.READ_REPO_RANGE.value,
+    IntentType.READ_DIFF.value,
+    IntentType.READ_CANDIDATE_STATE.value,
 )
 
 # Capability entries follow the shape task_service._validate_capability
@@ -118,13 +128,20 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             IntentType.CREATE_GOAL.value,
             IntentType.UPDATE_GOAL.value,
             IntentType.REVIEW_IMPROVEMENT.value,
+            IntentType.READ_CANDIDATE_STATE.value,
+            IntentType.REQUEST_PR_PROMOTION.value,
+            IntentType.REQUEST_STAGING_EVALUATION.value,
         ),
         subscriptions=(
             EventType.PROPOSAL_CREATED,
             EventType.CODE_CANDIDATE_READY,
             EventType.CODE_CANDIDATE_REJECTED,
             EventType.SOCIETY_HEARTBEAT,
+            EventType.PROMOTION_MERGE_ELIGIBLE,
+            EventType.PROMOTION_REJECTED,
+            EventType.EXPERIMENT_FINISHED,
         ),
+        risk_ceiling=IntentRiskClass.MEDIUM.value,
         resource_scopes={"memory_scopes": ["agent", "society"], "goal_owners": ["agent", "society"]},
         max_runs_per_hour=12,
         max_intents_per_run=4,
@@ -169,6 +186,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         ),
         description="Architect — bounded design, task decomposition, acceptance criteria",
         allowed_intents=_LOW_COMMON
+        + _REPO_READS
         + (
             IntentType.REQUEST_CODE_CHANGE.value,
             IntentType.CREATE_TASK.value,
@@ -176,6 +194,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         ),
         subscriptions=(
             EventType.PROPOSAL_APPROVED,
+            EventType.REPO_READ_RESULT,
             EventType.CODE_CANDIDATE_QA_FAILED,
             EventType.CODE_CANDIDATE_READY,
         ),
@@ -196,6 +215,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         ),
         description="Builder — isolated worktree implementation",
         allowed_intents=_LOW_COMMON
+        + _REPO_READS
         + (
             IntentType.SUBMIT_CODE_CANDIDATE.value,
             IntentType.REQUEST_QA.value,
@@ -205,6 +225,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         ),
         subscriptions=(
             EventType.CODE_CHANGE_REQUESTED,
+            EventType.REPO_READ_RESULT,
             EventType.CODE_CANDIDATE_QA_FAILED,
             EventType.CODE_CANDIDATE_READY,
             EventType.CODE_CANDIDATE_REJECTED,
@@ -247,8 +268,32 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             "cannot be ruled out is a FAIL. You are independently permissioned and cannot be overruled by QA."
         ),
         description="Security Reviewer — risky-surface review, fail closed",
-        allowed_intents=_LOW_COMMON + (IntentType.SECURITY_REVIEW_CANDIDATE.value,),
-        subscriptions=(EventType.CODE_CANDIDATE_SECURITY_REVIEW,),
+        allowed_intents=_LOW_COMMON + (IntentType.SECURITY_REVIEW_CANDIDATE.value, IntentType.READ_DIFF.value, IntentType.READ_REPO_FILE.value, IntentType.READ_CANDIDATE_STATE.value),
+        subscriptions=(EventType.CODE_CANDIDATE_SECURITY_REVIEW, EventType.REPO_READ_RESULT),
+        risk_ceiling=IntentRiskClass.MEDIUM.value,
+        resource_scopes={"memory_scopes": ["agent", "society"]},
+        max_runs_per_hour=20,
+        max_intents_per_run=3,
+        wake_cooldown_seconds=10,
+    ),
+    ROLE_EVALUATOR: RoleDefinition(
+        role=ROLE_EVALUATOR,
+        agent_name="Society_Evaluator",
+        mission=(
+            "Determine whether an approved code change improved the system according to TRUSTED evaluation "
+            "criteria. Request the offline fitness experiment for a promoted candidate, summarise the objective "
+            "results, record a promote/reject/rollback recommendation and write the lesson to memory. You cannot "
+            "change thresholds, approve, merge, deploy, alter evidence or override a hard gate; deterministic "
+            "gates always win over your opinion. You are independent of Builder, QA and Security."
+        ),
+        description="Evaluator — fitness experiment requests, objective summaries, promotion/rollback recommendations",
+        allowed_intents=_LOW_COMMON
+        + (
+            IntentType.READ_CANDIDATE_STATE.value,
+            IntentType.REQUEST_MERGE_EVALUATION.value,
+            IntentType.RECORD_EVALUATION_RECOMMENDATION.value,
+        ),
+        subscriptions=(EventType.PROMOTION_CI_PASSED, EventType.EXPERIMENT_FINISHED),
         risk_ceiling=IntentRiskClass.MEDIUM.value,
         resource_scopes={"memory_scopes": ["agent", "society"]},
         max_runs_per_hour=20,

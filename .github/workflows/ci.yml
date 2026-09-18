@@ -150,8 +150,21 @@ jobs:
             --cov=services --cov-report=term-missing --cov-report=xml
       - name: No unexplained skips
         run: python scripts/ci/check_skips.py pytest-report.xml --allow "fresh-install harness"
-      - name: Deterministic Society end-to-end demo
+      # Self-development gates (Phase 3): named so a failure is visible at a glance.
+      # They are part of the full suite above; this re-runs them as explicit gates
+      # with deterministic fakes only (no DeepSeek, no GitHub App, no hosting).
+      - name: Self-development gates (repo intelligence, risk/meta-change, promotion, fitness, provider contract, secret boundary)
+        run: |
+          pytest -q -p no:cacheprovider \
+            tests/society/test_repo_intel.py tests/society/test_risk_and_meta_change.py \
+            tests/society/test_promotion.py tests/society/test_fitness.py \
+            tests/society/test_memory_provenance.py tests/society/test_telemetry_scout_budget.py \
+            tests/society/test_deepseek_contract.py tests/society/test_secret_boundary.py \
+            tests/society/test_deployment_and_jarvis.py tests/society/test_e2e_self_development.py
+      - name: Deterministic Society end-to-end demo (documentation candidate)
         run: python examples/demo_autonomous_society.py
+      - name: Deterministic self-development demo (real source-code candidate, shadow PR, offline fitness)
+        run: python examples/demo_autonomous_society.py --story code
       - name: Upload coverage + report
         if: always()
         uses: actions/upload-artifact@v6

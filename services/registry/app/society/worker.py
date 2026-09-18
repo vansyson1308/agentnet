@@ -47,14 +47,19 @@ from ..models import (
     Span,
     SpanStatus,
 )
+from . import deployment as dep_mod
+from . import fitness as fitness_mod
+from . import promotion as promo_mod
+from . import router as router_mod
+from . import telemetry as telemetry_mod
 from .approvals import claim_next_approved_intent, execute_approved_intent
 from .cognition import CognitiveModel, ModelProviderError, ModelTimeout, get_model
 from .config import SocietySettings, get_settings
 from .context import build_context
 from .events import WAKE_CHANNEL, EventType, emit_event, utcnow
 from .executor import ExecContext, ExecutionError, execute
-from .intents import DecisionValidationError, ValidatedIntent, payload_to_dict, validate_intents
-from .policy import check_run_budget, evaluate_intent
+from .intents import REPO_READ_INTENT_TYPES, DecisionValidationError, ValidatedIntent, payload_to_dict, validate_intents
+from .policy import check_run_budget, evaluate_intent, spend_today_usd
 from .roles import load_role_definitions, subscriptions_by_event
 from .world import emit_heartbeat, ingest_task_outcomes
 from .runs import (
@@ -130,6 +135,9 @@ class CycleStats:
     duplicates_prevented: int = 0
     loop_breaks: int = 0
     approved_intents_resumed: int = 0
+    promotions_advanced: int = 0
+    experiments_run: int = 0
+    telemetry_events: int = 0
     cycles: int = 0
     processed_run_ids: List[str] = field(default_factory=list)
 
@@ -196,6 +204,9 @@ class SocietyWorker:
         roles=None,
         worker_id: Optional[str] = None,
         listen_dsn: Optional[str] = None,
+        promotion_provider=None,
+        deployment_provider=None,
+        telemetry_enabled: bool = True,
     ):
         self.session_factory = session_factory
         self.settings = settings or get_settings()
@@ -205,6 +216,11 @@ class SocietyWorker:
         self.worker_id = worker_id or self.settings.worker_id
         self.listener = WakeListener(listen_dsn) if listen_dsn else None
         self._stop = False
+        # Non-LLM controllers: providers are resolved from settings unless a
+        # test injects a fake. The model never receives either object.
+        self.promotion_provider = promo_mod.get_promotion_provider(self.settings, override=promotion_provider)
+        self.deployment_provider = dep_mod.get_deployment_provider(self.settings, override=deployment_provider)
+        self.telemetry_enabled = telemetry_enabled
 
     # ── dispatch ───────────────────────────────────────────────────────
 
@@ -215,6 +231,11 @@ class SocietyWorker:
                 if self.settings.ingest_task_outcomes:
                     ingest_task_outcomes(db, lookback_seconds=self.settings.ingest_lookback_seconds)
                 emit_heartbeat(db, self.settings)
+                if self.telemetry_enabled:
+                    n = telemetry_mod.produce_anomalies(db, self.settings)
+                    if stats is not None:
+                        stats.telemetry_events += n
+                dep_mod.observe_requests(db, self.deployment_provider)
             except Exception:  # noqa: BLE001 — world ingestion must never block dispatch
                 db.rollback()
                 logger.exception("society world ingestion failed")
@@ -232,10 +253,33 @@ class SocietyWorker:
 
     # ── one run ────────────────────────────────────────────────────────
 
-    async def _decide(self, context) -> Any:
+    def _route(self, db: Session, run: AgentRun, agent: Agent, grant: AgentCapabilityGrant, event: SocietyEvent) -> router_mod.Route:
+        payload = event.payload or {}
+        cand_tier = None
+        qa_failures = int(payload.get("attempts") or 0) if event.event_type == EventType.CODE_CANDIDATE_QA_FAILED else 0
+        agent_budget = Decimal(str(grant.daily_model_budget_usd)) - spend_today_usd(db, agent_id=agent.id)
+        corr_remaining = self.settings.max_correlation_cost_usd - router_mod.correlation_spend(db, run.correlation_id)
+        route = router_mod.choose_route(
+            self.settings,
+            role=grant.role,
+            event_type=event.event_type,
+            event_payload=payload,
+            risk_tier=cand_tier or payload.get("risk_tier"),
+            prior_invalid=router_mod.prior_invalid_in_correlation(db, run.correlation_id, agent.id),
+            qa_failures=qa_failures,
+            budget_remaining_usd=agent_budget,
+            correlation_remaining_usd=corr_remaining,
+        )
+        run.model_tier = route.tier
+        run.route_reason = route.reason[:255]
+        return route
+
+    async def _decide(self, context, route: Optional[router_mod.Route] = None) -> Any:
         # Total budget: every bounded request attempt plus backoff, then a margin.
         attempts = 1 + int(getattr(self.settings, "model_request_retries", 0))
         total = self.settings.model_timeout_seconds * attempts + self.settings.model_retry_backoff_seconds * attempts * 2 + 5
+        if route is not None and getattr(self.model, "supports_routing", False):
+            return await asyncio.wait_for(self.model.decide(context, model_name=route.model_name), timeout=total)
         return await asyncio.wait_for(self.model.decide(context), timeout=total)
 
     def _persist_decision(self, db: Session, run: AgentRun, agent: Agent, grant: AgentCapabilityGrant, context, response) -> List[AgentIntent]:
@@ -251,10 +295,14 @@ class SocietyWorker:
         run.model_requests = int(getattr(response, "requests", 1) or 1)
         run.model_retries = int(getattr(response, "retries", 0) or 0)
         run.model_timeouts = int(getattr(response, "timeouts", 0) or 0)
+        run.tokens_cached = getattr(response, "tokens_cached", None)
+        run.output_format = getattr(response, "output_format", None)
+        run.format_fallbacks = int(getattr(response, "format_fallbacks", 0) or 0)
         run.sleep_until = utcnow() + timedelta(seconds=int(response.decision.sleep_for_seconds or 0))
         validated = validate_intents(response.decision, run.id)
         rows: List[AgentIntent] = []
         max_intents = min(int(grant.max_intents_per_run), self.settings.max_intents_per_run)
+        reads_in_run = 0
         for v in validated:
             verdict = evaluate_intent(v, grant=grant, settings=self.settings, agent=agent)
             decision = verdict.decision
@@ -262,6 +310,11 @@ class SocietyWorker:
             if v.seq >= max_intents and decision == PolicyDecision.ALLOW:
                 decision = PolicyDecision.DENY
                 reason = f"exceeds max_intents_per_run ({max_intents})"
+            if decision == PolicyDecision.ALLOW and v.intent_type in REPO_READ_INTENT_TYPES:
+                reads_in_run += 1
+                if reads_in_run > self.settings.max_repo_reads_per_run:
+                    decision = PolicyDecision.DENY
+                    reason = f"exceeds max_repo_reads_per_run ({self.settings.max_repo_reads_per_run})"
             exec_status = {
                 PolicyDecision.ALLOW: IntentExecutionStatus.PENDING,
                 PolicyDecision.DENY: IntentExecutionStatus.DENIED,
@@ -342,6 +395,7 @@ class SocietyWorker:
                 intent_row=row,
                 validated=validated,
                 heartbeat=lambda: extend_lease(db, run, lease_seconds=self.settings.run_lease_seconds),
+                deployment_provider=self.deployment_provider,
             )
             try:
                 outcome = execute(ctx)
@@ -440,8 +494,10 @@ class SocietyWorker:
             resumed = db.query(AgentIntent.id).filter(AgentIntent.run_id == run.id).first() is not None
             if not resumed:
                 context = build_context(db, agent=agent, grant=grant, event=event, run=run, settings=self.settings)
+                route = self._route(db, run, agent, grant, event)
+                db.commit()
                 try:
-                    response = await self._decide(context)
+                    response = await self._decide(context, route)
                 except (asyncio.TimeoutError, ModelTimeout) as exc:
                     run.model_timeouts = int(run.model_timeouts or 0) + 1
                     run.model_requests = int(run.model_requests or 0) + 1
@@ -537,6 +593,17 @@ class SocietyWorker:
                     stats.intents_failed += 1
         return done
 
+    def process_controllers(self, stats: Optional[CycleStats] = None) -> int:
+        """Deterministic, non-LLM controllers: promotions (branch/PR/CI/eligibility)
+        and fitness experiments. Returns how many items advanced."""
+        p = promo_mod.process_promotions(self.session_factory, settings=self.settings, provider=self.promotion_provider, worker_id=self.worker_id)
+        e = fitness_mod.process_experiments(self.session_factory, settings=self.settings, worker_id=self.worker_id)
+        advanced = sum(p.values()) + sum(e.values())
+        if stats is not None:
+            stats.promotions_advanced += sum(p.values())
+            stats.experiments_run += sum(e.values())
+        return advanced
+
     async def run_until_idle(self, *, max_cycles: int = 50, max_runs: int = 200, wait_for_backoff: bool = True) -> CycleStats:
         """Drive the loop until no pending events/claimable runs remain.
         Used by tests and the demo; the same code path as run_forever."""
@@ -548,11 +615,14 @@ class SocietyWorker:
             n = await self.process_claimable(stats, max_runs=max_runs - total)
             total += n
             self.process_approved_intents(stats)
+            advanced = self.process_controllers(stats)
             db = self.session_factory()
             try:
-                if pending_work_exists(db):
+                if pending_work_exists(db) or advanced:
                     continue
                 deadline = next_wake_deadline(db) if wait_for_backoff else None
+                if deadline is None and wait_for_backoff:
+                    deadline = self._controller_deadline(db)
             finally:
                 db.close()
             if deadline is None:
@@ -561,6 +631,19 @@ class SocietyWorker:
             if delay > 0:
                 await asyncio.sleep(min(delay, 30) + 0.05)
         return stats
+
+    @staticmethod
+    def _controller_deadline(db: Session):
+        """Earliest promotion/experiment lease expiry (transient retry backoff)."""
+        from sqlalchemy import func
+
+        from ..models import ChangeExperiment, CodePromotion
+
+        now = utcnow()
+        p = db.query(func.min(CodePromotion.lease_expires_at)).filter(CodePromotion.lease_expires_at > now, CodePromotion.status.in_([s.value for s in promo_mod.ACTIVE_STATUSES])).scalar()
+        e = db.query(func.min(ChangeExperiment.lease_expires_at)).filter(ChangeExperiment.lease_expires_at > now).scalar()
+        candidates = [d for d in (p, e) if d is not None]
+        return min(candidates) if candidates else None
 
     def stop(self) -> None:
         self._stop = True
@@ -577,6 +660,7 @@ class SocietyWorker:
                 self.dispatch()
                 await self.process_claimable()
                 self.process_approved_intents()
+                self.process_controllers()
             except Exception:  # noqa: BLE001
                 logger.exception("society worker loop error")
                 await asyncio.sleep(settings.wake_poll_seconds)

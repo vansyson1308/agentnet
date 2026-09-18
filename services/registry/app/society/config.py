@@ -87,6 +87,10 @@ def _detect_repo_root() -> str:
 PROMPT_VERSION = "society-v1"
 
 MODEL_PROVIDERS = ("scripted", "openai_compatible", "fake")
+OUTPUT_FORMATS = ("auto", "json_object", "json_schema")
+MODEL_TIERS = ("fast", "strong")
+PROMOTION_PROVIDERS = ("disabled", "fake", "github")
+DEPLOYMENT_PROVIDERS = ("disabled", "fake")
 
 
 @dataclass(frozen=True)
@@ -120,11 +124,26 @@ class SocietySettings:
     # it (OpenAI-style ``response_format.json_schema``); falls back to
     # ``json_object`` + strict parsing when off or rejected by the provider.
     model_json_schema: bool = field(default_factory=lambda: _bool("SOCIETY_MODEL_JSON_SCHEMA", False))
+    # Output-format negotiation (Phase 3): auto probes json_schema once and
+    # falls back to json_object WITHOUT spending the error-retry budget;
+    # json_object is what DeepSeek documents; json_schema forces the
+    # OpenAI-style structured output. The legacy bool above maps to json_schema.
+    model_output_format: str = field(
+        default_factory=lambda: (os.getenv("SOCIETY_MODEL_OUTPUT_FORMAT") or ("json_schema" if _bool("SOCIETY_MODEL_JSON_SCHEMA", False) else "auto")).strip().lower()
+    )
+    model_empty_content_retries: int = field(default_factory=lambda: _int("SOCIETY_MODEL_EMPTY_CONTENT_RETRIES", 1, minimum=0))
+    # Model router: logical tiers -> provider model names (never hard-coded in
+    # business logic). Empty strong name = single-tier deployment.
+    model_fast_name: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_FAST_NAME") or os.getenv("SOCIETY_MODEL_NAME") or os.getenv("LLM_MODEL_NAME", "gpt-4o-mini"))
+    model_strong_name: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_STRONG_NAME", ""))
+    max_correlation_cost_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_MAX_CORRELATION_COST_USD", "0.50"))
+    max_experiment_cost_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_MAX_EXPERIMENT_COST_USD", "0.25"))
+    max_promotion_cost_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_MAX_PROMOTION_COST_USD", "0.25"))
 
     # ── global budgets / loop-storm limits ─────────────────────────────
     max_runs_per_hour: int = field(default_factory=lambda: _int("SOCIETY_MAX_RUNS_PER_HOUR", 120, minimum=1))
     daily_model_budget_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_DAILY_MODEL_BUDGET", "2.0"))
-    max_causation_depth: int = field(default_factory=lambda: _int("SOCIETY_MAX_CAUSATION_DEPTH", 12, minimum=1))
+    max_causation_depth: int = field(default_factory=lambda: _int("SOCIETY_MAX_CAUSATION_DEPTH", 24, minimum=1))
     max_runs_per_correlation: int = field(default_factory=lambda: _int("SOCIETY_MAX_RUNS_PER_CORRELATION", 40, minimum=1))
     max_intents_per_run: int = field(default_factory=lambda: _int("SOCIETY_MAX_INTENTS_PER_RUN", 5, minimum=1))
     repeat_message_window_seconds: int = field(
@@ -173,6 +192,35 @@ class SocietySettings:
     )
     qa_test_timeout_seconds: int = field(default_factory=lambda: _int("SOCIETY_QA_TEST_TIMEOUT_SECONDS", 300, minimum=10))
     branch_prefix: str = field(default_factory=lambda: os.getenv("SOCIETY_BRANCH_PREFIX", "agentnet-auto"))
+    # ── repository intelligence + iterative engineering bounds (fail closed) ──
+    max_engineering_turns: int = field(default_factory=lambda: _int("SOCIETY_MAX_ENGINEERING_TURNS", 6, minimum=0))
+    max_correlation_engineering_turns: int = field(default_factory=lambda: _int("SOCIETY_MAX_CORRELATION_ENGINEERING_TURNS", 12, minimum=0))
+    max_repo_reads_per_run: int = field(default_factory=lambda: _int("SOCIETY_MAX_REPO_READS_PER_RUN", 5, minimum=0))
+    max_repo_reads_per_correlation: int = field(default_factory=lambda: _int("SOCIETY_MAX_REPO_READS_PER_CORRELATION", 40, minimum=0))
+    max_repo_bytes_per_run: int = field(default_factory=lambda: _int("SOCIETY_MAX_REPO_BYTES_PER_RUN", 120_000, minimum=0))
+    max_search_results: int = field(default_factory=lambda: _int("SOCIETY_MAX_SEARCH_RESULTS", 40, minimum=1))
+    max_engineering_correlation_depth: int = field(default_factory=lambda: _int("SOCIETY_MAX_ENGINEERING_CORRELATION_DEPTH", 20, minimum=1))
+    # ── change budget (engineering rate limits, independent of model spend) ──
+    max_autonomous_candidates_per_day: int = field(default_factory=lambda: _int("SOCIETY_MAX_AUTONOMOUS_CANDIDATES_PER_DAY", 10, minimum=0))
+    max_promotions_per_day: int = field(default_factory=lambda: _int("SOCIETY_MAX_PROMOTIONS_PER_DAY", 10, minimum=0))
+    max_open_autonomous_prs: int = field(default_factory=lambda: _int("SOCIETY_MAX_OPEN_AUTONOMOUS_PRS", 3, minimum=0))
+    max_red_candidates_per_day: int = field(default_factory=lambda: _int("SOCIETY_MAX_RED_CANDIDATES_PER_DAY", 2, minimum=0))
+    max_files_per_candidate: int = field(default_factory=lambda: _int("SOCIETY_MAX_FILES_PER_CANDIDATE", 8, minimum=1))
+    max_diff_lines: int = field(default_factory=lambda: _int("SOCIETY_MAX_DIFF_LINES", 600, minimum=1))
+    # ── promotion / evaluation / deployment providers ──
+    promotion_provider: str = field(default_factory=lambda: os.getenv("SOCIETY_PROMOTION_PROVIDER", "disabled").strip().lower())
+    auto_merge_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_AUTO_MERGE_ENABLED", False))
+    github_repository: str = field(default_factory=lambda: os.getenv("SOCIETY_GITHUB_REPOSITORY", ""))
+    github_base_branch: str = field(default_factory=lambda: os.getenv("SOCIETY_GITHUB_BASE_BRANCH", "main"))
+    github_api_url: str = field(default_factory=lambda: os.getenv("SOCIETY_GITHUB_API_URL", "https://api.github.com"))
+    deployment_provider: str = field(default_factory=lambda: os.getenv("SOCIETY_DEPLOYMENT_PROVIDER", "disabled").strip().lower())
+    fitness_test_timeout_seconds: int = field(default_factory=lambda: _int("SOCIETY_FITNESS_TEST_TIMEOUT_SECONDS", 300, minimum=10))
+    promotion_lease_seconds: int = field(default_factory=lambda: _int("SOCIETY_PROMOTION_LEASE_SECONDS", 300, minimum=10))
+    promotion_max_attempts: int = field(default_factory=lambda: _int("SOCIETY_PROMOTION_MAX_ATTEMPTS", 5, minimum=1))
+    # A promotion waiting on the outside world (open PR, CI, human approval) is
+    # re-polled at most once per interval; without it the controller would poll
+    # the provider on every worker cycle.
+    promotion_poll_interval_seconds: int = field(default_factory=lambda: _int("SOCIETY_PROMOTION_POLL_INTERVAL_SECONDS", 60, minimum=0))
 
     # ── identity ───────────────────────────────────────────────────────
     worker_id: str = field(
@@ -186,6 +234,18 @@ class SocietySettings:
                 "society config: unknown SOCIETY_MODEL_PROVIDER=%r; falling back to 'scripted'", self.model_provider
             )
             object.__setattr__(self, "model_provider", "scripted")
+        if not os.getenv("SOCIETY_MODEL_FAST_NAME"):
+            # single-tier deployments: the fast tier IS the configured model
+            object.__setattr__(self, "model_fast_name", self.model_name)
+        if self.model_output_format not in OUTPUT_FORMATS:
+            logger.warning("society config: unknown SOCIETY_MODEL_OUTPUT_FORMAT=%r; using 'auto'", self.model_output_format)
+            object.__setattr__(self, "model_output_format", "auto")
+        if self.promotion_provider not in PROMOTION_PROVIDERS:
+            logger.warning("society config: unknown SOCIETY_PROMOTION_PROVIDER=%r; using 'disabled' (fail closed)", self.promotion_provider)
+            object.__setattr__(self, "promotion_provider", "disabled")
+        if self.deployment_provider not in DEPLOYMENT_PROVIDERS:
+            logger.warning("society config: unknown SOCIETY_DEPLOYMENT_PROVIDER=%r; using 'disabled' (fail closed)", self.deployment_provider)
+            object.__setattr__(self, "deployment_provider", "disabled")
         if _bool("SOCIETY_PRODUCTION_DEPLOY_ENABLED", False):
             logger.warning(
                 "SOCIETY_PRODUCTION_DEPLOY_ENABLED is set but production autonomous deploy is hard-disabled in v1; ignoring"
@@ -212,6 +272,9 @@ class SocietySettings:
             "staging_deploy_enabled": self.staging_deploy_enabled,
             "production_deploy_enabled": self.production_deploy_enabled,
             "model_provider": self.model_provider,
+            "promotion_provider": self.promotion_provider,
+            "deployment_provider": self.deployment_provider,
+            "auto_merge_enabled": self.auto_merge_enabled,
         }
 
 
@@ -238,6 +301,10 @@ def validate_settings(s: "SocietySettings") -> list:
         problems.append("SOCIETY_MODEL_USD_PER_1K_* must be >= 0")
     if s.run_lease_seconds <= s.model_timeout_seconds // 2 and s.run_lease_seconds < 30:
         problems.append("SOCIETY_RUN_LEASE_SECONDS is too short for the model timeout (a run would lose its lease mid-call)")
+    if s.auto_merge_enabled and s.promotion_provider == "github":
+        problems.append("SOCIETY_AUTO_MERGE_ENABLED=true with the GitHub provider is refused in this phase (Level 3 is not exercised)")
+    if s.promotion_provider == "github" and (not s.github_repository.strip() or "/" not in s.github_repository):
+        problems.append("SOCIETY_GITHUB_REPOSITORY (owner/repo) is required when SOCIETY_PROMOTION_PROVIDER=github")
     if s.model_provider == LIVE_PROVIDER_NAME and env != "development":
         url = (s.model_base_url or "").strip()
         if not url.startswith("https://"):

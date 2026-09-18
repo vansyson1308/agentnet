@@ -65,7 +65,7 @@ FRESH_DB = os.getenv("PARITY_FRESH_DB", "agentnet_parity_fresh")
 UPGRADE_DB = os.getenv("PARITY_UPGRADE_DB", "agentnet_parity_upgrade")
 BOOTSTRAP_DB = os.getenv("PARITY_BOOTSTRAP_DB", "agentnet_parity_bootstrap")
 
-EXPECTED_HEAD = "0009_app_tables"
+EXPECTED_HEAD = "0010_self_development"
 PRE_SOCIETY_MAX_PREFIX = 15  # init-db files 01..15 = schema before the society runtime + app tables
 
 # The eight tables that had no DDL before app/schema_app_sql.py.
@@ -110,6 +110,7 @@ MUST_COVER = [
     "users", "agents", "wallets", "task_sessions", "transactions", "spans", "agent_chat", "goals",
     "memory_items", "improvement_proposals", "agent_reputation_history", "society_events", "agent_runs",
     "agent_intents", "agent_capability_grants", "code_candidates", "intent_approvals", "approval_requests",
+    "code_promotions", "change_experiments", "deployment_requests",
     "scoped_tokens", "projects", "project_resources", "orchestrator_partners", "audit_log",
     "provisioning_providers", "provisioning_services", "offers", "negotiation_rounds", "referrals",
     "notifications", "stories", "email_verification_tokens", "agent_interactions", "sim_sessions",
@@ -481,6 +482,7 @@ def upgrade_db(pg):
         "0006_email_verified -> 0007_society_runtime",
         "0007_society_runtime -> 0008_society_phase2",
         "0008_society_phase2 -> 0009_app_tables",
+        "0009_app_tables -> 0010_self_development",
     ):
         assert hop in out, out
     assert EXPECTED_HEAD in _alembic_current(UPGRADE_DB)
@@ -535,7 +537,7 @@ def test_alembic_on_top_of_fresh_bundle_is_a_schema_noop(fresh_db, fresh_snapsho
     """The entrypoint always runs stamp 0003 + upgrade head after the bundle."""
     _alembic(fresh_db, "stamp", "0003_spending_cap_fix")
     up = _alembic(fresh_db, "upgrade", "head")
-    assert "-> 0009_app_tables" in up.stdout + up.stderr
+    assert "-> 0010_self_development" in up.stdout + up.stderr
     assert EXPECTED_HEAD in _alembic_current(fresh_db)
     diffs = diff_schemas(fresh_snapshot, snapshot_schema(fresh_db))
     assert not diffs, "alembic changed a bundle-bootstrapped schema:\n" + "\n".join(diffs)
@@ -543,14 +545,17 @@ def test_alembic_on_top_of_fresh_bundle_is_a_schema_noop(fresh_db, fresh_snapsho
     assert "Running upgrade" not in second.stdout + second.stderr
 
 
+PHASE3_TABLES = {"code_promotions", "change_experiments", "deployment_requests"}
+
+
 def test_downgrade_0008_then_upgrade_head_round_trips(upgrade_db):
     before = snapshot_schema(upgrade_db)
-    assert APP_TABLES <= set(before["tables"])
+    assert APP_TABLES | PHASE3_TABLES <= set(before["tables"])
     _alembic(upgrade_db, "downgrade", "0008_society_phase2")
     assert "0008_society_phase2" in _alembic_current(upgrade_db)
     mid = snapshot_schema(upgrade_db)
-    assert not (APP_TABLES & set(mid["tables"])), "downgrade left app tables behind"
-    assert set(before["tables"]) - set(mid["tables"]) == APP_TABLES, "downgrade touched other tables"
+    assert not ((APP_TABLES | PHASE3_TABLES) & set(mid["tables"])), "downgrade left app/phase-3 tables behind"
+    assert set(before["tables"]) - set(mid["tables"]) == APP_TABLES | PHASE3_TABLES, "downgrade touched other tables"
     _alembic(upgrade_db, "upgrade", "head")
     assert EXPECTED_HEAD in _alembic_current(upgrade_db)
     diffs = diff_schemas(before, snapshot_schema(upgrade_db))
@@ -791,7 +796,7 @@ def test_db_bootstrap_cli_brings_empty_database_to_head(pg, tmp_path, fresh_snap
         # The entrypoint's follow-up on the exit-code-20 path.
         _alembic(BOOTSTRAP_DB, "stamp", "0003_spending_cap_fix")
         up = _alembic(BOOTSTRAP_DB, "upgrade", "head")
-        assert "-> 0009_app_tables" in up.stdout + up.stderr
+        assert "-> 0010_self_development" in up.stdout + up.stderr
         assert EXPECTED_HEAD in _alembic_current(BOOTSTRAP_DB)
 
         tables = _table_names(BOOTSTRAP_DB)
@@ -824,7 +829,7 @@ def test_entrypoint_bootstraps_empty_database_end_to_end(pg):
         first = _run_entrypoint(BOOTSTRAP_DB, INIT_DB)
         out = first.stdout + first.stderr
         assert first.returncode == 0, out
-        assert "empty DB" in out and "db_bootstrap: applied" in out and "-> 0009_app_tables" in out, out
+        assert "empty DB" in out and "db_bootstrap: applied" in out and "-> 0010_self_development" in out, out
         assert EXPECTED_HEAD in _alembic_current(BOOTSTRAP_DB)
         tables = _table_names(BOOTSTRAP_DB)
         assert set(MUST_COVER) <= tables, sorted(set(MUST_COVER) - tables)

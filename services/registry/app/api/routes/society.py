@@ -40,14 +40,17 @@ from ...models import (
     AgentIntent,
     AgentRun,
     AgentRunStatus,
+    ChangeExperiment,
     CodeCandidate,
     CodeCandidateStatus,
+    CodePromotion,
     Goal,
     GoalStatus,
     ImprovementProposal,
     IntentApproval,
     IntentExecutionStatus,
     PolicyDecision,
+    PromotionStatus,
     ProposalStatus,
     SocietyEvent,
     SocietyEventStatus,
@@ -587,7 +590,138 @@ def _answer_why_denied(db: Session, question: str) -> Dict[str, Any]:
     return out
 
 
+def _answer_improving(db: Session) -> Dict[str, Any]:
+    """What is AgentNet trying to improve? Open proposals with their evidence + linked candidates."""
+    rows = db.query(ImprovementProposal).filter(ImprovementProposal.status.in_([ProposalStatus.PROPOSED, ProposalStatus.UNDER_REVIEW, ProposalStatus.APPROVED, ProposalStatus.CONVERTED_TO_TASK])).order_by(ImprovementProposal.importance.desc()).limit(20).all()
+    out = []
+    for p in rows:
+        cands = db.query(CodeCandidate).filter(CodeCandidate.proposal_id == p.id).order_by(CodeCandidate.created_at.desc()).limit(3).all()
+        evidence = None
+        intent = db.query(AgentIntent).filter(AgentIntent.intent_type == "CREATE_IMPROVEMENT", AgentIntent.result["result"]["proposal_id"].astext == str(p.id)).first()
+        if intent is not None:
+            evidence = (intent.payload or {}).get("evidence")
+        out.append({"proposal_id": str(p.id), "title": p.title, "status": _ev(p.status), "importance": p.importance, "evidence": evidence, "candidates": [{"id": str(c.id), "status": _ev(c.status), "risk_tier": c.risk_tier, "expected_effect": (c.spec or {}).get("expected_effect")} for c in cands]})
+    return {"improving": out}
+
+
+def _answer_why_candidate(db: Session, question: str) -> Dict[str, Any]:
+    """Why was this candidate created? What files did the Builder inspect?"""
+    ids = re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", question.lower())
+    q = db.query(CodeCandidate)
+    if ids:
+        q = q.filter(CodeCandidate.id == uuid.UUID(ids[0]))
+    out = []
+    for c in q.order_by(CodeCandidate.created_at.desc()).limit(5).all():
+        prop = db.query(ImprovementProposal).filter(ImprovementProposal.id == c.proposal_id).first() if c.proposal_id else None
+        reads = (
+            db.query(AgentIntent, Agent.name)
+            .join(Agent, Agent.id == AgentIntent.agent_id)
+            .join(AgentRun, AgentRun.id == AgentIntent.run_id)
+            .filter(AgentRun.correlation_id == c.correlation_id, AgentIntent.intent_type.in_(["LIST_REPO_TREE", "SEARCH_REPO", "READ_REPO_FILE", "READ_REPO_RANGE", "READ_DIFF"]), AgentIntent.execution_status == IntentExecutionStatus.EXECUTED)
+            .order_by(AgentIntent.executed_at)
+            .all()
+        )
+        out.append(
+            {
+                "candidate_id": str(c.id),
+                "title": c.title,
+                "status": _ev(c.status),
+                "risk_tier": c.risk_tier,
+                "correlation_id": str(c.correlation_id),
+                "because": {"proposal_id": str(prop.id) if prop else None, "proposal_title": prop.title if prop else None, "problem": (prop.problem or "")[:500] if prop else None, "expected_effect": (c.spec or {}).get("expected_effect"), "signal": (c.spec or {}).get("signal")},
+                "repository_reads": [{"agent": name, "op": i.intent_type, "request": i.payload, "at": _iso(i.executed_at)} for i, name in reads],
+                "files_changed": list(c.changed_files or []),
+                "engineering_turns": c.engineering_turns,
+            }
+        )
+    return {"candidates": out}
+
+
+def _answer_promotions(db: Session, question: str) -> Dict[str, Any]:
+    """What is awaiting promotion? Why can this PR not merge? Which CI gate failed?"""
+    ids = re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", question.lower())
+    q = db.query(CodePromotion)
+    if ids:
+        uid = uuid.UUID(ids[0])
+        q = q.filter((CodePromotion.id == uid) | (CodePromotion.candidate_id == uid))
+    else:
+        q = q.filter(CodePromotion.status.notin_([PromotionStatus.MERGED, PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED]))
+    out = []
+    for pr in q.order_by(CodePromotion.updated_at.desc()).limit(20).all():
+        elig = pr.eligibility or {}
+        out.append(
+            {
+                "promotion_id": str(pr.id),
+                "candidate_id": str(pr.candidate_id),
+                "status": _ev(pr.status),
+                "risk_tier": pr.risk_tier,
+                "provider": pr.provider,
+                "pr": {"number": pr.external_pr_number, "url": pr.external_pr_url, "branch": pr.external_branch},
+                "ci_state": pr.ci_state,
+                "merge_state": pr.merge_state,
+                "cannot_merge_because": elig.get("blocking") or ([pr.failure_reason] if pr.failure_reason else []),
+                "human_approval_required": elig.get("human_approval_required"),
+                "auto_merge_enabled": elig.get("auto_merge_enabled"),
+                "failure_reason": pr.failure_reason,
+            }
+        )
+    return {"promotions": out}
+
+
+def _answer_fitness(db: Session, question: str) -> Dict[str, Any]:
+    """What is the fitness result? What change should be rolled back?"""
+    ids = re.findall(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", question.lower())
+    q = db.query(ChangeExperiment)
+    if ids:
+        uid = uuid.UUID(ids[0])
+        q = q.filter((ChangeExperiment.id == uid) | (ChangeExperiment.candidate_id == uid) | (ChangeExperiment.promotion_id == uid))
+    rows = q.order_by(ChangeExperiment.created_at.desc()).limit(10).all()
+    rollbacks = db.query(ChangeExperiment).filter(ChangeExperiment.rollback_recommended.is_(True)).order_by(ChangeExperiment.finished_at.desc()).limit(10).all()
+    return {
+        "experiments": [
+            {"experiment_id": str(x.id), "candidate_id": str(x.candidate_id), "promotion_id": str(x.promotion_id) if x.promotion_id else None, "mode": x.evaluation_mode, "status": _ev(x.status), "decision": x.decision, "confidence": x.confidence, "hard_gates": x.hard_gate_results, "metric_deltas": x.metric_deltas, "criteria_version": (x.criteria_snapshot or {}).get("version"), "recommendation": x.recommendation, "rollback_recommended": x.rollback_recommended}
+            for x in rows
+        ],
+        "rollback_recommended": [
+            {"experiment_id": str(x.id), "promotion_id": str(x.promotion_id) if x.promotion_id else None, "previous_good_sha": (db.query(CodePromotion.previous_good_sha).filter(CodePromotion.id == x.promotion_id).scalar() if x.promotion_id else None), "failed_gates": [g["gate"] for g in (x.hard_gate_results or []) if not g.get("passed")]}
+            for x in rollbacks
+        ],
+    }
+
+
+def _answer_engineering_budget(db: Session) -> Dict[str, Any]:
+    """How much autonomous engineering budget remains today?"""
+    from ...society.config import get_settings
+    from ...society.promotion import open_prs, promotions_today
+
+    s = get_settings()
+    day = _now().replace(hour=0, minute=0, second=0, microsecond=0)
+    cands = db.query(CodeCandidate).filter(CodeCandidate.created_at >= day).count()
+    red = db.query(CodeCandidate).filter(CodeCandidate.created_at >= day, CodeCandidate.risk_tier.in_(["red", "never"])).count()
+    return {
+        "engineering_budget": {
+            "candidates_today": cands,
+            "max_candidates_per_day": s.max_autonomous_candidates_per_day,
+            "red_candidates_today": red,
+            "max_red_candidates_per_day": s.max_red_candidates_per_day,
+            "promotions_today": promotions_today(db),
+            "max_promotions_per_day": s.max_promotions_per_day,
+            "open_autonomous_prs": open_prs(db),
+            "max_open_autonomous_prs": s.max_open_autonomous_prs,
+            "max_files_per_candidate": s.max_files_per_candidate,
+            "max_diff_lines": s.max_diff_lines,
+            "auto_merge_enabled": s.auto_merge_enabled,
+            "promotion_provider": s.promotion_provider,
+        }
+    }
+
+
 _QUESTION_ROUTES = [
+    (re.compile(r"\b(improv|trying to)", re.I), "improving", _answer_improving),
+    (re.compile(r"\b(why was .*candidate|inspect|files did|repository reads?)", re.I), "why_candidate", None),
+    (re.compile(r"\b(promot|pull request|\bpr\b|merge|ci gate|ci fail)", re.I), "promotions", None),
+    (re.compile(r"\b(fitness|experiment|roll ?back|evaluat)", re.I), "fitness", None),
+    (re.compile(r"\b(engineering budget|autonomous engineering|budget remain)", re.I), "engineering_budget", _answer_engineering_budget),
     (re.compile(r"\bgoal", re.I), "goals", _answer_goals),
     (re.compile(r"\b(working|busy|active agents?|who is)", re.I), "working", _answer_working),
     (re.compile(r"\b(recent|happened|lately|history|last story)", re.I), "recent", _answer_recent),
@@ -609,6 +743,12 @@ def ask(q: str = Query(..., min_length=2, max_length=500), db: Session = Depends
                 answers["answers"]["budget"] = society_budget(db, operator)
             elif key == "why_denied":
                 answers["answers"]["why_denied"] = _answer_why_denied(db, q)
+            elif key == "why_candidate":
+                answers["answers"]["why_candidate"] = _answer_why_candidate(db, q)
+            elif key == "promotions":
+                answers["answers"]["promotions"] = _answer_promotions(db, q)
+            elif key == "fitness":
+                answers["answers"]["fitness"] = _answer_fitness(db, q)
             else:
                 answers["answers"][key] = fn(db)
     if not answers["answers"]:

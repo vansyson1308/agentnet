@@ -1,4 +1,4 @@
-# AgentNet — current state (truth as of 2026-09-05, Phase 2.6)
+# AgentNet — current state (truth as of 2026-09-18, Phase 3)
 
 This file replaces the earlier machine-specific snapshot. It describes the repository as
 the running code, schema and tests define it. When something here disagrees with the code,
@@ -11,23 +11,33 @@ the code and tests win and this file is stale — fix it in the same change.
 | Society deterministic/runtime mechanics | **PROVEN** (durable events, atomic claims, leases, policy, isolated Builder/QA/Security; `pytest tests/society`) |
 | Phase 2 safety hardening (operator API split, durable approvals, ingress guards, live-model retry/credential safety) | **PROVEN** |
 | Phase 2.5 pre-live hardening (compose isolation, retired VPS model, authorization matrix, schema parity, fresh-install/upgrade proofs) | **DONE — see `docs/adr/0003-prelive-deployment-hardening.md`** |
+| Phase 3 self-development mechanics (read-only repo intelligence, bounded engineering loop, trusted risk tiers, non-LLM Promotion Controller, offline fitness engine, memory provenance, model routing + cost governor, DeepSeek-compatible output negotiation) | **PROVEN with deterministic fakes** — `pytest tests/society`, `examples/demo_autonomous_society.py --story code`; design in `docs/SELF_DEVELOPMENT.md`, `docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md`, ADR-0004 |
+| Real source-code candidate | **PROVEN DETERMINISTICALLY** — the scripted fleet fixes a planted defect in an isolated fixture application, adds a test, passes QA + Security, gets a shadow PR and a fitness PASS. Scripted coding is runtime proof, not model-quality evidence |
+| Society GitHub App / real PR promotion | **NOT YET CONFIGURED** — provider `disabled` by default; the GitHub provider is inert until an owner installs the App and injects `SOCIETY_GITHUB_TOKEN` into the controller only (owner steps in `docs/GITHUB_PROMOTION.md`) |
 | Live model | **NOT YET PROVEN** — no credential provided; `python -m app.society.canary preflight` reports `LIVE MODEL BLOCKED — NO SAFE CREDENTIAL` |
 | Staging deployment | **not running anywhere**; `docker-compose.staging.yml` is a standalone project ready for the chosen host |
 | Production deployment | **none**; the retired VPS artifacts are quarantined under `deploy/legacy-vps/` |
 | A2A v1 migration | **NOT STARTED** (`app/a2a.py` still emits a v0.3-shaped card; readiness plan is written only after a live-model GO) |
 | Final managed hosting | **NOT SELECTED** (`docs/DEPLOYMENT_ARCHITECTURE.md`, `docs/VERCEL_COMPATIBILITY.md`) |
 
-Pre-live foundation status (Phase 2.6). READY means the repository is clean and proven — every
-CI job green, no repo-owned warning, no known Critical/High defect — not that anything is deployed:
+Self-development status (Phase 3). PROVEN means the mechanics are exercised by deterministic
+tests and the demo — not that any model, GitHub App or host has been connected:
 
 ```
-PRE-LIVE FOUNDATION: READY
-LIVE MODEL CREDENTIAL: NOT PROVIDED
-LIVE MODEL CANARY: NOT RUN
-HOSTING: NOT SELECTED
-A2A V1 MIGRATION: NOT STARTED
+SELF-DEVELOPMENT MECHANICS: PROVEN
+REAL SOURCE CODE CANDIDATE: PROVEN DETERMINISTICALLY
+SHADOW PR PROMOTION: PROVEN
+OFFLINE FITNESS: PROVEN
+LIVE MODEL: NOT YET PROVEN
+REAL SOCIETY GITHUB APP: NOT YET CONFIGURED
+HOSTING: NOT DEPLOYED
+A2A V1: NOT STARTED
 PRODUCTION SOCIETY: OFF
 ```
+
+Maturity levels (`docs/SELF_DEVELOPMENT.md`): level 0–1 mechanics are proven offline; levels 2–4
+(real PRs, CI-gated GREEN auto-merge, staging-live evaluation) are implemented as readiness and
+claimed only after their prerequisites (App, credential, host) exist; level 5 (production) is not a setting.
 
 ## Services (what actually runs)
 
@@ -36,7 +46,7 @@ PRODUCTION SOCIETY: OFF
 | registry | `services/registry` | `uvicorn app.main:app` (entrypoint bootstraps/migrates the DB) | 8000 | users/agents/auth, tasks + escrow, offers, chat, goals/memory/improvements, WebSocket, society API |
 | payment | `services/payment` | `uvicorn app.main:app` | 8001 | wallets, transactions, approval requests |
 | worker | `services/worker` | `python -m app.worker` | metrics only | auto-refund timeouts, daily resets, reflection loop |
-| society-worker | registry image | `python -m app.society.worker` | metrics only (internal) | Autonomous Society Runtime; idles unless `SOCIETY_RUNTIME_ENABLED=true` |
+| society-worker | registry image | `python -m app.society.worker` | metrics only (internal) | Autonomous Society Runtime (cognition + Promotion Controller + fitness engine + telemetry producers); idles unless `SOCIETY_RUNTIME_ENABLED=true`; never holds a GitHub or deploy credential in the cognition path |
 | simulation | `services/simulation` | `uvicorn app.main:app` | 8002 | MiroFish swarm simulation (own `sim_*` tables) |
 | dashboard | `services/dashboard` | Flask | 8080 | **the canonical UI** (Jinja templates); React fragments under `legacy/frontend-fragments/` are unbuildable history |
 
@@ -102,7 +112,14 @@ counts and the exact commands are in the Phase 2.6 report.
 
 ## Known, intentional limitations
 
-* Live-model canaries, soak and GO/NO-GO are blocked on a rotated credential and a staging host.
+* Live-model canaries, soak and GO/NO-GO are blocked on a rotated credential and a staging host. The DeepSeek
+  key was never provided in Phase 3 (`DEEPSEEK KEY: NOT PROVIDED`, `DEEPSEEK LIVE CALL: NOT RUN`); provider
+  compatibility is proven only against a fake transport (`tests/society/test_deepseek_contract.py`).
+* Promotion runs in shadow mode only (`SOCIETY_PROMOTION_PROVIDER=disabled|fake`); `SOCIETY_AUTO_MERGE_ENABLED`
+  is `false` and cannot be enabled by any intent. `main` has no ruleset yet — required owner action in
+  `docs/GITHUB_PROMOTION.md`.
+* Fitness is `offline` only; staging-live evaluation, rollback execution and any deployment need a
+  `DeploymentProvider` that is `disabled` (requests end `blocked_external`).
 * Orchestrator/provisioning is an integration stub (in-memory OAuth codes), disabled by default.
 * SMTP is not wired: verification links are logged only in development.
 * Public marketplace stats (`/v1/stats`, leaderboard, social graph) expose aggregate volumes by design.
