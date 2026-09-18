@@ -156,6 +156,31 @@ def test_unknown_commit_and_credentialed_urls_are_refused(tmp_path, origin):
     assert not (vol / "repo" / "junk").exists()
 
 
+def test_bootstrap_refuses_option_injection_query_urls_and_shallow_roots(tmp_path, origin):
+    """Operator-set values reach git argv and an rm -rf: a ref or commit id that
+    starts with '-' must never become a git option, a URL with a query or
+    fragment is refused before it can be logged, and the repo root must be a
+    real mount point (never '/')."""
+    bare, first, second, _ = origin
+    vol = tmp_path / "volume"
+    (tmp_path / "home").mkdir()
+    base = {"SOCIETY_REPO_ROOT": str(vol / "repo"), "SOCIETY_WORKSPACE_ROOT": str(vol / "worktrees"), "HOME": str(tmp_path / "home"), "SOCIETY_REPO_URL": str(bare)}
+    proc = _bootstrap({**base, "SOCIETY_REPO_REF": "--upload-pack=/bin/true"}, expect_rc=2)
+    assert "SOCIETY_REPO_REF" in proc.stdout
+    proc = _bootstrap({**base, "RAILWAY_GIT_COMMIT_SHA": "--upload-pack=/bin/true"}, expect_rc=2)
+    assert "RAILWAY_GIT_COMMIT_SHA" in proc.stdout
+    _bootstrap({**base, "RAILWAY_GIT_COMMIT_SHA": "abc"}, expect_rc=2)  # too short to be a commit id
+    proc = _bootstrap({**base, "SOCIETY_REPO_URL": f"{bare}?access_token=SENTINEL"}, expect_rc=2)
+    assert "SENTINEL" not in proc.stdout and "SENTINEL" not in proc.stderr
+    _bootstrap({**base, "SOCIETY_REPO_URL": f"{bare}#SENTINEL"}, expect_rc=2)
+    for root in ("/", "/repo", "relative/repo"):  # "" falls back to the documented default path
+        _bootstrap({**base, "SOCIETY_REPO_ROOT": root}, expect_rc=2)
+    assert not (vol / "repo").exists(), "every refusal happens before anything is cloned or removed"
+    # the valid shapes still work
+    _bootstrap({**base, "RAILWAY_GIT_COMMIT_SHA": first})
+    assert _git(["rev-parse", "HEAD"], vol / "repo") == first
+
+
 def test_bootstrap_script_never_pushes_or_forces():
     text = SCRIPT.read_text()
     assert "git push" not in text and "--force" not in text and "-f " not in text.replace("clean -q -fd", "")
@@ -226,3 +251,25 @@ def test_dashboard_client_honours_registry_url(env, expected):
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == expected
+
+
+def test_dashboard_readiness_never_echoes_the_registry_probe_error():
+    """The dashboard is public on the platform; its /readyz must not name the
+    private registry URL or any exception text (same rule as the registry's
+    own readiness endpoint)."""
+    text = (REPO / "services/dashboard/app/main.py").read_text(encoding="utf-8")
+    assert '"error": str(e)' not in text
+    clean = {k: v for k, v in os.environ.items() if k not in {"REGISTRY_URL", "API_BASE_URL", "ENVIRONMENT"}}
+    code = (
+        "from app.main import app; c = app.test_client(); r = c.get('/readyz'); "
+        "print(r.status_code); print(r.get_data(as_text=True))"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], cwd=REPO / "services/dashboard",
+        env={**clean, "REGISTRY_URL": "http://127.0.0.1:1/private-registry-host", "ENVIRONMENT": "development"},
+        capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    status, body = proc.stdout.strip().split("\n", 1)
+    assert status == "503"
+    assert "private-registry-host" not in body and "127.0.0.1" not in body and "error" not in body

@@ -111,6 +111,7 @@ export default defineRailway((ctx) => {
       PORT: "8001",
       JWT_SECRET_KEY: ctx.shared.JWT_SECRET_KEY,
       JWT_ALGORITHM: "HS256",
+      RATE_LIMIT_PER_MINUTE: "60",
       INTERNAL_WORKER_TOKEN: ctx.shared.INTERNAL_WORKER_TOKEN,
     },
   });

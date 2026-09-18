@@ -46,8 +46,10 @@ def healthz():
 def readyz():
     try:
         ok = api_client.health_registry(timeout=2.0)
-    except Exception as e:
-        return jsonify({"status": "not_ready", "error": str(e)}), 503
+    except Exception:
+        # Never echo the exception: it names the private registry URL.
+        app.logger.warning("readyz: registry probe raised", exc_info=True)
+        ok = False
     if not ok:
         return jsonify({"status": "not_ready"}), 503
     return jsonify({"status": "ready"}), 200

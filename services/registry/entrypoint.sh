@@ -29,7 +29,7 @@ set -e
 # society worker can never race or re-run a migration. Local Compose and the
 # fresh-install proof leave the variable unset (default: bootstrap + migrate).
 if [ "${SKIP_DB_BOOTSTRAP:-false}" = "true" ]; then
-  echo "registry: SKIP_DB_BOOTSTRAP=true — schema bootstrap/migrations are owned by another deployment step; starting: $*"
+  echo "registry: SKIP_DB_BOOTSTRAP=true — schema bootstrap/migrations are owned by another deployment step; starting: ${1:-}"
   exec "$@"
 fi
 

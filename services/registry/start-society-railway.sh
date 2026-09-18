@@ -30,10 +30,22 @@ TARGET_SHA="${RAILWAY_GIT_COMMIT_SHA:-}"
 
 log() { printf 'society-bootstrap: %s\n' "$*"; }
 
+# Input shape checks (operator-set values, but they reach git argv and rm -rf):
 case "$REPO_URL" in
-  *@*) log "refusing SOCIETY_REPO_URL with an embedded credential"; exit 2 ;;
+  *@*|*\?*|*\#*) log "refusing SOCIETY_REPO_URL with an embedded credential, query or fragment"; exit 2 ;;
   https://*|file://*|/*) ;;
   *) log "refusing SOCIETY_REPO_URL: only https:// (or a local path in tests) is allowed"; exit 2 ;;
+esac
+case "$REPO_ROOT" in
+  /?*/?*) ;;
+  *) log "refusing SOCIETY_REPO_ROOT: must be an absolute path at least two levels deep"; exit 2 ;;
+esac
+if ! git check-ref-format --branch "$REPO_REF" >/dev/null 2>&1; then
+  log "refusing SOCIETY_REPO_REF: not a valid branch name"; exit 2
+fi
+case "$TARGET_SHA" in
+  "") ;;
+  *[!0-9a-fA-F]*|?|??|???|????|?????|??????) log "refusing RAILWAY_GIT_COMMIT_SHA: not a hexadecimal commit id"; exit 2 ;;
 esac
 
 export GIT_TERMINAL_PROMPT=0
