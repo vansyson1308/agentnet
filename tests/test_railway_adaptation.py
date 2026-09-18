@@ -148,7 +148,7 @@ def test_unknown_commit_and_credentialed_urls_are_refused(tmp_path, origin):
     vol = tmp_path / "volume"
     (tmp_path / "home").mkdir()
     base = {"SOCIETY_REPO_ROOT": str(vol / "repo"), "SOCIETY_WORKSPACE_ROOT": str(vol / "worktrees"), "HOME": str(tmp_path / "home")}
-    proc = _bootstrap({**base, "SOCIETY_REPO_URL": "https://x-access-token:secret-SENTINEL@github.com/vansyson1308/agentnet.git"}, expect_rc=2)
+    proc = _bootstrap({**base, "SOCIETY_REPO_URL": "https://SENTINEL@github.com/vansyson1308/agentnet.git"}, expect_rc=2)
     assert "embedded credential" in proc.stdout and "SENTINEL" not in proc.stdout
     _bootstrap({**base, "SOCIETY_REPO_URL": "git://example/repo.git"}, expect_rc=2)
     proc = _bootstrap({**base, "SOCIETY_REPO_URL": str(bare), "RAILWAY_GIT_COMMIT_SHA": "0" * 40}, expect_rc=3)
@@ -170,7 +170,7 @@ def test_bootstrap_refuses_option_injection_query_urls_and_shallow_roots(tmp_pat
     proc = _bootstrap({**base, "RAILWAY_GIT_COMMIT_SHA": "--upload-pack=/bin/true"}, expect_rc=2)
     assert "RAILWAY_GIT_COMMIT_SHA" in proc.stdout
     _bootstrap({**base, "RAILWAY_GIT_COMMIT_SHA": "abc"}, expect_rc=2)  # too short to be a commit id
-    proc = _bootstrap({**base, "SOCIETY_REPO_URL": f"{bare}?access_token=SENTINEL"}, expect_rc=2)
+    proc = _bootstrap({**base, "SOCIETY_REPO_URL": f"{bare}?ref=SENTINEL"}, expect_rc=2)
     assert "SENTINEL" not in proc.stdout and "SENTINEL" not in proc.stderr
     _bootstrap({**base, "SOCIETY_REPO_URL": f"{bare}#SENTINEL"}, expect_rc=2)
     for root in ("/", "/repo", "relative/repo"):  # "" falls back to the documented default path
