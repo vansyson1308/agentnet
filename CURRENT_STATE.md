@@ -1,4 +1,4 @@
-# AgentNet — current state (truth as of 2026-09-18, Phase 3)
+# AgentNet — current state (truth as of 2026-09-18, Phase 3.1)
 
 This file replaces the earlier machine-specific snapshot. It describes the repository as
 the running code, schema and tests define it. When something here disagrees with the code,
@@ -13,7 +13,9 @@ the code and tests win and this file is stale — fix it in the same change.
 | Phase 2.5 pre-live hardening (compose isolation, retired VPS model, authorization matrix, schema parity, fresh-install/upgrade proofs) | **DONE — see `docs/adr/0003-prelive-deployment-hardening.md`** |
 | Phase 3 self-development mechanics (read-only repo intelligence, bounded engineering loop, trusted risk tiers, non-LLM Promotion Controller, offline fitness engine, memory provenance, model routing + cost governor, DeepSeek-compatible output negotiation) | **PROVEN with deterministic fakes** — `pytest tests/society`, `examples/demo_autonomous_society.py --story code`; design in `docs/SELF_DEVELOPMENT.md`, `docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md`, ADR-0004 |
 | Real source-code candidate | **PROVEN DETERMINISTICALLY** — the scripted fleet fixes a planted defect in an isolated fixture application, adds a test, passes QA + Security, gets a shadow PR and a fitness PASS. Scripted coding is runtime proof, not model-quality evidence |
-| Society GitHub App / real PR promotion | **NOT YET CONFIGURED** — provider `disabled` by default; the GitHub provider is inert until an owner installs the App and injects `SOCIETY_GITHUB_TOKEN` into the controller only (owner steps in `docs/GITHUB_PROMOTION.md`) |
+| Society GitHub App / real PR promotion | **IMPLEMENTED, NOT CONFIGURED** — `GitHubCredentialProvider` (`disabled` default, `static`, `app` = App JWT → short-lived installation token, in-memory cache/refresh/single-flight) and `GIT_ASKPASS`-based `git push` (no token in URL/argv/config); inert until an owner registers the App and mounts its private key into the controller only (`docs/GITHUB_PROMOTION.md`, ADR-0005). No real promotion has run |
+| One self-improvement control plane | **DONE (Phase 3.1)** — the worker's reflection loop and `AGENT_BACKLOG.md` bridge are archived under `legacy/hermes/`; synthetic poll/echo/storyteller agents under `legacy/synthetic-agents/`; `tests/society/test_single_control_plane.py` |
+| `main` ruleset | **OWNER ACTION REQUIRED** — the API refused ruleset creation from the session proxy (403); exact body in `deploy/github/main-ruleset.json` |
 | Live model | **NOT YET PROVEN** — no credential provided; `python -m app.society.canary preflight` reports `LIVE MODEL BLOCKED — NO SAFE CREDENTIAL` |
 | Staging deployment | **not running anywhere**; `docker-compose.staging.yml` is a standalone project ready for the chosen host |
 | Production deployment | **none**; the retired VPS artifacts are quarantined under `deploy/legacy-vps/` |
@@ -33,6 +35,12 @@ REAL SOCIETY GITHUB APP: NOT YET CONFIGURED
 HOSTING: NOT DEPLOYED
 A2A V1: NOT STARTED
 PRODUCTION SOCIETY: OFF
+LEGACY FILE BACKLOG: RETIRED FROM ACTIVE RUNTIME
+SYNTHETIC POLL ACTIVITY: LEGACY/DEMO ONLY
+GITHUB APP AUTH: IMPLEMENTED, NOT CONFIGURED
+REAL GITHUB PROMOTION: NOT RUN
+MAIN RULESET: OWNER ACTION REQUIRED
+DEEPSEEK KEY: NOT PROVIDED
 ```
 
 Maturity levels (`docs/SELF_DEVELOPMENT.md`): level 0–1 mechanics are proven offline; levels 2–4
@@ -45,7 +53,7 @@ claimed only after their prerequisites (App, credential, host) exist; level 5 (p
 | --- | --- | --- | --- | --- |
 | registry | `services/registry` | `uvicorn app.main:app` (entrypoint bootstraps/migrates the DB) | 8000 | users/agents/auth, tasks + escrow, offers, chat, goals/memory/improvements, WebSocket, society API |
 | payment | `services/payment` | `uvicorn app.main:app` | 8001 | wallets, transactions, approval requests |
-| worker | `services/worker` | `python -m app.worker` | metrics only | auto-refund timeouts, daily resets, reflection loop |
+| worker | `services/worker` | `python -m app.worker` | metrics only | auto-refund timeouts, daily resets, reputation, offline detection, card crawling, simulation timeouts — no self-improvement logic (the legacy reflection/backlog bridge was retired in Phase 3.1) |
 | society-worker | registry image | `python -m app.society.worker` | metrics only (internal) | Autonomous Society Runtime (cognition + Promotion Controller + fitness engine + telemetry producers); idles unless `SOCIETY_RUNTIME_ENABLED=true`; never holds a GitHub or deploy credential in the cognition path |
 | simulation | `services/simulation` | `uvicorn app.main:app` | 8002 | MiroFish swarm simulation (own `sim_*` tables) |
 | dashboard | `services/dashboard` | Flask | 8080 | **the canonical UI** (Jinja templates); React fragments under `legacy/frontend-fragments/` are unbuildable history |
@@ -116,8 +124,8 @@ counts and the exact commands are in the Phase 2.6 report.
   key was never provided in Phase 3 (`DEEPSEEK KEY: NOT PROVIDED`, `DEEPSEEK LIVE CALL: NOT RUN`); provider
   compatibility is proven only against a fake transport (`tests/society/test_deepseek_contract.py`).
 * Promotion runs in shadow mode only (`SOCIETY_PROMOTION_PROVIDER=disabled|fake`); `SOCIETY_AUTO_MERGE_ENABLED`
-  is `false` and cannot be enabled by any intent. `main` has no ruleset yet — required owner action in
-  `docs/GITHUB_PROMOTION.md`.
+  is `false` and cannot be enabled by any intent. `main` has no ruleset yet — owner action with the exact payload
+  in `deploy/github/` (creation through the session proxy is refused).
 * Fitness is `offline` only; staging-live evaluation, rollback execution and any deployment need a
   `DeploymentProvider` that is `disabled` (requests end `blocked_external`).
 * Orchestrator/provisioning is an integration stub (in-memory OAuth codes), disabled by default.

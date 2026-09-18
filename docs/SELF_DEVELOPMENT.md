@@ -11,7 +11,19 @@ LIVE MODEL: NOT YET PROVEN
 REAL SOCIETY GITHUB APP: NOT YET CONFIGURED
 HOSTING: NOT DEPLOYED
 A2A V1: NOT STARTED
+LEGACY FILE BACKLOG: RETIRED FROM ACTIVE RUNTIME
+SYNTHETIC POLL ACTIVITY: LEGACY/DEMO ONLY
+GITHUB APP AUTH: IMPLEMENTED, NOT CONFIGURED
+REAL GITHUB PROMOTION: NOT RUN
+MAIN RULESET: OWNER ACTION REQUIRED
+DEEPSEEK KEY: NOT PROVIDED
 ```
+
+Phase 3.1 closed the pre-deploy boundaries (ADR-0005): the Society runtime is the ONLY autonomous improvement
+control plane (the worker's reflection loop and `AGENT_BACKLOG.md` bridge are archived under `legacy/`), the
+synthetic poll/echo/storyteller agents are legacy fixtures, the staging Compose contract exposes every Phase-3
+setting, and the GitHub provider authenticates through a credential provider + `GIT_ASKPASS` (never a URL or
+argv) — see `docs/GITHUB_PROMOTION.md`.
 
 Proof: `pytest tests/society/test_e2e_self_development.py` and `python examples/demo_autonomous_society.py --story code`.
 Both use the offline `ScriptedRoleModel` — they prove the *mechanics* of the loop, never model quality, and nothing in

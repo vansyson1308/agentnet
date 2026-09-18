@@ -115,7 +115,8 @@ All emit `loop_breaker.tripped` / `run.dead` events (deduped) for observability.
 
 ## Configuration
 
-See `.env.example` (section *Autonomous Society Runtime v1*). Defaults: runtime OFF, code loop OFF,
+See `.env.example` (section *Autonomous Society Runtime v1*); `tests/test_config_parity.py` keeps the
+settings, `.env.example`, `docker-compose.staging.yml` and `docs/DEPLOYMENT_ARCHITECTURE.md` in sync. Defaults: runtime OFF, code loop OFF,
 staging OFF, production deploy hard OFF (not a setting), provider `scripted`. Live models:
 `SOCIETY_MODEL_PROVIDER=openai_compatible` + `SOCIETY_MODEL_BASE_URL` + `SOCIETY_MODEL_API_KEY` (+ `_NAME`).
 
@@ -195,7 +196,12 @@ actually proven (and what was blocked): `docs/SOCIETY_LIVE_PROOF.md`. No product
 - `REQUEST_STAGING_DEPLOY` is recorded as a `deployment_requests` row and, with the default `disabled`
   provider, ends `blocked_external`; deployment remains a human/CI action. Production deploy is refused.
 - `proposal.status` reaches `CONVERTED_TO_TASK` when a candidate is requested; `IMPLEMENTED` is reserved
-  for a human merge (the runtime never merges).
+  for a human merge (the runtime never merges). Phase 3.1 retired the general worker's legacy reflection
+  loop and `AGENT_BACKLOG.md` bridge (archived under `legacy/hermes/`): the Society runtime is the ONE
+  autonomous improvement control plane and the worker never touches proposals
+  (`tests/society/test_single_control_plane.py`). Historical rows that the bridge flipped to
+  `CONVERTED_TO_TASK` are left as they are; they are recognisable by `converted_task_id IS NULL`, whereas
+  Society conversions always carry the Builder task id.
 - Human approval is API-only (`/v1/society/approvals`, `approve|reject`); there is no UI. `modify` (edit-then-approve)
   is deliberately unsupported: intents are immutable once persisted.
 

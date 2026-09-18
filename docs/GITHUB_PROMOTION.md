@@ -48,7 +48,38 @@ acceptance criteria, QA, Security, fitness, rollback criteria). The model cannot
 | --- | --- |
 | `disabled` (default) | every promotion becomes `blocked_external`; nothing is published; resumes when a provider appears |
 | `fake` | in-memory GitHub double: deterministic branch/PR numbers, scripted CI, simulated approvals/merges, injectable faults (transient, conflict, refused) — the shadow proof |
-| `github` | real REST/`git push` implementation, **inert** without `SOCIETY_GITHUB_REPOSITORY=owner/repo` and `SOCIETY_GITHUB_TOKEN` in the controller's environment |
+| `github` | real REST/`git push` implementation, **inert** without `SOCIETY_GITHUB_REPOSITORY=owner/repo` and a credential provider other than `disabled` (below) |
+
+## Credential boundary (Phase 3.1)
+
+```
+GITHUB APP AUTH: IMPLEMENTED, NOT CONFIGURED
+REAL GITHUB PROMOTION: NOT RUN
+SOCIETY GITHUB APP SECRET: NOT PROVIDED
+```
+
+Only `services/registry/app/society/github_credentials.py` can hold a GitHub secret. The promotion
+provider asks a `GitHubCredentialProvider` for a credential at call time and never stores it:
+
+| `SOCIETY_GITHUB_CREDENTIAL_PROVIDER` | Behaviour |
+| --- | --- |
+| `disabled` (default) | every credential request fails closed → the `github` provider is inert |
+| `static` | reads `SOCIETY_GITHUB_TOKEN` from the controller process environment on every call; nothing cached. Tests, or a temporary operator-supplied installation token |
+| `app` | future production path: RS256 App JWT (`iat` −60 s, `exp` +10 min, `iss` = `SOCIETY_GITHUB_APP_ID`) → `POST /app/installations/{SOCIETY_GITHUB_INSTALLATION_ID}/access_tokens` downscoped to `repositories=[<repo>]` and the minimum permissions → 1-hour installation token cached **in process memory only**, reused while `now + SOCIETY_GITHUB_TOKEN_REFRESH_MARGIN_SECONDS < expires_at`, refreshed before expiry, invalidated on any 401 (the call is retried exactly once), single-flight under a lock. The private key comes from the platform-mounted file `SOCIETY_GITHUB_APP_PRIVATE_KEY_FILE` (preferred) or, only where a mount is impossible, `SOCIETY_GITHUB_APP_PRIVATE_KEY_PEM`; it is read at signing time and dropped. No token shape or length is assumed (GitHub's stateless `ghs_APPID_JWT` format is rolling out) |
+
+`git push` never sees a URL credential: the remote is `https://github.com/<owner>/<repo>.git`, the
+command is `git -c credential.helper= push --no-verify <url> HEAD:refs/heads/<branch>` (no shell,
+no force, no `+refspec`), and authentication happens through a temporary `GIT_ASKPASS` helper (mode
+0700, no secret embedded, deleted in `finally`) that echoes two variables present only in the child
+process environment. `GIT_TERMINAL_PROMPT=0`, `GIT_CONFIG_NOSYSTEM=1`; nothing is written to
+`.git/config` or any credential store; stderr is scrubbed before it can reach an exception.
+Proven by `tests/society/test_github_credentials_and_push.py` (fake token endpoint, generated RSA
+key, JWT verification, cache/refresh/expiry/401/429/5xx/timeout/concurrency, recording git runner)
+and by a real `git push` over HTTP to a local Basic-auth smart-HTTP server
+(`tests/society/git_http_harness.py`).
+
+Secrets never appear in `docker-compose*.yml`, `.env.example` (comment-only names), logs, events,
+runs, memory, the model context, `repr()` or exceptions (`tests/society/test_secret_boundary.py`).
 
 ## Future GitHub App (owner action — NOT done in this phase)
 
@@ -63,14 +94,29 @@ Create a dedicated GitHub App installed on this repository only, with the minimu
 | Workflows | **not granted** | workflow-file changes are RED and not promoted by the App in v1 (grant only if that becomes intentional) |
 | Administration / Issues | **not granted** | not needed |
 
-Generate short-lived installation access tokens (1 hour; optionally scoped with the `repositories` and
-`permissions` body parameters) in the controller process only, expose them as `SOCIETY_GITHUB_TOKEN` to that
-process only, never to the cognition worker (`tests/society/test_secret_boundary.py`). Do **not** add the App as a
-bypass actor of the `main` ruleset, and do not let it be the expected source of the status checks it needs.
+Installation access tokens (1 hour; scoped with the `repositories` and `permissions` body parameters) are
+minted by the controller's `app` credential provider itself from the App ID, installation ID and the mounted
+private key — no token is ever configured by hand, persisted, or given to the cognition worker
+(`tests/society/test_secret_boundary.py`). Do **not** add the App as a bypass actor of the `main` ruleset, and do
+not let it be the expected source of the status checks it needs. Owner setup: register the App (permissions
+above), install it on this repository only, generate one private key, mount it as a file in the controller's
+environment, set `SOCIETY_GITHUB_CREDENTIAL_PROVIDER=app`, `SOCIETY_GITHUB_APP_ID`,
+`SOCIETY_GITHUB_INSTALLATION_ID`, `SOCIETY_GITHUB_APP_PRIVATE_KEY_FILE`, `SOCIETY_GITHUB_REPOSITORY`; keep
+`SOCIETY_AUTO_MERGE_ENABLED=false`.
 
-## Recommended `main` ruleset (owner action)
+## `main` ruleset — OWNER ACTION REQUIRED
 
-At authoring `main` had **no ruleset and no branch protection** (`GET /rules/branches/main` → `[]`). Recommended:
+```
+MAIN RULESET: OWNER ACTION REQUIRED
+```
+
+Re-audited 2026-09-18 (Phase 3.1): `main` still has **no ruleset and no branch protection**
+(`GET /repos/vansyson1308/agentnet/rulesets` → `[]`). Creating it from the engineering session was refused —
+the session's GitHub proxy does not permit write access to the rulesets API path (HTTP 403) — so nothing was
+weakened and the exact body is committed as `deploy/github/main-ruleset.json` with the `gh api` command and UI
+steps in `deploy/github/README.md`. It uses the live CI job names, strict (up-to-date) status checks, 0 required
+approvals (single-owner repository), conversation resolution, no force pushes, no deletion, and an EMPTY bypass
+list. Recommended shape:
 
 1. Require a pull request before merging (1 approval; dismiss stale approvals; require conversation resolution).
 2. Require status checks to pass: the six CI jobs (Lint, Dependency audit, Per-service isolated environments,
