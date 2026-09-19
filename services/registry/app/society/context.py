@@ -544,7 +544,27 @@ def _repo_reads(db: Session, agent: Agent, run: Optional[AgentRun], event: Socie
     return out
 
 
-def _engineering(db: Session, agent: Agent, event: SocietyEvent, settings: SocietySettings) -> Dict[str, Any]:
+# Repository conventions the trusted QA gate enforces mechanically
+# (engineering/qa.py + tests/society/acceptance/). They are CODE, never model
+# output: a live Architect must know them to design a candidate QA can verify.
+DOCS_CANDIDATE_DIR = "docs/society/candidates/"
+DOCS_ACCEPTANCE_TEST = "tests/society/acceptance/test_candidate_docs.py"
+DOCS_REQUIRED_SECTIONS = ("## Problem", "## Proposed change", "## Evidence", "## Verification")
+ENGINEERING_ROLES = ("architect", "builder", "qa", "security", "evaluator")
+
+
+def engineering_conventions(settings: SocietySettings) -> Dict[str, Any]:
+    return {
+        "files_allowed": "hard allow-list of repository-relative paths; the Builder may only create/modify those",
+        "acceptance_tests": "existing pytest paths (file or file::test) that QA runs inside the worktree; the Builder must not modify them and cannot invent them",
+        "docs_candidate": f"kind=docs: ONE new file {DOCS_CANDIDATE_DIR}<slug>.md — first line an H1 title, then the sections {', '.join(DOCS_REQUIRED_SECTIONS)} each with prose; acceptance test {DOCS_ACCEPTANCE_TEST}",
+        "code_candidate": "kind=code: small change to existing source with existing tests covering the touched module as acceptance_tests; a new regression test file may be added when listed in files_allowed",
+        "never": "auth, payment, wallets, migrations, secrets, deploy, workflows, dependencies, Dockerfiles, the society runtime",
+        "branch_prefix": settings.branch_prefix,
+    }
+
+
+def _engineering(db: Session, agent: Agent, event: SocietyEvent, settings: SocietySettings, role: str = "") -> Dict[str, Any]:
     turns = (
         db.query(SocietyEvent.id)
         .filter(
@@ -573,6 +593,7 @@ def _engineering(db: Session, agent: Agent, event: SocietyEvent, settings: Socie
         "reads_max_per_run": int(settings.max_repo_reads_per_run),
         "max_files_per_candidate": int(settings.max_files_per_candidate),
         "max_diff_lines": int(settings.max_diff_lines),
+        "conventions": engineering_conventions(settings) if role in ENGINEERING_ROLES else {},
     }
 
 
@@ -667,7 +688,7 @@ def build_context(
         society_agents=_society_agents(db, agent),
         run_id=str(run.id) if run else None,
         repo_reads=_repo_reads(db, agent, run, event),
-        engineering=_engineering(db, agent, event, settings),
+        engineering=_engineering(db, agent, event, settings, role),
         promotions=_promotions(db, event),
     )
     return ctx

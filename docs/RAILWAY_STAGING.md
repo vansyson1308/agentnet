@@ -348,8 +348,12 @@ whose egress cannot reach `*.up.railway.app` — is the `staging-validator` serv
 directory `/services/registry`) with the start command
 
 ```
-sh -c 'rm -rf /tmp/repo && git clone -q --depth 1 --branch "$VALIDATOR_REF" https://github.com/vansyson1308/agentnet.git /tmp/repo && python /tmp/repo/deploy/railway/validate_staging.py; echo "validator finished with exit $?"; exec tail -f /dev/null'
+sh -c 'rm -rf /tmp/repo && git clone -q --depth 1 --branch "$VALIDATOR_REF" https://github.com/vansyson1308/agentnet.git /tmp/repo && python /tmp/repo/deploy/railway/${VALIDATOR_SCRIPT:-validate_staging.py}; echo "validator finished with exit $?"; exec tail -f /dev/null'
 ```
+
+(`VALIDATOR_SCRIPT` unset → the full validation; `VALIDATOR_SCRIPT=phase5_live.py` → the Phase 5 live-society
+driver, docs/SOCIETY_LIVE_MODEL_RUNBOOK.md §3.1. `VALIDATOR_EXPECT_RUNTIME=on|off` tells the validation which
+public `runtime_enabled` flag to assert — `off` unless a live window is open.)
 
 and the variables `REGISTRY_PUBLIC_URL`, `DASHBOARD_PUBLIC_URL`, the `POSTGRES_*` references, the Railway-generated
 shared secret `STAGING_VALIDATOR_SECRET` (`${{secret(64, "abcdef0123456789")}}`, never read back),

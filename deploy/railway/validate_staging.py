@@ -28,6 +28,7 @@ Environment (all optional except the secret and the database):
     VALIDATOR_USER_EMAIL                          plain user for the 403 checks
     EXPECTED_ALEMBIC_HEAD (0010_self_development)
     REDTEAM_BURST (40)  SPOOF_BASELINE (220)  SPOOF_FORGED (60)
+    VALIDATOR_EXPECT_RUNTIME (off)                 on|off: the public runtime_enabled flag the smoke asserts
 """
 
 from __future__ import annotations
@@ -71,6 +72,13 @@ def analyse_spoof(baseline: List[int], forged: List[int]) -> Tuple[bool, str]:
     if f is None:
         return False, f"forged headers never hit 429 in {len(forged)} requests (fresh bucket => spoofable)"
     return f <= b, f"baseline first 429 at #{b + 1}, forged first 429 at #{f + 1}"
+
+
+def expected_runtime(value: str) -> str:
+    """VALIDATOR_EXPECT_RUNTIME -> the smoke's --expect-runtime argument.
+    Only "on" (Phase 5, runtime deliberately enabled) turns the assertion on;
+    anything else keeps the historical default of asserting the runtime OFF."""
+    return "on" if value.strip().lower() in ("on", "true", "1", "yes") else "off"
 
 
 def summarise_script_output(text: str) -> List[str]:
@@ -212,6 +220,7 @@ def main() -> int:
     op_email = env("VALIDATOR_OPERATOR_EMAIL", "staging-operator@staging.agentnet.io.vn")
     user_email = env("VALIDATOR_USER_EMAIL", "staging-user@staging.agentnet.io.vn")
     expected_head = env("EXPECTED_ALEMBIC_HEAD", "0010_self_development")
+    expect_runtime = expected_runtime(env("VALIDATOR_EXPECT_RUNTIME"))
 
     sys.stdout.write(
         f"VALIDATOR start deployment={env('RAILWAY_DEPLOYMENT_ID', '?')[:8]} commit={env('RAILWAY_GIT_COMMIT_SHA', '?')[:12]} "
@@ -265,11 +274,12 @@ def main() -> int:
         st, body = http("GET", f"{api}/v1/society/config", token=user_token)
         rep.record("U02", st == 403, f"plain user refused on operator surface HTTP {st}")
 
-    # §10 society smoke + red-team (scripted only; runtime expected OFF)
+    # §10 society smoke + red-team (scripted probes; the runtime flag is asserted
+    # to match VALIDATOR_EXPECT_RUNTIME — "off" unless Phase 5 says otherwise)
     smoke = REPO / "deploy" / "society-staging-smoke.py"
     redteam = REPO / "deploy" / "society-staging-redteam.py"
     if op_token:
-        rc, lines = run_child(smoke, ["--api", api, "--expect-runtime", "off", "--report", "/tmp/society-smoke.json"],
+        rc, lines = run_child(smoke, ["--api", api, "--expect-runtime", expect_runtime, "--report", "/tmp/society-smoke.json"],
                               {"SOCIETY_SMOKE_TOKEN": op_token})
         for ln in lines:
             sys.stdout.write(f"  smoke: {ln}\n")
