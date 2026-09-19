@@ -57,6 +57,14 @@ class ModelResponse:
     format_fallbacks: int = 0
     tokens_cached: Optional[int] = None
     usage_missing: bool = False
+    # provider reasoning metadata (Phase 4.1, ADR-0007): presence and counts
+    # only — the reasoning text itself is never kept anywhere.
+    finish_reason: str = ""
+    reasoning_present: bool = False
+    reasoning_tokens: Optional[int] = None
+    empty_retries: int = 0
+    thinking_mode: str = "auto"
+    reasoning_effort: str = "auto"
 
 
 class ModelTimeout(Exception):
@@ -65,7 +73,94 @@ class ModelTimeout(Exception):
 
 class ModelProviderError(Exception):
     """Provider returned a non-retryable or repeatedly failing response.
-    The message never includes request headers or credentials."""
+    The message never includes request headers or credentials. ``status``
+    is the last HTTP status (None for transport-level failures)."""
+
+    def __init__(self, message: str, *, status: Optional[int] = None):
+        super().__init__(message)
+        self.status = status
+
+
+class EmptyContentError(DecisionValidationError):
+    """The provider answered but ``message.content`` stayed empty after the
+    bounded empty-content retries (a documented DeepSeek JSON-mode edge
+    case). Carries structural metadata only — never content or reasoning."""
+
+    def __init__(self, message: str, *, finish_reason: str = "", reasoning_present: bool = False, empty_retries: int = 0):
+        super().__init__(message)
+        self.finish_reason = finish_reason
+        self.reasoning_present = reasoning_present
+        self.empty_retries = empty_retries
+
+
+@dataclass(frozen=True)
+class RequestPolicy:
+    """Provider request-capability layer (ADR-0007).
+
+    Turns the provider-neutral settings (``SOCIETY_MODEL_CAPABILITY_PROFILE``,
+    ``SOCIETY_MODEL_THINKING_MODE``, ``SOCIETY_MODEL_REASONING_EFFORT``) into
+    the request fields the configured profile documents. ``auto`` sends no
+    field at all, so a plain OpenAI-compatible provider never receives a
+    DeepSeek-only parameter. Both the runtime (``decide``) and the preflight
+    probe build their requests through this one layer.
+    """
+
+    profile: str = "generic"
+    thinking_mode: str = "auto"
+    reasoning_effort: str = "auto"
+
+    @classmethod
+    def from_settings(cls, settings: SocietySettings) -> "RequestPolicy":
+        return cls(
+            profile=getattr(settings, "model_capability_profile", "generic"),
+            thinking_mode=getattr(settings, "model_thinking_mode", "auto"),
+            reasoning_effort=getattr(settings, "model_reasoning_effort", "auto"),
+        )
+
+    @property
+    def controls_thinking(self) -> bool:
+        """Whether this profile can express a thinking toggle at all."""
+        return self.profile == "deepseek"
+
+    def wire_fields(self) -> Dict[str, Any]:
+        fields_out: Dict[str, Any] = {}
+        if self.profile == "deepseek":
+            if self.thinking_mode in ("disabled", "enabled"):
+                fields_out["thinking"] = {"type": self.thinking_mode}
+            if self.reasoning_effort != "auto":
+                fields_out["reasoning_effort"] = self.reasoning_effort
+        else:
+            # generic OpenAI-compatible: no ``thinking`` field exists; an explicit
+            # reasoning_effort is passed through because the operator asked for it.
+            if self.reasoning_effort != "auto":
+                fields_out["reasoning_effort"] = self.reasoning_effort
+        return fields_out
+
+    def describe(self) -> Dict[str, Any]:
+        return {
+            "capability_profile": self.profile,
+            "thinking_mode": self.thinking_mode,
+            "reasoning_effort": self.reasoning_effort,
+            "request_fields": sorted(self.wire_fields().keys()),
+        }
+
+
+@dataclass
+class ChatOutcome:
+    """Structural result of one bounded JSON completion (no content is kept
+    beyond ``content`` itself, which the caller parses; reasoning text is
+    never stored)."""
+
+    content: str
+    finish_reason: str = ""
+    content_present: bool = False
+    reasoning_present: bool = False
+    reasoning_tokens: Optional[int] = None
+    tokens_in: int = 0
+    tokens_out: int = 0
+    tokens_cached: Optional[int] = None
+    usage_missing: bool = False
+    empty_retries: int = 0
 
 
 _RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
@@ -768,7 +863,15 @@ class OpenAICompatibleModel:
 
     Empty content (a documented DeepSeek JSON-mode edge case) is retried a
     bounded number of times (``SOCIETY_MODEL_EMPTY_CONTENT_RETRIES``), also
-    outside the error-retry budget, then surfaces as a DecisionValidationError.
+    outside the error-retry budget, then surfaces as an ``EmptyContentError``
+    (a DecisionValidationError). ``complete_json`` is that shared loop; the
+    preflight probe runs through it too, so the two never drift.
+
+    Reasoning (Phase 4.1, ADR-0007): ``RequestPolicy`` maps the provider-neutral
+    thinking / reasoning-effort settings onto the fields the configured
+    capability profile documents; a provider's ``reasoning_content`` is only
+    ever inspected for presence and its token count — the text is never kept,
+    logged or parsed for intents.
     """
 
     provider = "openai_compatible"
@@ -782,6 +885,30 @@ class OpenAICompatibleModel:
         self._transport = transport  # test hook: async callable(payload) -> dict
         self._schema_supported: Optional[bool] = None  # learned capability (None = unknown)
         self.negotiation_log: List[str] = []
+        self.policy = RequestPolicy.from_settings(settings)
+
+    def build_chat_request(
+        self,
+        *,
+        messages: List[Dict[str, str]],
+        max_tokens: int,
+        response_format: Dict[str, Any],
+        model_name: Optional[str] = None,
+        temperature: float = 0.2,
+    ) -> Dict[str, Any]:
+        """The one place a ``/chat/completions`` request is assembled: the
+        provider-neutral settings become wire fields through ``RequestPolicy``
+        (``thinking`` / ``reasoning_effort`` only where the profile documents
+        them). Used by ``decide`` and by the preflight probe alike."""
+        payload: Dict[str, Any] = {
+            "model": model_name or self.model_name,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": int(max_tokens),
+            "response_format": response_format,
+        }
+        payload.update(self.policy.wire_fields())
+        return payload
 
     def _messages(self, context: AgentContext) -> List[Dict[str, str]]:
         system = SYSTEM_PROMPT.format(
@@ -856,9 +983,9 @@ class OpenAICompatibleModel:
                     attempt -= 1
                     continue
                 if exc.status in _RETRYABLE_STATUS:
-                    last_exc = ModelProviderError(f"provider status {exc.status} (attempt {attempt}/{max_attempts}): {exc.excerpt}")
+                    last_exc = ModelProviderError(f"provider status {exc.status} (attempt {attempt}/{max_attempts}): {exc.excerpt}", status=exc.status)
                 else:
-                    raise ModelProviderError(f"provider status {exc.status}: {exc.excerpt}") from None
+                    raise ModelProviderError(f"provider status {exc.status}: {exc.excerpt}", status=exc.status) from None
             except Exception as exc:  # noqa: BLE001 — transport-level failure
                 name = type(exc).__name__
                 if name in ("DecisionValidationError",):
@@ -880,49 +1007,110 @@ class OpenAICompatibleModel:
             return ""
         return str(content)
 
-    async def decide(self, context: AgentContext, *, model_name: Optional[str] = None) -> ModelResponse:
-        chosen_model = model_name or self.model_name
-        fmt = self._initial_format()
-        payload = {
-            "model": chosen_model,
-            "messages": self._messages(context),
-            "temperature": 0.2,
-            "max_tokens": self.settings.model_max_output_tokens,
-            "response_format": self._response_format(fmt),
-        }
-        stats = {"requests": 0, "retries": 0, "timeouts": 0, "format_fallbacks": 0, "empty_retries": 0, "format": fmt}
-        tokens_in = tokens_out = 0
-        tokens_cached: Optional[int] = None
-        usage_missing = False
-        content = ""
+    @staticmethod
+    def _structure(data: Dict[str, Any]) -> Dict[str, Any]:
+        """Safe structural metadata of one response: finish_reason, whether a
+        reasoning field was present, and the reasoning token count if the
+        provider reports it. The reasoning text is looked at only for
+        emptiness and is never returned."""
+        finish_reason = ""
+        reasoning_present = False
+        try:
+            choice = data["choices"][0]
+            finish_reason = str(choice.get("finish_reason") or "")
+            message = choice.get("message") or {}
+            reasoning = message.get("reasoning_content")
+            reasoning_present = isinstance(reasoning, str) and bool(reasoning.strip())
+        except (KeyError, IndexError, TypeError, AttributeError):
+            pass
+        reasoning_tokens: Optional[int] = None
+        usage = (data.get("usage") if isinstance(data, dict) else None) or {}
+        details = usage.get("completion_tokens_details") if isinstance(usage, dict) else None
+        if isinstance(details, dict) and details.get("reasoning_tokens") is not None:
+            try:
+                reasoning_tokens = int(details.get("reasoning_tokens") or 0)
+            except (TypeError, ValueError):
+                reasoning_tokens = None
+        return {"finish_reason": finish_reason, "reasoning_present": reasoning_present, "reasoning_tokens": reasoning_tokens}
+
+    async def complete_json(self, payload: Dict[str, Any], stats: Dict[str, int]) -> ChatOutcome:
+        """One bounded JSON completion shared by ``decide`` and the preflight
+        probe: the request retry loop, then the documented DeepSeek JSON-mode
+        empty-content edge case retried at most
+        ``SOCIETY_MODEL_EMPTY_CONTENT_RETRIES`` times (counted in
+        ``stats["empty_retries"]``, outside the error-retry budget). Usage is
+        accumulated across attempts; provider ``completion_tokens`` already
+        include reasoning tokens, so ``reasoning_tokens`` is reported but
+        never added again. Raises ``EmptyContentError`` (structural metadata
+        only) when every attempt came back empty."""
+        stats.setdefault("format_fallbacks", 0)
+        stats.setdefault("empty_retries", 0)
+        out = ChatOutcome(content="")
         for empty_attempt in range(int(self.settings.model_empty_content_retries) + 1):
             data = await self._request_with_retries(payload, stats)
-            usage = data.get("usage") or {}
+            usage = (data.get("usage") if isinstance(data, dict) else None) or {}
             if not usage:
-                usage_missing = True
-            tokens_in += int(usage.get("prompt_tokens") or 0)
-            tokens_out += int(usage.get("completion_tokens") or 0)
+                out.usage_missing = True
+            out.tokens_in += int(usage.get("prompt_tokens") or 0)
+            out.tokens_out += int(usage.get("completion_tokens") or 0)
             cached = usage.get("prompt_cache_hit_tokens")
             if cached is None:
                 cached = ((usage.get("prompt_tokens_details") or {}).get("cached_tokens"))
             if cached is not None:
-                tokens_cached = (tokens_cached or 0) + int(cached or 0)
+                out.tokens_cached = (out.tokens_cached or 0) + int(cached or 0)
+            meta = self._structure(data)
+            out.finish_reason = meta["finish_reason"]
+            out.reasoning_present = out.reasoning_present or bool(meta["reasoning_present"])
+            if meta["reasoning_tokens"] is not None:
+                out.reasoning_tokens = (out.reasoning_tokens or 0) + int(meta["reasoning_tokens"])
             content = self._content(data).strip()
             if content:
-                break
-            stats["empty_retries"] += 1
-            self.negotiation_log.append("empty content -> retry")
+                out.content = content
+                out.content_present = True
+                return out
             if empty_attempt >= int(self.settings.model_empty_content_retries):
-                raise DecisionValidationError("provider returned empty content (documented JSON-mode edge case) after bounded retries")
+                raise EmptyContentError(
+                    "provider returned empty content (documented JSON-mode edge case) after bounded retries",
+                    finish_reason=out.finish_reason,
+                    reasoning_present=out.reasoning_present,
+                    empty_retries=out.empty_retries,
+                )
+            # a retry WILL follow: count it (retries performed, not empty answers seen)
+            stats["empty_retries"] += 1
+            out.empty_retries = stats["empty_retries"]
+            self.negotiation_log.append("empty content -> retry")
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    async def decide(self, context: AgentContext, *, model_name: Optional[str] = None) -> ModelResponse:
+        chosen_model = model_name or self.model_name
+        fmt = self._initial_format()
+        payload = self.build_chat_request(
+            messages=self._messages(context),
+            max_tokens=self.settings.model_max_output_tokens,
+            response_format=self._response_format(fmt),
+            model_name=chosen_model,
+            temperature=0.2,
+        )
+        stats = {"requests": 0, "retries": 0, "timeouts": 0, "format_fallbacks": 0, "empty_retries": 0, "format": fmt}
+        outcome = await self.complete_json(payload, stats)
         used_format = str(stats.get("format") or fmt)
-        if stats["format_fallbacks"]:
-            payload = {**payload, "response_format": self._response_format("json_object")}
+        tokens_in, tokens_out = outcome.tokens_in, outcome.tokens_out
         cost = (Decimal(tokens_in) / 1000) * self.settings.model_usd_per_1k_input + (Decimal(tokens_out) / 1000) * self.settings.model_usd_per_1k_output
         # retried attempts that returned nothing still cost input tokens at the
         # provider; account conservatively for them.
         if stats["retries"]:
             cost += (Decimal(tokens_in) / 1000) * self.settings.model_usd_per_1k_input * stats["retries"]
-        decision = parse_decision(content, max_intents=int(context.permissions.get("max_intents_per_run") or 5))
+        content = outcome.content
+        try:
+            decision = parse_decision(content, max_intents=int(context.permissions.get("max_intents_per_run") or 5))
+        except DecisionValidationError as exc:
+            if outcome.finish_reason == "length":
+                raise DecisionValidationError(
+                    f"provider output truncated at max_tokens={self.settings.model_max_output_tokens} (finish_reason=length)"
+                    + (" while reasoning was present; set SOCIETY_MODEL_THINKING_MODE=disabled for structured output" if outcome.reasoning_present else "")
+                    + f": {exc}"
+                ) from exc
+            raise
         return ModelResponse(
             decision=decision,
             provider=self.provider,
@@ -936,8 +1124,14 @@ class OpenAICompatibleModel:
             timeouts=stats["timeouts"],
             output_format=used_format,
             format_fallbacks=stats["format_fallbacks"],
-            tokens_cached=tokens_cached,
-            usage_missing=usage_missing,
+            tokens_cached=outcome.tokens_cached,
+            usage_missing=outcome.usage_missing,
+            finish_reason=outcome.finish_reason,
+            reasoning_present=outcome.reasoning_present,
+            reasoning_tokens=outcome.reasoning_tokens,
+            empty_retries=outcome.empty_retries,
+            thinking_mode=self.policy.thinking_mode,
+            reasoning_effort=self.policy.reasoning_effort,
         )
 
 
@@ -961,6 +1155,9 @@ __all__ = [
     "ModelResponse",
     "ModelTimeout",
     "ModelProviderError",
+    "EmptyContentError",
+    "RequestPolicy",
+    "ChatOutcome",
     "FakeModel",
     "ScriptedRoleModel",
     "OpenAICompatibleModel",

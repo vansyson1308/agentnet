@@ -40,7 +40,7 @@ def _decision_transport(calls):
 
     async def transport(payload):
         calls.append(payload)
-        if payload.get("max_tokens") == 20:  # the preflight probe
+        if cn.PROBE_SYSTEM_PROMPT in payload["messages"][0]["content"]:  # the preflight probe, identified by shape
             return {"choices": [{"message": {"content": '{"ok": true}'}}], "usage": {"prompt_tokens": 5, "completion_tokens": 2}}
         system = payload["messages"][0]["content"]
         intents = []
@@ -123,7 +123,16 @@ def test_preflight_probe_ready_with_injected_transport(society_settings):
     assert rep.base_url_host == "model.invalid" and rep.credential.fingerprint_prefix == cn.fingerprint(TEST_KEY)[:8]
     text = json.dumps(rep.to_dict())
     assert TEST_KEY not in text and "sk-test" not in text
-    assert seen[0]["response_format"]["type"] == "json_object" and seen[0]["max_tokens"] == 20 and seen[0]["model"] == "canary-test-model"
+    probe = seen[0]
+    assert probe["response_format"]["type"] == "json_object" and probe["model"] == "canary-test-model"
+    # a connectivity + structured-output probe: an adequate output budget (never a
+    # 20-token constant), an explicit json instruction with an example, and no
+    # provider-specific reasoning field on the default generic profile
+    assert probe["max_tokens"] == cn.PROBE_MAX_TOKENS >= 128
+    prompt = " ".join(m["content"] for m in probe["messages"])
+    assert "json" in prompt and '{"ok": true}' in prompt
+    assert "thinking" not in probe and "reasoning_effort" not in probe
+    assert rep.probe.category == "ready" and rep.request_policy["capability_profile"] == "generic"
 
 
 def test_preflight_unreachable_paths_never_echo_credential(society_settings):
@@ -135,19 +144,22 @@ def test_preflight_unreachable_paths_never_echo_credential(society_settings):
         raise ConnectionError("down")
 
     rep = cn.preflight(s, transport=boom, scan_history=False)
-    assert rep.verdict == cn.VERDICT_UNREACHABLE and "transport error" in rep.probe.error
+    assert rep.verdict == cn.VERDICT_UNREACHABLE and rep.probe.category == "provider_unreachable" and "transport error" in rep.probe.error
 
     async def prose(payload):
         return {"choices": [{"message": {"content": "sure! ok"}}]}
 
     rep = cn.preflight(s, transport=prose, scan_history=False)
-    assert rep.verdict == cn.VERDICT_UNREACHABLE and rep.probe.status == "unexpected_content"
+    # the provider answered: that is an OUTPUT CONTRACT failure, never "unreachable"
+    assert rep.verdict == cn.VERDICT_OUTPUT_CONTRACT and rep.probe.category == "output_contract_failed"
+    assert "sure! ok" not in json.dumps(rep.to_dict())
 
     async def unauth(payload):
         raise _HTTPStatus(401, "invalid api key " + TEST_KEY)
 
     rep = cn.preflight(s, transport=unauth, scan_history=False)
-    assert rep.verdict == cn.VERDICT_UNREACHABLE and "401" in rep.probe.error
+    assert rep.verdict == cn.VERDICT_PROVIDER_ERROR and rep.probe.category == "authentication_failed"
+    assert "401" in rep.probe.error and rep.probe.http_status == 401
     assert TEST_KEY not in json.dumps(rep.to_dict())
     rep = cn.preflight(_live(society_settings, model_base_url=""), scan_history=False)
     assert rep.verdict == cn.VERDICT_UNREACHABLE and "BASE_URL" in rep.probe.error

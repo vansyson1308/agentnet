@@ -178,6 +178,13 @@ export default defineRailway((ctx) => {
       SOCIETY_REPO_REF: BRANCH,
       SOCIETY_WORKER_ID: "railway-staging-society-worker",
       SOCIETY_MODEL_OUTPUT_FORMAT: "auto",
+      // Phase 4.1 (ADR-0007): the live DeepSeek posture is set on the service
+      // (deepseek / disabled / none / json_object); the IaC keeps the
+      // provider-neutral defaults so a non-DeepSeek endpoint never receives a
+      // DeepSeek-only request field.
+      SOCIETY_MODEL_CAPABILITY_PROFILE: "generic",
+      SOCIETY_MODEL_THINKING_MODE: "auto",
+      SOCIETY_MODEL_REASONING_EFFORT: "auto",
       SOCIETY_HEARTBEAT_INTERVAL_SECONDS: "3600",
       ...societyOff,
     },

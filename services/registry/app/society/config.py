@@ -88,6 +88,20 @@ PROMPT_VERSION = "society-v1"
 
 MODEL_PROVIDERS = ("scripted", "openai_compatible", "fake")
 OUTPUT_FORMATS = ("auto", "json_object", "json_schema")
+# Provider request-capability profile (Phase 4.1, ADR-0007). It decides which
+# provider-specific request fields the OpenAI-compatible adapter may send:
+#   generic  — plain OpenAI-compatible: never a ``thinking`` field;
+#              ``reasoning_effort`` only when explicitly configured;
+#   deepseek — DeepSeek's documented thinking toggle
+#              (``thinking={"type": "enabled"|"disabled"}``) plus
+#              ``reasoning_effort`` (none|low|high|max).
+CAPABILITY_PROFILES = ("generic", "deepseek")
+# ``auto`` never sends a thinking field (the provider's default applies).
+THINKING_MODES = ("auto", "disabled", "enabled")
+# ``auto`` never sends ``reasoning_effort``; ``none`` disables reasoning
+# where the provider supports that spelling (DeepSeek documents it).
+REASONING_EFFORTS = ("auto", "none", "low", "medium", "high", "max")
+DEEPSEEK_REASONING_EFFORTS = ("auto", "none", "low", "high", "max")
 MODEL_TIERS = ("fast", "strong")
 PROMOTION_PROVIDERS = ("disabled", "fake", "github")
 GITHUB_CREDENTIAL_PROVIDERS = ("disabled", "static", "app")
@@ -133,6 +147,13 @@ class SocietySettings:
         default_factory=lambda: (os.getenv("SOCIETY_MODEL_OUTPUT_FORMAT") or ("json_schema" if _bool("SOCIETY_MODEL_JSON_SCHEMA", False) else "auto")).strip().lower()
     )
     model_empty_content_retries: int = field(default_factory=lambda: _int("SOCIETY_MODEL_EMPTY_CONTENT_RETRIES", 1, minimum=0))
+    # Provider request-capability profile + explicit reasoning policy
+    # (Phase 4.1, ADR-0007). Provider-neutral names; the adapter's capability
+    # layer maps them onto the wire fields the configured profile documents.
+    # Invalid values fail fast (SocietyConfigError), they are never coerced.
+    model_capability_profile: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_CAPABILITY_PROFILE", "generic").strip().lower())
+    model_thinking_mode: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_THINKING_MODE", "auto").strip().lower())
+    model_reasoning_effort: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_REASONING_EFFORT", "auto").strip().lower())
     # Model router: logical tiers -> provider model names (never hard-coded in
     # business logic). Empty strong name = single-tier deployment.
     model_fast_name: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_FAST_NAME") or os.getenv("SOCIETY_MODEL_NAME") or os.getenv("LLM_MODEL_NAME", "gpt-4o-mini"))
@@ -324,6 +345,18 @@ def validate_settings(s: "SocietySettings") -> list:
             problems.append("SOCIETY_GITHUB_APP_PRIVATE_KEY_FILE (preferred, platform-mounted) or SOCIETY_GITHUB_APP_PRIVATE_KEY_PEM must be provided to the controller process when SOCIETY_GITHUB_CREDENTIAL_PROVIDER=app")
     if s.github_app_private_key_file and s.github_app_private_key_file.lstrip().startswith("-----"):
         problems.append("SOCIETY_GITHUB_APP_PRIVATE_KEY_FILE must be a file path, never key material")
+    if s.model_capability_profile not in CAPABILITY_PROFILES:
+        problems.append(f"SOCIETY_MODEL_CAPABILITY_PROFILE must be one of {'|'.join(CAPABILITY_PROFILES)}")
+    if s.model_thinking_mode not in THINKING_MODES:
+        problems.append(f"SOCIETY_MODEL_THINKING_MODE must be one of {'|'.join(THINKING_MODES)}")
+    if s.model_reasoning_effort not in REASONING_EFFORTS:
+        problems.append(f"SOCIETY_MODEL_REASONING_EFFORT must be one of {'|'.join(REASONING_EFFORTS)}")
+    elif s.model_capability_profile == "deepseek" and s.model_reasoning_effort not in DEEPSEEK_REASONING_EFFORTS:
+        problems.append(f"SOCIETY_MODEL_REASONING_EFFORT={s.model_reasoning_effort!r} is not documented by DeepSeek (use {'|'.join(DEEPSEEK_REASONING_EFFORTS)})")
+    if s.model_thinking_mode == "disabled" and s.model_reasoning_effort not in ("auto", "none"):
+        problems.append("SOCIETY_MODEL_THINKING_MODE=disabled contradicts SOCIETY_MODEL_REASONING_EFFORT=" + s.model_reasoning_effort)
+    if s.model_thinking_mode == "enabled" and s.model_reasoning_effort == "none":
+        problems.append("SOCIETY_MODEL_THINKING_MODE=enabled contradicts SOCIETY_MODEL_REASONING_EFFORT=none")
     if s.model_provider == LIVE_PROVIDER_NAME and env != "development":
         url = (s.model_base_url or "").strip()
         if not url.startswith("https://"):

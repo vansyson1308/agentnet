@@ -53,6 +53,30 @@ VERDICT_READY = "LIVE MODEL READY"
 VERDICT_NO_CREDENTIAL = "LIVE MODEL BLOCKED — NO SAFE CREDENTIAL"
 VERDICT_UNREACHABLE = "LIVE MODEL BLOCKED — PROVIDER UNREACHABLE"
 VERDICT_NOT_LIVE = "LIVE MODEL BLOCKED — PROVIDER IS NOT LIVE (NO FAKE AUTONOMY)"
+# Phase 4.1 (ADR-0007): a provider that answered is never called "unreachable".
+VERDICT_PROVIDER_ERROR = "LIVE MODEL BLOCKED — PROVIDER ERROR"
+VERDICT_OUTPUT_CONTRACT = "LIVE MODEL BLOCKED — OUTPUT CONTRACT"
+
+# Probe categories (precise, redacted) and the public verdict each maps to.
+PROBE_CATEGORY_VERDICT: Dict[str, str] = {
+    "ready": VERDICT_READY,
+    "misconfigured": VERDICT_UNREACHABLE,
+    "provider_unreachable": VERDICT_UNREACHABLE,
+    "authentication_failed": VERDICT_PROVIDER_ERROR,
+    "rate_limited": VERDICT_PROVIDER_ERROR,
+    "provider_error": VERDICT_PROVIDER_ERROR,
+    "empty_content": VERDICT_OUTPUT_CONTRACT,
+    "output_truncated": VERDICT_OUTPUT_CONTRACT,
+    "output_contract_failed": VERDICT_OUTPUT_CONTRACT,
+}
+
+# The preflight probe is a minimal connectivity + structured-output check. It
+# is identified by its prompts (below), never by an accidental token constant.
+PROBE_SYSTEM_PROMPT = "You are a json-only connectivity probe for AgentNet. Answer with one json object and nothing else."
+PROBE_USER_PROMPT = 'Reply with exactly this json object and no other text: {"ok": true}'
+# Large enough that a short JSON object can never be cut off even if the
+# provider prepends a little reasoning; small enough to stay a probe.
+PROBE_MAX_TOKENS = 256
 
 # SHA-256 fingerprints of provider-key-shaped strings that appeared in this
 # repository's git history (found by the v1 security gate). The secrets are
@@ -214,61 +238,129 @@ class ProbeResult:
     json_ok: bool = False
     response_format: str = "json_object"
     error: Optional[str] = None
+    # Phase 4.1 (ADR-0007): precise category + safe structural metadata only.
+    category: str = "provider_unreachable"
+    http_status: Optional[int] = None
+    finish_reason: str = ""
+    content_present: bool = False
+    reasoning_present: bool = False
+    reasoning_tokens: Optional[int] = None
+    empty_retries: int = 0
+    format_fallbacks: int = 0
+    model: str = ""
+    capability_profile: str = "generic"
+    thinking_mode: str = "auto"
+    reasoning_effort: str = "auto"
+    request_fields: List[str] = field(default_factory=list)
+    hint: Optional[str] = None
+
+
+def _thinking_hint(policy: Any) -> Optional[str]:
+    if policy.profile == "deepseek" and policy.thinking_mode != "disabled":
+        return ("DeepSeek thinks by default (effort high) and reasoning consumes the output budget; "
+                "set SOCIETY_MODEL_THINKING_MODE=disabled and SOCIETY_MODEL_REASONING_EFFORT=none for structured output")
+    if policy.profile != "deepseek":
+        return ("the generic profile cannot switch provider reasoning off; if this endpoint is DeepSeek set "
+                "SOCIETY_MODEL_CAPABILITY_PROFILE=deepseek with SOCIETY_MODEL_THINKING_MODE=disabled")
+    return None
 
 
 async def probe_provider(settings: SocietySettings, *, transport: Optional[Callable[..., Any]] = None) -> ProbeResult:
-    """One minimal, bounded structured-output request through the same
-    retry loop the runtime uses. Reports status/latency/usage only."""
-    from .cognition import ModelProviderError, ModelTimeout, OpenAICompatibleModel
+    """One minimal, bounded structured-output request through the SAME
+    request-capability layer, retry loop and empty-content handling the
+    runtime uses (``OpenAICompatibleModel.build_chat_request`` /
+    ``complete_json``). Reports category, status, latency, usage and
+    structural metadata only — never content, reasoning or the credential."""
+    from .cognition import EmptyContentError, ModelProviderError, ModelTimeout, OpenAICompatibleModel
 
     try:
         model = OpenAICompatibleModel(settings, transport=transport)
     except ValueError as exc:
-        return ProbeResult(False, "misconfigured", error=scrub(str(exc), settings))
+        return ProbeResult(False, "misconfigured", category="misconfigured", error=scrub(str(exc), settings))
+    policy = model.policy
     fmt = model._response_format("json_object")  # the DeepSeek-documented mode; negotiation happens on real runs
-    payload = {
-        "model": model.model_name,
-        "messages": [
-            {"role": "system", "content": "You are a JSON-only service."},
-            {"role": "user", "content": 'Reply with exactly {"ok": true} as a JSON object.'},
-        ],
-        "temperature": 0,
-        "max_tokens": 20,
-        "response_format": fmt,
-    }
-    stats = {"requests": 0, "retries": 0, "timeouts": 0}
-    t0 = time.monotonic()
-    try:
-        data = await model._request_with_retries(payload, stats)
-    except (ModelProviderError, ModelTimeout) as exc:
-        return ProbeResult(False, "error", int((time.monotonic() - t0) * 1000), stats["requests"], stats["retries"], stats["timeouts"], response_format=fmt["type"], error=scrub(str(exc), settings)[:300])
-    latency = int((time.monotonic() - t0) * 1000)
-    content = None
-    try:
-        content = data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError):
-        pass
-    json_ok = False
-    if isinstance(content, str):
-        try:
-            parsed = json.loads(content)
-            json_ok = isinstance(parsed, dict) and parsed.get("ok") is True
-        except ValueError:
-            json_ok = False
-    usage = (data.get("usage") if isinstance(data, dict) else None) or {}
-    return ProbeResult(
-        ok=json_ok,
-        status="ok" if json_ok else "unexpected_content",
-        latency_ms=latency,
-        requests=stats["requests"],
-        retries=stats["retries"],
-        timeouts=stats["timeouts"],
-        tokens_in=int(usage.get("prompt_tokens") or 0),
-        tokens_out=int(usage.get("completion_tokens") or 0),
-        json_ok=json_ok,
-        response_format=fmt["type"],
-        error=None if json_ok else "provider did not return the requested JSON object",
+    payload = model.build_chat_request(
+        messages=[{"role": "system", "content": PROBE_SYSTEM_PROMPT}, {"role": "user", "content": PROBE_USER_PROMPT}],
+        max_tokens=PROBE_MAX_TOKENS,
+        response_format=fmt,
+        temperature=0,
     )
+    stats = {"requests": 0, "retries": 0, "timeouts": 0, "format_fallbacks": 0, "empty_retries": 0, "format": fmt["type"]}
+    base = dict(
+        response_format=fmt["type"],
+        model=model.model_name,
+        capability_profile=policy.profile,
+        thinking_mode=policy.thinking_mode,
+        reasoning_effort=policy.reasoning_effort,
+        request_fields=sorted(policy.wire_fields().keys()),
+    )
+    t0 = time.monotonic()
+
+    def _fail(category: str, error: str, **extra: Any) -> ProbeResult:
+        return ProbeResult(
+            False,
+            category,
+            int((time.monotonic() - t0) * 1000),
+            stats["requests"],
+            stats["retries"],
+            stats["timeouts"],
+            category=category,
+            error=scrub(error, settings)[:300],
+            empty_retries=stats.get("empty_retries", 0),
+            format_fallbacks=stats.get("format_fallbacks", 0),
+            **base,
+            **extra,
+        )
+
+    try:
+        outcome = await model.complete_json(payload, stats)
+    except ModelTimeout as exc:
+        return _fail("provider_unreachable", str(exc))
+    except ModelProviderError as exc:
+        status = getattr(exc, "status", None)
+        if status is None:
+            return _fail("provider_unreachable", str(exc))
+        if status in (401, 403):
+            return _fail("authentication_failed", str(exc), http_status=status)
+        if status == 429:
+            return _fail("rate_limited", str(exc), http_status=status)
+        return _fail("provider_error", str(exc), http_status=status)
+    except EmptyContentError as exc:
+        truncated = exc.finish_reason == "length"
+        category = "output_truncated" if truncated else "empty_content"
+        return _fail(
+            category,
+            "provider answered but message.content stayed empty after bounded retries"
+            + (" (finish_reason=length: the output budget was spent before any content)" if truncated else ""),
+            finish_reason=exc.finish_reason,
+            reasoning_present=exc.reasoning_present,
+            hint=_thinking_hint(policy) if (truncated or exc.reasoning_present) else None,
+        )
+    except Exception as exc:  # noqa: BLE001 — malformed provider body shape
+        return _fail("output_contract_failed", f"provider response shape invalid: {type(exc).__name__}")
+
+    latency = int((time.monotonic() - t0) * 1000)
+    meta = dict(
+        finish_reason=outcome.finish_reason,
+        content_present=outcome.content_present,
+        reasoning_present=outcome.reasoning_present,
+        reasoning_tokens=outcome.reasoning_tokens,
+        empty_retries=outcome.empty_retries,
+        format_fallbacks=stats.get("format_fallbacks", 0),
+        tokens_in=outcome.tokens_in,
+        tokens_out=outcome.tokens_out,
+    )
+    common = dict(latency_ms=latency, requests=stats["requests"], retries=stats["retries"], timeouts=stats["timeouts"], **base, **meta)
+    try:
+        parsed = json.loads(outcome.content)
+    except ValueError:
+        if outcome.finish_reason == "length":
+            return ProbeResult(False, "output_truncated", category="output_truncated", error="provider output was cut off at max_tokens (finish_reason=length) before the json object completed", hint=_thinking_hint(policy), **common)
+        return ProbeResult(False, "output_contract_failed", category="output_contract_failed", error="provider content is not valid json", **common)
+    if isinstance(parsed, dict) and parsed.get("ok") is True:
+        return ProbeResult(True, "ok", category="ready", json_ok=True, **common)
+    shape = "object" if isinstance(parsed, dict) else type(parsed).__name__
+    return ProbeResult(False, "output_contract_failed", category="output_contract_failed", error=f"provider returned valid json ({shape}) but not the requested {{\"ok\": true}} object", **common)
 
 
 # ── preflight ─────────────────────────────────────────────────────────
@@ -284,6 +376,7 @@ class PreflightReport:
     probe: Optional[ProbeResult]
     flags: Dict[str, Any]
     limits: Dict[str, Any]
+    request_policy: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def ready(self) -> bool:
@@ -310,8 +403,11 @@ def preflight(
     skip_probe: bool = False,
     scan_history: bool = True,
 ) -> PreflightReport:
+    from .cognition import RequestPolicy
+
     settings = settings or get_settings()
     cred = credential_status(settings, repo_root=repo_root, scan_history=scan_history)
+    policy = RequestPolicy.from_settings(settings)
     limits = {
         "daily_model_budget_usd": str(settings.daily_model_budget_usd),
         "model_timeout_seconds": settings.model_timeout_seconds,
@@ -330,19 +426,20 @@ def preflight(
         probe=None,
         flags=settings.public_flags(),
         limits=limits,
+        request_policy=policy.describe(),
     )
     if settings.model_provider != LIVE_PROVIDER:
         return PreflightReport(verdict=VERDICT_NOT_LIVE, **base)
     if not cred.safe:
         return PreflightReport(verdict=VERDICT_NO_CREDENTIAL, **base)
     if not settings.model_base_url:
-        base["probe"] = ProbeResult(False, "misconfigured", error="SOCIETY_MODEL_BASE_URL (or LLM_BASE_URL) is not set")
+        base["probe"] = ProbeResult(False, "misconfigured", category="misconfigured", error="SOCIETY_MODEL_BASE_URL (or LLM_BASE_URL) is not set")
         return PreflightReport(verdict=VERDICT_UNREACHABLE, **base)
     if skip_probe:
         return PreflightReport(verdict=VERDICT_READY, **base)
     probe = asyncio.run(probe_provider(settings, transport=transport))
     base["probe"] = probe
-    return PreflightReport(verdict=VERDICT_READY if probe.ok else VERDICT_UNREACHABLE, **base)
+    return PreflightReport(verdict=PROBE_CATEGORY_VERDICT.get(probe.category, VERDICT_UNREACHABLE), **base)
 
 
 # ── canary report ─────────────────────────────────────────────────────
