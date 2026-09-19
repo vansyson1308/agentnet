@@ -232,3 +232,64 @@ def test_driver_intent_rows_keep_trusted_reasons_and_key_names_only():
     }]
     assert key not in json.dumps(rows) and "secret-looking" not in json.dumps(rows), "payload values never printed; reasons scrubbed"
 
+
+
+# ── Gate A: the `memory:<role>` diagnostic. Memory is the only runtime state a
+# finished run leaves for the next one, so reading it back is how a canary that
+# trained the fleet against its own signal becomes visible.
+
+
+def test_plan_grammar_accepts_a_memory_role_and_rejects_junk():
+    p5 = _driver()
+    assert p5.parse_plan("memory:scout") == [("memory", ["scout"])]
+    for bad in ("memory", "memory:Scout", "memory:scout:extra", "memory:../etc"):
+        with pytest.raises(ValueError):
+            p5.parse_plan(bad)
+
+
+def test_memory_view_is_read_only_scrubbed_and_never_reads_contents():
+    import inspect
+
+    p5 = _driver()
+    src = inspect.getsource(p5.memory_view)
+    lowered = src.lower()
+    for forbidden in ("update ", "delete ", "insert ", "drop ", "m.content"):
+        assert forbidden not in lowered, f"memory_view must stay read-only and title-only: {forbidden!r}"
+
+    class _Cur:
+        def __init__(self):
+            self.sql = []
+
+        def execute(self, sql, params=()):
+            self.sql.append((sql, params))
+            self._rows = (
+                [("AGENT", "Repeated signal: sk-ABCDEFGHIJKLMNOPQRSTUV", None, None, 30, 40, "unvalidated", "run", None)]
+                if "ORDER BY" in sql
+                else [(7, 0, 3)]
+            )
+
+        def fetchall(self):
+            return self._rows
+
+    cur = _Cur()
+    view = p5.memory_view(cur, "Society_Scout")
+    assert view == {
+        "agent": "Society_Scout",
+        "live_rows": 7,
+        "rows_with_expiry": 0,
+        "distinct_correlations": 3,
+        "newest": [
+            {
+                "scope": "AGENT",
+                "title": "Repeated signal: ***",
+                "created_at": None,
+                "expires_at": None,
+                "importance": 30,
+                "confidence": 40,
+                "validation": "unvalidated",
+                "source": "run",
+                "correlation": None,
+            }
+        ],
+    }
+    assert all(isinstance(params, tuple) for _, params in cur.sql)  # parameterised, never interpolated
