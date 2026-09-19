@@ -15,8 +15,8 @@ the code and tests win and this file is stale — fix it in the same change.
 | Real source-code candidate | **PROVEN DETERMINISTICALLY** — the scripted fleet fixes a planted defect in an isolated fixture application, adds a test, passes QA + Security, gets a shadow PR and a fitness PASS. Scripted coding is runtime proof, not model-quality evidence |
 | Society GitHub App / real PR promotion | **IMPLEMENTED, NOT CONFIGURED** — `GitHubCredentialProvider` (`disabled` default, `static`, `app` = App JWT → short-lived installation token, in-memory cache/refresh/single-flight) and `GIT_ASKPASS`-based `git push` (no token in URL/argv/config); inert until an owner registers the App and mounts its private key into the controller only (`docs/GITHUB_PROMOTION.md`, ADR-0005). No real promotion has run |
 | One self-improvement control plane | **DONE (Phase 3.1)** — the worker's reflection loop and `AGENT_BACKLOG.md` bridge are archived under `legacy/hermes/`; synthetic poll/echo/storyteller agents under `legacy/synthetic-agents/`; `tests/society/test_single_control_plane.py` |
-| `main` ruleset | **OWNER ACTION REQUIRED** — the API refused ruleset creation from the session proxy (403); exact body in `deploy/github/main-ruleset.json` |
-| Live model | **NOT YET PROVEN** — no credential provided; `python -m app.society.canary preflight` reports `LIVE MODEL BLOCKED — NO SAFE CREDENTIAL` |
+| `main` ruleset | **ACTIVE** — configured by the owner (2026-09-19) from `deploy/github/main-ruleset.json`: pull request required, review threads resolved, the six CI jobs required and strict, no bypass actors; enforced on the Phase 4.1 PR |
+| Live model | **PREFLIGHT IN PROGRESS (Phase 4.1)** — a DeepSeek credential exists only in the Railway `society-worker` (never read by the session). The first live preflight (2026-09-19) reached the provider but failed the output contract because DeepSeek thinks by default and the 20-token probe budget was spent on reasoning; ADR-0007 adds one provider request-capability layer (`SOCIETY_MODEL_CAPABILITY_PROFILE`, `SOCIETY_MODEL_THINKING_MODE`, `SOCIETY_MODEL_REASONING_EFFORT`) shared by the probe and `decide()`, precise probe categories and two new verdicts. The live verdict is recorded in the Phase 4.1 report; Society runtime stays OFF |
 | Staging deployment | **Railway managed staging — GREEN** (2026-09-18, `main` ae42d7a): project `AgentNet`, environment `staging`, Postgres + Redis (private), registry + dashboard on Railway-generated domains, payment / worker / society-worker private, one `society-workspace` volume, registry pre-deploy as the only migration owner (`0010_self_development`, fleet seed), `TRUST_X_REAL_IP` spoof test PASS at the live edge, Society flags OFF, scripted model only. Two consecutive full validations by the in-environment `staging-validator` (`deploy/railway/validate_staging.py`, 26 checks each, distinct operators) plus restart / persistence / rollback / secret-leak / resource proofs — `docs/RAILWAY_STAGING.md` §20. Open owner action: *Wait for CI* on each service (the flag does not persist through the connector). `docker-compose.staging.yml` remains the Compose alternative |
 | Production deployment | **none**; the retired VPS artifacts are quarantined under `deploy/legacy-vps/` |
 | A2A v1 migration | **NOT STARTED** (`app/a2a.py` still emits a v0.3-shaped card; readiness plan is written only after a live-model GO) |
@@ -36,7 +36,7 @@ HOSTING: RAILWAY STAGING DEPLOYED (project AgentNet / environment staging)
 MANAGED STAGING: GREEN (two consecutive full validations on main ae42d7a)
 STAGING OPERATOR: CREATED
 SECRET LEAK CHECK: PASS
-DEEPSEEK KEY PRESENT: NO
+DEEPSEEK KEY PRESENT: YES (Railway society-worker only; never read, printed or copied)
 SOCIETY GITHUB SECRET PRESENT: NO
 WAIT FOR CI ON RAILWAY: OWNER ACTION REQUIRED
 PRODUCTION DEPLOYMENT: NOT STARTED
@@ -47,8 +47,8 @@ LEGACY FILE BACKLOG: RETIRED FROM ACTIVE RUNTIME
 SYNTHETIC POLL ACTIVITY: LEGACY/DEMO ONLY
 GITHUB APP AUTH: IMPLEMENTED, NOT CONFIGURED
 REAL GITHUB PROMOTION: NOT RUN
-MAIN RULESET: OWNER ACTION REQUIRED
-DEEPSEEK KEY: NOT PROVIDED
+MAIN RULESET: ACTIVE (owner-configured 2026-09-19; required checks = the six CI jobs, thread resolution, no bypass)
+DEEPSEEK KEY: PROVIDED TO RAILWAY SOCIETY-WORKER ONLY
 ```
 
 Maturity levels (`docs/SELF_DEVELOPMENT.md`): level 0–1 mechanics are proven offline; levels 2–4
@@ -128,17 +128,18 @@ counts and the exact commands are in the Phase 2.6 report.
 
 ## Known, intentional limitations
 
-* Railway staging (ADR-0006 D12): *Wait for CI* is not yet switched on (the flag does not persist through the
-  connector — owner action in the dashboard); the dashboard runs Flask's development server behind Railway's
-  edge (a WSGI server is a follow-up); stale dashboard template links render as inert `#` anchors; the `kill 1`
-  crash test and the volume marker file of the runbook need `railway ssh` and were not run — the restart policy
-  (`ALWAYS`) and the bootstrap's `reusing persistent checkout` log lines are the evidence instead.
+* Railway staging (ADR-0006 D12): *Wait for CI* was switched on by the owner in the dashboard on 2026-09-19
+  (`checkSuites: true` on registry, payment, worker, dashboard and society-worker; the flag does not persist
+  through the connector); the dashboard runs Flask's development server behind Railway's edge (a WSGI server
+  is a follow-up); stale dashboard template links render as inert `#` anchors; the `kill 1` crash test and the
+  volume marker file of the runbook need `railway ssh` and were not run — the restart policy (`ALWAYS`) and the
+  bootstrap's `reusing persistent checkout` log lines are the evidence instead.
 * Live-model canaries, soak and GO/NO-GO are blocked on a rotated credential and a staging host. The DeepSeek
-  key was never provided in Phase 3 (`DEEPSEEK KEY: NOT PROVIDED`, `DEEPSEEK LIVE CALL: NOT RUN`); provider
+  key now exists only in the Railway `society-worker` (Phase 4.1: preflight probes only, no canary run); provider
   compatibility is proven only against a fake transport (`tests/society/test_deepseek_contract.py`).
 * Promotion runs in shadow mode only (`SOCIETY_PROMOTION_PROVIDER=disabled|fake`); `SOCIETY_AUTO_MERGE_ENABLED`
-  is `false` and cannot be enabled by any intent. `main` has no ruleset yet — owner action with the exact payload
-  in `deploy/github/` (creation through the session proxy is refused).
+  is `false` and cannot be enabled by any intent. `main` is protected by the owner-configured ruleset
+  (`deploy/github/main-ruleset.json`).
 * Fitness is `offline` only; staging-live evaluation, rollback execution and any deployment need a
   `DeploymentProvider` that is `disabled` (requests end `blocked_external`).
 * Orchestrator/provisioning is an integration stub (in-memory OAuth codes), disabled by default.

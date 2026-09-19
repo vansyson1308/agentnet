@@ -118,11 +118,11 @@ sources are attached; they fail their healthchecks until §5 is complete — exp
 
 Then `railway redeploy -s <service>` for each service (registry first — its pre-deploy step owns the schema).
 
-As executed: every row above is live except **Wait for CI** — the connector's `update-service` and the Railway
-agent both accept `source.checkSuites` but the value does not persist (`describe-service` keeps reporting
-`checkSuites: false`), so the flag must be switched on in the dashboard (Service → Settings → Source → *Wait for
-CI*) for registry, payment, worker, dashboard and society-worker: **OWNER ACTION**. Until then the deploy gate is
-the repository's own rule (only PR-merged, CI-green `main` is ever pushed) rather than a Railway-side check.
+As executed: every row above is live. **Wait for CI** could not be set through the connector (the connector's
+`update-service` and the Railway agent both accept `source.checkSuites` but the value does not persist); the
+owner switched it on in the dashboard (Service → Settings → Source → *Wait for CI*) on 2026-09-19 and
+`describe-service` now reports `checkSuites: true` for registry, payment, worker, dashboard and society-worker,
+so a push to `main` deploys only after the GitHub check suite succeeds.
 Restart policy is `ALWAYS` on the five services (Hobby plan); the validator uses `ON_FAILURE`, max 3 retries.
 Watch paths are gitignore-style from the repository root (`/services/registry/**`, …, `/deploy/railway/**` for
 the validator); a push that matches none of a service's patterns creates a `SKIPPED` deployment record for it.

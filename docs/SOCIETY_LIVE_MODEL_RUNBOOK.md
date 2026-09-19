@@ -51,12 +51,21 @@ docker exec agentnet-staging-society-worker python -m app.society.canary preflig
 
 Verdicts:
 
-| Verdict | Meaning | Next step |
-| --- | --- | --- |
-| `LIVE MODEL READY` | provider is `openai_compatible`, credential safe, one bounded JSON probe succeeded | proceed to §3 |
-| `LIVE MODEL BLOCKED — NO SAFE CREDENTIAL` | no credential, or fingerprint compromised (git history / denylist) | obtain a rotated credential; do **not** test the leaked one |
-| `LIVE MODEL BLOCKED — PROVIDER UNREACHABLE` | base URL missing, transport failure, non-JSON reply, provider error (status kept, never the key) | fix `SOCIETY_MODEL_BASE_URL`/network; check `probe.error` |
-| `LIVE MODEL BLOCKED — PROVIDER IS NOT LIVE (NO FAKE AUTONOMY)` | provider is `scripted`/`fake` | this is the correct state for a deployment that has not been given a live model |
+| Verdict | `probe.category` | Meaning | Next step |
+| --- | --- | --- | --- |
+| `LIVE MODEL READY` | `ready` | provider is `openai_compatible`, credential safe, one bounded JSON probe succeeded through the runtime's own request layer | proceed to §3 |
+| `LIVE MODEL BLOCKED — NO SAFE CREDENTIAL` | — | no credential, or fingerprint compromised (git history / denylist) | obtain a rotated credential; do **not** test the leaked one |
+| `LIVE MODEL BLOCKED — PROVIDER UNREACHABLE` | `misconfigured`, `provider_unreachable` | base URL missing, transport failure or timeout after bounded retries — the provider never answered | fix `SOCIETY_MODEL_BASE_URL` / egress; check `probe.error` |
+| `LIVE MODEL BLOCKED — PROVIDER ERROR` | `authentication_failed` (401/403), `rate_limited` (429 after retries), `provider_error` (402, other 4xx, 5xx) | the provider answered with an error status (`probe.http_status`; never the key) | 401: key disabled/rotated; 402: account balance; 429/5xx: provider side — external blockers |
+| `LIVE MODEL BLOCKED — OUTPUT CONTRACT` | `empty_content`, `output_truncated`, `output_contract_failed` | the provider answered 200 but `content` was empty, cut off at `max_tokens` (`finish_reason=length`), not JSON, or not the requested object | read `probe.hint`: on DeepSeek set `SOCIETY_MODEL_CAPABILITY_PROFILE=deepseek`, `SOCIETY_MODEL_THINKING_MODE=disabled`, `SOCIETY_MODEL_REASONING_EFFORT=none` (ADR-0007) |
+| `LIVE MODEL BLOCKED — PROVIDER IS NOT LIVE (NO FAKE AUTONOMY)` | — | provider is `scripted`/`fake` | this is the correct state for a deployment that has not been given a live model |
+
+The probe (ADR-0007 D4) sends the runtime's exact reasoning policy, `response_format=json_object`, a
+json-only prompt with the example `{"ok": true}` and `max_tokens=256`; the report carries structural
+metadata only (`finish_reason`, `content_present`, `reasoning_present`, `reasoning_tokens`, requests,
+retries, empty-content retries, latency, tokens, capability profile / thinking mode / effort and the request
+field names) — never content, reasoning, prompts or the credential. DeepSeek thinks by default (effort
+`high`), so the documented live posture is `deepseek` / `disabled` / `none` / `json_object`.
 
 The report also lists the limits the canary will run under (daily USD budget, request retries,
 timeout, runs/hour, runs/correlation, causation depth). Tighten them for the first window:
