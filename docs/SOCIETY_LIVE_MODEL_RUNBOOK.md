@@ -133,6 +133,9 @@ holds the model credential (it is not in its environment) and prints only struct
 | `gate:<role>:<INTENT>` / `gate:<role>:clear` | operator approval gate on the grant (`approval_required_intents`), only narrowing existing permissions | `gate G01` |
 | `canary:<single\|multi\|approval>[:<approve\|reject>]` | `app.society.canary.observe_canary` over HTTP — same PASS criteria as the table above | `canary.<scenario>.report/runs/intents/events/approvals/decisions` |
 | `signal[:candidate]` | ONE world event from `PHASE5_SIGNAL_TYPE` + `PHASE5_SIGNAL_JSON`, followed until the story is idle; `candidate` also asserts the engineering chain (READY with QA + Security pass, acceptance tests actually executed, bounded allow-list, one candidate) | `signal.events/runs/intents/decisions/candidates/candidate.<id>`, checks `K01–K10` |
+| `taskfail:<credits>[:<seq>]` | proves multi-agent operation on a REAL domain fact: registers two canary agents, funds the caller, creates a task through `POST /v1/tasks`, fails it through `PUT /v1/tasks/<id>/fail`, then waits for the runtime's own `world.ingest_task_outcomes()` to raise `task.failed`. The driver never injects that event and never writes a `task_sessions` row | `taskfail.task/outcome/runs`, checks `T00–T08` |
+| `intents:<correlation-id>` | read-only diagnosis of one story: per-intent policy decision, execution status and the **untruncated** validation reason, plus each run's decision summary | `intents.<id>.intents/events/decisions`, check `D01` |
+| `memory:<role>` | read-only: how many live memory rows a role carries into its next run, from how many correlations, how many have an expiry, and the newest titles with provenance. Titles are model-authored, so they are scrubbed and bounded; contents are never read and nothing is written | `memory.<role>.view`, check `M01` |
 | `audit[:<hours>]` | loop breaker / DEAD / forbidden-HIGH / duplicate-workstream checks, escrow-ledger invariants (`E01–E03`), secret-and-chain-of-thought scan over runtime-produced rows (counts only, `X01–X03`), budget (`C01`), public-surface structure and closed operator surfaces (`P01–P04`) | `audit.snapshot/tasks/transactions/wallets/secret_scan/budget` |
 
 Money invariant (fund step): balances are mutated only by `update_wallet_balances_trigger`; the driver inserts
@@ -160,6 +163,30 @@ leak (`society-staging-redteam.py` ALL DEFENDED), production flags untouched.
 NO-GO (stop the runtime, keep the evidence): any forbidden HIGH intent allowed, any wallet/escrow
 inconsistency, any loop breaker tripping repeatedly, a credential appearing anywhere, or the daily
 budget exhausted by fewer than the expected runs.
+
+### 4.1 What the Phase 5 closure window actually recorded (2026-09-19)
+
+Outcome: **CONDITIONAL GO** — full record in `docs/SOCIETY_LIVE_PROOF.md`. Met live: ≥3 roles,
+real-domain multi-agent operation, approval + rejection lifecycles, red-team ALL DEFENDED twice
+with fresh actors, economics, secret/chain-of-thought and public-surface audits, zero DEAD runs.
+Not met: a docs candidate reaching READY.
+
+Two defects were found **by the live runtime**, not by inspection, and both are repaired:
+undocumented intent-payload bounds, and an agent being unable to see its own refused intents.
+The second matters for anyone running this again: a refused intent does not stop the run, so the
+run's remaining intents still execute and can record that refused work succeeded. Check
+`recent_refusals` in the context and `intents_by_execution` in `audit` before concluding that an
+agent "declined" something.
+
+Two operational notes worth keeping:
+
+- The red-team's `--burst 40` spends an actor's hourly ingress quota, and with the runtime ON it
+  also drives the fleet into its per-role hourly run limit — the closure window recorded 34 runs
+  correctly skipped with `global runs/hour limit reached (30/30)`. That is the governor working,
+  not a fault. Use a fresh operator per run (`docs/RAILWAY_STAGING.md` §9).
+- `EXPECTED_ALEMBIC_HEAD` exists both as a code default and as a service variable, and the
+  variable silently wins. Update both when a migration lands, or a validation goes RED on `S01`
+  while the database is correct.
 
 Failure policy: `SOCIETY_RUNTIME_ENABLED=false` (events wait, nothing is lost) → collect
 `/v1/society/story/<corr>/detail` for the affected correlation → fix on a branch → re-run the

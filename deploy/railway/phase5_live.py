@@ -51,6 +51,7 @@ import pathlib
 import re
 import sys
 import time
+import urllib.parse
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -62,7 +63,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "taskfail")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -129,6 +130,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("intents:<correlation-id>")
         if name == "memory" and (len(args) != 1 or not re.fullmatch(r"[a-z_]{2,32}", args[0])):
             raise ValueError("memory:<role>")
+        if name == "taskfail" and (len(args) > 1 or (args and not args[0].isdigit())):
+            raise ValueError("taskfail[:<escrow-credits>]")
         plan.append((name, args))
     if not plan:
         raise ValueError("PHASE5_PLAN is empty")
@@ -615,6 +618,150 @@ def step_intents(out: Out, base: str, token: str, correlation: str) -> None:
     out.json("intents", f"{correlation[:8]}.events", [{k: e.get(k) for k in ("event_type", "causation_depth", "status")} for e in detail.get("events") or []])
 
 
+CANARY_CALLER = "Phase5_Canary_Caller"
+CANARY_CALLEE = "Phase5_Canary_Callee"
+CANARY_CAPABILITY = "staging.canary.echo"
+
+
+def _ensure_canary_agent(out: Out, base: str, token: str, name: str) -> Optional[str]:
+    """Register (or reuse) a staging-only agent owned by the operator user.
+
+    Ordinary authenticated agent registration — the same call any integrator
+    makes. Nothing here touches the database."""
+    st, body = api("GET", f"{base}/v1/agents/?limit=100", token)
+    if st == 200:
+        rows = body if isinstance(body, list) else (body or {}).get("items") or []
+        for a in rows:
+            if isinstance(a, dict) and a.get("name") == name and a.get("id"):
+                return str(a["id"])
+    st, body = api(
+        "POST", f"{base}/v1/agents/", token,
+        {
+            "name": name,
+            "description": "Phase 5 closure: controlled staging task-failure canary (no external endpoint).",
+            "capabilities": [{
+                "name": CANARY_CAPABILITY, "version": "1.0.0",
+                "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}},
+                "output_schema": {"type": "object", "properties": {"text": {"type": "string"}}},
+                "price": 1.0,
+            }],
+            "endpoint": "https://staging.invalid/phase5-canary",
+            "public_key": "phase5-closure-canary-not-a-key",
+        },
+    )
+    if st in (200, 201) and isinstance(body, dict) and body.get("id"):
+        return str(body["id"])
+    out.check("taskfail", "T00", False, f"register {name}: HTTP {st} {str(body)[:120]}")
+    return None
+
+
+def step_taskfail(out: Out, base: str, token: str, conn, credits: int, timeout: float) -> None:
+    """REAL domain signal: create a task through the ordinary API, fail it
+    through the ordinary callee path, and let the runtime's own
+    ``world.ingest_task_outcomes`` turn that platform fact into ``task.failed``.
+
+    Nothing about the society is simulated: no event is injected, no TaskSession
+    row is written by hand. This is the production path a real failing task
+    takes, which is the only kind of evidence a Scout should act on."""
+    caller = _ensure_canary_agent(out, base, token, CANARY_CALLER)
+    callee = _ensure_canary_agent(out, base, token, CANARY_CALLEE)
+    if not (caller and callee):
+        return
+    out.check("taskfail", "T00", True, f"canary agents ready (caller {caller[:8]}, callee {callee[:8]})")
+
+    # Fund the caller's wallet through the ledger so escrow can lock.
+    with conn.cursor() as cur:
+        row = _rows(cur, "SELECT id, balance_credits FROM wallets WHERE owner_type = 'agent' AND owner_id = %s", (caller,))
+        if not row:
+            out.check("taskfail", "T01", False, "caller wallet missing")
+            return
+        wallet_id, balance = str(row[0][0]), int(row[0][1])
+        if balance < credits:
+            key = f"phase5-closure-fund-{caller[:8]}"
+            if not _rows(cur, "SELECT id FROM transactions WHERE idempotency_key = %s", (key,)):
+                tx = str(uuid.uuid4())
+                cur.execute(
+                    "INSERT INTO transactions (id, from_wallet, to_wallet, amount, currency, status, type, platform_fee, platform_fee_rate, extra_data, idempotency_key, created_at) "
+                    "VALUES (%s, NULL, %s, %s, 'credits', 'pending', 'deposit', 0, 0, %s, %s, now())",
+                    (tx, wallet_id, max(credits * 4, 40), json.dumps({"operator_action": "phase5_closure_canary"}), key),
+                )
+                conn.commit()
+                cur.execute("UPDATE transactions SET status = 'completed', completed_at = now() WHERE id = %s AND status = 'pending'", (tx,))
+                conn.commit()
+        balance = int(_rows(cur, "SELECT balance_credits FROM wallets WHERE id = %s", (wallet_id,))[0][0])
+    out.check("taskfail", "T01", balance >= credits, f"caller wallet funded: {balance} credits available for a {credits}-credit escrow")
+
+    st, body = api(
+        "POST", f"{base}/v1/tasks/", token,
+        {
+            "caller_agent_id": caller, "callee_agent_id": callee,
+            "capability": CANARY_CAPABILITY,
+            "input": {"text": "phase5 closure controlled failure canary"},
+            "max_budget": credits, "currency": "credits", "timeout_seconds": 300,
+        },
+    )
+    # POST /v1/tasks answers with the escrow trace, keyed task_session_id.
+    task_id = str((body or {}).get("task_session_id") or (body or {}).get("id") or "") if isinstance(body, dict) else ""
+    out.check("taskfail", "T02", st in (200, 201) and bool(task_id), f"task created through POST /v1/tasks: HTTP {st} id={task_id[:8] or '-'}")
+    if not task_id:
+        out.json("taskfail", "create_error", {"status": st, "body": scrub(str(body))[:300]})
+        return
+
+    err = "callee returned HTTP 502 from https://staging.invalid/phase5-canary (staging canary: upstream unreachable)"
+    st, body = api("PUT", f"{base}/v1/tasks/{task_id}/fail?error_message={urllib.parse.quote(err)}&agent_id={callee}", token)
+    out.check("taskfail", "T03", st == 200, f"task failed through the ordinary callee path PUT /v1/tasks/<id>/fail: HTTP {st}")
+    if st != 200:
+        out.json("taskfail", "fail_error", {"status": st, "body": scrub(str(body))[:300]})
+        return
+
+    # The runtime ingests task outcomes itself, before each dispatch cycle.
+    deadline = time.time() + min(timeout, 300)
+    correlation, event_id = "", ""
+    while time.time() < deadline:
+        with conn.cursor() as cur:
+            rows = _rows(
+                cur,
+                "SELECT id, correlation_id, event_type, status FROM society_events "
+                "WHERE subject_type = 'task' AND subject_id = %s ORDER BY created_at LIMIT 2",
+                (task_id,),
+            )
+        if rows:
+            event_id, correlation = str(rows[0][0]), str(rows[0][1])
+            out.check("taskfail", "T04", len(rows) == 1, f"exactly one task-outcome event for this task: {[(r[2], r[3]) for r in rows]}")
+            break
+        time.sleep(5)
+    if not correlation:
+        out.check("taskfail", "T04", False, "no task.failed event was ingested within the window (world.ingest_task_outcomes)")
+        return
+
+    with conn.cursor() as cur:
+        st_rows = _rows(cur, "SELECT status, error_message IS NOT NULL, escrow_amount FROM task_sessions WHERE id = %s", (task_id,))
+    out.check("taskfail", "T05", bool(st_rows) and str(st_rows[0][0]).lower().endswith("failed"), f"task row status={st_rows[0][0] if st_rows else '?'} (set by the API, not by hand)")
+
+    pace_for_cooldown(out, "taskfail", base, token)
+    deadline = time.time() + min(timeout, 600)
+    detail: Dict[str, Any] = {}
+    while time.time() < deadline:
+        detail = _story_detail(base, token, correlation)
+        runs = detail.get("runs") or []
+        if runs and all(r.get("status") in ("completed", "failed", "dead", "skipped") for r in runs):
+            break
+        time.sleep(10)
+
+    runs = detail.get("runs") or []
+    roles = sorted({r.get("role") for r in runs if r.get("status") == "completed"})
+    dead = [r for r in runs if r.get("status") == "dead"]
+    fake = [r for r in runs if r.get("status") == "completed" and r.get("model_provider") not in (None, LIVE_PROVIDER)]
+    out.check("taskfail", "T06", bool(runs), f"the real task.failed event woke the fleet: {len(runs)} run(s), roles completed={roles}")
+    out.check("taskfail", "T07", not dead, f"no DEAD run on the real-domain story ({len(dead)} dead)")
+    out.check("taskfail", "T08", not fake, "every completed run used the live provider (no fake autonomy)")
+    out.json("taskfail", "story", {"task_id": task_id, "event_id": event_id, "correlation": correlation, "roles_completed": roles})
+    out.json("taskfail", "runs", [{k: r.get(k) for k in ("id", "role", "status", "attempt", "model_provider", "model_name", "tokens_in", "tokens_out", "cost_usd", "model_requests", "model_retries")} for r in runs])
+    out.json("taskfail", "decisions", _decisions(detail))
+    out.json("taskfail", "intents", intent_rows(detail))
+    out.json("taskfail", "events", [{k: e.get(k) for k in ("event_type", "causation_depth", "status")} for e in detail.get("events") or []])
+
+
 def step_canary(out: Out, base: str, token: str, scenario: str, decide: Optional[str], timeout: float) -> None:
     sys.path.insert(0, str(REPO / "services" / "registry"))
     from app.society.canary import CanaryRefused, observe_canary  # the runtime's own canary (HTTP-only)
@@ -819,7 +966,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit", "memory") and conn is None:
+            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail") and conn is None:
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -839,6 +986,8 @@ def main() -> int:
                 step_intents(out, base, token, args[0])
             elif name == "memory":
                 step_memory(out, conn, args[0])
+            elif name == "taskfail":
+                step_taskfail(out, base, token, conn, int(args[0]) if args else 5, timeout)
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence
             if conn is not None:
                 try:

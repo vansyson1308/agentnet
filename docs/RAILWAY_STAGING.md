@@ -395,3 +395,30 @@ deployment and the redeploy: `H01`–`H08`, `S01`–`S02`, `O01a`–`O02`, `U01a
 
 Only two consecutive clean runs on the same `main` commit yield `MANAGED STAGING — GREEN`; anything less stays
 `PARTIAL / BLOCKED` with the failing row named. **Verdict: `MANAGED STAGING — GREEN`.**
+
+## 22. Phase 5 live window (2026-09-19) — runtime ON with a real model
+
+The Society runtime and the autonomous code loop were enabled on this environment against real
+DeepSeek. Full evidence: `docs/SOCIETY_LIVE_PROOF.md`. What this section records is the
+environment's behaviour, not the Society's.
+
+| Check | Result |
+| --- | --- |
+| Two consecutive full validations, distinct actors (`staging-operator-b`, `staging-operator`) | run 24 RED on `S01` only, run 25 **GREEN (26 checks)** |
+| `S01` on run 24 | the DATABASE was correct at `0011_expire_rehearsal_memory`; the stale `EXPECTED_ALEMBIC_HEAD` **service variable** overrode the correct code default. Reconciled; run 25 PASS |
+| Society smoke, runtime ON | `SOCIETY SMOKE: PASS` — `C04 runtime_enabled == True` asserted, `C08` operator config redacts the credential, production deploy OFF |
+| Red-team, runtime ON, live model | `SOCIETY RED-TEAM: ALL DEFENDED`, both runs |
+| Proxy-header spoof (`P01`) | baseline first 429 at #73, **forged** first 429 at #1 — a forged `X-Forwarded-For` buys no fresh rate-limit bucket |
+| Wait for CI | **verified active** — every deployment sat `WAITING` until `main` CI passed, on registry and society-worker alike |
+| Migration ownership | unchanged: the registry pre-deploy is the only migration owner; head `0011_expire_rehearsal_memory` |
+| Resource / cost | 57 live runs, $0.048 of a $1.00 daily model budget; 0 retries, 0 timeouts |
+
+Two environment-level lessons:
+
+1. **`EXPECTED_ALEMBIC_HEAD` has two sources of truth** — the code default in
+   `deploy/railway/validate_staging.py` and the service variable, and the variable wins silently.
+   Update both when a migration lands.
+2. **The red-team burst is expensive with the runtime ON.** It spends the actor's hourly ingress
+   quota (§9) *and* drives the fleet into its per-role hourly run limit; the window recorded 34
+   runs correctly skipped with `global runs/hour limit reached (30/30)`. Use a fresh operator per
+   run and expect the skip reasons.
