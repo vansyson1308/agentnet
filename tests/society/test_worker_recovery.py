@@ -13,7 +13,7 @@ from services.registry.app.society.cognition import FakeModel
 from services.registry.app.society.events import emit_event, utcnow
 from services.registry.app.society.runs import claim_next_run
 from services.registry.app.society.seed import seed_society
-from services.registry.app.society.worker import SocietyWorker
+from services.registry.app.society.worker import CycleStats, SocietyWorker
 
 
 def _ev(v):
@@ -189,13 +189,97 @@ def test_daily_budget_exhausted_skips_before_model_call(db, SessionLocal, monkey
     assert len(model.calls) == 1
 
 
-def test_agent_cooldown_skips_second_wake(db, SessionLocal, society_settings, monkeypatch):
-    seed_society(db)  # default cooldown 30s for scout
+def _set_scout_cooldown(db, seconds: int) -> None:
+    for g in db.query(AgentCapabilityGrant).filter(AgentCapabilityGrant.role == "scout").all():
+        g.wake_cooldown_seconds = seconds
+    db.commit()
+
+
+def test_agent_cooldown_defers_second_wake_instead_of_dropping_the_event(db, SessionLocal, society_settings):
+    """Phase 5 Gate A finding: a world event that arrives inside the agent's
+    wake cooldown must not be dropped. The run is handed back to the queue
+    with a not_before (no attempt consumed, event stays DISPATCHED) and runs
+    once the cooldown has elapsed."""
+    import time
+
+    seed_society(db)
+    _set_scout_cooldown(db, 2)
     model = FakeModel([{"decision_summary": "n", "intents": []}] * 2)
     ev1, worker, _ = _emit_and_run(db, SessionLocal, society_settings, model)
-    ev2, worker, _ = _emit_and_run(db, SessionLocal, society_settings, model)
+    worker2 = SocietyWorker(SessionLocal, settings=society_settings, model=model, worker_id="w-test")
+    worker2.routing = {"t.scout": ["scout"]}
+    ev2 = emit_event(db, event_type="t.scout", payload={})
+    db.commit()
+    stats = asyncio.run(worker2.run_until_idle(max_cycles=1, wait_for_backoff=False))
+    db.expire_all()
     r2 = db.query(AgentRun).filter(AgentRun.event_id == ev2.id).first()
-    assert _ev(r2.status) == "skipped" and "cooldown" in r2.error
+    assert stats.runs_deferred == 1 and stats.runs_skipped == 0
+    assert _ev(r2.status) == "queued" and r2.not_before is not None and r2.not_before > utcnow()
+    assert r2.attempt == 0 and r2.worker_id is None and r2.error.startswith("deferred: agent wake cooldown")
+    assert _ev(db.query(SocietyEvent).filter(SocietyEvent.id == ev2.id).first().status) == "dispatched", "the event is not finalised"
+    assert len(model.calls) == 1, "no model call during the cooldown"
+    time.sleep(2.2)
+    asyncio.run(worker2.run_until_idle(max_cycles=5, wait_for_backoff=False))
+    db.expire_all()
+    r2 = db.query(AgentRun).filter(AgentRun.event_id == ev2.id).first()
+    assert _ev(r2.status) == "completed" and r2.attempt == 1
+    assert _ev(db.query(SocietyEvent).filter(SocietyEvent.id == ev2.id).first().status) == "processed"
+    assert len(model.calls) == 2
+
+
+def test_cooldown_deferral_is_bounded_by_the_event_ttl(db, SessionLocal, society_settings, monkeypatch):
+    """A run that has waited longer than SOCIETY_EVENT_TTL_SECONDS is skipped
+    with the reason recorded (never deferred forever)."""
+    seed_society(db)
+    _set_scout_cooldown(db, 3600)
+    model = FakeModel([{"decision_summary": "n", "intents": []}] * 2)
+    ev1, worker, _ = _emit_and_run(db, SessionLocal, society_settings, model)
+    settings = _settings(monkeypatch, SOCIETY_EVENT_TTL_SECONDS="60")
+    worker2 = SocietyWorker(SessionLocal, settings=settings, model=model, worker_id="w-test")
+    worker2.routing = {"t.scout": ["scout"]}
+    ev2 = emit_event(db, event_type="t.scout", payload={})
+    db.commit()
+    worker2.dispatch(CycleStats())
+    r2 = db.query(AgentRun).filter(AgentRun.event_id == ev2.id).first()
+    r2.created_at = utcnow() - timedelta(seconds=120)
+    db.commit()
+    stats = asyncio.run(worker2.run_until_idle(max_cycles=1, wait_for_backoff=False))
+    db.expire_all()
+    r2 = db.query(AgentRun).filter(AgentRun.event_id == ev2.id).first()
+    assert stats.runs_skipped == 1 and stats.runs_deferred == 0
+    assert _ev(r2.status) == "skipped" and "deferred past the event TTL" in r2.error
+    assert len(model.calls) == 1
+
+
+def test_model_supplied_references_are_validated_never_trusted(db, SessionLocal, society_settings, grants_with_no_cooldown):
+    """Phase 5 Gate A finding: the live model fabricated a source_task_id and
+    the executor crashed on a foreign key. Fabricated ids fail the intent with
+    a clear reason; the transaction and the rest of the run survive."""
+    import uuid
+
+    seed_society(db)
+    grants_with_no_cooldown()
+    ghost = str(uuid.uuid4())
+    model = FakeModel(
+        [
+            {
+                "decision_summary": "remember with a made-up task reference",
+                "intents": [
+                    {"type": "WRITE_MEMORY", "payload": {"title": "ghost ref", "content": "x", "scope": "agent", "source_task_id": ghost}},
+                    {"type": "CREATE_IMPROVEMENT", "payload": {"title": "ghost proposal", "problem": "p", "proposed_change": "c", "source_task_id": ghost}},
+                    {"type": "WRITE_MEMORY", "payload": {"title": "clean", "content": "no reference", "scope": "agent"}},
+                ],
+                "sleep_for_seconds": 1,
+            }
+        ]
+    )
+    ev, worker, stats = _emit_and_run(db, SessionLocal, society_settings, model)
+    run = db.query(AgentRun).filter(AgentRun.event_id == ev.id).first()
+    assert _ev(run.status) == "completed"
+    intents = db.query(AgentIntent).filter(AgentIntent.run_id == run.id).order_by(AgentIntent.seq).all()
+    assert [_ev(i.execution_status) for i in intents] == ["failed", "failed", "executed"]
+    for i in intents[:2]:
+        assert "source_task_id does not reference an existing task" in i.error and "IntegrityError" not in i.error
     assert len(model.calls) == 1
 
 

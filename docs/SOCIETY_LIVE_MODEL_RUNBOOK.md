@@ -100,6 +100,8 @@ docker exec agentnet-staging-registry python -m app.society.canary gate --role s
 | --- | --- | --- |
 | 1 single agent | `staging.canary.signal` (Scout) | ≥1 completed run, `model_provider=openai_compatible`, model name as configured, no DEAD run |
 | 2 multi-agent | `platform.metric.anomaly` | ≥2 roles completed runs, ≥1 causation-linked follow-up event |
+
+Stories injected back-to-back are paced by the driver (§3.1) past the fleet's longest wake cooldown; if one lands inside a cooldown anyway the runtime defers the run (`not_before`, event stays `dispatched`) instead of dropping it. Every model-supplied identifier (`source_task_id`, `proposal_id`, `goal_id`, `task_id`) is validated by the executor before it reaches a foreign key: a fabricated id fails that one intent with a clear reason and the run continues.
 | 3 approval | `platform.metric.anomaly` + gate | intent parked `awaiting_approval`; after `approve` → `executed` (resumed, model not re-called); after `reject` → `rejected`, never executed; `intent_approvals` row present |
 
 Reports contain run ids, roles, statuses, provider/model, tokens, cost, request/retry/timeout

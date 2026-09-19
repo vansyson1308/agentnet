@@ -67,6 +67,7 @@ from .runs import (
     complete_run,
     dispatch_pending_events,
     extend_lease,
+    defer_run,
     fail_run,
     mark_running,
     next_wake_deadline,
@@ -126,6 +127,7 @@ class CycleStats:
     runs_processed: int = 0
     runs_completed: int = 0
     runs_skipped: int = 0
+    runs_deferred: int = 0
     runs_failed: int = 0
     runs_dead: int = 0
     intents_executed: int = 0
@@ -484,7 +486,20 @@ class SocietyWorker:
                 return "dead"
             gate = check_run_budget(db, agent=agent, grant=grant, settings=self.settings, run=run)
             if not gate.ok:
-                skip_run(db, run, gate.reason)
+                now = utcnow()
+                created = run.created_at if run.created_at is not None else now
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=now.tzinfo)
+                age = (now - created).total_seconds()
+                if gate.retry_after_seconds and age <= self.settings.event_ttl_seconds:
+                    # Temporal refusal: keep the event, wake later (bounded by the TTL).
+                    defer_run(db, run, gate.reason, retry_after_seconds=gate.retry_after_seconds, now=now)
+                    M_RUNS.labels(status="deferred").inc()
+                    if stats:
+                        stats.runs_deferred += 1
+                    return "deferred"
+                reason = gate.reason if not gate.retry_after_seconds else f"{gate.reason}; deferred past the event TTL ({int(age)}s)"
+                skip_run(db, run, reason, now=now)
                 M_RUNS.labels(status="skipped").inc()
                 if stats:
                     stats.runs_skipped += 1

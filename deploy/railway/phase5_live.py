@@ -156,6 +156,21 @@ def gate_list(allowed: Sequence[str], current: Sequence[str], intent: str) -> Li
     return out
 
 
+def seconds_to_wait(last_completed_iso: Optional[str], cooldown_seconds: int, now: datetime, margin_seconds: int = 5) -> int:
+    """Seconds until the fleet's wake cooldown has elapsed since the last
+    completed run (0 when no run or already elapsed). Canaries injected inside
+    the cooldown would be deferred by the runtime, which only slows the story."""
+    if not last_completed_iso:
+        return 0
+    try:
+        last = datetime.fromisoformat(str(last_completed_iso).replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return max(0, int(cooldown_seconds + margin_seconds - (now - last).total_seconds()))
+
+
 def private_keys_in(obj: Any) -> List[str]:
     """Names of PRIVATE_KEYS appearing as dict keys anywhere in a public response."""
     found: List[str] = []
@@ -466,6 +481,23 @@ def step_gate(out: Out, conn, role: str, intent: str) -> None:
     out.check("gate", "G01", list(final or []) == new, f"role={role.lower()} approval_required_intents={final}")
 
 
+def pace_for_cooldown(out: Out, step: str, base: str, token: str) -> None:
+    """Sleep (bounded) until every role's wake cooldown has elapsed since the
+    fleet's last completed run, so back-to-back stories are not deferred."""
+    cooldown = 30
+    st, cfg = api("GET", f"{base}/v1/society/config", token)
+    if st == 200 and isinstance(cfg, dict):
+        roles = cfg.get("roles") or {}
+        values = [int((r or {}).get("wake_cooldown_seconds") or 0) for r in roles.values()] if isinstance(roles, dict) else []
+        cooldown = max(values) if values else cooldown
+    st, status_body = api("GET", f"{base}/v1/society/status", None)
+    last = status_body.get("last_run_completed_at") if isinstance(status_body, dict) else None
+    wait = min(seconds_to_wait(last, cooldown, _now()), 180)
+    if wait:
+        out.info(step, f"pacing: sleeping {wait}s so the fleet's wake cooldown ({cooldown}s) has elapsed since the last completed run")
+        time.sleep(wait)
+
+
 def _decisions(base: str, token: str, correlation: str) -> List[Dict[str, Any]]:
     st, detail = api("GET", f"{base}/v1/society/story/{correlation}/detail", token)
     if st != 200 or not isinstance(detail, dict):
@@ -477,6 +509,7 @@ def step_canary(out: Out, base: str, token: str, scenario: str, decide: Optional
     sys.path.insert(0, str(REPO / "services" / "registry"))
     from app.society.canary import CanaryRefused, observe_canary  # the runtime's own canary (HTTP-only)
 
+    pace_for_cooldown(out, "canary", base, token)
     try:
         rep = observe_canary(base, token, scenario=scenario, decide=decide, timeout_seconds=timeout, poll_seconds=5.0)
     except CanaryRefused as exc:
@@ -513,6 +546,7 @@ def step_signal(out: Out, base: str, token: str, *, expect_candidate: bool, time
     if expect_candidate and not status_body.get("autonomous_code_enabled"):
         out.check("signal", "I01", False, "autonomous code loop is disabled; a candidate cannot be expected")
         return
+    pace_for_cooldown(out, "signal", base, token)
     tag = uuid.uuid4().hex[:8]
     correlation = str(uuid.uuid4())
     st, ev = api("POST", f"{base}/v1/society/events", token, {"event_type": etype, "payload": payload, "correlation_id": correlation, "idempotency_key": f"phase5-signal-{tag}"})

@@ -194,3 +194,18 @@ def test_driver_never_prints_tokens_or_secrets():
     assert "SOCIETY_MODEL_API_KEY" not in text, "the driver never even names the model credential"
     # every log line goes through scrub()
     assert text.count("def scrub(") == 1 and "scrub(detail)" in text and "text = scrub(json.dumps(" in text
+
+
+def test_driver_paces_stories_past_the_fleet_cooldown():
+    from datetime import datetime, timezone
+
+    d = _driver()
+    now = datetime(2026, 9, 19, 8, 24, 0, tzinfo=timezone.utc)
+    assert d.seconds_to_wait(None, 30, now) == 0
+    assert d.seconds_to_wait("garbage", 30, now) == 0
+    assert d.seconds_to_wait("2026-09-19T08:23:50+00:00", 30, now) == 25
+    assert d.seconds_to_wait("2026-09-19T08:23:50Z", 30, now, margin_seconds=0) == 20
+    assert d.seconds_to_wait("2026-09-19T08:23:00", 30, now) == 0, "naive timestamps are UTC; elapsed cooldown waits 0"
+    text = DRIVER.read_text(encoding="utf-8")
+    assert text.count("pace_for_cooldown(out, ") == 2, "canary and signal steps both pace before injecting"
+
