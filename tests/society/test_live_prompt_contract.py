@@ -41,8 +41,11 @@ def test_schema_doc_documents_nested_payload_models():
     assert doc["SUBMIT_CODE_CANDIDATE"]["edits"] == [{"path": "string", "content": "string"}]
     evidence = doc["CREATE_IMPROVEMENT"]["evidence"]
     assert set(evidence) >= {"signal", "baseline", "observed", "window", "sample_size", "actionable_reason"}
-    assert doc["SEND_MESSAGE"]["to_agent"] == "string", "Optional[str] renders as its non-null arm"
-    assert "null" not in json.dumps(doc), "Optional fields never surface their null arm"
+    assert doc["SEND_MESSAGE"]["to_agent"] == "string|null", "Optional[str] says it may be null"
+    assert doc["WRITE_MEMORY"]["source_task_id"] == "uuid|null" and doc["SEND_MESSAGE"]["thread_id"] == "uuid|null", "optional uuid references are documented as uuid-or-null, never a free string"
+    assert doc["REQUEST_CODE_CHANGE"]["proposal_id"] == "uuid|null" and doc["READ_REPO_FILE"]["candidate_id"] == "uuid|null"
+    assert doc["REVIEW_IMPROVEMENT"]["proposal_id"] == "uuid", "required uuid references are documented as uuid"
+    assert doc["WRITE_MEMORY"]["title"] == "string" and doc["WRITE_MEMORY"]["importance"] == "integer", "required scalars stay bare"
     assert len(_schemas_doc()) < 6000, "the schema block stays a bounded part of every prompt"
 
 

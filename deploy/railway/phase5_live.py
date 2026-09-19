@@ -30,6 +30,7 @@ never stops the plan so the evidence of the later steps is still recorded):
     signal[:candidate]            inject PHASE5_SIGNAL_TYPE + PHASE5_SIGNAL_JSON as ONE world event and
                                   follow the story until idle; `candidate` also asserts the engineering chain
     audit[:<hours>]               quality / loop / economics / secret / public-surface audit (default 24 h)
+    intents:<correlation-id>      per-intent policy/validation reasons + decision summaries of one story (diagnosis)
 
 Environment (never printed):
     REGISTRY_PUBLIC_URL, POSTGRES_*, STAGING_VALIDATOR_SECRET, VALIDATOR_OPERATOR_EMAIL   as validate_staging.py
@@ -61,7 +62,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -124,6 +125,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("signal[:candidate]")
         if name == "audit" and args and not args[0].isdigit():
             raise ValueError("audit[:<hours>]")
+        if name == "intents" and (len(args) != 1 or not re.fullmatch(r"[0-9a-fA-F-]{32,36}", args[0])):
+            raise ValueError("intents:<correlation-id>")
         plan.append((name, args))
     if not plan:
         raise ValueError("PHASE5_PLAN is empty")
@@ -169,6 +172,32 @@ def seconds_to_wait(last_completed_iso: Optional[str], cooldown_seconds: int, no
     if last.tzinfo is None:
         last = last.replace(tzinfo=timezone.utc)
     return max(0, int(cooldown_seconds + margin_seconds - (now - last).total_seconds()))
+
+
+def intent_rows(detail: Dict[str, Any], *, reason_chars: int = 300) -> List[Dict[str, Any]]:
+    """Structural per-intent rows of a story detail: type, risk, policy and
+    execution decisions, the TRUSTED policy/validation reason and executor
+    error (scrubbed, bounded) and the payload's key names — never its values."""
+    rows: List[Dict[str, Any]] = []
+    for r in detail.get("runs") or []:
+        for i in r.get("intents") or []:
+            payload = i.get("payload")
+            rows.append(
+                {
+                    "run": str(r.get("id") or "")[:8],
+                    "role": r.get("role"),
+                    "seq": i.get("seq"),
+                    "type": i.get("intent_type"),
+                    "risk": i.get("risk_class"),
+                    "policy": i.get("policy_decision"),
+                    "execution": i.get("execution_status"),
+                    "reason": scrub(str(i.get("policy_reason") or ""))[:reason_chars],
+                    "error": scrub(str(i.get("error") or ""))[:reason_chars] or None,
+                    "payload_keys": sorted(payload.keys()) if isinstance(payload, dict) else None,
+                    "approval": (i.get("approval") or {}).get("decision"),
+                }
+            )
+    return rows
 
 
 def private_keys_in(obj: Any) -> List[str]:
@@ -498,11 +527,24 @@ def pace_for_cooldown(out: Out, step: str, base: str, token: str) -> None:
         time.sleep(wait)
 
 
-def _decisions(base: str, token: str, correlation: str) -> List[Dict[str, Any]]:
+def _story_detail(base: str, token: str, correlation: str) -> Dict[str, Any]:
     st, detail = api("GET", f"{base}/v1/society/story/{correlation}/detail", token)
-    if st != 200 or not isinstance(detail, dict):
-        return []
-    return [{"role": r.get("role"), "status": r.get("status"), "model": r.get("model_name"), "summary": (r.get("decision_summary") or "")[:240], "intents": [i.get("intent_type") for i in r.get("intents") or []]} for r in detail.get("runs") or []]
+    return detail if st == 200 and isinstance(detail, dict) else {}
+
+
+def _decisions(detail: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [{"role": r.get("role"), "status": r.get("status"), "model": r.get("model_name"), "summary": scrub(r.get("decision_summary") or "")[:400], "intents": [i.get("intent_type") for i in r.get("intents") or []]} for r in detail.get("runs") or []]
+
+
+def step_intents(out: Out, base: str, token: str, correlation: str) -> None:
+    detail = _story_detail(base, token, correlation)
+    ok = bool(detail)
+    out.check("intents", "D01", ok, f"story detail for {correlation[:8]} {'read' if ok else 'unavailable'}")
+    if not ok:
+        return
+    out.json("intents", f"{correlation[:8]}.intents", intent_rows(detail))
+    out.json("intents", f"{correlation[:8]}.decisions", _decisions(detail))
+    out.json("intents", f"{correlation[:8]}.events", [{k: e.get(k) for k in ("event_type", "causation_depth", "status")} for e in detail.get("events") or []])
 
 
 def step_canary(out: Out, base: str, token: str, scenario: str, decide: Optional[str], timeout: float) -> None:
@@ -521,7 +563,9 @@ def step_canary(out: Out, base: str, token: str, scenario: str, decide: Optional
     out.json("canary", f"{scenario}.intents", d.get("intents"))
     out.json("canary", f"{scenario}.events", d.get("events"))
     out.json("canary", f"{scenario}.approvals", d.get("approvals"))
-    out.json("canary", f"{scenario}.decisions", _decisions(base, token, rep.correlation_id))
+    detail = _story_detail(base, token, rep.correlation_id)
+    out.json("canary", f"{scenario}.decisions", _decisions(detail))
+    out.json("canary", f"{scenario}.intent_reasons", intent_rows(detail))
     out.check("canary", scenario + (f":{decide}" if decide else ""), rep.verdict == "PASS", f"verdict={rep.verdict} model={rep.model_name} runs={d.get('totals', {}).get('runs_completed')}/{d.get('totals', {}).get('runs')} reasons={rep.reasons}")
 
 
@@ -723,6 +767,8 @@ def main() -> int:
                 step_signal(out, base, token, expect_candidate=bool(args), timeout=float(vs.env("PHASE5_TIMEOUT", "1800") or 1800), decide=decide if decide in DECISIONS else None)
             elif name == "audit":
                 step_audit(out, base, token, conn, int(args[0]) if args else 24)
+            elif name == "intents":
+                step_intents(out, base, token, args[0])
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence
             if conn is not None:
                 try:

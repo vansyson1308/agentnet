@@ -845,7 +845,13 @@ def _schema_type(v: Dict[str, Any], defs: Dict[str, Any], depth: int) -> Any:
         return str(v["const"])
     if "anyOf" in v:
         arms = [_schema_type(a, defs, depth) for a in v["anyOf"] if a.get("type") != "null"]
-        return arms[0] if len(arms) == 1 else arms
+        nullable = any(a.get("type") == "null" for a in v["anyOf"])
+        inner = arms[0] if len(arms) == 1 else arms
+        # Optional fields say so: a model that cannot supply a value sends null,
+        # never "" (an empty string is not a uuid and fails validation).
+        return f"{inner}|null" if nullable and isinstance(inner, str) else inner
+    if v.get("format") == "uuid":
+        return "uuid"
     t = v.get("type")
     if t == "array":
         items = v.get("items") or {}
