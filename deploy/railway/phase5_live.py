@@ -62,7 +62,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -127,6 +127,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("audit[:<hours>]")
         if name == "intents" and (len(args) != 1 or not re.fullmatch(r"[0-9a-fA-F-]{32,36}", args[0])):
             raise ValueError("intents:<correlation-id>")
+        if name == "memory" and (len(args) != 1 or not re.fullmatch(r"[a-z_]{2,32}", args[0])):
+            raise ValueError("memory:<role>")
         plan.append((name, args))
     if not plan:
         raise ValueError("PHASE5_PLAN is empty")
@@ -536,6 +538,72 @@ def _decisions(detail: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [{"role": r.get("role"), "status": r.get("status"), "model": r.get("model_name"), "summary": scrub(r.get("decision_summary") or "")[:400], "intents": [i.get("intent_type") for i in r.get("intents") or []]} for r in detail.get("runs") or []]
 
 
+def memory_view(cur, agent_name: str, limit: int = 30) -> Dict[str, Any]:
+    """Read-only view of the memory ONE role reads back as prior experience.
+
+    Memory is the only runtime state a finished run leaves behind for the next
+    one, so a rehearsal that writes "this was non-actionable" changes every
+    later decision on a similar signal. Titles are model-authored text: they
+    are scrubbed and bounded like any other untrusted string, and contents are
+    never read."""
+    rows = _rows(
+        cur,
+        """
+        SELECT m.scope::text, m.title, m.created_at, m.expires_at, m.importance,
+               m.confidence, m.validation_state, m.source_type, m.correlation_id
+        FROM memory_items m
+        LEFT JOIN agents a ON a.id = m.agent_id
+        WHERE (a.name = %s OR m.scope::text = 'SOCIETY')
+          AND (m.expires_at IS NULL OR m.expires_at > now())
+        ORDER BY m.created_at DESC
+        LIMIT %s
+        """,
+        (agent_name, limit),
+    )
+    live = [
+        {
+            "scope": r[0],
+            "title": scrub(str(r[1]))[:160],
+            "created_at": r[2].isoformat() if r[2] else None,
+            "expires_at": r[3].isoformat() if r[3] else None,
+            "importance": int(r[4] or 0),
+            "confidence": int(r[5] or 0),
+            "validation": r[6],
+            "source": r[7],
+            "correlation": str(r[8])[:8] if r[8] else None,
+        }
+        for r in rows
+    ]
+    totals = _rows(
+        cur,
+        """
+        SELECT count(*),
+               count(*) FILTER (WHERE m.expires_at IS NOT NULL),
+               count(DISTINCT m.correlation_id)
+        FROM memory_items m
+        LEFT JOIN agents a ON a.id = m.agent_id
+        WHERE (a.name = %s OR m.scope::text = 'SOCIETY')
+          AND (m.expires_at IS NULL OR m.expires_at > now())
+        """,
+        (agent_name,),
+    )[0]
+    return {
+        "agent": agent_name,
+        "live_rows": int(totals[0]),
+        "rows_with_expiry": int(totals[1]),
+        "distinct_correlations": int(totals[2]),
+        "newest": live,
+    }
+
+
+def step_memory(out: Out, conn, role: str) -> None:
+    agent_name = "Society_" + role.capitalize()
+    with conn.cursor() as cur:
+        view = memory_view(cur, agent_name)
+    out.check("memory", "M01", True, f"{agent_name}: {view['live_rows']} live memory row(s) from {view['distinct_correlations']} correlation(s), {view['rows_with_expiry']} with an expiry")
+    out.json("memory", f"{role}.view", view)
+
+
 def step_intents(out: Out, base: str, token: str, correlation: str) -> None:
     detail = _story_detail(base, token, correlation)
     ok = bool(detail)
@@ -751,7 +819,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit") and conn is None:
+            if name in ("baseline", "fund", "gate", "audit", "memory") and conn is None:
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -769,6 +837,8 @@ def main() -> int:
                 step_audit(out, base, token, conn, int(args[0]) if args else 24)
             elif name == "intents":
                 step_intents(out, base, token, args[0])
+            elif name == "memory":
+                step_memory(out, conn, args[0])
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence
             if conn is not None:
                 try:
