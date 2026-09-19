@@ -38,14 +38,18 @@ def test_schema_doc_documents_nested_payload_models():
     assert isinstance(spec, dict), "CodeChangeSpec must be inlined, not an empty string"
     assert spec["files_allowed"] == ["string"] and spec["acceptance_tests"] == ["string"]
     assert spec["kind"] == "docs|test_fixture|code" and spec["must_compile"] == "boolean"
-    assert doc["SUBMIT_CODE_CANDIDATE"]["edits"] == [{"path": "string", "content": "string"}]
+    edits = doc["SUBMIT_CODE_CANDIDATE"]["edits"]
+    assert isinstance(edits, list) and len(edits) == 1 and isinstance(edits[0], dict), "FileEdit must be inlined inside the array"
+    assert set(edits[0]) == {"path", "content"} and all(v.startswith("string") for v in edits[0].values())
     evidence = doc["CREATE_IMPROVEMENT"]["evidence"]
     assert set(evidence) >= {"signal", "baseline", "observed", "window", "sample_size", "actionable_reason"}
-    assert doc["SEND_MESSAGE"]["to_agent"] == "string|null", "Optional[str] says it may be null"
+    assert doc["SEND_MESSAGE"]["to_agent"] == "string(<=255 chars)|null", "Optional[str] says it may be null, and its bound"
     assert doc["WRITE_MEMORY"]["source_task_id"] == "uuid|null" and doc["SEND_MESSAGE"]["thread_id"] == "uuid|null", "optional uuid references are documented as uuid-or-null, never a free string"
     assert doc["REQUEST_CODE_CHANGE"]["proposal_id"] == "uuid|null" and doc["READ_REPO_FILE"]["candidate_id"] == "uuid|null"
     assert doc["REVIEW_IMPROVEMENT"]["proposal_id"] == "uuid", "required uuid references are documented as uuid"
-    assert doc["WRITE_MEMORY"]["title"] == "string" and doc["WRITE_MEMORY"]["importance"] == "integer", "required scalars stay bare"
+    # Scalars carry the bounds the typed parser enforces; see
+    # test_every_enforced_scalar_bound_is_stated_in_the_prompt for why.
+    assert doc["WRITE_MEMORY"]["title"] == "string(1..255 chars)" and doc["WRITE_MEMORY"]["importance"] == "integer(0..100)"
     assert len(_schemas_doc()) < 6000, "the schema block stays a bounded part of every prompt"
 
 
@@ -132,3 +136,94 @@ def test_validate_intents_records_the_normalised_payload_as_valid():
     assert len(validated) == 1 and validated[0].valid, validated[0].error
     assert validated[0].payload.source_task_id is None
     assert validated[0].raw_payload["source_task_id"] == ""  # the audit trail keeps what the model actually sent
+
+
+def _constrained_scalar_fields() -> dict:
+    """Every scalar field in every intent payload schema that carries a bound
+    the typed parser enforces, as ``"INTENT.path" -> {constraint: value}``."""
+    from services.registry.app.society.intents import ALLOWED_INTENT_TYPES, PAYLOAD_MODELS
+
+    scalar = {"minLength", "maxLength", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"}
+    found: dict = {}
+
+    def walk(node, defs, path):
+        if not isinstance(node, dict):
+            return
+        if "$ref" in node:
+            walk(defs.get(str(node["$ref"]).rsplit("/", 1)[-1]) or {}, defs, path)
+            return
+        hit = {k: node[k] for k in scalar if k in node}
+        if hit:
+            found.setdefault(path, {}).update(hit)
+        for arm in node.get("anyOf") or []:
+            walk(arm, defs, path)
+        for name, sub in (node.get("properties") or {}).items():
+            walk(sub, defs, f"{path}.{name}")
+
+    for t in ALLOWED_INTENT_TYPES:
+        schema = PAYLOAD_MODELS[t].model_json_schema()
+        walk(schema, schema.get("$defs") or {}, t.value)
+    return found
+
+
+def _rendered(doc: dict, path: str):
+    node = doc
+    for part in path.split(".")[1:]:
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node
+
+
+def test_every_enforced_scalar_bound_is_stated_in_the_prompt():
+    """A bound the model cannot see is a trap: ``parse_intent`` denies the
+    intent outright and never asks again. A live Scout lost a well-formed
+    CREATE_IMPROVEMENT to ``evidence.signal``'s undocumented maxLength=128
+    while the prompt promised "payloads must match the documented schema".
+    """
+    doc = _doc_lines()
+    constrained = _constrained_scalar_fields()
+    assert constrained, "the payload models carry bounds; this test is pointless if not"
+
+    missing = []
+    for path, bounds in sorted(constrained.items()):
+        intent = path.split(".")[0]
+        if intent not in doc:
+            continue
+        text = _rendered(doc[intent], path)
+        if not isinstance(text, str):
+            missing.append(f"{path}: not rendered as a scalar ({text!r})")
+            continue
+        for key in ("maxLength", "maximum", "minLength", "minimum", "exclusiveMinimum", "exclusiveMaximum"):
+            if key in bounds and str(bounds[key]) not in text:
+                missing.append(f"{path}: {key}={bounds[key]} absent from {text!r}")
+    assert not missing, "bounds enforced but never shown to the model:\n" + "\n".join(missing)
+
+
+def test_the_bound_that_denied_a_live_intent_is_rendered_exactly():
+    doc = _doc_lines()
+    assert doc["CREATE_IMPROVEMENT"]["evidence"]["signal"] == "string(1..128 chars)"
+    assert doc["CREATE_IMPROVEMENT"]["evidence"]["baseline"] == "string(<=200 chars)|null"
+    assert doc["CREATE_IMPROVEMENT"]["evidence"]["sample_size"] == "integer(>=0)|null"
+    assert doc["CREATE_IMPROVEMENT"]["importance"] == "integer(0..100)"
+    # the same field one step later in the chain carried the same silent trap
+    assert doc["REQUEST_CODE_CHANGE"]["spec"]["signal"] == "string(<=128 chars)|null"
+
+
+def test_the_prompt_says_the_bounds_are_hard_and_not_retried():
+    from services.registry.app.society.cognition import SYSTEM_PROMPT
+
+    assert "string(1..128 chars)" in SYSTEM_PROMPT
+    assert "NOT asked again" in SYSTEM_PROMPT
+
+
+def test_structure_of_non_scalar_renderings_is_unchanged():
+    """The bound annotation must not disturb the shapes the prompt already
+    documented: enums, uuids, arrays, booleans and inlined nested models."""
+    doc = _doc_lines()
+    spec = doc["REQUEST_CODE_CHANGE"]["spec"]
+    assert spec["files_allowed"] == ["string"] and spec["acceptance_tests"] == ["string"]
+    assert spec["kind"] == "docs|test_fixture|code" and spec["must_compile"] == "boolean"
+    assert doc["CREATE_IMPROVEMENT"]["target_scope"] == "agent|platform"
+    assert doc["CREATE_IMPROVEMENT"]["source_task_id"] == "uuid|null"
+    assert isinstance(doc["CREATE_IMPROVEMENT"]["evidence"], dict)
