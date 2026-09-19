@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from ..models import SocietyEvent, SocietyEventStatus
+from .ids import CANARY_IDEMPOTENCY_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,36 @@ class EventType:
     DEPLOYMENT_REQUESTED = "deployment.requested"
     DEPLOYMENT_BLOCKED = "deployment.blocked"
     DEPLOYMENT_REFUSED = "deployment.refused"
+
+
+# ── rehearsal (canary) provenance ──────────────────────────────────────
+# A canary is a REHEARSAL: it injects one world event so the live fleet can be
+# observed end to end. Everything it causes is real (real runs, real model
+# calls, real policy decisions) except its premise, so the one thing it must
+# not do is leave permanent state behind. Memory is exactly that: the only
+# runtime state a finished run hands to the next one. Gate A runs 12 and 14
+# showed the cost — every rehearsal wrote "this signal was non-actionable",
+# and the Scout then read its own residue back as prior experience and
+# declined to act, on the rehearsal AND on anything resembling it.
+#
+# The marker is the injected event's idempotency key, which is set by the
+# canary (or an operator) and is never visible to the model, so a model
+# cannot make its own memory ephemeral.
+REHEARSAL_MEMORY_TTL_SECONDS = 3600
+
+
+def is_rehearsal_correlation(db: Session, correlation_id: Optional[uuid.UUID]) -> bool:
+    """True when a canary rehearsal started this correlation."""
+    if correlation_id is None:
+        return False
+    row = db.execute(
+        text(
+            "SELECT 1 FROM society_events WHERE correlation_id = :cid "
+            "AND idempotency_key LIKE :prefix LIMIT 1"
+        ),
+        {"cid": str(correlation_id), "prefix": CANARY_IDEMPOTENCY_PREFIX + "%"},
+    ).first()
+    return row is not None
 
 
 def utcnow() -> datetime:

@@ -124,3 +124,76 @@ def test_trusted_experiment_memory_is_validated_and_agents_cannot_forge_it(db):
     assert "validation_state" not in WriteMemoryPayload.model_fields
     assert "source_type" not in WriteMemoryPayload.model_fields
     assert "confidence" not in WriteMemoryPayload.model_fields
+
+
+# ── Gate A runs 12/14 (Railway staging, real DeepSeek): a canary rehearsal left
+# permanent memory behind. The Scout read its own residue back as prior
+# experience ("prior runs already triaged this family as non-actionable") and
+# declined to act. A rehearsal is real in every way except its premise, so the
+# one thing it must not do is train the fleet for good.
+
+
+def _one_memory_run(db, SessionLocal, society_settings, *, title, event_type, idempotency_key):
+    """Drive ONE real run that writes ONE memory row, and return that row."""
+    seed_society(db)
+    script = {"scout": [{"decision_summary": "triaged", "intents": [{"type": "WRITE_MEMORY", "payload": {"title": title, "content": "observed and recorded", "scope": "agent", "importance": 2}}], "sleep_for_seconds": 1}]}
+    ev = emit_event(db, event_type=event_type, idempotency_key=idempotency_key)
+    db.commit()
+    w = SocietyWorker(SessionLocal, settings=society_settings, model=FakeModel(script), worker_id="w", telemetry_enabled=False)
+    w.routing = {event_type: ["scout"]}
+    asyncio.run(w.run_until_idle(max_cycles=3))
+    return db.query(MemoryItem).filter(MemoryItem.title == title).one(), ev
+
+
+def test_memory_written_under_a_rehearsal_correlation_expires_with_it(db, SessionLocal, society_settings, grants_with_no_cooldown):
+    from services.registry.app.society.events import REHEARSAL_MEMORY_TTL_SECONDS, utcnow
+    from services.registry.app.society.ids import CANARY_IDEMPOTENCY_PREFIX
+
+    grants_with_no_cooldown()
+    before = utcnow()
+    item, _ = _one_memory_run(
+        db, SessionLocal, society_settings,
+        title="Canary signal triage: t1",
+        event_type="staging.canary.signal",
+        idempotency_key=CANARY_IDEMPOTENCY_PREFIX + "single-t1",
+    )
+    assert item.expires_at is not None, "rehearsal memory must not be permanent"
+    ttl = (item.expires_at - before).total_seconds()
+    assert 0 < ttl <= REHEARSAL_MEMORY_TTL_SECONDS + 5
+
+
+def test_memory_from_a_real_signal_keeps_no_expiry(db, SessionLocal, society_settings, grants_with_no_cooldown):
+    grants_with_no_cooldown()
+    item, _ = _one_memory_run(
+        db, SessionLocal, society_settings,
+        title="Anomaly triage: task_failure_rate",
+        event_type="platform.metric.anomaly",
+        idempotency_key="telemetry:task_failure_rate:1",
+    )
+    assert item.expires_at is None, "a real signal's lesson is durable"
+
+
+def test_a_model_cannot_make_its_own_memory_ephemeral(db, SessionLocal, society_settings, grants_with_no_cooldown):
+    """The marker is the INJECTED event's idempotency key, which trusted code
+    sets; nothing a model or a payload says can forge a rehearsal."""
+    grants_with_no_cooldown()
+    item, _ = _one_memory_run(
+        db, SessionLocal, society_settings,
+        title="Forged rehearsal",
+        event_type="platform.metric.anomaly",
+        idempotency_key="telemetry:forged:2",
+    )
+    assert item.expires_at is None, "a payload claiming to be a canary must not shorten memory life"
+
+
+def test_the_canary_marks_its_injected_event_as_a_rehearsal():
+    """Both canary injection paths (in-process and HTTP) must use the prefix the
+    runtime looks for, or the rehearsal is indistinguishable from the world."""
+    import pathlib as _pl
+
+    from services.registry.app.society.ids import CANARY_IDEMPOTENCY_PREFIX
+
+    src = (_pl.Path(__file__).resolve().parents[2] / "services/registry/app/society/canary.py").read_text()
+    assert src.count("CANARY_IDEMPOTENCY_PREFIX + f\"{scenario}-{tag}\"") == 2
+    assert 'idempotency_key=f"canary-' not in src, "the literal prefix must not be re-spelled"
+    assert CANARY_IDEMPOTENCY_PREFIX == "canary-"

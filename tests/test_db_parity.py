@@ -65,7 +65,7 @@ FRESH_DB = os.getenv("PARITY_FRESH_DB", "agentnet_parity_fresh")
 UPGRADE_DB = os.getenv("PARITY_UPGRADE_DB", "agentnet_parity_upgrade")
 BOOTSTRAP_DB = os.getenv("PARITY_BOOTSTRAP_DB", "agentnet_parity_bootstrap")
 
-EXPECTED_HEAD = "0010_self_development"
+EXPECTED_HEAD = "0011_expire_rehearsal_memory"
 PRE_SOCIETY_MAX_PREFIX = 15  # init-db files 01..15 = schema before the society runtime + app tables
 
 # The eight tables that had no DDL before app/schema_app_sql.py.
@@ -483,6 +483,7 @@ def upgrade_db(pg):
         "0007_society_runtime -> 0008_society_phase2",
         "0008_society_phase2 -> 0009_app_tables",
         "0009_app_tables -> 0010_self_development",
+        "0010_self_development -> 0011_expire_rehearsal_memory",
     ):
         assert hop in out, out
     assert EXPECTED_HEAD in _alembic_current(UPGRADE_DB)
@@ -537,7 +538,7 @@ def test_alembic_on_top_of_fresh_bundle_is_a_schema_noop(fresh_db, fresh_snapsho
     """The entrypoint always runs stamp 0003 + upgrade head after the bundle."""
     _alembic(fresh_db, "stamp", "0003_spending_cap_fix")
     up = _alembic(fresh_db, "upgrade", "head")
-    assert "-> 0010_self_development" in up.stdout + up.stderr
+    assert "-> 0011_expire_rehearsal_memory" in up.stdout + up.stderr
     assert EXPECTED_HEAD in _alembic_current(fresh_db)
     diffs = diff_schemas(fresh_snapshot, snapshot_schema(fresh_db))
     assert not diffs, "alembic changed a bundle-bootstrapped schema:\n" + "\n".join(diffs)
@@ -796,7 +797,7 @@ def test_db_bootstrap_cli_brings_empty_database_to_head(pg, tmp_path, fresh_snap
         # The entrypoint's follow-up on the exit-code-20 path.
         _alembic(BOOTSTRAP_DB, "stamp", "0003_spending_cap_fix")
         up = _alembic(BOOTSTRAP_DB, "upgrade", "head")
-        assert "-> 0010_self_development" in up.stdout + up.stderr
+        assert "-> 0011_expire_rehearsal_memory" in up.stdout + up.stderr
         assert EXPECTED_HEAD in _alembic_current(BOOTSTRAP_DB)
 
         tables = _table_names(BOOTSTRAP_DB)
@@ -829,7 +830,7 @@ def test_entrypoint_bootstraps_empty_database_end_to_end(pg):
         first = _run_entrypoint(BOOTSTRAP_DB, INIT_DB)
         out = first.stdout + first.stderr
         assert first.returncode == 0, out
-        assert "empty DB" in out and "db_bootstrap: applied" in out and "-> 0010_self_development" in out, out
+        assert "empty DB" in out and "db_bootstrap: applied" in out and "-> 0011_expire_rehearsal_memory" in out, out
         assert EXPECTED_HEAD in _alembic_current(BOOTSTRAP_DB)
         tables = _table_names(BOOTSTRAP_DB)
         assert set(MUST_COVER) <= tables, sorted(set(MUST_COVER) - tables)

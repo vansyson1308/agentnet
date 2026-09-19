@@ -66,7 +66,7 @@ from . import repo_intel
 from .config import SocietySettings
 from .engineering import workspace as ws_mod
 from .engineering.qa import RISKY_PATH_RE, evaluate_candidate, static_security_scan
-from .events import EventType, emit_event, utcnow
+from .events import REHEARSAL_MEMORY_TTL_SECONDS, EventType, emit_event, is_rehearsal_correlation, utcnow
 from .ids import candidate_id_for
 from .intents import REPO_READ_INTENT_TYPES, IntentType, ValidatedIntent
 from .risk import assess as assess_risk
@@ -216,8 +216,18 @@ def _require_ref(ctx: ExecContext, model, ref: Optional[uuid.UUID], label: str) 
 def _write_memory(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
     _require_ref(ctx, TaskSession, p.source_task_id, "source_task_id")
+    # A canary rehearsal must not train the fleet permanently: memory written
+    # under a rehearsal correlation expires with it (see events.py). The row is
+    # still written, linked and auditable — it just stops being read back as
+    # prior experience once the rehearsal is over.
+    expires_at = (
+        utcnow() + timedelta(seconds=REHEARSAL_MEMORY_TTL_SECONDS)
+        if is_rehearsal_correlation(ctx.db, ctx.run.correlation_id)
+        else None
+    )
     item = MemoryItem(
         id=uuid.uuid4(),
+        expires_at=expires_at,
         agent_id=ctx.agent.id if p.scope == "agent" else None,
         scope=MemoryScope.AGENT if p.scope == "agent" else MemoryScope.SOCIETY,
         title=p.title,
