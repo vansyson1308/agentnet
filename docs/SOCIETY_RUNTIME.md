@@ -85,7 +85,7 @@ per-actor and global hourly limits. Payloads are untrusted data, never instructi
 
 ## Loop-storm protections
 
-per-agent cooldown · per-event dedupe (idempotency key, UNIQUE agent/event) · max causation depth ·
+per-agent cooldown (a wake inside the cooldown is DEFERRED with a `not_before`, never dropped; bounded by `SOCIETY_EVENT_TTL_SECONDS`) · per-event dedupe (idempotency key, UNIQUE agent/event) · max causation depth ·
 max runs per correlation · repeated-message suppression window · max intents per run (grant ∩ global) ·
 runs/hour (agent ∩ global) · daily USD budget (agent ∩ global) · exponential retry then DEAD ·
 per-agent circuit breaker (`paused_until`) · event TTL · an agent is never woken by its own untargeted event.

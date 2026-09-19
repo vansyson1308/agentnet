@@ -295,6 +295,23 @@ def skip_run(db: Session, run: AgentRun, reason: str, *, now: Optional[datetime]
     db.commit()
 
 
+def defer_run(db: Session, run: AgentRun, reason: str, *, retry_after_seconds: int, now: Optional[datetime] = None) -> None:
+    """A TEMPORAL refusal (wake cooldown) hands the run back to the queue with
+    a ``not_before`` instead of dropping the world event that woke the agent.
+    The claim's attempt is returned (a deferral is not a failure) and the
+    worker bounds deferrals by the event TTL so a starved run cannot live
+    forever. The event stays DISPATCHED until the run reaches a terminal state."""
+    now = now or utcnow()
+    run.status = AgentRunStatus.QUEUED
+    run.worker_id = None
+    run.lease_expires_at = None
+    run.not_before = now + timedelta(seconds=max(1, int(retry_after_seconds)))
+    run.attempt = max(0, int(run.attempt or 0) - 1)
+    run.error = f"deferred: {reason}"[:2000]
+    run.updated_at = now
+    db.commit()
+
+
 def backoff_seconds(settings: SocietySettings, attempt: int) -> int:
     return int(settings.retry_backoff_base_seconds * (2 ** max(0, attempt - 1)))
 

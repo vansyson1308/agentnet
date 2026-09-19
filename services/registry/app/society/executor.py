@@ -43,14 +43,13 @@ from ..models import (
     CodeCandidate,
     CodeCandidateStatus,
     CodePromotion,
-    IntentExecutionStatus,
-    RiskTier,
     CurrencyType,
     Goal,
     GoalOwnerType,
     GoalPriority,
     GoalStatus,
     ImprovementProposal,
+    IntentExecutionStatus,
     MemoryItem,
     MemoryScope,
     NegotiationRound,
@@ -59,7 +58,9 @@ from ..models import (
     ProposalScope,
     ProposalSource,
     ProposalStatus,
+    RiskTier,
     SocietyEvent,
+    TaskSession,
 )
 from . import repo_intel
 from .config import SocietySettings
@@ -201,8 +202,20 @@ def _send_message(ctx: ExecContext) -> ExecOutcome:
     return ExecOutcome(result={"message_id": str(msg.id), "thread_id": str(msg.thread_id), "to": to_agent.name if to_agent else None}, events=[str(ev.id)])
 
 
+def _require_ref(ctx: ExecContext, model, ref: Optional[uuid.UUID], label: str) -> Optional[uuid.UUID]:
+    """Model-supplied identifiers are UNTRUSTED: a fabricated ``source_task_id``
+    / ``goal_id`` / ``proposal_id`` must fail the intent with a clear reason,
+    never reach a foreign key and crash the executor mid-transaction."""
+    if ref is None:
+        return None
+    if ctx.db.query(model.id).filter(model.id == ref).first() is None:
+        raise ExecutionError(f"{label} does not reference an existing {model.__tablename__.rstrip('s').replace('_', ' ')}: model-supplied ids are validated, never trusted")
+    return ref
+
+
 def _write_memory(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
+    _require_ref(ctx, TaskSession, p.source_task_id, "source_task_id")
     item = MemoryItem(
         id=uuid.uuid4(),
         agent_id=ctx.agent.id if p.scope == "agent" else None,
@@ -332,6 +345,7 @@ WORLD_SIGNAL_EVENTS = frozenset(
 
 def _create_improvement(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
+    _require_ref(ctx, TaskSession, p.source_task_id, "source_task_id")
     if ctx.event.event_type in WORLD_SIGNAL_EVENTS and p.evidence is None:
         # An event existing is not evidence. Signal-driven proposals must say
         # what was observed, against what baseline, over what window, and why
@@ -577,6 +591,9 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
     # proposal link; code candidates additionally need an expected effect.
     if p.proposal_id is None:
         raise ExecutionError("a code change must link to an improvement proposal (proposal_id); unlinked engineering is busywork")
+    _require_ref(ctx, ImprovementProposal, p.proposal_id, "proposal_id")
+    _require_ref(ctx, TaskSession, p.task_id, "task_id")
+    _require_ref(ctx, Goal, p.goal_id, "goal_id")
     if spec.get("kind") == "code" and not (spec.get("expected_effect") or "").strip():
         raise ExecutionError("code candidates must state expected_effect (the metric/behaviour the change should move)")
     if not spec.get("acceptance_tests"):

@@ -19,6 +19,7 @@ cap, or a secret.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -103,6 +104,10 @@ class PolicyVerdict:
 class RunBudgetVerdict:
     ok: bool
     reason: str = ""
+    # Set when the refusal is TEMPORAL (wake cooldown): the worker defers the
+    # run with a not_before instead of dropping the event. Hard refusals
+    # (budget, hourly caps, disabled grant) leave it None and the run is skipped.
+    retry_after_seconds: Optional[int] = None
 
 
 def _as_enum(value, enum_cls):
@@ -281,7 +286,8 @@ def check_run_budget(
     last = last_run_started_at(db, agent.id, exclude_run_id=run.id)
     cooldown = int(grant.wake_cooldown_seconds or 0)
     if last is not None and cooldown > 0 and (now - last).total_seconds() < cooldown:
-        return RunBudgetVerdict(False, f"agent wake cooldown ({cooldown}s) not elapsed")
+        remaining = max(1, int(math.ceil(cooldown - (now - last).total_seconds())))
+        return RunBudgetVerdict(False, f"agent wake cooldown ({cooldown}s) not elapsed", retry_after_seconds=remaining)
     return RunBudgetVerdict(True, "")
 
 
