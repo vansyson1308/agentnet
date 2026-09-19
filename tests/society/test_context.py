@@ -107,3 +107,158 @@ def test_context_is_deterministic_and_bounded(db, society_settings, monkeypatch)
     assert all(len(m["data"]["content"]) <= 601 for m in c1.memory)
     assert c1.event["payload"]["data"].get("_truncated") is True
     assert len(c1.canonical_json()) < 60_000
+
+
+def _refused_intent(db, agent, *, intent_type, status, policy, reason, seq, minutes_ago=0):
+    from datetime import datetime, timedelta, timezone
+
+    from services.registry.app.models import AgentIntent, AgentRun, IntentExecutionStatus, PolicyDecision, SocietyEvent
+
+    ev = emit_event(db, event_type="user.feedback.received", payload={"note": "x"})
+    db.flush()
+    run = AgentRun(id=uuid.uuid4(), agent_id=agent.id, event_id=ev.id, correlation_id=ev.correlation_id, status="completed")
+    db.add(run)
+    db.flush()
+    intent = AgentIntent(
+        id=uuid.uuid4(),
+        run_id=run.id,
+        agent_id=agent.id,
+        seq=seq,
+        intent_type=intent_type,
+        payload={},
+        idempotency_key=f"test-refusal-{uuid.uuid4()}",
+        policy_decision=policy,
+        policy_reason=reason,
+        execution_status=status,
+        created_at=datetime.now(timezone.utc) - timedelta(minutes=minutes_ago),
+    )
+    db.add(intent)
+    db.commit()
+    return intent
+
+
+def test_an_agent_can_see_its_own_refused_intents(db, society_settings, monkeypatch):
+    """A refused intent never took effect. If the agent cannot see the refusal
+    it records that it did the work and declines to do it again -- observed
+    live on staging, where a Scout's CREATE_IMPROVEMENT was refused for a
+    schema violation and the next two runs declined the signal as already
+    handled."""
+    from services.registry.app.models import IntentExecutionStatus, PolicyDecision
+
+    report, scout = _seeded(db, monkeypatch)
+    grant = db.query(AgentCapabilityGrant).filter(AgentCapabilityGrant.agent_id == scout.id).first()
+    _refused_intent(
+        db, scout,
+        intent_type="CREATE_IMPROVEMENT",
+        status=IntentExecutionStatus.DENIED,
+        policy=PolicyDecision.INVALID,
+        reason="payload schema violation: evidence.signal too long",
+        seq=0,
+    )
+    ev = emit_event(db, event_type="user.feedback.received", payload={"doc": "stale"})
+    db.commit()
+    ctx = build_context(db, agent=scout, grant=grant, event=ev, run=None, settings=society_settings)
+
+    assert len(ctx.recent_refusals) == 1
+    row = ctx.recent_refusals[0]
+    assert row["intent_type"] == "CREATE_IMPROVEMENT"
+    assert row["outcome"] == "denied" and row["policy"] == "invalid"
+    assert "schema violation" in row["reason"]
+    assert "recent_refusals" in ctx.canonical_json()
+
+
+def test_refusals_survive_the_run_window_that_earned_them(db, society_settings, monkeypatch):
+    """recent_activity is bounded to LIMIT_RECENT_RUNS, so the refused run ages
+    out while the memory it wrote does not. The refusal must outlive it."""
+    from services.registry.app.models import IntentExecutionStatus, PolicyDecision
+    from services.registry.app.society.context import LIMIT_RECENT_RUNS
+
+    report, scout = _seeded(db, monkeypatch)
+    grant = db.query(AgentCapabilityGrant).filter(AgentCapabilityGrant.agent_id == scout.id).first()
+    _refused_intent(
+        db, scout,
+        intent_type="CREATE_IMPROVEMENT",
+        status=IntentExecutionStatus.DENIED,
+        policy=PolicyDecision.INVALID,
+        reason="payload schema violation",
+        seq=0,
+        minutes_ago=90,
+    )
+    # Push the refused run out of the recent-activity window with ordinary
+    # SUCCESSFUL runs -- which is what happened live (canary and red-team wakes
+    # between the refusal and the retry). They must not displace the refusal.
+    for _ in range(LIMIT_RECENT_RUNS + 2):
+        _refused_intent(
+            db, scout,
+            intent_type="WRITE_MEMORY",
+            status=IntentExecutionStatus.EXECUTED,
+            policy=PolicyDecision.ALLOW,
+            reason="allowed by grant",
+            seq=0,
+        )
+    ev = emit_event(db, event_type="user.feedback.received", payload={"doc": "stale"})
+    db.commit()
+    ctx = build_context(db, agent=scout, grant=grant, event=ev, run=None, settings=society_settings)
+
+    assert len(ctx.recent_activity) <= LIMIT_RECENT_RUNS
+    assert "CREATE_IMPROVEMENT" not in {r.get("event_type") for r in ctx.recent_activity}
+    assert "CREATE_IMPROVEMENT" in {r["intent_type"] for r in ctx.recent_refusals}
+
+
+def test_executed_intents_and_other_agents_refusals_are_not_listed(db, society_settings, monkeypatch):
+    from services.registry.app.models import Agent, IntentExecutionStatus, PolicyDecision
+
+    report, scout = _seeded(db, monkeypatch)
+    grant = db.query(AgentCapabilityGrant).filter(AgentCapabilityGrant.agent_id == scout.id).first()
+    architect = db.query(Agent).filter(Agent.id == report.agents["architect"]).first()
+    _refused_intent(
+        db, scout,
+        intent_type="WRITE_MEMORY",
+        status=IntentExecutionStatus.EXECUTED,
+        policy=PolicyDecision.ALLOW,
+        reason="allowed by grant",
+        seq=0,
+    )
+    _refused_intent(
+        db, architect,
+        intent_type="SEARCH_REPO",
+        status=IntentExecutionStatus.DENIED,
+        policy=PolicyDecision.DENY,
+        reason="autonomous code disabled",
+        seq=0,
+    )
+    ev = emit_event(db, event_type="user.feedback.received", payload={"doc": "stale"})
+    db.commit()
+    ctx = build_context(db, agent=scout, grant=grant, event=ev, run=None, settings=society_settings)
+    assert ctx.recent_refusals == []
+
+
+def test_refusals_are_bounded_and_age_out(db, society_settings, monkeypatch):
+    from services.registry.app.models import IntentExecutionStatus, PolicyDecision
+    from services.registry.app.society.context import LIMIT_RECENT_REFUSALS, RECENT_REFUSAL_HOURS
+
+    report, scout = _seeded(db, monkeypatch)
+    grant = db.query(AgentCapabilityGrant).filter(AgentCapabilityGrant.agent_id == scout.id).first()
+    for i in range(LIMIT_RECENT_REFUSALS + 4):
+        _refused_intent(
+            db, scout,
+            intent_type="CREATE_IMPROVEMENT",
+            status=IntentExecutionStatus.DENIED,
+            policy=PolicyDecision.INVALID,
+            reason=f"refusal {i}",
+            seq=0,
+        )
+    _refused_intent(
+        db, scout,
+        intent_type="CREATE_GOAL",
+        status=IntentExecutionStatus.DENIED,
+        policy=PolicyDecision.INVALID,
+        reason="too old to matter",
+        seq=0,
+        minutes_ago=RECENT_REFUSAL_HOURS * 60 + 30,
+    )
+    ev = emit_event(db, event_type="user.feedback.received", payload={"doc": "stale"})
+    db.commit()
+    ctx = build_context(db, agent=scout, grant=grant, event=ev, run=None, settings=society_settings)
+    assert len(ctx.recent_refusals) == LIMIT_RECENT_REFUSALS
+    assert "CREATE_GOAL" not in {r["intent_type"] for r in ctx.recent_refusals}
