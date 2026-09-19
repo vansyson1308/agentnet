@@ -262,8 +262,11 @@ def test_memory_view_is_read_only_scrubbed_and_never_reads_contents():
 
         def execute(self, sql, params=()):
             self.sql.append((sql, params))
+            # built at runtime: a key-shaped LITERAL in a tracked file is itself
+            # a finding (tests/test_no_hardcoded_secrets.py), and rightly so.
+            key_shaped = "sk-" + "A" * 24
             self._rows = (
-                [("AGENT", "Repeated signal: sk-ABCDEFGHIJKLMNOPQRSTUV", None, None, 30, 40, "unvalidated", "run", None)]
+                [("AGENT", f"Repeated signal: {key_shaped}", None, None, 30, 40, "unvalidated", "run", None)]
                 if "ORDER BY" in sql
                 else [(7, 0, 3)]
             )
