@@ -153,5 +153,5 @@ for reasoning quality; the only prompt-side change in Phase 5 is a documented-co
 promised "documented schema" while nested payload models rendered as `""`/`"array"` — `_schemas_doc()` now
 inlines them (`spec.files_allowed`, `edits[].path/content`, literals as `a|b|c`), and the roles that design,
 build and verify code receive the repository conventions the trusted QA gate enforces (`context.engineering.conventions`,
-from code, matching `tests/society/acceptance/test_candidate_docs.py`).
+from code, matching `tests/society/acceptance/test_candidate_docs.py`). Gate A run 9 (real runs on Railway staging) then showed the model sending `""` for an optional uuid reference it had no value for (`uuid_parsing … input: ''`, both Scout intents rejected): the schema doc now renders optional fields as `<type>|null` and uuid references as `uuid`, and the strict payload base reads an empty string on an optional non-text field as absent (`intents._Strict._empty_string_means_absent`; a non-empty invalid id, a required id and an unknown key still fail). Neither change touches the prompt's rules or the model's reasoning settings.
 

@@ -72,3 +72,63 @@ def test_http_canary_is_importable_without_the_orm():
     )
     proc = subprocess.run([sys.executable, "-c", code], cwd=str(REPO / "services" / "registry"), capture_output=True, text=True, timeout=120, env={"PATH": "", "PYTHONPATH": str(REPO / "services" / "registry"), "HOME": "/tmp", "ENVIRONMENT": "staging"})
     assert proc.returncode == 0 and proc.stdout.strip() == "ok", proc.stderr[-800:]
+
+
+# ── Gate A run 9 (Railway staging, real DeepSeek): both Scout intents were
+# rejected with ``uuid_parsing … input: ''`` on ``source_task_id``. The model
+# sent an empty string for an optional reference. The schema doc now says
+# ``uuid|null`` and the strict base reads "" as absent for optional non-text
+# fields — nothing else is coerced.
+
+
+def test_empty_string_for_an_optional_reference_means_absent():
+    from services.registry.app.society.intents import CreateImprovementPayload, WriteMemoryPayload
+
+    memory = WriteMemoryPayload(title="t", content="c", source_task_id="")
+    assert memory.source_task_id is None
+    proposal = CreateImprovementPayload(
+        title="t",
+        problem="p",
+        proposed_change="c",
+        source_task_id="",
+        evidence={"signal": "task_failure_rate", "actionable_reason": "above threshold", "sample_size": ""},
+    )
+    assert proposal.source_task_id is None
+    assert proposal.evidence is not None and proposal.evidence.sample_size is None
+
+
+def test_only_empty_strings_on_optional_non_text_fields_are_normalised():
+    import pytest
+    from pydantic import ValidationError
+
+    from services.registry.app.society.intents import CreateGoalPayload, ReviewImprovementPayload, WriteMemoryPayload
+
+    with pytest.raises(ValidationError):  # a NON-empty invalid id is still invalid
+        WriteMemoryPayload(title="t", content="c", source_task_id="not-a-uuid")
+    with pytest.raises(ValidationError):  # a REQUIRED id stays required
+        ReviewImprovementPayload(proposal_id="", decision="approve", reason="r")
+    with pytest.raises(ValidationError):  # unknown keys are still rejected
+        WriteMemoryPayload(title="t", content="c", source_task_id="", shell="rm -rf /")
+    with pytest.raises(ValidationError):  # required text is still required (min_length)
+        WriteMemoryPayload(title="", content="c")
+    goal = CreateGoalPayload(title="t", description="")
+    assert goal.description == ""  # optional TEXT keeps its value; only non-text optionals are normalised
+
+
+def test_validate_intents_records_the_normalised_payload_as_valid():
+    import uuid
+
+    from services.registry.app.society.intents import IntentType, parse_decision, validate_intents
+
+    decision = parse_decision(
+        {
+            "decision_summary": "record the observation",
+            "intents": [{"type": IntentType.WRITE_MEMORY.value, "payload": {"title": "t", "content": "c", "source_task_id": ""}}],
+            "sleep_for_seconds": 600,
+        },
+        max_intents=5,
+    )
+    validated = validate_intents(decision, uuid.uuid4())
+    assert len(validated) == 1 and validated[0].valid, validated[0].error
+    assert validated[0].payload.source_task_id is None
+    assert validated[0].raw_payload["source_task_id"] == ""  # the audit trail keeps what the model actually sent
