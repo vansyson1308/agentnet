@@ -50,3 +50,25 @@ def test_live_provider_outside_development_needs_https_and_a_key(monkeypatch):
     s = _settings(monkeypatch, ENVIRONMENT="staging", SOCIETY_MODEL_PROVIDER="openai_compatible", SOCIETY_MODEL_BASE_URL="https://model.example/v1", SOCIETY_MODEL_API_KEY="placeholder-for-test")
     assert cfg.validate_settings(s) == []
     cfg.reset_settings_cache()
+
+
+def test_credential_is_required_only_in_the_model_calling_process(monkeypatch):
+    """Split deployments (Railway): the registry API mirrors the non-secret live
+    flags so /v1/society/status tells the truth; only the society worker — the
+    process that calls the model — must hold and fail fast on the credential."""
+    from services.registry.app.society import worker as worker_mod
+
+    s = _settings(monkeypatch, ENVIRONMENT="staging", SOCIETY_RUNTIME_ENABLED="true", SOCIETY_MODEL_PROVIDER="openai_compatible", SOCIETY_MODEL_BASE_URL="https://model.example/v1", SOCIETY_MODEL_API_KEY="")
+    assert cfg.validate_settings(s) == [], "the API process mirrors the flags without a credential"
+    assert s.public_flags()["runtime_enabled"] is True and s.public_flags()["model_provider"] == "openai_compatible"
+    assert s.public_dict()["model_api_key"] == ""
+    worker_problems = worker_mod.startup_problems(s)
+    assert len(worker_problems) == 1 and "SOCIETY_MODEL_API_KEY" in worker_problems[0] and "worker" in worker_problems[0]
+    assert cfg.validate_settings(s, model_caller=True) == worker_problems
+    with_key = _settings(monkeypatch, ENVIRONMENT="staging", SOCIETY_MODEL_PROVIDER="openai_compatible", SOCIETY_MODEL_BASE_URL="https://model.example/v1", SOCIETY_MODEL_API_KEY="placeholder-for-test")
+    assert worker_mod.startup_problems(with_key) == []
+    # an http endpoint is refused everywhere, key or not
+    with pytest.raises(cfg.SocietyConfigError):
+        _settings(monkeypatch, ENVIRONMENT="staging", SOCIETY_MODEL_PROVIDER="openai_compatible", SOCIETY_MODEL_BASE_URL="http://model.internal/v1", SOCIETY_MODEL_API_KEY="placeholder-for-test")
+    cfg.reset_settings_cache()
+

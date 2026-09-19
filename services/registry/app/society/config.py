@@ -311,13 +311,18 @@ class SocietySettings:
         }
 
 
-def validate_settings(s: "SocietySettings") -> list:
+def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> list:
     """Fail-fast rules (see docs/DEPLOYMENT_ARCHITECTURE.md §2):
 
     * production never runs the society runtime or the autonomous code loop in
       this phase — the flags are refused, not ignored;
     * budgets and limits must be sane (no negative money, no impossible timeouts);
-    * a live provider outside development must point at an https endpoint.
+    * a live provider outside development must point at an https endpoint;
+    * the model credential is required only in the process that calls the
+      model (``model_caller=True``: the society worker, see ``worker.main``).
+      On a split deployment the registry API mirrors the NON-secret live flags
+      so ``/v1/society/status`` and ``/config`` tell the truth about the
+      running worker — it never holds ``SOCIETY_MODEL_API_KEY``.
     """
     problems = []
     env = os.getenv("ENVIRONMENT", "development").strip().lower()
@@ -361,8 +366,8 @@ def validate_settings(s: "SocietySettings") -> list:
         url = (s.model_base_url or "").strip()
         if not url.startswith("https://"):
             problems.append("SOCIETY_MODEL_BASE_URL must be an https:// URL outside development")
-        if not s.model_api_key:
-            problems.append("SOCIETY_MODEL_API_KEY is required when SOCIETY_MODEL_PROVIDER=openai_compatible")
+        if model_caller and not s.model_api_key:
+            problems.append("SOCIETY_MODEL_API_KEY is required in the process that calls the model (society worker) when SOCIETY_MODEL_PROVIDER=openai_compatible")
     return problems
 
 

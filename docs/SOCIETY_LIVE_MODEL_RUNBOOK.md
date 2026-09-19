@@ -19,6 +19,7 @@ Companion documents: `docs/SOCIETY_RUNTIME.md` (architecture), ADR-0002 (decisio
 | NO FAKE AUTONOMY | `canary run/observe` refuse `scripted`/`fake`; a report FAILs if any completed run carries another provider; nobody writes Builder output or QA/Security verdicts by hand |
 | Operator authority is server-side | `users.society_role` + one dependency (`operator_auth`); user JWTs only; scoped `spt_` and agent tokens are 403 |
 | Runtime OFF by default | `SOCIETY_RUNTIME_ENABLED` / `SOCIETY_AUTONOMOUS_CODE_ENABLED` default `false` in every compose file; the worker idles and touches nothing |
+| The credential lives only where the model is called | `SOCIETY_MODEL_API_KEY` is required (fail-fast at startup, `worker.startup_problems`) only by the society worker; on a split deployment (Railway) the registry API mirrors the NON-secret live flags (`SOCIETY_RUNTIME_ENABLED`, `SOCIETY_MODEL_PROVIDER`, `SOCIETY_MODEL_BASE_URL`, `SOCIETY_MODEL_NAME`, profile / thinking / effort / output format, limits, budget) so `/v1/society/status` and `/config` describe the running worker — it never holds the key |
 | Production untouched | no production Compose definition is current (the old overlay is retired under `deploy/legacy-vps/`, LEGACY); production autonomous deploy is not a setting | `tests/test_compose_topology.py`, `config.py` |
 
 ---
@@ -130,6 +131,12 @@ holds the model credential (it is not in its environment) and prints only struct
 
 Money invariant (fund step): balances are mutated only by `update_wallet_balances_trigger`; the driver inserts
 a `deposit` transaction and flips it `pending → completed`, then proves `balance_after == balance_before + credits`.
+
+Before wake-up: world events injected while the runtime was OFF (every validation's red-team burst and probes)
+are still `pending` and would all wake the Scout at activation. They are not edited by hand — the runtime's own
+TTL expires them: set `SOCIETY_EVENT_TTL_SECONDS` on the worker to the length of the live window (e.g. `1800`)
+before `SOCIETY_RUNTIME_ENABLED=true`; the first dispatch pass marks the backlog `expired: TTL elapsed before
+dispatch` (visible in `baseline.snapshot.events_by_status` / `audit`), and fresh canary events dispatch normally.
 
 ---
 

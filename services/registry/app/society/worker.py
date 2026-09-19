@@ -54,7 +54,7 @@ from . import router as router_mod
 from . import telemetry as telemetry_mod
 from .approvals import claim_next_approved_intent, execute_approved_intent
 from .cognition import CognitiveModel, ModelProviderError, ModelTimeout, get_model
-from .config import SocietySettings, get_settings
+from .config import SocietySettings, get_settings, validate_settings
 from .context import build_context
 from .events import WAKE_CHANNEL, EventType, emit_event, utcnow
 from .executor import ExecContext, ExecutionError, execute
@@ -684,6 +684,13 @@ class SocietyWorker:
             self.listener.close()
 
 
+def startup_problems(settings: SocietySettings) -> List[str]:
+    """The worker is the ONLY process that calls the model, so it is the one
+    that must fail fast without the credential (the registry API mirrors the
+    non-secret flags for status truth and never holds the key)."""
+    return list(validate_settings(settings, model_caller=True))
+
+
 def main() -> None:  # pragma: no cover — process entrypoint
     from ..config import DATABASE_URL
     from ..database import SessionLocal
@@ -691,6 +698,11 @@ def main() -> None:  # pragma: no cover — process entrypoint
 
     setup_logging("society-worker")
     settings = get_settings()
+    problems = startup_problems(settings)
+    if problems:
+        for problem in problems:
+            logger.error("society worker refuses to start: %s", problem)
+        raise SystemExit(2)
     port = int(os.getenv("SOCIETY_METRICS_PORT", "0") or 0)
     if port:
         try:
