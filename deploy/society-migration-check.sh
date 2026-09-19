@@ -3,7 +3,7 @@
 #
 #   FRESH   : full init-db bundle (what a new Postgres volume gets) → stamp 0003 →
 #             `alembic upgrade head` must be idempotent over the already-present
-#             society + app-table DDL and land on 0010_self_development.
+#             society + app-table DDL and land on 0011_expire_rehearsal_memory.
 #   UPGRADE : pre-society bundle (init-db minus 16-society-runtime.sql and
 #             17-app-tables.sql) → stamp 0003 → `alembic upgrade head` must run
 #             0007, 0008 and 0009; a second `upgrade head` must be a no-op;
@@ -46,7 +46,7 @@ done
 
 cd "$(dirname "$0")/.."
 INIT_DIR="services/registry/init-db"
-EXPECTED_HEAD="0010_self_development"
+EXPECTED_HEAD="0011_expire_rehearsal_memory"
 PG_USER="${POSTGRES_USER:-agentnet}"
 PG_HOST="${POSTGRES_HOST:-127.0.0.1}"
 PG_PORT="${POSTGRES_PORT:-5432}"
@@ -151,7 +151,7 @@ expect_head "$FRESH_DB"
 check_schema "$FRESH_DB"
 expect_noop_upgrade "$FRESH_DB"
 
-echo "→ UPGRADE path: pre-society bundle + alembic 0004..0010"
+echo "→ UPGRADE path: pre-society bundle + alembic 0004..$EXPECTED_HEAD"
 create_db "$UPGRADE_DB"
 apply_bundle "$UPGRADE_DB" 1
 n="$(scalar "$UPGRADE_DB" "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='society_events'")"
@@ -160,10 +160,17 @@ n="$(scalar "$UPGRADE_DB" "SELECT count(*) FROM information_schema.tables WHERE 
 [[ "$n" == "0" ]] && ok "$UPGRADE_DB: starts without app tables" || bad "$UPGRADE_DB: app tables present before migration"
 run_alembic "$UPGRADE_DB" stamp 0003_spending_cap_fix >/dev/null
 out="$(run_alembic "$UPGRADE_DB" upgrade head)" || { echo "$out"; die "$UPGRADE_DB: alembic upgrade head failed"; }
-[[ "$out" == *"0006_email_verified -> 0007_society_runtime"* ]] && ok "$UPGRADE_DB: ran 0007_society_runtime" || bad "$UPGRADE_DB: 0007 did not run: $out"
-[[ "$out" == *"0007_society_runtime -> 0008_society_phase2"* ]] && ok "$UPGRADE_DB: ran 0008_society_phase2" || bad "$UPGRADE_DB: 0008 did not run: $out"
-[[ "$out" == *"0008_society_phase2 -> 0009_app_tables"* ]] && ok "$UPGRADE_DB: ran 0009_app_tables" || bad "$UPGRADE_DB: 0009 did not run: $out"
-[[ "$out" == *"0009_app_tables -> $EXPECTED_HEAD"* ]] && ok "$UPGRADE_DB: ran $EXPECTED_HEAD" || bad "$UPGRADE_DB: 0010 did not run: $out"
+# Every hop from the pre-society bundle to the head, spelled out: a new
+# migration is a deliberate one-line change here, and the chain can never
+# silently skip a revision. The head is NOT assumed to follow 0009.
+for hop in \
+  "0006_email_verified -> 0007_society_runtime" \
+  "0007_society_runtime -> 0008_society_phase2" \
+  "0008_society_phase2 -> 0009_app_tables" \
+  "0009_app_tables -> 0010_self_development" \
+  "0010_self_development -> $EXPECTED_HEAD"; do
+  [[ "$out" == *"$hop"* ]] && ok "$UPGRADE_DB: ran $hop" || bad "$UPGRADE_DB: hop did not run ($hop): $out"
+done
 expect_head "$UPGRADE_DB"
 check_schema "$UPGRADE_DB"
 expect_noop_upgrade "$UPGRADE_DB"

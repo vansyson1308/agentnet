@@ -26,7 +26,7 @@ Environment (all optional except the secret and the database):
     STAGING_VALIDATOR_SECRET                      Railway-generated shared secret
     VALIDATOR_OPERATOR_EMAIL                      one of SOCIETY_OPERATOR_BOOTSTRAP_EMAILS
     VALIDATOR_USER_EMAIL                          plain user for the 403 checks
-    EXPECTED_ALEMBIC_HEAD (0010_self_development)
+    EXPECTED_ALEMBIC_HEAD (0011_expire_rehearsal_memory)
     REDTEAM_BURST (40)  SPOOF_BASELINE (220)  SPOOF_FORGED (60)
     VALIDATOR_EXPECT_RUNTIME (off)                 on|off: the public runtime_enabled flag the smoke asserts
 """
@@ -219,7 +219,7 @@ def main() -> int:
     secret = env("STAGING_VALIDATOR_SECRET")
     op_email = env("VALIDATOR_OPERATOR_EMAIL", "staging-operator@staging.agentnet.io.vn")
     user_email = env("VALIDATOR_USER_EMAIL", "staging-user@staging.agentnet.io.vn")
-    expected_head = env("EXPECTED_ALEMBIC_HEAD", "0010_self_development")
+    expected_head = env("EXPECTED_ALEMBIC_HEAD", "0011_expire_rehearsal_memory")
     expect_runtime = expected_runtime(env("VALIDATOR_EXPECT_RUNTIME"))
 
     sys.stdout.write(

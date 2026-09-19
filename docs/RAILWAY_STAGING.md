@@ -160,7 +160,7 @@ tracebacks. A healthcheck passing is a deploy gate, not monitoring — restarts 
 
 ```bash
 railway logs -s registry | grep -E "alembic|db_bootstrap|SKIP_DB_BOOTSTRAP"   # pre-deploy: bootstrap/upgrade; runtime: SKIP line
-railway ssh -s registry -- sh -c 'cd /app && alembic current'                  # 0010_self_development (head)
+railway ssh -s registry -- sh -c 'cd /app && alembic current'                  # 0011_expire_rehearsal_memory (head)
 railway logs -s registry | grep "society seed report"                         # pre-deploy: fleet created once, reused afterwards
 railway ssh -s society-worker -- sh -c 'echo SKIP_DB_BOOTSTRAP=$SKIP_DB_BOOTSTRAP'   # true
 railway logs -s society-worker | grep -c alembic                                     # 0
