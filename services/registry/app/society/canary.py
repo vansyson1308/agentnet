@@ -548,14 +548,32 @@ def evaluate(scenario: str, report: CanaryReport, *, decided: Optional[str], exp
 
 
 def _payload_for(scenario: str, tag: str) -> Dict[str, Any]:
+    """The event body the canary injects.
+
+    The ``platform.metric.anomaly`` body mirrors what the TRUSTED producer
+    emits (``telemetry.produce_anomalies``): metric, observed value,
+    threshold, baseline, sample size, window and observation time. The
+    Scout's standing rule is that a proposal must carry evidence *taken from
+    the event*, so a canary body without those fields is not a signal the
+    fleet can legitimately act on — Gate A run 12 showed the live Scout
+    correctly recording the observation and declining to propose. Keeping the
+    shapes identical is what makes the canary a rehearsal of the real path
+    instead of a different one; the values stay obviously synthetic
+    (``source: staging-canary`` plus the run tag).
+    """
     if scenario == "single":
         return {"signal": "canary", "scenario": "single", "tag": tag, "note": "staging canary signal: observe the platform and report; no change is required"}
     return {
         "metric": f"task_failure_rate_canary_{tag}",
         "value": 0.42,
         "threshold": 0.10,
-        "description": "task failure rate above threshold for 15 minutes (staging canary)",
+        "baseline": 0.05,
+        "sample_size": 120,
+        "window_seconds": 900,
+        "description": "50/120 canary tasks failed or timed out in the last 15 minutes (staging canary)",
         "severity_score": 70,
+        "source": "staging-canary",
+        "observed_at": _now_iso(),
         "tag": tag,
     }
 
