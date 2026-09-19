@@ -23,7 +23,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
@@ -69,6 +69,10 @@ LIMIT_PROPOSALS = 6
 LIMIT_CANDIDATES = 5
 LIMIT_TASKS = 5
 LIMIT_RECENT_RUNS = 5
+# A refusal stays relevant long after the run that earned it has aged out of
+# LIMIT_RECENT_RUNS, so this window is measured in TIME, not in runs.
+LIMIT_RECENT_REFUSALS = 6
+RECENT_REFUSAL_HOURS = 24
 LIMIT_REPO_READS = 6
 LIMIT_PROMOTIONS = 4
 TXT_READ = 6000
@@ -127,6 +131,7 @@ class AgentContext:
     permissions: Dict[str, Any]
     restrictions: List[str]
     recent_activity: List[Dict[str, Any]]
+    recent_refusals: List[Dict[str, Any]] = field(default_factory=list)
     society_agents: List[Dict[str, Any]] = field(default_factory=list)
     run_id: Optional[str] = None
     # Phase 3: bounded repository-read results from THIS agent's earlier turns
@@ -496,6 +501,52 @@ def _recent_activity(db: Session, agent: Agent, exclude_run_id: Optional[uuid.UU
     ]
 
 
+def _recent_refusals(db: Session, agent: Agent, now: datetime) -> List[Dict[str, Any]]:
+    """This agent's OWN intents that the platform refused, newest first.
+
+    An agent that cannot see its refusals cannot learn from them. Worse, a run
+    whose first intent is refused still executes its remaining intents, so it
+    can persist a memory asserting work the platform never performed -- and
+    every later run then declines that work as already done, recording another
+    corroborating note as it goes. Observed live on staging: a Scout's
+    CREATE_IMPROVEMENT was refused for a schema violation, its WRITE_MEMORY
+    recorded "improvement raised", and the next two runs declined the same
+    signal citing that memory.
+
+    ``recent_activity`` cannot carry this. It is bounded to the last
+    ``LIMIT_RECENT_RUNS`` runs and reports only an intent COUNT, so the run
+    that was refused ages out while the false memory it wrote does not. This
+    window is bounded by time instead, and reports the outcome and the reason.
+
+    Refusals are facts recorded by trusted code (the policy engine and the
+    typed parser), not agent text, so they are not wrapped as untrusted.
+    """
+    cutoff = now - timedelta(hours=RECENT_REFUSAL_HOURS)
+    rows = (
+        db.query(AgentIntent)
+        .filter(
+            AgentIntent.agent_id == agent.id,
+            AgentIntent.execution_status.in_(
+                [IntentExecutionStatus.DENIED, IntentExecutionStatus.FAILED, IntentExecutionStatus.REJECTED]
+            ),
+            AgentIntent.created_at >= cutoff,
+        )
+        .order_by(AgentIntent.created_at.desc())
+        .limit(LIMIT_RECENT_REFUSALS)
+        .all()
+    )
+    return [
+        {
+            "intent_type": r.intent_type,
+            "outcome": _ev(r.execution_status),
+            "policy": _ev(r.policy_decision),
+            "reason": _t(r.policy_reason or r.error, TXT_SHORT),
+            "at": _iso(r.created_at),
+        }
+        for r in rows
+    ]
+
+
 def _society_agents(db: Session, agent: Agent) -> List[Dict[str, Any]]:
     rows = (
         db.query(Agent.name, AgentCapabilityGrant.role)
@@ -685,6 +736,7 @@ def build_context(
         permissions=_permissions(grant),
         restrictions=_restrictions(settings, grant),
         recent_activity=_recent_activity(db, agent, run.id if run else None),
+        recent_refusals=_recent_refusals(db, agent, now),
         society_agents=_society_agents(db, agent),
         run_id=str(run.id) if run else None,
         repo_reads=_repo_reads(db, agent, run, event),
