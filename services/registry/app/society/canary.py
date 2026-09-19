@@ -470,9 +470,12 @@ class CanaryReport:
 
 
 def _now_iso() -> str:
-    from .events import utcnow
+    # stdlib only: the HTTP canary (``observe_canary``) must stay importable
+    # without the ORM (``app.models`` -> ``app.config`` requires service
+    # secrets), e.g. from the Railway staging validator.
+    from datetime import datetime, timezone
 
-    return utcnow().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _totals(runs: List[Dict[str, Any]], intents: List[Dict[str, Any]], approvals: List[Dict[str, Any]]) -> Dict[str, Any]:

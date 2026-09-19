@@ -138,3 +138,20 @@ budgets are untouched.
   request shape, no-CoT, accounting) plus the updated `test_canary.py`.
 * Not done here: `deepseek-v4-pro` / V4.1-Pro, tool calls, multi-turn reasoning pass-back, prompt tuning
   for reasoning quality, any Society activation.
+
+## Phase 5 addendum (2026-09-19) — official-doc re-check before activation
+
+Re-read of `api-docs.deepseek.com` (search snippets; direct fetch is egress-blocked from the session)
+found **no material change** to the contract above: `deepseek-flash` still thinks by default (`thinking`
++ `reasoning_effort` controls, `reasoning_content` in the reply, `completion_tokens_details.reasoning_tokens`),
+JSON mode still needs the word "json" plus an example and an adequate `max_tokens`, empty `content` is still
+documented. Recorded for the activation window: the rate limit is a per-`user_id` concurrency ceiling
+(2500 in-flight requests for `deepseek-flash`, HTTP 429 above it — far above the society's `SOCIETY_MAX_RUNS_PER_HOUR`);
+pricing in effect since 2026-09-10 is what `SOCIETY_MODEL_USD_PER_1K_INPUT/OUTPUT` must not undercut;
+`deepseek-v4-pro` has been routed to V4.1-Flash since 2026-09-14 and remains out of scope. No prompt change
+for reasoning quality; the only prompt-side change in Phase 5 is a documented-contract fix: the system prompt
+promised "documented schema" while nested payload models rendered as `""`/`"array"` — `_schemas_doc()` now
+inlines them (`spec.files_allowed`, `edits[].path/content`, literals as `a|b|c`), and the roles that design,
+build and verify code receive the repository conventions the trusted QA gate enforces (`context.engineering.conventions`,
+from code, matching `tests/society/acceptance/test_candidate_docs.py`).
+

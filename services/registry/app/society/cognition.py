@@ -831,7 +831,39 @@ Intent payload schemas (json):
 """
 
 
+def _schema_type(v: Dict[str, Any], defs: Dict[str, Any], depth: int) -> Any:
+    """Compact, model-readable rendering of one json-schema property: nested
+    models are inlined (``$ref`` -> their properties), literals become
+    ``a|b|c``, arrays show their item type, ``Optional`` drops the null arm."""
+    if "$ref" in v:
+        name = str(v["$ref"]).rsplit("/", 1)[-1]
+        sub = defs.get(name) or {}
+        return _schema_props(sub, defs, depth + 1) if depth < 3 else name
+    if "enum" in v:
+        return "|".join(str(x) for x in v["enum"])
+    if "const" in v:
+        return str(v["const"])
+    if "anyOf" in v:
+        arms = [_schema_type(a, defs, depth) for a in v["anyOf"] if a.get("type") != "null"]
+        return arms[0] if len(arms) == 1 else arms
+    t = v.get("type")
+    if t == "array":
+        items = v.get("items") or {}
+        return [_schema_type(items, defs, depth)] if items else "array"
+    if t == "object" and v.get("properties"):
+        return _schema_props(v, defs, depth + 1)
+    return t or ""
+
+
+def _schema_props(schema: Dict[str, Any], defs: Dict[str, Any], depth: int = 0) -> Dict[str, Any]:
+    return {k: _schema_type(v, defs, depth) for k, v in (schema.get("properties") or {}).items()}
+
+
 def _schemas_doc() -> str:
+    """One line per allowed intent with its COMPLETE payload shape. The prompt
+    tells the model that payloads must match the documented schema exactly, so
+    nested models (CodeChangeSpec, FileEdit, ...) are documented too — a live
+    model cannot guess ``spec.files_allowed`` from ``"spec": ""``."""
     from .intents import ALLOWED_INTENT_TYPES, PAYLOAD_MODELS
 
     parts = []
@@ -839,8 +871,8 @@ def _schemas_doc() -> str:
         model = PAYLOAD_MODELS[t]
         try:
             schema = model.model_json_schema()
-            props = {k: v.get("type", v.get("anyOf", "")) for k, v in (schema.get("properties") or {}).items()}
-        except Exception:  # noqa: BLE001
+            props = _schema_props(schema, schema.get("$defs") or {})
+        except Exception:  # noqa: BLE001 — a schema that cannot render is documented as empty, never crashes cognition
             props = {}
         parts.append(f"- {t.value}: {json.dumps(props, default=str)}")
     return "\n".join(parts)

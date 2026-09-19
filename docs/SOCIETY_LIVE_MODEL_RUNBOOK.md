@@ -108,6 +108,29 @@ statuses — **no payloads, prompts, context or decision text**.
 `canary run` (in-process worker, DB access, credential in this process) exists for local proofs and
 is refused for anything but `openai_compatible` too.
 
+### 3.1 On Railway: the Phase 5 driver (`deploy/railway/phase5_live.py`)
+
+From an engineering session that cannot reach the staging edge, the same canaries run from inside the
+environment: the `staging-validator` service (docs/RAILWAY_STAGING.md §21) starts
+`deploy/railway/${VALIDATOR_SCRIPT:-validate_staging.py}`, so `VALIDATOR_SCRIPT=phase5_live.py` plus a
+`PHASE5_PLAN` and a new `VALIDATOR_RUN` value runs one plan per deployment. The driver logs in as the
+allow-listed operator (password derived from `STAGING_VALIDATOR_SECRET`, token kept in memory), never
+holds the model credential (it is not in its environment) and prints only structural, scrubbed lines
+(`PHASE5 <step> <code> PASS|FAIL …`, `PHASE5-JSON <step>.<key> {…}`, `PHASE5 RESULT: OK|FAILED`).
+
+| Step | What it does | Evidence line(s) |
+| --- | --- | --- |
+| `status` | public flags + a safe subset of `/v1/society/config` (never the credential field) | `status.public`, `status.config` |
+| `baseline` | counts-only snapshot of every society table, wallets, tasks, cost today, grants | `baseline.snapshot` |
+| `fund:<credits>[:<seq>]` | ledger-consistent DEPOSIT to `Society_Architect`'s wallet: a `pending` transaction completed so the **wallet trigger** credits it (never a balance write; idempotent per `seq`; operator action recorded in `extra_data`) | `fund.result` |
+| `gate:<role>:<INTENT>` / `gate:<role>:clear` | operator approval gate on the grant (`approval_required_intents`), only narrowing existing permissions | `gate G01` |
+| `canary:<single\|multi\|approval>[:<approve\|reject>]` | `app.society.canary.observe_canary` over HTTP — same PASS criteria as the table above | `canary.<scenario>.report/runs/intents/events/approvals/decisions` |
+| `signal[:candidate]` | ONE world event from `PHASE5_SIGNAL_TYPE` + `PHASE5_SIGNAL_JSON`, followed until the story is idle; `candidate` also asserts the engineering chain (READY with QA + Security pass, acceptance tests actually executed, bounded allow-list, one candidate) | `signal.events/runs/intents/decisions/candidates/candidate.<id>`, checks `K01–K10` |
+| `audit[:<hours>]` | loop breaker / DEAD / forbidden-HIGH / duplicate-workstream checks, escrow-ledger invariants (`E01–E03`), secret-and-chain-of-thought scan over runtime-produced rows (counts only, `X01–X03`), budget (`C01`), public-surface structure and closed operator surfaces (`P01–P04`) | `audit.snapshot/tasks/transactions/wallets/secret_scan/budget` |
+
+Money invariant (fund step): balances are mutated only by `update_wallet_balances_trigger`; the driver inserts
+a `deposit` transaction and flips it `pending → completed`, then proves `balance_after == balance_before + credits`.
+
 ---
 
 ## 4. Soak and GO / NO-GO
@@ -154,6 +177,9 @@ event_type pattern). Exit code 0 means all defended; `--burst` consumes the acto
 | `SOCIETY_REDTEAM_USER_TOKEN` / `SOCIETY_REDTEAM_AGENT_TOKEN` | red-team | plain user JWT / agent or `spt_` token (optional, adds 403 checks) |
 | `SOCIETY_CANARY_TOKEN` | `python -m app.society.canary observe` | operator user JWT (required) |
 | `SOCIETY_CANARY_API_URL` | canary `observe` | default `--api` |
+| `VALIDATOR_SCRIPT` | Railway `staging-validator` start command | `validate_staging.py` (default) or `phase5_live.py` |
+| `VALIDATOR_EXPECT_RUNTIME` | `deploy/railway/validate_staging.py` | `off` (default) or `on`: the public `runtime_enabled` flag the smoke asserts |
+| `PHASE5_PLAN`, `PHASE5_TIMEOUT`, `PHASE5_SIGNAL_TYPE`, `PHASE5_SIGNAL_JSON`, `PHASE5_DECIDE`, `PHASE5_OPERATOR_EMAIL`, `PHASE5_FUND_AGENT` | `deploy/railway/phase5_live.py` | plan and inputs of the Phase 5 driver (§3.1); none is a service setting |
 
 Tokens are read, never echoed. Reports are JSON files you choose the path for.
 

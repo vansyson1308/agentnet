@@ -27,4 +27,4 @@ cd .railway && npm install && cd .. && railway config plan && railway config app
 # per service: generated domain (registry, dashboard only), Wait for CI, watch paths, restart policy, pre-deploy timeout
 ```
 
-Status: `MANAGED STAGING — GREEN` (2026-09-18, `main` ae42d7a) — `docs/RAILWAY_STAGING.md` has the live inventory, the evidence per section and the §20 validation table; `validate_staging.py` is what the `staging-validator` service runs.
+Status: `MANAGED STAGING — GREEN` (2026-09-18, `main` ae42d7a) — `docs/RAILWAY_STAGING.md` has the live inventory, the evidence per section and the §20 validation table; `validate_staging.py` is what the `staging-validator` service runs (`VALIDATOR_EXPECT_RUNTIME` selects the runtime flag it asserts); `phase5_live.py` is the Phase 5 live-society driver the same service runs when `VALIDATOR_SCRIPT=phase5_live.py` (docs/SOCIETY_LIVE_MODEL_RUNBOOK.md §3.1).

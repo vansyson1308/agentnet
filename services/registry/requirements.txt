@@ -29,3 +29,10 @@ docker==7.0.0
 prometheus-client==0.20.0
 structlog==24.1.0
 alembic==1.13.1
+# Society QA runs the candidate's acceptance tests with `python -m pytest`
+# INSIDE the worker image (services/registry/app/society/engineering/qa.py);
+# pytest.ini (asyncio_mode, --timeout) needs these three at runtime. Same
+# pins as requirements-dev.txt — one resolver pass, one version everywhere.
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-timeout==2.4.0
