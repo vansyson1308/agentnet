@@ -341,3 +341,13 @@ def test_taskfail_agent_registration_is_authenticated_and_staging_only():
     assert '"POST", f"{base}/v1/agents/", token' in src, "agent registration must be the authenticated route"
     assert "public-register" not in src
     assert "staging.invalid" in src, "the canary agent must not advertise a reachable endpoint"
+
+
+def test_taskfail_reads_the_task_id_the_create_endpoint_actually_returns():
+    """POST /v1/tasks answers {'task_session_id', 'trace_id', 'span_id'} — not
+    {'id'}. Reading the wrong key made the step report FAIL on an HTTP 201."""
+    import inspect
+
+    p5 = _driver()
+    src = inspect.getsource(p5.step_taskfail)
+    assert '"task_session_id"' in src

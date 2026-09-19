@@ -700,7 +700,8 @@ def step_taskfail(out: Out, base: str, token: str, conn, credits: int, timeout: 
             "max_budget": credits, "currency": "credits", "timeout_seconds": 300,
         },
     )
-    task_id = str((body or {}).get("id") or "") if isinstance(body, dict) else ""
+    # POST /v1/tasks answers with the escrow trace, keyed task_session_id.
+    task_id = str((body or {}).get("task_session_id") or (body or {}).get("id") or "") if isinstance(body, dict) else ""
     out.check("taskfail", "T02", st in (200, 201) and bool(task_id), f"task created through POST /v1/tasks: HTTP {st} id={task_id[:8] or '-'}")
     if not task_id:
         out.json("taskfail", "create_error", {"status": st, "body": scrub(str(body))[:300]})
