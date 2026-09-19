@@ -313,3 +313,46 @@ def test_observe_parks_when_no_decision_is_given():
     stub = _StubHttp([_frame("completed", "awaiting_approval")] * 3)
     rep = cn.observe_canary("http://stub", "tok", scenario="approval", http=stub, sleep=lambda s: None, timeout_seconds=30)
     assert rep.verdict == "PARKED" and not [p for p in stub.posts if p[0] == "decide"]
+
+
+# ── Gate A run 12 (Railway staging, real DeepSeek runs): the live Scout
+# recorded the observation and declined to propose because the injected
+# anomaly carried no evidence, so the multi-agent chain never started. The
+# canary body must rehearse the real path, not a different one.
+
+
+def test_canary_anomaly_body_carries_the_same_evidence_the_trusted_producer_emits():
+    """The Scout may only propose on evidence TAKEN FROM THE EVENT, so the
+    canary's synthetic anomaly must carry the fields ``telemetry`` always
+    emits — otherwise the canary tests a signal no agent can act on."""
+    from services.registry.app.society import telemetry as tel
+
+    body = cn._payload_for("multi", "abc123")
+    required = {"metric", "value", "threshold", "baseline", "sample_size", "window_seconds", "description", "severity_score", "observed_at"}
+    assert required <= set(body), sorted(required - set(body))
+
+    # every evidence field the ProposalEvidence model needs is derivable
+    from services.registry.app.society.intents import ProposalEvidence
+
+    ProposalEvidence(
+        signal=body["metric"],
+        baseline=str(body["baseline"]),
+        observed=str(body["value"]),
+        window=f"{body['window_seconds']}s",
+        sample_size=int(body["sample_size"]),
+        actionable_reason=body["description"],
+    )
+
+    # parity with the trusted producer: the canary adds only `source`/`tag`
+    produced = {
+        "metric", "value", "threshold", "baseline", "sample_size",
+        "window_seconds", "description", "severity_score", "source", "observed_at",
+    }
+    assert set(tel.Anomaly.__dataclass_fields__) >= {"metric", "observed", "threshold", "baseline", "sample_size", "window_seconds", "description", "severity_score"}
+    assert set(body) - produced == {"tag"}, sorted(set(body) - produced)
+    assert body["source"] == "staging-canary"  # never claims to be real telemetry
+
+
+def test_canary_single_body_is_an_observation_not_an_anomaly():
+    body = cn._payload_for("single", "abc123")
+    assert body["signal"] == "canary" and "metric" not in body
