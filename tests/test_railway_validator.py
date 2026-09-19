@@ -209,7 +209,9 @@ def test_driver_paces_stories_past_the_fleet_cooldown():
     assert d.seconds_to_wait("2026-09-19T08:23:50Z", 30, now, margin_seconds=0) == 20
     assert d.seconds_to_wait("2026-09-19T08:23:00", 30, now) == 0, "naive timestamps are UTC; elapsed cooldown waits 0"
     text = DRIVER.read_text(encoding="utf-8")
-    assert text.count("pace_for_cooldown(out, ") == 2, "canary and signal steps both pace before injecting"
+    assert text.count("pace_for_cooldown(out, ") == 3, "canary, signal and taskfail all pace before a story starts"
+    for step in ("canary", "signal", "taskfail"):
+        assert f'pace_for_cooldown(out, "{step}"' in text, f"{step} must pace past the wake cooldown"
 
 
 def test_driver_intent_rows_keep_trusted_reasons_and_key_names_only():
@@ -296,3 +298,46 @@ def test_memory_view_is_read_only_scrubbed_and_never_reads_contents():
         ],
     }
     assert all(isinstance(params, tuple) for _, params in cur.sql)  # parameterised, never interpolated
+
+
+# ── Phase 5 closure: the real-domain step. A synthetic canary proves the
+# runtime; only a REAL platform fact proves the product. This step creates and
+# fails a task through the ordinary API and lets the runtime's own ingest turn
+# it into task.failed — it must never inject the event or write a task row.
+
+
+def test_plan_grammar_accepts_taskfail_with_an_optional_escrow():
+    p5 = _driver()
+    assert p5.parse_plan("taskfail") == [("taskfail", [])]
+    assert p5.parse_plan("taskfail:5") == [("taskfail", ["5"])]
+    for bad in ("taskfail:abc", "taskfail:5:6"):
+        with pytest.raises(ValueError):
+            p5.parse_plan(bad)
+
+
+def test_taskfail_uses_the_ordinary_api_and_never_injects_the_event():
+    import inspect
+
+    p5 = _driver()
+    src = inspect.getsource(p5.step_taskfail)
+    # the platform fact is made through the public API …
+    assert '"POST", f"{base}/v1/tasks/"' in src
+    assert "/fail?error_message=" in src
+    # … and the society event must come from the runtime's own ingest, never
+    # from the driver injecting one or editing the task row.
+    assert "/v1/society/events" not in src, "the real-domain step must not inject a society event"
+    for forbidden in ("UPDATE task_sessions", "INSERT INTO task_sessions", "INSERT INTO society_events"):
+        assert forbidden not in src, f"the real-domain step must not write {forbidden!r}"
+    # it asserts exactly one outcome event for the task, and no DEAD run
+    assert "exactly one task-outcome event" in src
+    assert "no DEAD run" in src
+
+
+def test_taskfail_agent_registration_is_authenticated_and_staging_only():
+    import inspect
+
+    p5 = _driver()
+    src = inspect.getsource(p5._ensure_canary_agent)
+    assert '"POST", f"{base}/v1/agents/", token' in src, "agent registration must be the authenticated route"
+    assert "public-register" not in src
+    assert "staging.invalid" in src, "the canary agent must not advertise a reachable endpoint"
