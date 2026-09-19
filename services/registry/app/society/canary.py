@@ -44,6 +44,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 from .config import SocietySettings, get_settings
+from .ids import CANARY_IDEMPOTENCY_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -655,7 +656,7 @@ def run_canary(
             actor_type="user" if operator is not None else "system",
             actor_id=operator.id if operator is not None else None,
             correlation_id=correlation,
-            idempotency_key=f"canary-{scenario}-{tag}",
+            idempotency_key=CANARY_IDEMPOTENCY_PREFIX + f"{scenario}-{tag}",
         )
         db.commit()
         logger.info("canary %s: injected %s id=%s correlation=%s", scenario, ev.event_type, ev.id, correlation)
@@ -799,7 +800,7 @@ def observe_canary(
     tag = uuid.uuid4().hex[:8]
     correlation = str(uuid.uuid4())
     report = CanaryReport(scenario=scenario, mode="observe", verdict="RUNNING", reasons=[], provider=LIVE_PROVIDER, model_name="", transport="live", correlation_id=correlation, started_at=_now_iso())
-    status, body = h.call("POST", "/v1/society/events", {"event_type": SCENARIOS[scenario]["event_type"], "payload": _payload_for(scenario, tag), "correlation_id": correlation, "idempotency_key": f"canary-{scenario}-{tag}"})
+    status, body = h.call("POST", "/v1/society/events", {"event_type": SCENARIOS[scenario]["event_type"], "payload": _payload_for(scenario, tag), "correlation_id": correlation, "idempotency_key": CANARY_IDEMPOTENCY_PREFIX + f"{scenario}-{tag}"})
     if status != 201:
         raise CanaryRefused(f"event injection failed with HTTP {status}: {str(body)[:200]}")
 

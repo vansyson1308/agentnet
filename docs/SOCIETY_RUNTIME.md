@@ -16,8 +16,8 @@ WORLD / DOMAIN EVENT ─► society_events (durable, idempotent, pg_notify wake)
 ```
 
 Code: `services/registry/app/society/` · Schema: migrations `0007_society_runtime` + `0008_society_phase2` +
-`0010_self_development` (all generated from `schema_sql.py`; `init-db/16-society-runtime.sql` is the fresh-volume
-bundle) · Tests: `tests/society/` · API: `/v1/society/*` (public structural surface + operator surface) ·
+`0010_self_development` (DDL, generated from `schema_sql.py`; `init-db/16-society-runtime.sql` is the fresh-volume
+bundle) + `0011_expire_rehearsal_memory` (data only: expires canary-rehearsal memory residue — nothing for a fresh volume) · Tests: `tests/society/` · API: `/v1/society/*` (public structural surface + operator surface) ·
 Demo: `examples/demo_autonomous_society.py --story docs|code` · Staging/live model: `docs/SOCIETY_LIVE_MODEL_RUNBOOK.md` ·
 Phase 3 self-development (repo intelligence, risk tiers, promotion controller, fitness): `docs/SELF_DEVELOPMENT.md`,
 `docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md` · Decisions: ADR-0001, ADR-0002, ADR-0004.
