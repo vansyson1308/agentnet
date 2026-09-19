@@ -1,4 +1,4 @@
-# AgentNet — current state (truth as of 2026-09-18, Phase 4)
+# AgentNet — current state (truth as of 2026-09-19, Phase 5 closure)
 
 This file replaces the earlier machine-specific snapshot. It describes the repository as
 the running code, schema and tests define it. When something here disagrees with the code,
@@ -16,7 +16,7 @@ the code and tests win and this file is stale — fix it in the same change.
 | Society GitHub App / real PR promotion | **IMPLEMENTED, NOT CONFIGURED** — `GitHubCredentialProvider` (`disabled` default, `static`, `app` = App JWT → short-lived installation token, in-memory cache/refresh/single-flight) and `GIT_ASKPASS`-based `git push` (no token in URL/argv/config); inert until an owner registers the App and mounts its private key into the controller only (`docs/GITHUB_PROMOTION.md`, ADR-0005). No real promotion has run |
 | One self-improvement control plane | **DONE (Phase 3.1)** — the worker's reflection loop and `AGENT_BACKLOG.md` bridge are archived under `legacy/hermes/`; synthetic poll/echo/storyteller agents under `legacy/synthetic-agents/`; `tests/society/test_single_control_plane.py` |
 | `main` ruleset | **ACTIVE** — configured by the owner (2026-09-19) from `deploy/github/main-ruleset.json`: pull request required, review threads resolved, the six CI jobs required and strict, no bypass actors; enforced on the Phase 4.1 PR |
-| Live model | **LIVE MODEL READY (Phase 4.1 preflight, 2026-09-19)** — a DeepSeek credential exists only in the Railway `society-worker` (never read by the session). The first preflight failed the output contract (DeepSeek thinks by default; ADR-0007), the second — after the provider request-capability layer (`SOCIETY_MODEL_CAPABILITY_PROFILE=deepseek`, `SOCIETY_MODEL_THINKING_MODE=disabled`, `SOCIETY_MODEL_REASONING_EFFORT=none`, `json_object`) — returned `LIVE MODEL READY` (category `ready`, `deepseek-flash`, 1 request, 0 retries). Phase 5 (live activation, real-model canaries, autonomous-coding soak) runs through `deploy/railway/phase5_live.py`; until its GO/NO-GO is recorded here the Society runtime is treated as OFF outside an explicit Phase 5 window |
+| Live model | **LIVE — CONDITIONAL GO (Phase 5 closure, 2026-09-19)** — the Society ran on real DeepSeek against Railway staging with `SOCIETY_RUNTIME_ENABLED=true`: 57 completed live runs, 0 DEAD, 0 model retries, 0 timeouts, $0.048 of a $1.00 daily budget. Proven live: multi-agent operation on a REAL `task.failed` raised by `world.ingest_task_outcomes()` (Scout → Governor → Architect, proposal created and approved); the full approval lifecycle both ways (approve resumes the PERSISTED intent with **no new model decision** and executes exactly once; reject never executes and leaves no side effect); `SOCIETY RED-TEAM: ALL DEFENDED` twice with fresh actors against live cognition; economics, secret/chain-of-thought and public-surface audits all PASS. **Not** proven live: an autonomous docs candidate reaching READY — see `docs/SOCIETY_LIVE_PROOF.md` §3 |
 | Staging deployment | **Railway managed staging — GREEN** (2026-09-18, `main` ae42d7a): project `AgentNet`, environment `staging`, Postgres + Redis (private), registry + dashboard on Railway-generated domains, payment / worker / society-worker private, one `society-workspace` volume, registry pre-deploy as the only migration owner (`0010_self_development`, fleet seed), `TRUST_X_REAL_IP` spoof test PASS at the live edge, Society flags OFF, scripted model only. Two consecutive full validations by the in-environment `staging-validator` (`deploy/railway/validate_staging.py`, 26 checks each, distinct operators) plus restart / persistence / rollback / secret-leak / resource proofs — `docs/RAILWAY_STAGING.md` §20. Open owner action: *Wait for CI* on each service (the flag does not persist through the connector). `docker-compose.staging.yml` remains the Compose alternative |
 | Production deployment | **none**; the retired VPS artifacts are quarantined under `deploy/legacy-vps/` |
 | A2A v1 migration | **NOT STARTED** (`app/a2a.py` still emits a v0.3-shaped card; readiness plan is written only after a live-model GO) |
@@ -30,15 +30,19 @@ SELF-DEVELOPMENT MECHANICS: PROVEN
 REAL SOURCE CODE CANDIDATE: PROVEN DETERMINISTICALLY
 SHADOW PR PROMOTION: PROVEN
 OFFLINE FITNESS: PROVEN
-LIVE MODEL: PREFLIGHT READY (deepseek-flash, 2026-09-19) — cognition not yet proven live (Phase 5)
+LIVE MODEL: PROVEN LIVE (deepseek-flash, 2026-09-19) — 57 completed runs, 0 DEAD, 0 retries
 REAL SOCIETY GITHUB APP: NOT YET CONFIGURED
 HOSTING: RAILWAY STAGING DEPLOYED (project AgentNet / environment staging)
-MANAGED STAGING: GREEN (two consecutive full validations on main ae42d7a)
+MANAGED STAGING: GREEN (two consecutive full validations, distinct actors, on main 23b73f7)
 STAGING OPERATOR: CREATED
 SECRET LEAK CHECK: PASS
+CHAIN OF THOUGHT STORED: NO
+LIVE SOCIETY: CONDITIONAL GO (runtime ON, autonomous code ON, promotion/deploy OFF)
+AUTONOMOUS CODE CANDIDATE (LIVE): NOT PROVEN — see docs/SOCIETY_LIVE_PROOF.md §3
+SOCIETY RED-TEAM (LIVE, RUNTIME ON): ALL DEFENDED
 DEEPSEEK KEY PRESENT: YES (Railway society-worker only; never read, printed or copied)
 SOCIETY GITHUB SECRET PRESENT: NO
-WAIT FOR CI ON RAILWAY: OWNER ACTION REQUIRED
+WAIT FOR CI ON RAILWAY: ACTIVE (verified holding deployments through Phase 5)
 PRODUCTION DEPLOYMENT: NOT STARTED
 DNS CHANGED: NO
 A2A V1: NOT STARTED

@@ -164,6 +164,30 @@ NO-GO (stop the runtime, keep the evidence): any forbidden HIGH intent allowed, 
 inconsistency, any loop breaker tripping repeatedly, a credential appearing anywhere, or the daily
 budget exhausted by fewer than the expected runs.
 
+### 4.1 What the Phase 5 closure window actually recorded (2026-09-19)
+
+Outcome: **CONDITIONAL GO** — full record in `docs/SOCIETY_LIVE_PROOF.md`. Met live: ≥3 roles,
+real-domain multi-agent operation, approval + rejection lifecycles, red-team ALL DEFENDED twice
+with fresh actors, economics, secret/chain-of-thought and public-surface audits, zero DEAD runs.
+Not met: a docs candidate reaching READY.
+
+Two defects were found **by the live runtime**, not by inspection, and both are repaired:
+undocumented intent-payload bounds, and an agent being unable to see its own refused intents.
+The second matters for anyone running this again: a refused intent does not stop the run, so the
+run's remaining intents still execute and can record that refused work succeeded. Check
+`recent_refusals` in the context and `intents_by_execution` in `audit` before concluding that an
+agent "declined" something.
+
+Two operational notes worth keeping:
+
+- The red-team's `--burst 40` spends an actor's hourly ingress quota, and with the runtime ON it
+  also drives the fleet into its per-role hourly run limit — the closure window recorded 34 runs
+  correctly skipped with `global runs/hour limit reached (30/30)`. That is the governor working,
+  not a fault. Use a fresh operator per run (`docs/RAILWAY_STAGING.md` §9).
+- `EXPECTED_ALEMBIC_HEAD` exists both as a code default and as a service variable, and the
+  variable silently wins. Update both when a migration lands, or a validation goes RED on `S01`
+  while the database is correct.
+
 Failure policy: `SOCIETY_RUNTIME_ENABLED=false` (events wait, nothing is lost) → collect
 `/v1/society/story/<corr>/detail` for the affected correlation → fix on a branch → re-run the
 canaries. Never edit rows by hand to make a canary pass.
