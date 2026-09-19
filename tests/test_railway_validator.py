@@ -6,6 +6,7 @@ pin the parts that decide PASS/FAIL and the never-print-a-secret contract."""
 from __future__ import annotations
 
 import importlib.util
+import json
 import pathlib
 import re
 
@@ -100,7 +101,8 @@ def test_driver_plan_grammar():
         ("audit", ["6"]),
         ("status", []),
     ]
-    for bad in ("", "nuke", "canary", "canary:bogus", "canary:single:maybe", "gate:scout", "fund", "fund:0", "fund:ten", "signal:now", "audit:soon"):
+    assert d.parse_plan("intents:b5cba482-1b16-422a-9bc2-8055fbaa1403") == [("intents", ["b5cba482-1b16-422a-9bc2-8055fbaa1403"])]
+    for bad in ("", "nuke", "canary", "canary:bogus", "canary:single:maybe", "gate:scout", "fund", "fund:0", "fund:ten", "signal:now", "audit:soon", "intents", "intents:not-an-id"):
         with pytest.raises(ValueError):
             d.parse_plan(bad)
 
@@ -208,4 +210,25 @@ def test_driver_paces_stories_past_the_fleet_cooldown():
     assert d.seconds_to_wait("2026-09-19T08:23:00", 30, now) == 0, "naive timestamps are UTC; elapsed cooldown waits 0"
     text = DRIVER.read_text(encoding="utf-8")
     assert text.count("pace_for_cooldown(out, ") == 2, "canary and signal steps both pace before injecting"
+
+
+def test_driver_intent_rows_keep_trusted_reasons_and_key_names_only():
+    d = _driver()
+    key = "sk-" + "B" * 40
+    detail = {
+        "runs": [
+            {"id": "44719395-b014-48a3-858e-a4c3377316ea", "role": "scout", "status": "completed", "decision_summary": "s", "intents": [
+                {"seq": 0, "intent_type": "CREATE_IMPROVEMENT", "risk_class": "low", "policy_decision": "invalid", "execution_status": "denied",
+                 "policy_reason": "payload schema violation: [{'type': 'uuid_parsing', 'loc': ('source_task_id',)}] " + key, "error": None,
+                 "payload": {"title": "secret-looking value " + key, "evidence": {"signal": "x"}}, "approval": None},
+            ]},
+        ]
+    }
+    rows = d.intent_rows(detail)
+    assert rows == [{
+        "run": "44719395", "role": "scout", "seq": 0, "type": "CREATE_IMPROVEMENT", "risk": "low", "policy": "invalid", "execution": "denied",
+        "reason": "payload schema violation: [{'type': 'uuid_parsing', 'loc': ('source_task_id',)}] ***", "error": None,
+        "payload_keys": ["evidence", "title"], "approval": None,
+    }]
+    assert key not in json.dumps(rows) and "secret-looking" not in json.dumps(rows), "payload values never printed; reasons scrubbed"
 
