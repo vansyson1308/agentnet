@@ -30,9 +30,9 @@ import enum
 import hashlib
 import json
 import uuid
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 MAX_TEXT = 4000
 MAX_TITLE = 255
@@ -116,8 +116,37 @@ REPO_READ_INTENT_TYPES = frozenset(
 )
 
 
+def _nullable_non_text(annotation: Any) -> bool:
+    """True for ``Optional[X]`` where no arm is ``str``: an empty string can
+    never be a valid value for such a field, only "no value"."""
+    if get_origin(annotation) is not Union:
+        return False
+    arms = get_args(annotation)
+    return type(None) in arms and str not in arms
+
+
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _empty_string_means_absent(cls, data: Any) -> Any:
+        """Live-model compatibility (Phase 5, Gate A run 9): a json-mode
+        model that has no value for an optional reference tends to send
+        ``""`` rather than ``null``. For an ``Optional`` field whose type is
+        not text (uuid, int, enum, nested model, list) an empty string is
+        read as absent. Nothing else is coerced: a NON-empty invalid id still
+        fails validation, a required id is still required, and an unknown
+        key is still rejected."""
+        if not isinstance(data, dict):
+            return data
+        cleaned = None
+        for name, field in cls.model_fields.items():
+            if data.get(name) == "" and _nullable_non_text(field.annotation):
+                if cleaned is None:
+                    cleaned = dict(data)
+                cleaned[name] = None
+        return cleaned if cleaned is not None else data
 
 
 AgentRef = str  # agent name (e.g. "Society_Architect") or UUID string
