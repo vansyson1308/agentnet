@@ -585,16 +585,20 @@ def test_alembic_on_top_of_fresh_bundle_is_a_schema_noop(fresh_db, fresh_snapsho
 
 
 PHASE3_TABLES = {"code_promotions", "change_experiments", "deployment_requests"}
+# Added by 0012 and removed by its downgrade: the append-only audit trail for
+# memory validation state changes.
+PHASE6_TABLES = {"memory_validation_events"}
+POST_0008_TABLES = APP_TABLES | PHASE3_TABLES | PHASE6_TABLES
 
 
 def test_downgrade_0008_then_upgrade_head_round_trips(upgrade_db):
     before = snapshot_schema(upgrade_db)
-    assert APP_TABLES | PHASE3_TABLES <= set(before["tables"])
+    assert POST_0008_TABLES <= set(before["tables"])
     _alembic(upgrade_db, "downgrade", "0008_society_phase2")
     assert "0008_society_phase2" in _alembic_current(upgrade_db)
     mid = snapshot_schema(upgrade_db)
-    assert not ((APP_TABLES | PHASE3_TABLES) & set(mid["tables"])), "downgrade left app/phase-3 tables behind"
-    assert set(before["tables"]) - set(mid["tables"]) == APP_TABLES | PHASE3_TABLES, "downgrade touched other tables"
+    assert not (POST_0008_TABLES & set(mid["tables"])), "downgrade left post-0008 tables behind"
+    assert set(before["tables"]) - set(mid["tables"]) == POST_0008_TABLES, "downgrade touched other tables"
     _alembic(upgrade_db, "upgrade", "head")
     assert EXPECTED_HEAD in _alembic_current(upgrade_db)
     diffs = diff_schemas(before, snapshot_schema(upgrade_db))
