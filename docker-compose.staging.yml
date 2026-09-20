@@ -172,7 +172,8 @@ services:
       SOCIETY_MAX_DIFF_LINES: ${SOCIETY_MAX_DIFF_LINES:-600}
       # promotion controller (shadow by default; the real provider is inert without a credential)
       SOCIETY_PROMOTION_PROVIDER: ${SOCIETY_PROMOTION_PROVIDER:-disabled}
-      SOCIETY_AUTO_MERGE_ENABLED: "false"   # not overridable in staging in this phase
+      SOCIETY_AUTO_MERGE_ENABLED: "false"   # this stack never merges autonomously; the flag is not host-overridable here
+      SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY: ${SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY:-1}
       SOCIETY_GITHUB_REPOSITORY: ${SOCIETY_GITHUB_REPOSITORY:-}
       SOCIETY_GITHUB_BASE_BRANCH: ${SOCIETY_GITHUB_BASE_BRANCH:-main}
       SOCIETY_GITHUB_API_URL: ${SOCIETY_GITHUB_API_URL:-https://api.github.com}
