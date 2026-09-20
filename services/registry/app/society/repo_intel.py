@@ -238,7 +238,18 @@ def read_file(root: pathlib.Path, rel: str, *, max_bytes: int = DEFAULT_MAX_BYTE
         raise RepoReadError(f"not a file: {rel}")
     text, truncated = _read_text_bounded(p, max_bytes)
     norm = normalize_rel_path(rel)
-    return ReadResult(op="read_file", path=norm, data={"content": text, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "lines": text.count("\n") + (1 if text and not text.endswith("\n") else 0)}, truncated=truncated, bytes_returned=len(text))
+    lines = text.count("\n") + (1 if text and not text.endswith("\n") else 0)
+    data = {"content": text, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "lines": lines}
+    if truncated:
+        # A truncated read has to say how to CONTINUE it. The cut is by bytes and
+        # can land mid-line, so the last returned line may be partial: re-reading
+        # it is correct, skipping it silently loses content. A live Builder with
+        # only a byte count to go on continued a 12000-byte preview at "line"
+        # 12000 of a 92-line file and stranded its candidate.
+        whole, _ = _read_text_bounded(p, DEFAULT_MAX_BYTES * 8)
+        data["total_lines"] = whole.count("\n") + (1 if whole and not whole.endswith("\n") else 0)
+        data["next_line"] = max(1, lines)
+    return ReadResult(op="read_file", path=norm, data=data, truncated=truncated, bytes_returned=len(text))
 
 
 def read_range(root: pathlib.Path, rel: str, start: int, end: int, *, max_lines: int = DEFAULT_MAX_LINES) -> ReadResult:

@@ -866,6 +866,24 @@ def _scalar_bounds(v: Dict[str, Any], t: str) -> str:
     return ""
 
 
+def _scalar_note(v: Dict[str, Any]) -> str:
+    """A field's ``description``, for contracts a type and a bound cannot state.
+
+    Bounds say how big a value may be; they cannot say what it MEANS. Adjacent
+    read primitives took ``max_bytes`` and ``start``/``end`` with no unit named
+    anywhere the model could see, so a live Builder continuing a byte-truncated
+    preview asked for line 12000 of a 92-line file, got an empty result, read
+    again, and tripped the loop breaker with its candidate stranded. Like
+    ``_scalar_bounds``, this prompt line is the only place such a contract is
+    ever stated: ``payload`` is an open object in the provider-side schema.
+
+    Kept to one short clause per field, and only where type and bound are
+    genuinely ambiguous — the schema block is part of every prompt.
+    """
+    d = str(v.get("description") or "").strip()
+    return f" {d}" if d else ""
+
+
 def _schema_type(v: Dict[str, Any], defs: Dict[str, Any], depth: int) -> Any:
     """Compact, model-readable rendering of one json-schema property: nested
     models are inlined (``$ref`` -> their properties), literals become
@@ -896,7 +914,7 @@ def _schema_type(v: Dict[str, Any], defs: Dict[str, Any], depth: int) -> Any:
         return _schema_props(v, defs, depth + 1)
     if not t:
         return ""
-    return f"{t}{_scalar_bounds(v, str(t))}"
+    return f"{t}{_scalar_bounds(v, str(t))}{_scalar_note(v)}"
 
 
 def _schema_props(schema: Dict[str, Any], defs: Dict[str, Any], depth: int = 0) -> Dict[str, Any]:
