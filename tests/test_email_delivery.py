@@ -236,3 +236,143 @@ def test_no_vendor_specific_code_in_the_delivery_boundary():
     assert "import smtplib" in src
     for forbidden in ("import requests", "import httpx", "import boto3"):
         assert forbidden not in src, f"{forbidden} suggests a vendor HTTP API, not neutral SMTP"
+
+
+# ── resend-verification must not become an enumeration oracle ────────────────
+#
+# The endpoint's whole contract is that its answer does not depend on whether
+# the address exists. Checking "did the provider construct?" does NOT establish
+# that: the disabled provider -- production's default -- constructs perfectly
+# well and refuses only when asked to send, which happens after the lookup. So
+# an existing unverified address got a 503 and everything else got a 200, which
+# is exactly the bit the generic message exists to withhold.
+#
+# These drive the real route function against a stub session, so the assertion
+# is about the response the endpoint actually produces.
+
+def _auth_routes():
+    """Import the auth routes the way the service itself does.
+
+    The registry package is rooted at ``services/registry`` and imports itself
+    as ``app.*``; importing it as ``services.registry.app.*`` gives a second,
+    inconsistent copy whose own imports fail.
+    """
+    import pathlib
+    import sys
+
+    root = str(pathlib.Path(__file__).resolve().parent.parent / "services" / "registry")
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from app.api.routes import auth as auth_routes
+
+    return auth_routes
+
+
+class _StubQuery:
+    def __init__(self, result):
+        self._result = result
+
+    def filter(self, *_a, **_k):
+        return self
+
+    def first(self):
+        return self._result
+
+
+class _StubSession:
+    """Just enough Session for the route: a canned user and no-op writes."""
+
+    def __init__(self, user):
+        self._user = user
+        self.committed = False
+        self.rolled_back = False
+        self.added = []
+
+    def query(self, *_a, **_k):
+        return _StubQuery(self._user)
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    def flush(self):
+        pass
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        self.rolled_back = True
+
+
+class _StubUser:
+    def __init__(self, verified: bool):
+        import uuid as _uuid
+
+        self.id = _uuid.uuid4()
+        self.email = "someone@example.com"
+        self.is_email_verified = verified
+
+
+def _resend(monkeypatch, provider_name: str, user):
+    """Call the real route and return (status_code_or_200, session)."""
+    import asyncio
+
+    from fastapi import HTTPException
+
+    auth_routes = _auth_routes()
+
+    monkeypatch.setenv("EMAIL_DELIVERY_PROVIDER", provider_name)
+    session = _StubSession(user)
+    req = auth_routes.ResendVerificationRequest(email="someone@example.com")
+    try:
+        asyncio.run(auth_routes.resend_verification(req, db=session))
+        return 200, session
+    except HTTPException as exc:
+        return exc.status_code, session
+
+
+@pytest.mark.parametrize(
+    "user,label",
+    [
+        (None, "no such address"),
+        (_StubUser(verified=False), "exists, unverified"),
+        (_StubUser(verified=True), "exists, verified"),
+    ],
+)
+def test_resend_answers_identically_whether_or_not_the_address_exists(monkeypatch, user, label):
+    """With delivery disabled, all three cases must be indistinguishable."""
+    status, session = _resend(monkeypatch, "disabled", user)
+    assert status == 503, f"{label}: got {status}"
+    assert not session.committed, f"{label}: nothing may be written when delivery is impossible"
+
+
+def test_resend_delivers_for_an_unverified_address_when_delivery_works(monkeypatch):
+    """The uniform 503 must not be achieved by never delivering at all."""
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    import importlib
+
+    from services.registry.app import config as app_config
+
+    importlib.reload(app_config)
+    sent = []
+    auth_routes = _auth_routes()
+
+    monkeypatch.setattr(
+        auth_routes, "_deliver_verification", lambda email, token: sent.append((email, token))
+    )
+    status, session = _resend(monkeypatch, "log", _StubUser(verified=False))
+    assert status == 200
+    assert session.committed and len(sent) == 1
+    # ...and a verified address is a no-op with the same 200.
+    status, session = _resend(monkeypatch, "log", _StubUser(verified=True))
+    assert status == 200 and not session.committed and len(sent) == 1
+
+
+def test_every_provider_declares_whether_it_can_deliver():
+    """`available` is the capability the route checks; a provider that omits it
+    would silently be treated as unable to deliver."""
+    from app.email_delivery import DisabledEmailProvider, LogEmailProvider, SMTPEmailProvider
+
+    assert DisabledEmailProvider.available is False
+    assert LogEmailProvider.available is True
+    assert SMTPEmailProvider.available is True

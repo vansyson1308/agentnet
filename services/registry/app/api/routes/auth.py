@@ -261,12 +261,26 @@ async def verify_email(token: str, db: Session = Depends(get_db)):
 @router.post("/resend-verification")
 async def resend_verification(req: ResendVerificationRequest, db: Session = Depends(get_db)):
     """Resend a verification link, without revealing whether the address exists."""
-    # Ask the provider whether delivery is possible at all BEFORE the lookup.
-    # Answering 503 only for addresses that exist would turn this endpoint into
-    # the enumeration oracle the generic message exists to avoid.
+    # Ask whether delivery is possible at all BEFORE the lookup. Answering 503
+    # only for addresses that exist would turn this endpoint into the
+    # enumeration oracle the generic message exists to avoid.
+    #
+    # Constructing the provider is NOT that question. The disabled provider --
+    # production's default -- constructs perfectly well and refuses only when
+    # asked to send, which is after the lookup. So the check is the provider's
+    # declared capability, not the fact that it was built.
+    #
+    # What remains: a provider that is statically capable but whose host is
+    # down answers 503 for an existing unverified address and 200 otherwise,
+    # for as long as the outage lasts. Closing that too would mean opening an
+    # SMTP connection on every request to an unauthenticated endpoint, which
+    # buys one bit at the cost of a denial-of-service amplifier. The residual
+    # is recorded here rather than papered over.
     try:
-        build_email_provider()
+        provider = build_email_provider()
     except Exception:
+        provider = None
+    if provider is None or not getattr(provider, "available", False):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Verification email delivery is temporarily unavailable. Please try again later.",

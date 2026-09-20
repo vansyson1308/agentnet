@@ -62,6 +62,13 @@ class EmailDeliveryUnavailable(EmailDeliveryError):
 class EmailDeliveryProvider(Protocol):
     name: str
 
+    #: Whether this provider can deliver at all, answerable WITHOUT a
+    #: recipient. A caller that must not reveal whether an address exists has
+    #: to decide "is delivery possible" before it looks the address up --
+    #: construction alone cannot answer that, because a provider that is
+    #: configured to deliver nothing constructs perfectly well.
+    available: bool
+
     def send_verification(self, *, to: str, verify_url: str) -> None:  # pragma: no cover - protocol
         ...
 
@@ -75,6 +82,7 @@ class DisabledEmailProvider:
     """
 
     name = "disabled"
+    available = False
 
     def send_verification(self, *, to: str, verify_url: str) -> None:
         raise EmailDeliveryUnavailable(
@@ -87,6 +95,7 @@ class LogEmailProvider:
     """Development only: the link goes to the log, as it always has."""
 
     name = "log"
+    available = True
 
     def __init__(self) -> None:
         if not IS_DEV:
@@ -109,7 +118,13 @@ class SMTPEmailProvider:
     port 465). Credentials come from the environment and are never logged.
     """
 
+    # Static configuration is validated in __init__ (host and sender are
+    # required, TLS modes are exclusive), so a constructed SMTP provider is
+    # always statically capable of delivering. Whether the host is reachable
+    # RIGHT NOW is a different question, and deliberately not asked here: see
+    # the note on the public verification endpoint in api/routes/auth.py.
     name = "smtp"
+    available = True
 
     def __init__(
         self,
