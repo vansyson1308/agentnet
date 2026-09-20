@@ -425,3 +425,4 @@ def test_memory_search_is_read_only_and_matches_a_literal_substring():
     assert "ESCAPE" in cur.sql
     assert hits[0]["id"] == "9f8e7d6c-5b4a-4938-8271-6f5e4d3c2b1a"
     assert hits[0]["validation"] == "unvalidated"
+    assert hits[0]["correlation"] is None

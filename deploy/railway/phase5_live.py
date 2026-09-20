@@ -632,7 +632,9 @@ def memory_search(cur, agent_name: str, needle: str, limit: int = 20) -> List[Di
             "title": scrub(str(r[1]))[:200],
             "created_at": r[2].isoformat() if r[2] else None,
             "validation": r[3],
-            "correlation": str(r[4])[:8] if r[4] else None,
+            # full, not the usual 8 chars: a refutation has to be justified from
+            # that story's intents, and `intents:<correlation>` needs the whole id
+            "correlation": str(r[4]) if r[4] else None,
             "scope": r[5],
         }
         for r in rows
