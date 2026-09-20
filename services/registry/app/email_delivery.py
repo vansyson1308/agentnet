@@ -38,7 +38,7 @@ import ssl
 from email.message import EmailMessage
 from typing import Optional, Protocol
 
-from .config import IS_DEV
+from .config import ENVIRONMENT, IS_DEV
 
 logger = logging.getLogger(__name__)
 
@@ -92,17 +92,28 @@ class DisabledEmailProvider:
 
 
 class LogEmailProvider:
-    """Development only: the link goes to the log, as it always has."""
+    """The link goes to the log, as it always has.
+
+    This is the DEFAULT in development and an explicit, deliberate opt-in
+    anywhere else -- it is never what an unconfigured host falls back to. In
+    production it is refused outright: the log would hold a live credential.
+
+    Staging sets it on purpose. Staging has no SMTP and its accounts are
+    canaries, and the alternative is either wiring real mail credentials into a
+    pre-production environment or leaving registration permanently broken
+    there, which would make staging a worse rehearsal for production, not a
+    safer one.
+    """
 
     name = "log"
     available = True
 
     def __init__(self) -> None:
-        if not IS_DEV:
+        if ENVIRONMENT == "production":
             # Not a warning, a refusal. This provider writes a live credential
-            # to the log; outside development that is a leak, not a fallback.
+            # to the log; in production that is a leak, not a fallback.
             raise EmailDeliveryError(
-                "EMAIL_DELIVERY_PROVIDER=log is refused outside development: "
+                "EMAIL_DELIVERY_PROVIDER=log is refused in production: "
                 "it writes the verification link to the log"
             )
 

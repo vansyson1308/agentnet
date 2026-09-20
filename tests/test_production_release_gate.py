@@ -372,3 +372,13 @@ def test_ci_runs_on_the_production_branch():
     for entry in branch_lists:
         names = {b.strip() for b in entry.split(",")}
         assert "production" in names and "main" in names
+
+
+def test_production_declares_email_delivery_and_never_logs_the_link():
+    """Production must not fall back to the log provider: the verification link
+    is a live credential. `disabled` is the honest posture until an owner wires
+    a real sender -- registration then refuses with 503 rather than creating
+    accounts nobody can activate."""
+    ts = _ts_code_only((REPO_ROOT / ".railway" / "production.ts").read_text(encoding="utf-8"))
+    assert 'EMAIL_DELIVERY_PROVIDER: "disabled"' in ts
+    assert 'EMAIL_DELIVERY_PROVIDER: "log"' not in ts

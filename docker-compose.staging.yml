@@ -38,6 +38,9 @@ x-staging-redis: &staging-redis
 x-staging-common: &staging-common
   JAEGER_ENABLED: "false"
   ENVIRONMENT: staging
+  # Staging has no SMTP. `log` is an explicit opt-in (never a fallback) and is
+  # REFUSED in production; without it, registration answers 503 here.
+  EMAIL_DELIVERY_PROVIDER: ${EMAIL_DELIVERY_PROVIDER:-log}
   # Which peers' X-Forwarded-* headers uvicorn trusts (the platform proxy).
   # Default loopback = trust nobody on the published port.
   FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}

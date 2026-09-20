@@ -116,11 +116,27 @@ def test_disabled_provider_never_claims_delivery():
         DisabledEmailProvider().send_verification(to="a@b.test", verify_url="https://x/y")
 
 
-def test_log_provider_is_refused_outside_development(monkeypatch):
-    """It writes a live credential to the log. Outside dev that is a leak."""
-    monkeypatch.setattr("services.registry.app.email_delivery.IS_DEV", False)
+def test_log_provider_is_refused_in_production(monkeypatch):
+    """It writes a live credential to the log. In production that is a leak."""
+    monkeypatch.setattr("services.registry.app.email_delivery.ENVIRONMENT", "production")
     with pytest.raises(EmailDeliveryError):
         LogEmailProvider()
+
+
+def test_log_provider_is_allowed_in_staging(monkeypatch):
+    """Staging has no SMTP and its accounts are canaries. Refusing here would
+    leave staging registration permanently 503 -- and the staging validator
+    cannot create the canary user it needs (deploy/railway/validate_staging.py).
+    It is still never the DEFAULT outside development: reaching it requires an
+    explicit EMAIL_DELIVERY_PROVIDER=log, which is a deliberate operator act.
+    """
+    monkeypatch.setattr("services.registry.app.email_delivery.ENVIRONMENT", "staging")
+    monkeypatch.setattr("services.registry.app.email_delivery.IS_DEV", False)
+    assert LogEmailProvider().name == "log"
+    monkeypatch.delenv("EMAIL_DELIVERY_PROVIDER", raising=False)
+    assert build_email_provider().name == "disabled", "log must not be the staging default"
+    monkeypatch.setenv("EMAIL_DELIVERY_PROVIDER", "log")
+    assert build_email_provider().name == "log"
 
 
 def test_smtp_delivers_the_verification_link():
