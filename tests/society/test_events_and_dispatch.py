@@ -153,3 +153,34 @@ def test_correlation_run_limit_loop_breaker(db, society_settings, monkeypatch):
     assert stats.loop_breaks == 1 and _ev(e2.status) == "ignored"
     assert db.query(AgentRun).filter(AgentRun.correlation_id == corr).count() == 3
     assert report.agents  # seeded
+
+
+def test_every_open_candidate_state_has_a_role_that_can_be_woken_periodically():
+    """A candidate is only ever moved by a role that wakes. The Builder's wakes
+    were all one-shot events, so when the loop breaker swallowed a live
+    repo.read.result its candidate was stranded in REQUESTED permanently:
+    nothing re-emits code_change.requested (a re-request returns duplicate=True
+    without emitting), no operator route closes a candidate, and the Scout then
+    CORRECTLY declines to re-propose work that already has an open candidate.
+    Three locally-correct behaviours composing into a deadlock.
+    """
+    from services.registry.app.society.events import EventType
+    from services.registry.app.society.intents import IntentType
+    from services.registry.app.society.roles import DEFAULT_ROLES, ROLE_BUILDER
+
+    builder = DEFAULT_ROLES[ROLE_BUILDER]
+    assert EventType.SOCIETY_HEARTBEAT in builder.subscriptions, (
+        "the only role that can move a candidate out of REQUESTED must have a "
+        "periodic wake, or one lost event strands the work forever"
+    )
+    assert IntentType.SUBMIT_CODE_CANDIDATE.value in builder.allowed_intents
+    # the wake is only useful because the Builder can already SEE open work
+    from services.registry.app.society.context import _candidates  # noqa: F401
+
+
+def test_the_heartbeat_reaches_the_builder_through_the_dispatch_table():
+    from services.registry.app.society.events import EventType
+    from services.registry.app.society.roles import DEFAULT_ROLES, ROLE_BUILDER, subscriptions_by_event
+
+    routing = subscriptions_by_event(DEFAULT_ROLES)
+    assert ROLE_BUILDER in routing.get(EventType.SOCIETY_HEARTBEAT, ())
