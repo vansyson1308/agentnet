@@ -47,6 +47,7 @@ class EventType:
     # society-produced
     AGENT_MESSAGE_RECEIVED = "agent.message.received"
     MEMORY_WRITTEN = "memory.written"
+    MEMORY_REFUTED = "memory.refuted"
     GOAL_CREATED = "goal.created"
     GOAL_UPDATED = "goal.updated"
     PROPOSAL_CREATED = "proposal.created"

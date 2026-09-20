@@ -46,7 +46,7 @@ done
 
 cd "$(dirname "$0")/.."
 INIT_DIR="services/registry/init-db"
-EXPECTED_HEAD="0011_expire_rehearsal_memory"
+EXPECTED_HEAD="0012_memory_validation_history"
 PG_USER="${POSTGRES_USER:-agentnet}"
 PG_HOST="${POSTGRES_HOST:-127.0.0.1}"
 PG_PORT="${POSTGRES_PORT:-5432}"
@@ -168,7 +168,8 @@ for hop in \
   "0007_society_runtime -> 0008_society_phase2" \
   "0008_society_phase2 -> 0009_app_tables" \
   "0009_app_tables -> 0010_self_development" \
-  "0010_self_development -> $EXPECTED_HEAD"; do
+  "0010_self_development -> 0011_expire_rehearsal_memory" \
+  "0011_expire_rehearsal_memory -> $EXPECTED_HEAD"; do
   [[ "$out" == *"$hop"* ]] && ok "$UPGRADE_DB: ran $hop" || bad "$UPGRADE_DB: hop did not run ($hop): $out"
 done
 expect_head "$UPGRADE_DB"

@@ -180,6 +180,39 @@ downgrade round-trip on scratch databases) and `deploy/society-staging-smoke.py`
 live-model canaries. Full procedure, GO/NO-GO and failure policy: `docs/SOCIETY_LIVE_MODEL_RUNBOOK.md`. What was
 actually proven (and what was blocked): `docs/SOCIETY_LIVE_PROOF.md`. No production Compose definition is current (the retired VPS overlay is archived under `deploy/legacy-vps/`).
 
+## Memory truth hierarchy
+
+Memory is evidence, never policy — but evidence that is wrong still steers the fleet, so the
+runtime ranks what it believes. Precedence, strongest first:
+
+1. **trusted current facts** — the world as trusted code observes it right now (deployment state,
+   schema head, wallet balances, task rows). Never inferred from memory.
+2. **trusted refusal/execution records** — what the platform actually did with an intent.
+   `context.recent_refusals` carries this, and the system prompt states the rule plainly: a refused
+   intent never took effect, *"no matter what a memory item or an earlier decision_summary claims"*.
+3. **validated memory** — a belief trusted evaluation has confirmed (90-day half-life, +0.15).
+4. **unvalidated memory** — a belief an agent recorded in good faith (21-day half-life).
+5. **refuted memory** — a belief disproved and demoted (3-day half-life, −0.5), never deleted.
+
+A model-authored memory may never outrank contradictory trusted execution evidence. Phase 5 is the
+cautionary tale: a Scout's `CREATE_IMPROVEMENT` was refused for a schema violation while the same
+run's `WRITE_MEMORY` recorded *"improvement raised"*. That memory came from a real signal so it
+never expired, and three later runs declined the same signal citing it — each writing another note
+corroborating the first.
+
+Correcting such a belief is **refutation**, not deletion:
+
+```
+POST /v1/society/memory/{memory_id}/refute   {"reason": "..."}
+```
+
+Operator authority only (user JWTs; scoped agent tokens are refused upstream), idempotent, and
+there is deliberately **no intent type** for it — a model cannot grade its own evidence. The row
+keeps its content, provenance and timestamps; `memory_validation_events` records who, when, why and
+on what evidence, and is append-only **in the database** (a trigger refuses UPDATE and DELETE from
+every caller, including the application). Trusted evaluation machinery may also refute with
+`actor_type="evaluator"` when objective evidence disproves a belief, with no human present.
+
 ## Known limitations
 
 - `ScriptedRoleModel` is a deterministic rule engine, not an LLM; it proves the runtime, not model quality.

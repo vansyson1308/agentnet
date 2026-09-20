@@ -335,3 +335,42 @@ CREATE TABLE IF NOT EXISTS deployment_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_deployment_requests_status ON deployment_requests (status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_deployment_requests_correlation ON deployment_requests (correlation_id);
+
+-- ============================================================
+-- Autonomous Society Runtime — audited memory validation history
+-- ============================================================
+
+-- Why a separate table rather than columns on memory_items: a memory row can be
+-- revalidated more than once over its life (unvalidated -> refuted, and later
+-- superseded), and the QUESTION an auditor asks is "who changed the standing of
+-- this belief, when, and on what evidence" -- which is a log, not a field.
+--
+-- memory_id deliberately carries NO foreign key. This is an audit log: it must
+-- outlive the row it describes, and a FK with ON DELETE CASCADE would also make
+-- the append-only trigger below fight agent deletion.
+CREATE TABLE IF NOT EXISTS memory_validation_events (
+    id              UUID PRIMARY KEY,
+    memory_id       UUID NOT NULL,
+    from_state      VARCHAR(16) NOT NULL,
+    to_state        VARCHAR(16) NOT NULL,
+    actor_type      VARCHAR(16) NOT NULL,   -- operator | evaluator
+    actor_user_id   UUID REFERENCES users(id) ON DELETE SET NULL,
+    reason          TEXT NOT NULL,
+    evidence        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_memory_validation_events_memory ON memory_validation_events (memory_id, created_at DESC);
+
+-- Constitutional invariant "agents cannot alter audit history", enforced by the
+-- database rather than by convention: this log is append-only for EVERY caller,
+-- including the application's own connection.
+CREATE OR REPLACE FUNCTION memory_validation_events_append_only() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'memory_validation_events is append-only (attempted %)', TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_memory_validation_events_append_only ON memory_validation_events;
+CREATE TRIGGER trg_memory_validation_events_append_only
+    BEFORE UPDATE OR DELETE ON memory_validation_events
+    FOR EACH ROW EXECUTE FUNCTION memory_validation_events_append_only();

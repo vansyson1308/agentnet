@@ -48,6 +48,7 @@ from ...models import (
     GoalStatus,
     ImprovementProposal,
     IntentApproval,
+    MemoryItem,
     IntentExecutionStatus,
     PolicyDecision,
     PromotionStatus,
@@ -60,6 +61,7 @@ from ...models import (
     WalletOwnerType,
 )
 from ...society import approvals as approvals_mod
+from ...society import memory_validation as memory_validation_mod
 from ...society.config import get_settings
 from ...society.events import EventType, emit_event
 from ...society.operator_auth import assign_role, require_event_producer, require_operator, user_society_role
@@ -504,6 +506,66 @@ def approve_intent(intent_id: uuid.UUID, body: Optional[DecisionBody] = None, db
 @router.post("/intents/{intent_id}/reject")
 def reject_intent(intent_id: uuid.UUID, body: Optional[DecisionBody] = None, db: Session = Depends(get_db), operator: User = Depends(require_operator)):
     return _decide(db, intent_id, operator, "rejected", body)
+
+
+# ── memory correction (operator) ──────────────────────────────────────
+
+
+class RefuteBody(BaseModel):
+    """A refutation must say why. The reason is persisted in the audit log."""
+
+    reason: str = Field(..., min_length=1, max_length=memory_validation_mod.MAX_REASON_CHARS)
+
+
+def _memory_out(m: MemoryItem) -> Dict[str, Any]:
+    return {
+        "id": str(m.id),
+        "scope": _ev(m.scope),
+        "title": m.title,
+        "agent_id": str(m.agent_id) if m.agent_id else None,
+        "validation_state": m.validation_state,
+        "superseded_by": str(m.superseded_by) if m.superseded_by else None,
+        "importance": m.importance,
+        "confidence": m.confidence,
+        "created_at": _iso(m.created_at),
+        "correlation_id": str(m.correlation_id) if m.correlation_id else None,
+    }
+
+
+@router.post("/memory/{memory_id}/refute")
+def refute_memory(
+    memory_id: uuid.UUID,
+    body: RefuteBody,
+    db: Session = Depends(get_db),
+    operator: User = Depends(require_operator),
+):
+    """Mark one memory ``refuted``: demoted in retrieval, never deleted.
+
+    There is no intent type for this. A model cannot grade its own evidence,
+    so refutation is reachable only through trusted code with operator
+    authority (user JWTs; scoped agent tokens are refused upstream).
+    """
+    try:
+        res = memory_validation_mod.refute(
+            db, memory_id=memory_id, reason=body.reason, actor_type="operator", actor=operator
+        )
+    except memory_validation_mod.MemoryNotFound:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="memory not found")
+    db.commit()
+    return {
+        "memory": _memory_out(res.memory),
+        "already_refuted": res.already_refuted,
+        "history": [
+            {
+                "from_state": h.from_state,
+                "to_state": h.to_state,
+                "actor_type": h.actor_type,
+                "reason": h.reason,
+                "at": _iso(h.created_at),
+            }
+            for h in memory_validation_mod.history(db, memory_id)
+        ],
+    }
 
 
 # ── operator management (operator) ────────────────────────────────────
