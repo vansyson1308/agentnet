@@ -135,7 +135,9 @@ holds the model credential (it is not in its environment) and prints only struct
 | `signal[:candidate]` | ONE world event from `PHASE5_SIGNAL_TYPE` + `PHASE5_SIGNAL_JSON`, followed until the story is idle; `candidate` also asserts the engineering chain (READY with QA + Security pass, acceptance tests actually executed, bounded allow-list, one candidate) | `signal.events/runs/intents/decisions/candidates/candidate.<id>`, checks `K01–K10` |
 | `taskfail:<credits>[:<seq>]` | proves multi-agent operation on a REAL domain fact: registers two canary agents, funds the caller, creates a task through `POST /v1/tasks`, fails it through `PUT /v1/tasks/<id>/fail`, then waits for the runtime's own `world.ingest_task_outcomes()` to raise `task.failed`. The driver never injects that event and never writes a `task_sessions` row | `taskfail.task/outcome/runs`, checks `T00–T08` |
 | `intents:<correlation-id>` | read-only diagnosis of one story: per-intent policy decision, execution status and the **untruncated** validation reason, plus each run's decision summary | `intents.<id>.intents/events/decisions`, check `D01` |
-| `memory:<role>` | read-only: how many live memory rows a role carries into its next run, from how many correlations, how many have an expiry, and the newest titles with provenance. Titles are model-authored, so they are scrubbed and bounded; contents are never read and nothing is written | `memory.<role>.view`, check `M01` |
+| `memory:<role>` | read-only: how many live memory rows a role carries into its next run, from how many correlations, how many have an expiry, and the newest titles with provenance and **id**. With `PHASE5_MEMORY_MATCH` set it searches every live row for that LITERAL title substring (`%`, `_` and `\` escaped) instead of showing the newest thirty — which is the wrong end of the list when the row you need to correct is old and the fleet has been busy since. Titles are model-authored, so they are scrubbed and bounded; contents are never read and nothing is written | `memory.<role>.view` / `memory.<role>.match`, checks `M01–M02` |
+| `refute:<memory-id>` | corrects ONE false memory through `POST /v1/society/memory/<id>/refute` — the operator path, never SQL. The row is never deleted and its title, `created_at` and correlation are asserted untouched; the append-only history is read back **out of** `memory_validation_events` rather than trusted from the response, and the call is repeated to prove it writes no second audit row. `PHASE5_REFUTE_REASON` is required: a refutation must say why, and the reason is persisted | `refute.before/history/after`, checks `R01–R05` |
+| `promotions[:<limit>]` | read-only: each promotion record the **controller** wrote — status, provider, risk tier, branch, PR, CI state — and the eligibility gates that decide merges. Asserts two negatives: `P02` nothing merged autonomously, `P03` no promotion was ever auto-merge eligible | `promotions.records`, checks `P01–P03` |
 | `audit[:<hours>]` | loop breaker / DEAD / forbidden-HIGH / duplicate-workstream checks, escrow-ledger invariants (`E01–E03`), secret-and-chain-of-thought scan over runtime-produced rows (counts only, `X01–X03`), budget (`C01`), public-surface structure and closed operator surfaces (`P01–P04`) | `audit.snapshot/tasks/transactions/wallets/secret_scan/budget` |
 
 Money invariant (fund step): balances are mutated only by `update_wallet_balances_trigger`; the driver inserts
@@ -184,6 +186,12 @@ Two operational notes worth keeping:
   also drives the fleet into its per-role hourly run limit — the closure window recorded 34 runs
   correctly skipped with `global runs/hour limit reached (30/30)`. That is the governor working,
   not a fault. Use a fresh operator per run (`docs/RAILWAY_STAGING.md` §9).
+- That budget is a ROLLING hour (`runs_last_hour`), and it is shared: a burst starves ordinary
+  stories for the next sixty minutes. A `signal` injected into a full window is **consumed** by a
+  `skipped` run — the event reaches `processed` and is never re-dispatched — so the story is lost,
+  not queued. Plan a real story at least an hour after any burst, and if one is skipped, inject a
+  fresh signal rather than raising `SOCIETY_MAX_RUNS_PER_HOUR`: raising a safety governor to make
+  a run happen is tuning the system to produce the answer you wanted.
 - `EXPECTED_ALEMBIC_HEAD` exists both as a code default and as a service variable, and the
   variable silently wins. Update both when a migration lands, or a validation goes RED on `S01`
   while the database is correct.
@@ -219,7 +227,7 @@ event_type pattern). Exit code 0 means all defended; `--burst` consumes the acto
 | `SOCIETY_CANARY_API_URL` | canary `observe` | default `--api` |
 | `VALIDATOR_SCRIPT` | Railway `staging-validator` start command | `validate_staging.py` (default) or `phase5_live.py` |
 | `VALIDATOR_EXPECT_RUNTIME` | `deploy/railway/validate_staging.py` | `off` (default) or `on`: the public `runtime_enabled` flag the smoke asserts |
-| `PHASE5_PLAN`, `PHASE5_TIMEOUT`, `PHASE5_SIGNAL_TYPE`, `PHASE5_SIGNAL_JSON`, `PHASE5_DECIDE`, `PHASE5_OPERATOR_EMAIL`, `PHASE5_FUND_AGENT` | `deploy/railway/phase5_live.py` | plan and inputs of the Phase 5 driver (§3.1); none is a service setting |
+| `PHASE5_PLAN`, `PHASE5_TIMEOUT`, `PHASE5_SIGNAL_TYPE`, `PHASE5_SIGNAL_JSON`, `PHASE5_DECIDE`, `PHASE5_OPERATOR_EMAIL`, `PHASE5_FUND_AGENT`, `PHASE5_MEMORY_MATCH`, `PHASE5_REFUTE_REASON` | `deploy/railway/phase5_live.py` | plan and inputs of the Phase 5 driver (§3.1); none is a service setting |
 
 Tokens are read, never echoed. Reports are JSON files you choose the path for.
 

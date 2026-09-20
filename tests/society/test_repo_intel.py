@@ -183,3 +183,49 @@ def test_reads_target_candidate_worktree_when_candidate_given(db, SessionLocal, 
     assert "MARKER_IN_WORKTREE" not in rows[1].result["result"]["data"]["content"], "the trusted base is untouched"
     db.refresh(cand)
     assert cand.repo_reads == 1
+
+
+# ── continuing a truncated read ────────────────────────────────────────
+#
+# A live Builder read a byte-truncated preview of a 92-line document, then
+# asked READ_REPO_RANGE for "line" 12000 — the byte offset it had just read to.
+# The range came back empty, it read again, the loop breaker tripped, and its
+# candidate was stranded in `requested`. Nothing the model could see said that
+# one primitive counts BYTES and its neighbour counts LINES.
+
+
+def test_truncated_read_file_says_how_to_continue(code_repo):
+    """The cut is by bytes and can land mid-line, so a truncated read has to
+    hand back a LINE to resume from — deriving one from a byte count is the
+    guess that stranded the candidate."""
+    rel = "services/app/big.py"
+    target = code_repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("".join(f"line {i} padding padding padding\n" for i in range(1, 401)), encoding="utf-8")
+
+    head = ri.read_file(code_repo, rel, max_bytes=500)
+    assert head.truncated is True
+    assert head.data["total_lines"] == 400, "a truncated read must state the WHOLE file's length"
+    nxt = head.data["next_line"]
+    assert 1 <= nxt <= head.data["lines"] + 1
+
+    tail = ri.read_range(code_repo, rel, nxt, nxt + 20)
+    assert tail.data["content"].strip(), "continuing at next_line must return real content"
+    assert tail.data["total_lines"] == 400
+
+    # an untruncated read carries no continuation: there is nothing to continue
+    whole = ri.read_file(code_repo, rel, max_bytes=32000)
+    assert whole.truncated is False and "next_line" not in whole.data
+
+
+def test_read_range_past_eof_is_empty_and_reports_the_real_length(code_repo):
+    """The exact live call: a line number taken from a byte offset. It must not
+    look like a file that simply has nothing there."""
+    rel = "services/app/small.py"
+    target = code_repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("".join(f"line {i}\n" for i in range(1, 93)), encoding="utf-8")
+
+    out = ri.read_range(code_repo, rel, 12000, 12200)
+    assert out.data["content"] == ""
+    assert out.data["total_lines"] == 92, "the reader must be able to tell it overshot"

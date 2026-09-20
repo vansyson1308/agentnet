@@ -227,3 +227,33 @@ def test_structure_of_non_scalar_renderings_is_unchanged():
     assert doc["CREATE_IMPROVEMENT"]["target_scope"] == "agent|platform"
     assert doc["CREATE_IMPROVEMENT"]["source_task_id"] == "uuid|null"
     assert isinstance(doc["CREATE_IMPROVEMENT"]["evidence"], dict)
+
+
+def test_the_unit_that_stranded_a_live_candidate_is_rendered_for_both_read_primitives():
+    """READ_REPO_FILE counts BYTES, READ_REPO_RANGE counts LINES, and the two
+    sit side by side in the same prompt block. A live Builder continuing a
+    byte-truncated preview asked for "line" 12000 of a 92-line file, got an
+    empty range, read again, and tripped the loop breaker with its candidate
+    stranded in `requested`. A bound says how big a value may be; only the
+    description can say what it MEANS.
+    """
+    doc = _doc_lines()
+    assert "BYTES" in doc["READ_REPO_FILE"]["max_bytes"]
+    for field in ("start", "end"):
+        assert "LINE" in doc["READ_REPO_RANGE"][field], f"{field} must name its unit"
+    assert "not a byte offset" in doc["READ_REPO_RANGE"]["start"]
+    # the bound is still there: a description must never displace one
+    assert "256..32000" in doc["READ_REPO_FILE"]["max_bytes"]
+    assert ">=1" in doc["READ_REPO_RANGE"]["start"]
+
+
+def test_a_field_without_a_description_renders_exactly_as_before():
+    """Descriptions are for genuinely ambiguous contracts; every other field
+    must stay as terse as it was, because this block is in every prompt."""
+    from services.registry.app.society.cognition import _scalar_note
+
+    assert _scalar_note({}) == ""
+    assert _scalar_note({"description": "  "}) == ""
+    assert _scalar_note({"description": "in BYTES"}) == " in BYTES"
+    doc = _doc_lines()
+    assert doc["WRITE_MEMORY"]["title"] == "string(1..255 chars)"

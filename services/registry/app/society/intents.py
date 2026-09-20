@@ -365,7 +365,7 @@ class RepoSearchPayload(_Strict):
 
 class RepoReadFilePayload(_Strict):
     path: str = Field(..., min_length=1, max_length=255)
-    max_bytes: int = Field(32000, ge=256, le=32000)
+    max_bytes: int = Field(32000, ge=256, le=32000, description="in BYTES")
     candidate_id: Optional[uuid.UUID] = None
 
     _p = field_validator("path")(classmethod(lambda cls, v: _repo_path_ok(v)))
@@ -373,8 +373,8 @@ class RepoReadFilePayload(_Strict):
 
 class RepoReadRangePayload(_Strict):
     path: str = Field(..., min_length=1, max_length=255)
-    start: int = Field(1, ge=1)
-    end: int = Field(..., ge=1)
+    start: int = Field(1, ge=1, description="1-based LINE number, not a byte offset")
+    end: int = Field(..., ge=1, description="1-based LINE number, inclusive")
     candidate_id: Optional[uuid.UUID] = None
 
     _p = field_validator("path")(classmethod(lambda cls, v: _repo_path_ok(v)))

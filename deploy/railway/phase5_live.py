@@ -63,7 +63,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "taskfail")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "taskfail")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -130,6 +130,10 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("intents:<correlation-id>")
         if name == "memory" and (len(args) != 1 or not re.fullmatch(r"[a-z_]{2,32}", args[0])):
             raise ValueError("memory:<role>")
+        if name == "refute" and (len(args) != 1 or not re.fullmatch(r"[0-9a-fA-F-]{32,36}", args[0])):
+            raise ValueError("refute takes exactly one memory item id")
+        if name == "promotions" and (len(args) > 1 or (args and not args[0].isdigit())):
+            raise ValueError("promotions[:<limit>]")
         if name == "taskfail" and (len(args) > 1 or (args and not args[0].isdigit())):
             raise ValueError("taskfail[:<escrow-credits>]")
         plan.append((name, args))
@@ -553,7 +557,8 @@ def memory_view(cur, agent_name: str, limit: int = 30) -> Dict[str, Any]:
         cur,
         """
         SELECT m.scope::text, m.title, m.created_at, m.expires_at, m.importance,
-               m.confidence, m.validation_state, m.source_type, m.correlation_id
+               m.confidence, m.validation_state, m.source_type, m.correlation_id,
+               m.id
         FROM memory_items m
         LEFT JOIN agents a ON a.id = m.agent_id
         WHERE (a.name = %s OR m.scope::text = 'SOCIETY')
@@ -574,6 +579,7 @@ def memory_view(cur, agent_name: str, limit: int = 30) -> Dict[str, Any]:
             "validation": r[6],
             "source": r[7],
             "correlation": str(r[8])[:8] if r[8] else None,
+            "id": str(r[9]),
         }
         for r in rows
     ]
@@ -599,12 +605,216 @@ def memory_view(cur, agent_name: str, limit: int = 30) -> Dict[str, Any]:
     }
 
 
+def memory_search(cur, agent_name: str, needle: str, limit: int = 20) -> List[Dict[str, Any]]:
+    """Read-only title search across ALL live rows a role reads back.
+
+    memory_view shows the newest few, which is the wrong end of the list when
+    the row you need to correct is old and the fleet has been busy since. The
+    needle is matched as a LITERAL substring: ILIKE wildcards in operator input
+    would silently widen the search, and a refutation must hit the row the
+    operator meant."""
+    literal = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    rows = _rows(
+        cur,
+        """
+        SELECT m.id, m.title, m.created_at, m.validation_state, m.correlation_id, m.scope::text
+        FROM memory_items m
+        LEFT JOIN agents a ON a.id = m.agent_id
+        WHERE (a.name = %s OR m.scope::text = 'SOCIETY')
+          AND (m.expires_at IS NULL OR m.expires_at > now())
+          AND m.title ILIKE %s ESCAPE '\\'
+        ORDER BY m.created_at DESC
+        LIMIT %s
+        """,
+        (agent_name, f"%{literal}%", limit),
+    )
+    return [
+        {
+            "id": str(r[0]),
+            "title": scrub(str(r[1]))[:200],
+            "created_at": r[2].isoformat() if r[2] else None,
+            "validation": r[3],
+            # full, not the usual 8 chars: a refutation has to be justified from
+            # that story's intents, and `intents:<correlation>` needs the whole id
+            "correlation": str(r[4]) if r[4] else None,
+            "scope": r[5],
+        }
+        for r in rows
+    ]
+
+
 def step_memory(out: Out, conn, role: str) -> None:
     agent_name = "Society_" + role.capitalize()
+    needle = (os.getenv("PHASE5_MEMORY_MATCH", "") or "").strip()
     with conn.cursor() as cur:
         view = memory_view(cur, agent_name)
+        hits = memory_search(cur, agent_name, needle) if needle else []
     out.check("memory", "M01", True, f"{agent_name}: {view['live_rows']} live memory row(s) from {view['distinct_correlations']} correlation(s), {view['rows_with_expiry']} with an expiry")
-    out.json("memory", f"{role}.view", view)
+    if needle:
+        out.check("memory", "M02", True, f"{len(hits)} live row(s) whose title contains the literal {needle!r}")
+        out.json("memory", f"{role}.match", hits)
+    else:
+        out.json("memory", f"{role}.view", view)
+
+
+def _memory_row(conn, memory_id: str) -> Optional[Dict[str, Any]]:
+    with conn.cursor() as cur:
+        rows = _rows(
+            cur,
+            """
+            SELECT m.title, m.validation_state, m.created_at, m.scope::text,
+                   m.correlation_id, a.name, m.importance, m.confidence
+            FROM memory_items m
+            LEFT JOIN agents a ON a.id = m.agent_id
+            WHERE m.id = %s
+            """,
+            (memory_id,),
+        )
+    if not rows:
+        return None
+    r = rows[0]
+    return {
+        "id": memory_id,
+        "title": scrub(str(r[0]))[:200],
+        "validation": r[1],
+        "created_at": r[2].isoformat() if r[2] else None,
+        "scope": r[3],
+        "correlation": str(r[4])[:8] if r[4] else None,
+        "agent": r[5],
+        "importance": int(r[6] or 0),
+        "confidence": int(r[7] or 0),
+    }
+
+
+def _refute_history(conn, memory_id: str) -> List[Dict[str, Any]]:
+    with conn.cursor() as cur:
+        rows = _rows(
+            cur,
+            """
+            SELECT e.from_state, e.to_state, e.actor_type, u.email, e.reason, e.created_at
+            FROM memory_validation_events e
+            LEFT JOIN users u ON u.id = e.actor_user_id
+            WHERE e.memory_id = %s
+            ORDER BY e.created_at
+            """,
+            (memory_id,),
+        )
+    return [
+        {
+            "from": r[0],
+            "to": r[1],
+            "actor_type": r[2],
+            "actor": (r[3] or "").split("@")[0] or None,
+            "reason": scrub(str(r[4] or ""))[:300],
+            "at": r[5].isoformat() if r[5] else None,
+        }
+        for r in rows
+    ]
+
+
+def step_refute(out: Out, base: str, token: str, conn, memory_id: str) -> None:
+    """Correct a false belief through the operator API, never through SQL.
+
+    The driver holds a database connection, so it COULD set validation_state
+    directly in one statement. It must not, and the distinction is the whole
+    point: an edit leaves no audit row, and a record that can be silently
+    rewritten is not evidence. This calls the ordinary operator endpoint and
+    then reads the append-only history back OUT of the database, so the claim
+    "the refutation was recorded" is checked against the table rather than
+    against the response that asserts it."""
+    reason = (os.getenv("PHASE5_REFUTE_REASON", "") or "").strip()
+    if not reason:
+        out.check("refute", "R00", False, "PHASE5_REFUTE_REASON is required — a refutation must say why")
+        return
+    before = _memory_row(conn, memory_id)
+    if before is None:
+        out.check("refute", "R00", False, f"memory {memory_id[:8]} not found")
+        return
+    out.json("refute", "before", before)
+    if before["validation"] == "refuted":
+        out.info("refute", f"{memory_id[:8]} is already refuted; re-running to confirm idempotency")
+
+    st, body = api("POST", f"{base}/v1/society/memory/{memory_id}/refute", token, {"reason": reason})
+    ok = st == 200 and isinstance(body, dict)
+    out.check("refute", "R01", ok, f"refute {memory_id[:8]} HTTP {st}{'' if ok else ' ' + str(body)[:160]}")
+    if not ok:
+        return
+    mem = body.get("memory") or {}
+    out.check("refute", "R02", mem.get("validation_state") == "refuted", f"validation_state={mem.get('validation_state')!r} (was {before['validation']!r})")
+
+    after = _memory_row(conn, memory_id)
+    preserved = bool(after) and scrub(str(after["title"]))[:200] == before["title"] and after["created_at"] == before["created_at"] and after["correlation"] == before["correlation"]
+    out.check("refute", "R03", preserved, "title, created_at and correlation untouched — the row still records what was believed")
+
+    st2, body2 = api("POST", f"{base}/v1/society/memory/{memory_id}/refute", token, {"reason": reason})
+    out.check("refute", "R04", st2 == 200 and isinstance(body2, dict) and (body2 or {}).get("already_refuted") is True, f"repeat refute HTTP {st2} already_refuted={(body2 or {}).get('already_refuted')}")
+
+    hist = _refute_history(conn, memory_id)
+    out.check("refute", "R05", len(hist) == 1, f"{len(hist)} append-only audit row(s) for this memory after two calls (exactly 1 expected)")
+    out.json("refute", "history", hist)
+    out.json("refute", "after", after)
+
+
+def step_promotions(out: Out, conn, limit: int) -> None:
+    """Read the durable promotion records the CONTROLLER wrote.
+
+    A PR that is not merged is weak evidence: it could simply not have been
+    tried yet. The eligibility record says WHY it is not merged -- which gate
+    blocked it and whether auto-merge was even allowed -- and that is the claim
+    "auto-merge is off" actually has to be checked against. Read-only."""
+    with conn.cursor() as cur:
+        rows = _rows(
+            cur,
+            """
+            SELECT p.id, p.status::text, p.provider, p.risk_tier, p.external_branch,
+                   p.external_pr_number, p.external_pr_url, p.ci_state, p.merge_state,
+                   p.merged_sha, p.failure_reason, p.eligibility, p.created_at,
+                   p.candidate_id, p.correlation_id, a.name
+            FROM code_promotions p
+            LEFT JOIN agents a ON a.id = p.requested_by_agent_id
+            ORDER BY p.created_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+    view = []
+    for r in rows:
+        gates = r[11] if isinstance(r[11], dict) else {}
+        view.append(
+            {
+                "promotion": str(r[0])[:8],
+                "status": r[1],
+                "provider": r[2],
+                "risk_tier": r[3],
+                "branch": r[4],
+                "pr": r[5],
+                "pr_url": r[6],
+                "ci_state": r[7],
+                "merge_state": r[8],
+                "merged_sha": (r[9] or "")[:12] or None,
+                "failure_reason": scrub(str(r[10]))[:200] if r[10] else None,
+                "requested_by": r[15],
+                "candidate": str(r[13])[:8],
+                "correlation": str(r[14]),
+                "created_at": r[12].isoformat() if r[12] else None,
+                "gates": {
+                    k: gates.get(k)
+                    for k in (
+                        "merge_eligible", "auto_merge_enabled", "auto_merge_allowed",
+                        "human_approval_required", "human_approval_satisfied",
+                        "human_approvals", "blocking", "ci_passed", "qa_pass",
+                        "security_pass", "fitness_precheck", "trusted_risk_tier",
+                    )
+                    if k in gates
+                },
+            }
+        )
+    out.check("promotions", "P01", True, f"{len(view)} promotion record(s)")
+    merged = [v for v in view if v["status"] == "merged" or v["merged_sha"]]
+    out.check("promotions", "P02", not merged, f"nothing merged autonomously ({len(merged)} merged record(s) found)")
+    auto = [v for v in view if v["gates"].get("auto_merge_enabled") or v["gates"].get("auto_merge_allowed")]
+    out.check("promotions", "P03", not auto, f"no promotion was auto-merge eligible ({len(auto)} found)")
+    out.json("promotions", "records", view)
 
 
 def step_intents(out: Out, base: str, token: str, correlation: str) -> None:
@@ -966,7 +1176,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail") and conn is None:
+            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions") and conn is None:
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -986,6 +1196,10 @@ def main() -> int:
                 step_intents(out, base, token, args[0])
             elif name == "memory":
                 step_memory(out, conn, args[0])
+            elif name == "refute":
+                step_refute(out, base, token, conn, args[0])
+            elif name == "promotions":
+                step_promotions(out, conn, int(args[0]) if args else 5)
             elif name == "taskfail":
                 step_taskfail(out, base, token, conn, int(args[0]) if args else 5, timeout)
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence

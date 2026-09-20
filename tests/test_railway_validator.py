@@ -268,7 +268,7 @@ def test_memory_view_is_read_only_scrubbed_and_never_reads_contents():
             # a finding (tests/test_no_hardcoded_secrets.py), and rightly so.
             key_shaped = "sk-" + "A" * 24
             self._rows = (
-                [("AGENT", f"Repeated signal: {key_shaped}", None, None, 30, 40, "unvalidated", "run", None)]
+                [("AGENT", f"Repeated signal: {key_shaped}", None, None, 30, 40, "unvalidated", "run", None, "9f8e7d6c-5b4a-4938-8271-6f5e4d3c2b1a")]
                 if "ORDER BY" in sql
                 else [(7, 0, 3)]
             )
@@ -294,6 +294,7 @@ def test_memory_view_is_read_only_scrubbed_and_never_reads_contents():
                 "validation": "unvalidated",
                 "source": "run",
                 "correlation": None,
+                "id": "9f8e7d6c-5b4a-4938-8271-6f5e4d3c2b1a",
             }
         ],
     }
@@ -351,3 +352,101 @@ def test_taskfail_reads_the_task_id_the_create_endpoint_actually_returns():
     p5 = _driver()
     src = inspect.getsource(p5.step_taskfail)
     assert '"task_session_id"' in src
+
+
+def test_plan_grammar_accepts_a_refute_by_memory_id_and_rejects_junk():
+    p5 = _driver()
+    mid = "3f2a1b4c5d6e47889a0b1c2d3e4f5061"
+    assert p5.parse_plan(f"refute:{mid}") == [("refute", [mid])]
+    for bad in ("refute", "refute:scout", "refute:" + mid + ":extra", "refute:../etc"):
+        with pytest.raises(ValueError):
+            p5.parse_plan(bad)
+
+
+def test_refute_writes_through_the_operator_api_and_never_through_sql():
+    """The driver holds a database connection, so the ONE thing this step must
+    not do is the thing it could most easily do."""
+    import inspect
+
+    p5 = _driver()
+    src = inspect.getsource(p5.step_refute)
+    assert '"POST", f"{base}/v1/society/memory/{memory_id}/refute"' in src
+    lowered = src.lower()
+    for forbidden in ("update memory_items", "insert into memory_items", "insert into memory_validation_events", "delete from"):
+        assert forbidden not in lowered, f"a refutation must go through the API, never {forbidden!r}"
+    # the history is read back OUT of the table rather than trusted from the response
+    assert "_refute_history(conn, memory_id)" in src
+    # and it proves the row was corrected, not erased
+    assert "R03" in src and "untouched" in src
+
+
+def test_refute_history_reader_is_read_only_and_never_prints_the_operator_email():
+    import inspect
+
+    p5 = _driver()
+    src = inspect.getsource(p5._refute_history)
+    lowered = src.lower()
+    for forbidden in ("update ", "insert ", "delete ", "drop "):
+        assert forbidden not in lowered, f"the audit reader must stay read-only: {forbidden!r}"
+    assert 'split("@")[0]' in src, "only the local part of the operator address may be printed"
+
+
+def test_memory_view_exposes_the_id_so_a_refutation_can_name_its_target():
+    import inspect
+
+    p5 = _driver()
+    src = inspect.getsource(p5.memory_view)
+    assert "m.id" in src and '"id": str(r[9])' in src
+
+
+def test_memory_search_is_read_only_and_matches_a_literal_substring():
+    """ILIKE wildcards in operator input would silently widen the search, and a
+    refutation must hit the row the operator meant."""
+    import inspect
+
+    p5 = _driver()
+    src = inspect.getsource(p5.memory_search)
+    lowered = src.lower()
+    for forbidden in ("update ", "delete ", "insert ", "drop ", "m.content"):
+        assert forbidden not in lowered, f"memory_search must stay read-only and title-only: {forbidden!r}"
+
+    class _Cur:
+        def execute(self, sql, params=()):
+            self.sql, self.params = sql, params
+            self._rows = [("9f8e7d6c-5b4a-4938-8271-6f5e4d3c2b1a", "Improvement raised for X", None, "unvalidated", None, "AGENT")]
+
+        def fetchall(self):
+            return self._rows
+
+    cur = _Cur()
+    hits = p5.memory_search(cur, "Society_Scout", "100%_raw\\")
+    assert isinstance(cur.params, tuple)  # parameterised, never interpolated
+    assert cur.params[1] == r"%100\%\_raw\\%", cur.params[1]
+    assert "ESCAPE" in cur.sql
+    assert hits[0]["id"] == "9f8e7d6c-5b4a-4938-8271-6f5e4d3c2b1a"
+    assert hits[0]["validation"] == "unvalidated"
+    assert hits[0]["correlation"] is None
+
+
+def test_plan_grammar_accepts_promotions_with_an_optional_limit():
+    p5 = _driver()
+    assert p5.parse_plan("promotions") == [("promotions", [])]
+    assert p5.parse_plan("promotions:5") == [("promotions", ["5"])]
+    for bad in ("promotions:all", "promotions:5:6"):
+        with pytest.raises(ValueError):
+            p5.parse_plan(bad)
+
+
+def test_promotions_step_is_read_only_and_checks_the_gates_not_just_the_status():
+    """A PR that is not merged could simply not have been tried yet; the
+    eligibility record is what 'auto-merge is off' has to be checked against."""
+    import inspect
+
+    p5 = _driver()
+    src = inspect.getsource(p5.step_promotions)
+    lowered = src.lower()
+    for forbidden in ("update ", "delete ", "insert ", "drop "):
+        assert forbidden not in lowered, f"the promotion reader must stay read-only: {forbidden!r}"
+    assert '"P02"' in src and '"P03"' in src
+    assert "auto_merge_enabled" in src and "auto_merge_allowed" in src
+    assert "human_approval_required" in src and "blocking" in src
