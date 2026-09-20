@@ -672,3 +672,163 @@ def test_reconciling_never_touches_a_head_someone_else_pushed(db, db_factory, so
     assert _ev(promo.status) == "superseded"
     assert provider.update_branch_count == 0, "a head we did not validate is never reconciled, it is abandoned"
     assert provider.merge_count == 0
+
+
+# ── the GREEN-only autonomous merge law (§23-§27) ─────────────────────
+
+
+def _automerge_settings(monkeypatch, temp_repo, tmp_path, **extra):
+    from services.registry.app.society.config import SocietySettings, reset_settings_cache
+
+    env = {"SOCIETY_RUNTIME_ENABLED": "true", "SOCIETY_AUTONOMOUS_CODE_ENABLED": "true",
+           "SOCIETY_REPO_ROOT": str(temp_repo), "SOCIETY_WORKSPACE_ROOT": str(tmp_path / "ws"),
+           "SOCIETY_PROMOTION_POLL_INTERVAL_SECONDS": "0", "SOCIETY_PROMOTION_PROVIDER": "fake",
+           "SOCIETY_AUTO_MERGE_ENABLED": "true"}
+    env.update(extra)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    reset_settings_cache()
+    return SocietySettings()
+
+
+def test_the_historical_phase_guard_is_replaced_by_real_conditions_not_deleted(monkeypatch):
+    """The old rule refused auto-merge with the GitHub provider outright. It is
+    gone, but what replaced it must still refuse the unsafe combinations."""
+    from services.registry.app.society.config import SocietyConfigError, SocietySettings, reset_settings_cache, validate_settings
+
+    def settings_with(**env):
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+        reset_settings_cache()
+        return SocietySettings()
+
+    base = {"SOCIETY_AUTO_MERGE_ENABLED": "true", "SOCIETY_AUTONOMOUS_CODE_ENABLED": "true",
+            "SOCIETY_PROMOTION_PROVIDER": "github", "SOCIETY_GITHUB_REPOSITORY": "owner/repo",
+            "SOCIETY_GITHUB_CREDENTIAL_PROVIDER": "static", "SOCIETY_GITHUB_TOKEN": "x", "ENVIRONMENT": "staging"}
+    # the combination the old guard banned is now ALLOWED, because it is safe
+    validate_settings(settings_with(**base))
+
+    for bad, why in [
+        ({"ENVIRONMENT": "production"}, "production"),
+        ({"SOCIETY_PROMOTION_PROVIDER": "disabled"}, "pretend"),
+        ({"SOCIETY_GITHUB_CREDENTIAL_PROVIDER": "disabled"}, "credential"),
+        ({"SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY": "0"}, "contradiction"),
+        ({"SOCIETY_AUTONOMOUS_CODE_ENABLED": "false"}, "may not produce"),
+    ]:
+        with pytest.raises(SocietyConfigError) as exc:
+            validate_settings(settings_with(**{**base, **bad}))
+        assert why in str(exc.value), (bad, str(exc.value))
+        for k in bad:
+            monkeypatch.setenv(k, base.get(k, ""))
+    reset_settings_cache()
+
+
+def test_green_auto_merge_spends_the_daily_budget_and_then_freezes(db, db_factory, temp_repo, tmp_path, monkeypatch):
+    settings = _automerge_settings(monkeypatch, temp_repo, tmp_path)
+    assert settings.max_autonomous_merges_per_day == 1, "the default cap is one merge a day"
+    report = seed_society(db)
+    provider = pm.FakePromotionProvider()
+
+    c1 = ready_candidate(db, settings, report, title="budget-1")
+    p1, _ = _request(db, settings, c1, report)
+    drive(db_factory, settings, provider)
+    _experiment_pass(db, p1, c1)
+    drive(db_factory, settings, provider)
+    db.refresh(p1)
+    assert _ev(p1.status) == "merged" and provider.merge_count == 1
+    assert p1.evidence["auto_merged"] == "true", "the merge is recorded as autonomous so it spends the budget"
+
+    # a second GREEN candidate the same day is frozen out
+    c2 = ready_candidate(db, settings, report, title="budget-2")
+    p2, _ = _request(db, settings, c2, report)
+    drive(db_factory, settings, provider)
+    _experiment_pass(db, p2, c2)
+    drive(db_factory, settings, provider)
+    db.refresh(p2)
+    assert provider.merge_count == 1, "the daily cap held"
+    assert _ev(p2.status) != "merged"
+    assert any("daily_merge_cap_reached" in r for r in p2.eligibility["merge_freeze"])
+    assert p2.eligibility["auto_merge_allowed"] is False
+    from services.registry.app.society.config import reset_settings_cache
+    reset_settings_cache()
+
+
+def test_a_previous_autonomous_merge_under_failed_evaluation_freezes_the_next(db, db_factory, temp_repo, tmp_path, monkeypatch):
+    settings = _automerge_settings(monkeypatch, temp_repo, tmp_path, SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY="5")
+    report = seed_society(db)
+    provider = pm.FakePromotionProvider()
+    c1 = ready_candidate(db, settings, report, title="regressed-1")
+    p1, _ = _request(db, settings, c1, report)
+    drive(db_factory, settings, provider)
+    _experiment_pass(db, p1, c1)
+    drive(db_factory, settings, provider)
+    db.refresh(p1)
+    assert _ev(p1.status) == "merged"
+    # post-merge evaluation says roll it back
+    exp = db.query(ChangeExperiment).filter(ChangeExperiment.promotion_id == p1.id).first()
+    exp.rollback_recommended = True
+    db.commit()
+
+    c2 = ready_candidate(db, settings, report, title="regressed-2")
+    p2, _ = _request(db, settings, c2, report)
+    drive(db_factory, settings, provider)
+    _experiment_pass(db, p2, c2)
+    drive(db_factory, settings, provider)
+    db.refresh(p2)
+    assert provider.merge_count == 1, "merge authority froze after a bad merge"
+    assert any("previous_autonomous_merge_under_failed_evaluation" in r for r in p2.eligibility["merge_freeze"])
+    from services.registry.app.society.config import reset_settings_cache
+    reset_settings_cache()
+
+
+def test_the_provider_refuses_a_merge_the_controller_did_not_authorise(db, db_factory, temp_repo, tmp_path, monkeypatch):
+    """Defense in depth (§24): an env var being true is not authority to land a
+    commit on main. Calling the provider directly must fail closed."""
+    settings = _automerge_settings(monkeypatch, temp_repo, tmp_path)
+    report = seed_society(db)
+    provider = pm.FakePromotionProvider()
+    cand = ready_candidate(db, settings, report, title="direct-call")
+    promo, _ = _request(db, settings, cand, report)
+    drive(db_factory, settings, provider)
+    db.refresh(promo)
+    promo.eligibility = {**(promo.eligibility or {}), "auto_merge_allowed": False}
+    db.commit()
+    with pytest.raises(pm.ProviderRefused) as exc:
+        provider.merge(promo, promo.candidate_sha or "x")
+    assert "did not authorise" in str(exc.value)
+    assert provider.merge_count == 0
+    from services.registry.app.society.config import reset_settings_cache
+    reset_settings_cache()
+
+
+def test_the_github_provider_checks_the_persisted_verdict_not_just_the_flag(monkeypatch):
+    from services.registry.app.society.config import SocietySettings, reset_settings_cache
+    from services.registry.app.society.promotion_github import GitHubPromotionProvider
+
+    # A GitHub provider with auto-merge on needs a real credential provider --
+    # the config guard added in this change refuses the combination otherwise,
+    # which is why this test has to configure one.
+    for k, v in {"SOCIETY_GITHUB_REPOSITORY": "owner/repo", "SOCIETY_PROMOTION_PROVIDER": "github",
+                 "SOCIETY_AUTO_MERGE_ENABLED": "true", "SOCIETY_GITHUB_CREDENTIAL_PROVIDER": "static",
+                 "SOCIETY_GITHUB_TOKEN": "t", "SOCIETY_AUTONOMOUS_CODE_ENABLED": "true"}.items():
+        monkeypatch.setenv(k, v)
+    reset_settings_cache()
+    s = SocietySettings()
+    called = []
+    p = GitHubPromotionProvider(s, credentials=type("C", (), {"get": lambda self: type("T", (), {"token": "t"})(), "invalidate": lambda self: None})(),
+                                transport=lambda m, u, j: (called.append(u), (200, {"merged": True, "sha": "z"}))[1])
+
+    def promo(**gates):
+        return type("P", (), {"external_pr_number": 30, "external_branch": "agentnet-auto/x", "candidate_sha": "h", "risk_tier": "green", "eligibility": gates})()
+
+    for gates, why in [
+        ({}, "did not authorise"),
+        ({"auto_merge_allowed": False, "trusted_risk_tier": "green"}, "did not authorise"),
+        ({"auto_merge_allowed": True, "trusted_risk_tier": "red"}, "GREEN-only"),
+        ({"auto_merge_allowed": True, "trusted_risk_tier": "green", "merge_freeze": ["daily_merge_cap_reached(1)"]}, "frozen"),
+    ]:
+        with pytest.raises(pm.ProviderRefused) as exc:
+            p.merge(promo(**gates), "h")
+        assert why in str(exc.value), (gates, str(exc.value))
+    assert not called, "not one merge request reached GitHub"
+    reset_settings_cache()

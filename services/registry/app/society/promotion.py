@@ -222,6 +222,8 @@ class FakePromotionProvider:
         self.merge_count = 0
         self.update_branch_count = 0
         self.ready_count = 0
+        #: a human merge (``human_merge``) does not go through this check
+        self.require_authorisation = True
 
     # test helpers
     def inject(self, exc: Exception) -> None:
@@ -322,6 +324,14 @@ class FakePromotionProvider:
     def merge(self, promotion, expected_head_sha):
         self.calls.append(("merge", promotion.external_branch, expected_head_sha))
         self._maybe_fault()
+        # Same second layer as the real provider: the persisted controller
+        # verdict is re-read here, so a test that reaches merge proves BOTH
+        # layers agreed rather than just the controller.
+        gates = dict(getattr(promotion, "eligibility", None) or {})
+        if gates.get("auto_merge_allowed") is not True and self.require_authorisation:
+            raise ProviderRefused("the promotion controller did not authorise an autonomous merge")
+        if self.require_authorisation and gates.get("merge_freeze"):
+            raise ProviderRefused(f"merge authority is frozen: {gates['merge_freeze']}")
         pr = self.prs.get(promotion.external_branch or "")
         if pr is None:
             raise ProviderRefused("no PR")
@@ -356,6 +366,25 @@ def _day_start(now: datetime) -> datetime:
 def promotions_today(db: Session, now: Optional[datetime] = None) -> int:
     now = now or utcnow()
     return int(db.query(CodePromotion).filter(CodePromotion.created_at >= _day_start(now)).count())
+
+
+def autonomous_merges_today(db: Session, now: Optional[datetime] = None) -> int:
+    """Promotions this controller MERGED itself today (UTC).
+
+    Counts only merges the controller performed: a promotion a human merged is
+    observed and recorded as MERGED too, but it never spends the autonomous
+    budget -- the budget exists to bound what the machine does unattended.
+    """
+    start = _day_start(now or utcnow())
+    return int(
+        db.query(CodePromotion)
+        .filter(
+            CodePromotion.status == PromotionStatus.MERGED,
+            CodePromotion.updated_at >= start,
+            CodePromotion.evidence["auto_merged"].astext == "true",
+        )
+        .count()
+    )
 
 
 def open_prs(db: Session) -> int:
@@ -557,6 +586,43 @@ def latest_experiment(db: Session, promotion: CodePromotion) -> Optional[ChangeE
     return db.query(ChangeExperiment).filter(ChangeExperiment.promotion_id == promotion.id).order_by(ChangeExperiment.created_at.desc()).first()
 
 
+def merge_freeze_reasons(db: Session, settings: SocietySettings, promotion: CodePromotion, candidate: CodeCandidate) -> List[str]:
+    """Why autonomous MERGE authority is frozen right now (§27).
+
+    A freeze stops the machine from landing anything on main. It deliberately
+    does NOT stop cognition, candidate generation, promotion, CI or review:
+    those stay useful while merging is unsafe, and the work is still there when
+    the freeze lifts. Everything here is read from persisted rows -- no network
+    call decides whether it is safe to merge.
+    """
+    reasons: List[str] = []
+    if autonomous_merges_today(db) >= settings.max_autonomous_merges_per_day:
+        reasons.append(f"daily_merge_cap_reached({settings.max_autonomous_merges_per_day})")
+    # A previous autonomous merge whose evaluation failed, or that wants rolling
+    # back, freezes the next one: two bad merges in a row is how a slow
+    # regression becomes an outage.
+    bad = (
+        db.query(ChangeExperiment)
+        .join(CodePromotion, ChangeExperiment.promotion_id == CodePromotion.id)
+        .filter(
+            CodePromotion.status == PromotionStatus.MERGED,
+            (ChangeExperiment.rollback_recommended.is_(True)) | (ChangeExperiment.status == ExperimentStatus.FAIL),
+        )
+        .count()
+    )
+    if bad:
+        reasons.append(f"previous_autonomous_merge_under_failed_evaluation({bad})")
+    sec = candidate.security_report or {}
+    if sec.get("findings") or sec.get("static_findings"):
+        reasons.append("security_findings_present")
+    qa = candidate.qa_report or {}
+    if [c for c in (qa.get("checks") or []) if c.get("name") == "no_secret_patterns" and not c.get("passed")]:
+        reasons.append("secret_scan_failed")
+    if not promotion.previous_good_sha:
+        reasons.append("no_recorded_rollback_point")
+    return reasons
+
+
 def _fitness_satisfied(exp: Optional[ChangeExperiment]) -> bool:
     """Does the fitness engine RAISE NO OBJECTION to merging this candidate?
 
@@ -628,10 +694,20 @@ def compute_eligibility(db: Session, settings: SocietySettings, promotion: CodeP
     hard = ["risk_promotable", "ci_passed", "branch_up_to_date", "head_unchanged", "qa_pass", "security_pass", "no_critical_findings", "fitness_precheck", "no_unresolved_review", "change_budget", "human_approval_satisfied"]
     gates["blocking"] = [g for g in hard if not gates.get(g)]
     gates["merge_eligible"] = not gates["blocking"]
+    # ── the GREEN-only autonomous merge law (§23) ──────────────────────
     # "PR not draft" gates AUTO-merge, not eligibility: a draft PR cannot be
     # merged by anyone, but a human may take a non-GREEN PR out of draft and
     # merge it themselves -- which is exactly the governance path RED keeps.
-    gates["auto_merge_allowed"] = gates["merge_eligible"] and tier == RiskTier.GREEN and settings.auto_merge_enabled and gates["pr_not_draft"]
+    freeze = merge_freeze_reasons(db, settings, promotion, candidate)
+    gates["merge_freeze"] = freeze
+    gates["merge_budget_remaining"] = max(0, settings.max_autonomous_merges_per_day - autonomous_merges_today(db))
+    gates["auto_merge_allowed"] = bool(
+        gates["merge_eligible"]
+        and tier == RiskTier.GREEN          # never AMBER, RED or CONSTITUTIONAL
+        and settings.auto_merge_enabled
+        and gates["pr_not_draft"]
+        and not freeze
+    )
     gates["computed_at"] = utcnow().isoformat()
     return gates
 
@@ -903,6 +979,13 @@ def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvid
                 if status != PromotionStatus.MERGE_ELIGIBLE:
                     _transition(db, promotion, candidate, PromotionStatus.MERGE_ELIGIBLE, gates=gates["blocking"])
                 if gates["auto_merge_allowed"]:
+                    # Persist the decision BEFORE calling the provider: the
+                    # provider re-reads it and refuses a merge the controller
+                    # did not authorise, so the two layers must agree on a row
+                    # that already exists rather than on a flag in the air.
+                    promotion.eligibility = {**(promotion.eligibility or {}), **gates}
+                    promotion.evidence = {**(promotion.evidence or {}), "auto_merged": "true", "auto_merge_decided_at": utcnow().isoformat()}
+                    db.flush()
                     merged = provider.merge(promotion, promotion.candidate_sha or "")
                     promotion.merged_sha = merged
                     promotion.merge_state = "merged"

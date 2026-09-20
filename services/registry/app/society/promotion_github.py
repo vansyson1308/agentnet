@@ -354,8 +354,24 @@ class GitHubPromotionProvider:
         return pr.get("isDraft") is False
 
     def merge(self, promotion, expected_head_sha: str) -> str:
+        """Second of two independent layers (§24).
+
+        An environment variable being true is NOT authority to land a commit on
+        main. This re-reads the verdict the trusted controller PERSISTED on the
+        promotion row and refuses anything it did not authorise -- so flipping
+        the flag, or calling this provider directly, cannot merge on its own.
+        """
         if not self.settings.auto_merge_enabled:
             raise ProviderRefused("auto-merge is disabled; a human merges through GitHub")
+        gates = dict(getattr(promotion, "eligibility", None) or {})
+        if gates.get("auto_merge_allowed") is not True:
+            raise ProviderRefused("the promotion controller did not authorise an autonomous merge (auto_merge_allowed is not true)")
+        if str(gates.get("trusted_risk_tier") or getattr(promotion, "risk_tier", "")) != "green":
+            raise ProviderRefused(f"autonomous merge is GREEN-only; this promotion is {gates.get('trusted_risk_tier') or promotion.risk_tier}")
+        if gates.get("merge_freeze"):
+            raise ProviderRefused(f"merge authority is frozen: {', '.join(list(gates['merge_freeze'])[:4])}")
+        if not expected_head_sha:
+            raise ProviderRefused("refusing to merge without an expected head sha")
         body = self._request("PUT", f"/repos/{self.repo}/pulls/{promotion.external_pr_number}/merge", json={"sha": expected_head_sha, "merge_method": "squash"})
         if not body or not body.get("merged"):
             raise ProviderConflict("merge was not performed (head moved or checks pending)")

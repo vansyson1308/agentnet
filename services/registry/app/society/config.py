@@ -231,6 +231,11 @@ class SocietySettings:
     max_autonomous_candidates_per_day: int = field(default_factory=lambda: _int("SOCIETY_MAX_AUTONOMOUS_CANDIDATES_PER_DAY", 10, minimum=0))
     max_promotions_per_day: int = field(default_factory=lambda: _int("SOCIETY_MAX_PROMOTIONS_PER_DAY", 10, minimum=0))
     max_open_autonomous_prs: int = field(default_factory=lambda: _int("SOCIETY_MAX_OPEN_AUTONOMOUS_PRS", 3, minimum=0))
+    # Autonomous MERGES are budgeted separately from promotions: opening a PR is
+    # reversible, landing one on main is not. Starts at one per day. Agents
+    # cannot raise it -- MODIFY_BUDGET is a forbidden HIGH intent with no
+    # executor, and nothing in the runtime writes this value.
+    max_autonomous_merges_per_day: int = field(default_factory=lambda: _int("SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY", 1, minimum=0))
     max_red_candidates_per_day: int = field(default_factory=lambda: _int("SOCIETY_MAX_RED_CANDIDATES_PER_DAY", 2, minimum=0))
     max_files_per_candidate: int = field(default_factory=lambda: _int("SOCIETY_MAX_FILES_PER_CANDIDATE", 8, minimum=1))
     max_diff_lines: int = field(default_factory=lambda: _int("SOCIETY_MAX_DIFF_LINES", 600, minimum=1))
@@ -313,6 +318,7 @@ class SocietySettings:
             "promotion_provider": self.promotion_provider,
             "deployment_provider": self.deployment_provider,
             "auto_merge_enabled": self.auto_merge_enabled,
+            "max_autonomous_merges_per_day": self.max_autonomous_merges_per_day,
         }
 
 
@@ -344,8 +350,24 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
         problems.append("SOCIETY_MODEL_USD_PER_1K_* must be >= 0")
     if s.run_lease_seconds <= s.model_timeout_seconds // 2 and s.run_lease_seconds < 30:
         problems.append("SOCIETY_RUN_LEASE_SECONDS is too short for the model timeout (a run would lose its lease mid-call)")
-    if s.auto_merge_enabled and s.promotion_provider == "github":
-        problems.append("SOCIETY_AUTO_MERGE_ENABLED=true with the GitHub provider is refused in this phase (Level 3 is not exercised)")
+    if s.auto_merge_enabled:
+        # This used to refuse auto-merge with the GitHub provider outright, as a
+        # phase guard, because no real promotion had ever been exercised. One has
+        # now run end to end (candidate b8cee13c -> PR #30 -> required CI green),
+        # so the guard is REPLACED by the conditions that actually make an
+        # autonomous merge safe -- not simply deleted.
+        if env == "production":
+            problems.append("SOCIETY_AUTO_MERGE_ENABLED=true is refused in production (autonomous merge is staging-only)")
+        if s.promotion_provider == "disabled":
+            problems.append("SOCIETY_AUTO_MERGE_ENABLED=true needs a real promotion provider; 'disabled' can only pretend to merge")
+        if s.promotion_provider == "github" and s.github_credential_provider == "disabled":
+            problems.append("SOCIETY_AUTO_MERGE_ENABLED=true with the GitHub provider needs a real credential provider (app|static), not 'disabled'")
+        if s.max_autonomous_merges_per_day < 1:
+            problems.append("SOCIETY_AUTO_MERGE_ENABLED=true with SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY=0 is a contradiction; set the cap or turn auto-merge off")
+        if s.max_open_autonomous_prs < 1:
+            problems.append("SOCIETY_AUTO_MERGE_ENABLED=true with SOCIETY_MAX_OPEN_AUTONOMOUS_PRS=0 is a contradiction")
+        if not s.autonomous_code_enabled:
+            problems.append("SOCIETY_AUTO_MERGE_ENABLED=true without SOCIETY_AUTONOMOUS_CODE_ENABLED merges work the Society may not produce")
     if s.promotion_provider == "github" and (not s.github_repository.strip() or "/" not in s.github_repository):
         problems.append("SOCIETY_GITHUB_REPOSITORY (owner/repo) is required when SOCIETY_PROMOTION_PROVIDER=github")
     if s.github_credential_provider == "app":
