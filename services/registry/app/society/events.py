@@ -92,6 +92,8 @@ class EventType:
     PROMOTION_CI_PASSED = "promotion.ci_passed"
     PROMOTION_CI_FAILED = "promotion.ci_failed"
     PROMOTION_AWAITING_APPROVAL = "promotion.awaiting_approval"
+    # The trusted controller took a fully gated GREEN draft PR out of draft.
+    PROMOTION_READY_FOR_REVIEW = "promotion.ready_for_review"
     PROMOTION_MERGE_ELIGIBLE = "promotion.merge_eligible"
     PROMOTION_MERGED = "promotion.merged"
     PROMOTION_REJECTED = "promotion.rejected"
