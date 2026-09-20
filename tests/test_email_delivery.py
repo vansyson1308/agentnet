@@ -364,12 +364,6 @@ def test_resend_answers_identically_whether_or_not_the_address_exists(monkeypatc
 
 def test_resend_delivers_for_an_unverified_address_when_delivery_works(monkeypatch):
     """The uniform 503 must not be achieved by never delivering at all."""
-    monkeypatch.setenv("ENVIRONMENT", "development")
-    import importlib
-
-    from services.registry.app import config as app_config
-
-    importlib.reload(app_config)
     sent = []
     auth_routes = _auth_routes()
 

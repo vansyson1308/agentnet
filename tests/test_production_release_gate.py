@@ -382,3 +382,37 @@ def test_production_declares_email_delivery_and_never_logs_the_link():
     ts = _ts_code_only((REPO_ROOT / ".railway" / "production.ts").read_text(encoding="utf-8"))
     assert 'EMAIL_DELIVERY_PROVIDER: "disabled"' in ts
     assert 'EMAIL_DELIVERY_PROVIDER: "log"' not in ts
+
+
+# ── the production validator's log scan (Phase 7 §35) ────────────────────────
+
+def _scan(log_text, values=None):
+    from deploy.production.validate import Report, scan_logs_for_secrets
+
+    report = Report()
+    scan_logs_for_secrets(report, log_text, values)
+    return next(c for c in report.checks if c["id"] == "L01")
+
+
+def test_log_scan_finds_a_leak_without_being_told_any_secret():
+    """The operator running this is forbidden to retrieve production secrets.
+    If the scan only worked with values in hand, "I have none" would silently
+    turn it into a check that always passes."""
+    assert not _scan("boot REDIS_PASSWORD=s3cr3tvalue here")["ok"]
+    assert not _scan('{"jwt_secret_key": "abc123"}')["ok"]
+    assert not _scan("INTERNAL_WORKER_TOKEN: deadbeefcafe")["ok"]
+
+
+def test_log_scan_accepts_what_a_correct_log_looks_like():
+    ok = _scan("POSTGRES_PASSWORD=***\nJWT_SECRET_KEY: <hidden>\nSMTP_PASSWORD=[REDACTED]\nstarted")
+    assert ok["ok"], ok["detail"]
+
+
+def test_log_scan_never_prints_the_value_it_matched():
+    detail = _scan("REDIS_PASSWORD=s3cr3tvalue")["detail"]
+    assert "REDIS_PASSWORD" in detail and "s3cr3tvalue" not in detail
+
+
+def test_log_scan_still_honours_explicit_values_when_an_operator_has_them():
+    assert not _scan("the token is abc-123-xyz", {"JWT_SECRET_KEY": "abc-123-xyz"})["ok"]
+    assert _scan("nothing here", {"JWT_SECRET_KEY": "abc-123-xyz"})["ok"]

@@ -183,12 +183,46 @@ def check_core_smoke(report: Report, registry: str, *, email_delivery: str) -> N
 
 
 # ── secret leak scan ─────────────────────────────────────────────────────
-def scan_logs_for_secrets(report: Report, log_text: str, secret_values: Dict[str, str]) -> None:
-    """Structural scan. Never prints a matched value -- only the NAME that leaked."""
+#: A secret-shaped name followed by a non-empty, non-redacted value. Catches a
+#: leak WITHOUT knowing any secret: `POSTGRES_PASSWORD=hunter`, `"jwt_secret_key":
+#: "abc"`, `REDIS_PASSWORD: xyz`. Redaction markers (***, [REDACTED], <hidden>)
+#: and empty values are what a correct log looks like, so they do not match.
+_ASSIGNMENT_RE = r"""(?ix) \b (%s) \b \s* ["']? \s* [:=] \s* ["']? ([^\s"',;}}\]]+)"""
+#: Compared after stripping quotes and bracket/angle wrappers, so "[REDACTED]",
+#: "<hidden>" and "***" all normalise onto these.
+_REDACTED = {"", "*", "**", "***", "********", "redacted", "hidden", "masked", "none", "null", "set", "unset"}
+
+
+def scan_logs_for_secrets(
+    report: Report, log_text: str, secret_values: Optional[Dict[str, str]] = None
+) -> None:
+    """Structural scan. Never prints a matched value -- only the NAME that leaked.
+
+    Two modes, and the second is the one that matters here. Given actual values
+    it looks for them verbatim. Given none -- which is the case whenever the
+    operator running this is forbidden to retrieve production secrets, as they
+    should be -- it instead looks for a secret-shaped NAME assigned a value that
+    is neither empty nor a redaction marker. That finds the leak without anyone
+    ever holding the secret, so "I have no values" cannot silently turn this
+    check into one that always passes.
+    """
+    import re
+
+    secret_values = secret_values or {}
     leaked = [name for name, value in secret_values.items() if value and value in log_text]
+    mode = "verbatim" if secret_values else "value-free (no secret was retrieved to run this)"
+    if not secret_values:
+        pattern = _ASSIGNMENT_RE % "|".join(re.escape(n) for n in SECRET_NAMES_FOR_LEAK_SCAN)
+        for match in re.finditer(pattern, log_text):
+            name = match.group(1)
+            value = match.group(2).strip().strip("\"'").strip("[]<>()").strip("*").strip()
+            if value and value.lower() not in _REDACTED:
+                leaked.append(name.upper())
+        leaked = sorted(set(leaked))
     report.check(
         "secrets", "L01", not leaked,
-        "no secret value found in logs" if not leaked else f"LEAKED (names only): {sorted(leaked)}",
+        f"no secret value found in logs [{mode}]" if not leaked
+        else f"LEAKED (names only, {mode}): {sorted(set(leaked))}",
     )
     for header in ("authorization:", "x-api-key:"):
         found = header in log_text.lower()
