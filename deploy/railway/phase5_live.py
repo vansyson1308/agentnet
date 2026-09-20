@@ -63,7 +63,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "taskfail")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "taskfail")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -130,6 +130,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("intents:<correlation-id>")
         if name == "memory" and (len(args) != 1 or not re.fullmatch(r"[a-z_]{2,32}", args[0])):
             raise ValueError("memory:<role>")
+        if name == "refute" and (len(args) != 1 or not re.fullmatch(r"[0-9a-fA-F-]{32,36}", args[0])):
+            raise ValueError("refute takes exactly one memory item id")
         if name == "taskfail" and (len(args) > 1 or (args and not args[0].isdigit())):
             raise ValueError("taskfail[:<escrow-credits>]")
         plan.append((name, args))
@@ -553,7 +555,8 @@ def memory_view(cur, agent_name: str, limit: int = 30) -> Dict[str, Any]:
         cur,
         """
         SELECT m.scope::text, m.title, m.created_at, m.expires_at, m.importance,
-               m.confidence, m.validation_state, m.source_type, m.correlation_id
+               m.confidence, m.validation_state, m.source_type, m.correlation_id,
+               m.id
         FROM memory_items m
         LEFT JOIN agents a ON a.id = m.agent_id
         WHERE (a.name = %s OR m.scope::text = 'SOCIETY')
@@ -574,6 +577,7 @@ def memory_view(cur, agent_name: str, limit: int = 30) -> Dict[str, Any]:
             "validation": r[6],
             "source": r[7],
             "correlation": str(r[8])[:8] if r[8] else None,
+            "id": str(r[9]),
         }
         for r in rows
     ]
@@ -605,6 +609,104 @@ def step_memory(out: Out, conn, role: str) -> None:
         view = memory_view(cur, agent_name)
     out.check("memory", "M01", True, f"{agent_name}: {view['live_rows']} live memory row(s) from {view['distinct_correlations']} correlation(s), {view['rows_with_expiry']} with an expiry")
     out.json("memory", f"{role}.view", view)
+
+
+def _memory_row(conn, memory_id: str) -> Optional[Dict[str, Any]]:
+    with conn.cursor() as cur:
+        rows = _rows(
+            cur,
+            """
+            SELECT m.title, m.validation_state, m.created_at, m.scope::text,
+                   m.correlation_id, a.name, m.importance, m.confidence
+            FROM memory_items m
+            LEFT JOIN agents a ON a.id = m.agent_id
+            WHERE m.id = %s
+            """,
+            (memory_id,),
+        )
+    if not rows:
+        return None
+    r = rows[0]
+    return {
+        "id": memory_id,
+        "title": scrub(str(r[0]))[:200],
+        "validation": r[1],
+        "created_at": r[2].isoformat() if r[2] else None,
+        "scope": r[3],
+        "correlation": str(r[4])[:8] if r[4] else None,
+        "agent": r[5],
+        "importance": int(r[6] or 0),
+        "confidence": int(r[7] or 0),
+    }
+
+
+def _refute_history(conn, memory_id: str) -> List[Dict[str, Any]]:
+    with conn.cursor() as cur:
+        rows = _rows(
+            cur,
+            """
+            SELECT e.from_state, e.to_state, e.actor_type, u.email, e.reason, e.created_at
+            FROM memory_validation_events e
+            LEFT JOIN users u ON u.id = e.actor_user_id
+            WHERE e.memory_id = %s
+            ORDER BY e.created_at
+            """,
+            (memory_id,),
+        )
+    return [
+        {
+            "from": r[0],
+            "to": r[1],
+            "actor_type": r[2],
+            "actor": (r[3] or "").split("@")[0] or None,
+            "reason": scrub(str(r[4] or ""))[:300],
+            "at": r[5].isoformat() if r[5] else None,
+        }
+        for r in rows
+    ]
+
+
+def step_refute(out: Out, base: str, token: str, conn, memory_id: str) -> None:
+    """Correct a false belief through the operator API, never through SQL.
+
+    The driver holds a database connection, so it COULD set validation_state
+    directly in one statement. It must not, and the distinction is the whole
+    point: an edit leaves no audit row, and a record that can be silently
+    rewritten is not evidence. This calls the ordinary operator endpoint and
+    then reads the append-only history back OUT of the database, so the claim
+    "the refutation was recorded" is checked against the table rather than
+    against the response that asserts it."""
+    reason = (os.getenv("PHASE5_REFUTE_REASON", "") or "").strip()
+    if not reason:
+        out.check("refute", "R00", False, "PHASE5_REFUTE_REASON is required — a refutation must say why")
+        return
+    before = _memory_row(conn, memory_id)
+    if before is None:
+        out.check("refute", "R00", False, f"memory {memory_id[:8]} not found")
+        return
+    out.json("refute", "before", before)
+    if before["validation"] == "refuted":
+        out.info("refute", f"{memory_id[:8]} is already refuted; re-running to confirm idempotency")
+
+    st, body = api("POST", f"{base}/v1/society/memory/{memory_id}/refute", token, {"reason": reason})
+    ok = st == 200 and isinstance(body, dict)
+    out.check("refute", "R01", ok, f"refute {memory_id[:8]} HTTP {st}{'' if ok else ' ' + str(body)[:160]}")
+    if not ok:
+        return
+    mem = body.get("memory") or {}
+    out.check("refute", "R02", mem.get("validation_state") == "refuted", f"validation_state={mem.get('validation_state')!r} (was {before['validation']!r})")
+
+    after = _memory_row(conn, memory_id)
+    preserved = bool(after) and scrub(str(after["title"]))[:200] == before["title"] and after["created_at"] == before["created_at"] and after["correlation"] == before["correlation"]
+    out.check("refute", "R03", preserved, "title, created_at and correlation untouched — the row still records what was believed")
+
+    st2, body2 = api("POST", f"{base}/v1/society/memory/{memory_id}/refute", token, {"reason": reason})
+    out.check("refute", "R04", st2 == 200 and isinstance(body2, dict) and (body2 or {}).get("already_refuted") is True, f"repeat refute HTTP {st2} already_refuted={(body2 or {}).get('already_refuted')}")
+
+    hist = _refute_history(conn, memory_id)
+    out.check("refute", "R05", len(hist) == 1, f"{len(hist)} append-only audit row(s) for this memory after two calls (exactly 1 expected)")
+    out.json("refute", "history", hist)
+    out.json("refute", "after", after)
 
 
 def step_intents(out: Out, base: str, token: str, correlation: str) -> None:
@@ -966,7 +1068,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail") and conn is None:
+            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute") and conn is None:
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -986,6 +1088,8 @@ def main() -> int:
                 step_intents(out, base, token, args[0])
             elif name == "memory":
                 step_memory(out, conn, args[0])
+            elif name == "refute":
+                step_refute(out, base, token, conn, args[0])
             elif name == "taskfail":
                 step_taskfail(out, base, token, conn, int(args[0]) if args else 5, timeout)
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence
