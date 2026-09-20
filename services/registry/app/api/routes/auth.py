@@ -17,22 +17,29 @@ from ...auth import (
     get_password_hash,
     verify_password,
 )
-from ...config import IS_DEV, public_url
+from ...config import public_url
 from ...database import get_db
+from ...email_delivery import VERIFICATION_TTL_HOURS, EmailDeliveryUnavailable, build_email_provider
 from ...models import Agent, EmailVerificationToken, User, Wallet, WalletOwnerType
 from ...schemas import AgentLogin, AgentToken, UserLogin, UserToken
 
 logger = logging.getLogger(__name__)
 
 
-def _announce_verification(email: str, token_value: str) -> None:
-    """SMTP is not wired yet. In development the link is the only way to
-    verify, so it is logged at INFO. Outside development the token is a
-    credential and is never written to logs; only the fact is recorded."""
-    if IS_DEV:
-        logger.info("DEV ONLY verification link for %s: %s", email, public_url(f"/v1/auth/verify-email?token={token_value}"))
-    else:
-        logger.info("verification token issued for %s (delivery pending: SMTP not configured)", email)
+def _deliver_verification(email: str, token_value: str) -> None:
+    """Send the verification link, or raise.
+
+    This used to only LOG that a token had been issued, which meant that
+    outside development the account was created, the email was consumed, and
+    the link never arrived -- while the API reported success. Delivery is now
+    something the caller can fail on, so registration can refuse to create an
+    account it cannot activate. Raises EmailDeliveryUnavailable.
+    """
+    provider = build_email_provider()
+    provider.send_verification(
+        to=email,
+        verify_url=public_url(f"/v1/auth/verify-email?token={token_value}"),
+    )
 
 router = APIRouter()
 
@@ -107,7 +114,6 @@ async def user_register(user_data: UserRegister, db: Session = Depends(get_db)):
         reserved_usdc=0,
     )
     db.add(wallet)
-    db.commit()
 
     # Create email verification token
     token_value = secrets.token_urlsafe(32)
@@ -115,13 +121,32 @@ async def user_register(user_data: UserRegister, db: Session = Depends(get_db)):
         id=uuid.uuid4(),
         user_id=user.id,
         token=token_value,
-        expires_at=datetime.utcnow() + timedelta(hours=24),
+        expires_at=datetime.utcnow() + timedelta(hours=VERIFICATION_TTL_HOURS),
         consumed_at=None,
     )
     db.add(verification)
-    db.commit()
+    db.flush()
 
-    _announce_verification(user.email, token_value)
+    # Deliver BEFORE committing. Login requires a verified address, so an
+    # account whose link was never sent is unreachable AND holds the email
+    # against a retry. Registration is therefore atomic with delivery: either
+    # the user can act on the link, or nothing was written at all.
+    try:
+        _deliver_verification(user.email, token_value)
+    except EmailDeliveryUnavailable as exc:
+        db.rollback()
+        logger.warning(
+            "registration refused: verification email undeliverable (%s)", type(exc).__name__
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Registration is temporarily unavailable: the verification email "
+                "could not be sent. Please try again later."
+            ),
+        )
+
+    db.commit()
 
     return UserRegisterResponse(id=str(user.id), email=user.email, message="User registered successfully")
 
@@ -235,22 +260,41 @@ async def verify_email(token: str, db: Session = Depends(get_db)):
 
 @router.post("/resend-verification")
 async def resend_verification(req: ResendVerificationRequest, db: Session = Depends(get_db)):
-    """Resend email verification token (logs token to file since SMTP not configured)."""
+    """Resend a verification link, without revealing whether the address exists."""
+    # Ask the provider whether delivery is possible at all BEFORE the lookup.
+    # Answering 503 only for addresses that exist would turn this endpoint into
+    # the enumeration oracle the generic message exists to avoid.
+    try:
+        build_email_provider()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Verification email delivery is temporarily unavailable. Please try again later.",
+        )
+
     user = db.query(User).filter(User.email == req.email).first()
-    if user:
+    if user and not getattr(user, "is_email_verified", False):
         # Create new verification token
         token_value = secrets.token_urlsafe(32)
         verification = EmailVerificationToken(
             id=uuid.uuid4(),
             user_id=user.id,
             token=token_value,
-            expires_at=datetime.utcnow() + timedelta(hours=24),
+            expires_at=datetime.utcnow() + timedelta(hours=VERIFICATION_TTL_HOURS),
             consumed_at=None,
         )
         db.add(verification)
+        db.flush()
+        try:
+            _deliver_verification(user.email, token_value)
+        except EmailDeliveryUnavailable:
+            db.rollback()
+            # Still generic: the caller learns delivery is down, not who exists.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Verification email delivery is temporarily unavailable. Please try again later.",
+            )
         db.commit()
-
-        _announce_verification(user.email, token_value)
 
     # Always return a generic message to avoid email enumeration
     return {"ok": True, "message": "If the email exists, a verification link has been sent."}
