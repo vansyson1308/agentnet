@@ -168,7 +168,7 @@ budget exhausted by fewer than the expected runs.
 
 ### 4.1 What the Phase 5 closure window actually recorded (2026-09-19)
 
-Outcome: **CONDITIONAL GO** — full record in `docs/SOCIETY_LIVE_PROOF.md`. Met live: ≥3 roles,
+Outcome: **QUALIFIED GO** — full record in `docs/SOCIETY_LIVE_PROOF.md`. Met live: ≥3 roles,
 real-domain multi-agent operation, approval + rejection lifecycles, red-team ALL DEFENDED twice
 with fresh actors, economics, secret/chain-of-thought and public-surface audits, zero DEAD runs.
 Not met: a docs candidate reaching READY.
