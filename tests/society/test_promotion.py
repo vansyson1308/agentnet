@@ -898,12 +898,17 @@ def test_a_promotion_superseded_over_its_own_reconcile_recovers_from_the_commit_
 
     drive(db_factory, society_settings, provider)
     db.refresh(promo)
-    assert _ev(promo.status) == "ci_pending", "recovered, and the required checks must re-run"
-    assert promo.candidate_sha == merge_sha
-    assert promo.eligibility.get("ci_passed") is False, "the reconciled head has NOT passed CI yet"
-    assert provider.merge_count == 0
+    assert _ev(promo.status) != "superseded", "the promotion is alive again"
+    assert promo.candidate_sha == merge_sha, "GitHub's merge commit is now the validated sha"
+    assert provider.merge_count == 0, "recovering never merges anything"
+    # The durable order is the proof, not the state drive() happens to stop in:
+    # the supersede is still on the record, and the required checks ran AGAIN
+    # afterwards, on the commit that would actually be merged.
     seq = [e.event_type for e in db.query(SocietyEvent).filter(SocietyEvent.correlation_id == cand.correlation_id).order_by(SocietyEvent.created_at, SocietyEvent.id).all()]
-    assert seq.index("promotion.superseded") < len(seq) - 1, "recovery is recorded after the supersede, not instead of it"
+    assert "promotion.superseded" in seq, "recovery must not erase the supersede"
+    after = seq[seq.index("promotion.superseded"):]
+    assert "promotion.ci_pending" in after, after
+    assert after.index("promotion.ci_pending") < after.index("promotion.ci_passed"), after
 
 
 @pytest.mark.parametrize(
@@ -943,31 +948,41 @@ def test_a_superseded_promotion_never_recovers_from_a_head_it_cannot_prove(db, d
     assert pm.active_promotion_for(db, cand.id) is None
 
 
-def test_a_transient_commit_read_never_supersedes_a_promotion(db, db_factory, society_settings, temp_repo):
+def test_a_transient_commit_read_is_held_not_treated_as_a_foreign_push(db, db_factory, society_settings, temp_repo):
     """Destroying a promotion because one API read failed is the same bug one
-    layer down. Unverifiable means hold, not abandon."""
+    layer down, so the verdict is tri-state: proved / disproved / UNKNOWN.
+
+    Driven directly, because injecting a fault into the loop hits whichever
+    provider call happens to come first, not the one under test."""
     report = seed_society(db)
     cand = ready_candidate(db, society_settings, report, title="transient-parents")
     promo, _ = _request(db, society_settings, cand, report)
     provider = pm.FakePromotionProvider()
     drive(db_factory, society_settings, provider)
-    _experiment_pass(db, promo, cand)
     db.refresh(promo)
-    before = _ev(promo.status)
     validated = promo.candidate_sha
-
     merge_sha = "merged-by-github-0002"
-    provider.prs[cand.branch_name]["head_sha"] = merge_sha
-    provider.parents[merge_sha] = [validated, provider.base_sha]
     promo.evidence = {**(promo.evidence or {}), "base_reconcile_pending": {"from": validated, "attempt": 1}}
     db.commit()
-    provider.inject(pm.ProviderTransient("GitHub transport error"))
+    state = pm.PRState(ci="pending", head_sha=merge_sha)
 
-    drive(db_factory, society_settings, provider)
-    db.refresh(promo)
-    assert _ev(promo.status) != "superseded", "a failed read must never be the reason a promotion dies"
-    # Once the read works, the same head is adopted.
-    drive(db_factory, society_settings, provider)
-    db.refresh(promo)
-    assert promo.candidate_sha == merge_sha
-    assert _ev(promo.status) in ("ci_pending", "ci_passed", "awaiting_approval", "merge_eligible"), before
+    class Unreadable:
+        def commit_parents(self, sha):
+            raise pm.ProviderTransient("GitHub transport error")
+
+    status_before = _ev(promo.status)
+    assert pm._adopt_reconciled_head(db, provider=Unreadable(), promotion=promo, candidate=cand, state=state) is None
+    assert _ev(promo.status) == status_before, "an unreadable commit changes nothing at all"
+    assert promo.candidate_sha == validated
+    assert (promo.evidence or {}).get("base_reconcile_pending"), "the request is still outstanding"
+
+    class Readable:
+        def commit_parents(self, sha):
+            return [validated, "base0000"]
+
+    assert pm._adopt_reconciled_head(db, provider=Readable(), promotion=promo, candidate=cand, state=state) is True
+    db.commit()
+    assert promo.candidate_sha == merge_sha, "once the read works, the same head is adopted"
+    assert _ev(promo.status) == "ci_pending"
+    assert promo.eligibility.get("ci_passed") is False, "the reconciled head has NOT passed CI yet"
+    assert "base_reconcile_pending" not in (promo.evidence or {})
