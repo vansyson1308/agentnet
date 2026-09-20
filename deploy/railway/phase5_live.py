@@ -63,7 +63,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -136,6 +136,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("promotions[:<limit>]")
         if name == "candidates" and (len(args) > 1 or (args and not args[0].isdigit())):
             raise ValueError("candidates[:<limit>]")
+        if name == "abandon" and (len(args) != 1 or not re.fullmatch(r"[0-9a-fA-F-]{32,36}", args[0])):
+            raise ValueError("abandon takes exactly one candidate id")
         if name == "taskfail" and (len(args) > 1 or (args and not args[0].isdigit())):
             raise ValueError("taskfail[:<escrow-credits>]")
         plan.append((name, args))
@@ -757,6 +759,121 @@ def step_refute(out: Out, base: str, token: str, conn, memory_id: str) -> None:
     out.json("refute", "after", after)
 
 
+def _candidate_row(conn, candidate_id: str) -> Optional[Dict[str, Any]]:
+    with conn.cursor() as cur:
+        rows = _rows(
+            cur,
+            """
+            SELECT c.status::text, c.title, c.error, c.created_at, c.correlation_id,
+                   c.task_id, t.status::text, t.escrow_amount,
+                   w.balance_credits, w.reserved_credits
+            FROM code_candidates c
+            LEFT JOIN task_sessions t ON t.id = c.task_id
+            LEFT JOIN wallets w ON w.owner_id = t.caller_agent_id AND w.owner_type = 'agent'
+            WHERE c.id = %s
+            """,
+            (candidate_id,),
+        )
+    if not rows:
+        return None
+    r = rows[0]
+    return {
+        "id": candidate_id[:8],
+        "status": r[0],
+        "title": scrub(str(r[1] or ""))[:160],
+        "error": scrub(str(r[2]))[:200] if r[2] else None,
+        "created_at": r[3].isoformat() if r[3] else None,
+        "correlation": str(r[4])[:8] if r[4] else None,
+        "task": str(r[5])[:8] if r[5] else None,
+        "task_status": r[6],
+        "escrow": int(r[7] or 0) if r[7] is not None else None,
+        "caller_balance": int(r[8]) if r[8] is not None else None,
+        "caller_reserved": int(r[9]) if r[9] is not None else None,
+    }
+
+
+def _abandon_events(conn, candidate_id: str) -> List[Dict[str, Any]]:
+    with conn.cursor() as cur:
+        rows = _rows(
+            cur,
+            """
+            SELECT e.actor_type, e.payload->>'previous_status', e.payload->>'task_refunded',
+                   e.idempotency_key, e.correlation_id, e.created_at
+            FROM society_events e
+            WHERE e.event_type = 'code_candidate.abandoned' AND e.subject_id = %s
+            ORDER BY e.created_at
+            """,
+            (candidate_id,),
+        )
+    return [
+        {"actor_type": r[0], "previous_status": r[1], "task_refunded": r[2],
+         "idempotency_key": r[3], "correlation": str(r[4])[:8] if r[4] else None,
+         "created_at": r[5].isoformat() if r[5] else None}
+        for r in rows
+    ]
+
+
+def step_abandon(out: Out, base: str, token: str, conn, candidate_id: str) -> None:
+    """Close a stranded candidate through the operator API, never through SQL.
+
+    Same discipline as `refute`: the driver holds a database connection and
+    COULD set status='abandoned' in one statement, which would leave no audit
+    row and no refund. It calls the ordinary operator endpoint instead and then
+    reads the row, the escrow and the append-only event back OUT of the
+    database, so "the candidate was abandoned and the money was released" is
+    checked against the tables rather than against the response asserting it."""
+    reason = (os.getenv("PHASE5_ABANDON_REASON", "") or "").strip()
+    if not reason:
+        out.check("abandon", "A00", False, "PHASE5_ABANDON_REASON is required — abandoning must say why")
+        return
+    before = _candidate_row(conn, candidate_id)
+    if before is None:
+        out.check("abandon", "A00", False, f"candidate {candidate_id[:8]} not found")
+        return
+    out.json("abandon", "before", before)
+    if before["status"] == "abandoned":
+        out.info("abandon", f"{candidate_id[:8]} is already abandoned; re-running to confirm idempotency")
+
+    st, body = api("POST", f"{base}/v1/society/candidates/{candidate_id}/abandon", token, {"reason": reason})
+    ok = st == 200 and isinstance(body, dict)
+    out.check("abandon", "A01", ok, f"abandon {candidate_id[:8]} HTTP {st}{'' if ok else ' ' + str(body)[:200]}")
+    if not ok:
+        return
+    cand = (body or {}).get("candidate") or {}
+    out.check("abandon", "A02", cand.get("status") == "abandoned", f"status={cand.get('status')!r} (was {before['status']!r})")
+
+    after = _candidate_row(conn, candidate_id)
+    out.json("abandon", "after", after)
+    preserved = bool(after) and after["title"] == before["title"] and after["created_at"] == before["created_at"] and after["correlation"] == before["correlation"]
+    out.check("abandon", "A03", preserved, "title, created_at and correlation untouched — the row still records what was attempted")
+
+    # Economics: the escrow is released exactly once, through the ordinary path.
+    if before["task"] is not None:
+        # task_status enum: initiated | in_progress | completed | failed | timeout | refunded
+        released = after["task_status"] in ("failed", "timeout", "refunded") if after else False
+        out.check("abandon", "A04", released or before["task_status"] not in ("initiated", "in_progress"),
+                  f"implementation task {before['task']} {before['task_status']} -> {after['task_status'] if after else '?'}")
+        if before["caller_reserved"] is not None and after and after["caller_reserved"] is not None:
+            freed = before["caller_reserved"] - after["caller_reserved"]
+            out.check("abandon", "A05", after["caller_reserved"] <= before["caller_reserved"],
+                      f"caller reserved {before['caller_reserved']} -> {after['caller_reserved']} (freed {freed}), balance {before['caller_balance']} -> {after['caller_balance']}")
+    else:
+        out.info("abandon", "candidate carried no implementation task; nothing to refund")
+
+    st2, body2 = api("POST", f"{base}/v1/society/candidates/{candidate_id}/abandon", token, {"reason": reason + " (repeat)"})
+    out.check("abandon", "A06", st2 == 200 and isinstance(body2, dict) and (body2 or {}).get("already_abandoned") is True,
+              f"repeat abandon HTTP {st2} already_abandoned={(body2 or {}).get('already_abandoned')}")
+    repeat = _candidate_row(conn, candidate_id)
+    if repeat and after:
+        out.check("abandon", "A07", repeat["caller_reserved"] == after["caller_reserved"] and repeat["caller_balance"] == after["caller_balance"],
+                  f"repeat released nothing further (reserved {after['caller_reserved']} -> {repeat['caller_reserved']})")
+
+    evs = _abandon_events(conn, candidate_id)
+    out.check("abandon", "A08", len(evs) == 1, f"{len(evs)} append-only audit event(s) after two calls (exactly 1 expected)")
+    out.check("abandon", "A09", all(e["actor_type"] == "operator" for e in evs), "the audit row names an operator, not an agent")
+    out.json("abandon", "events", evs)
+
+
 def step_candidates(out: Out, conn, limit: int) -> None:
     """Read recent candidates and, crucially, WHY each one ended where it did.
 
@@ -1224,7 +1341,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates") and conn is None:
+            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon") and conn is None:
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -1252,6 +1369,8 @@ def main() -> int:
                 step_candidates(out, conn, int(args[0]) if args else 5)
             elif name == "taskfail":
                 step_taskfail(out, base, token, conn, int(args[0]) if args else 5, timeout)
+            elif name == "abandon":
+                step_abandon(out, base, token, conn, args[0])
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence
             if conn is not None:
                 try:

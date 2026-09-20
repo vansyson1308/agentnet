@@ -473,3 +473,55 @@ def test_candidates_step_is_read_only_and_reports_why_not_just_what():
         assert forbidden not in lowered, f"the candidate reader must stay read-only: {forbidden!r}"
     assert "c.error" in src and "qa_failures" in src and "security_verdict" in src
     assert "scrub(" in src, "model-authored titles and errors are untrusted text"
+
+
+def test_plan_grammar_accepts_an_abandon_by_candidate_id_and_rejects_junk():
+    p5 = _driver()
+    cid = "f8296297a1b24c3d8e9f0a1b2c3d4e5f"
+    assert p5.parse_plan(f"abandon:{cid}") == [("abandon", [cid])]
+    for bad in ("abandon", "abandon:builder", "abandon:" + cid + ":extra", "abandon:../etc"):
+        with pytest.raises(ValueError):
+            p5.parse_plan(bad)
+
+
+def test_abandon_writes_through_the_operator_api_and_never_through_sql():
+    """Same discipline as refute, and for the same reason.
+
+    The driver holds a database connection. Setting status='abandoned' directly
+    would "work", leave no audit row, and release no escrow — which is exactly
+    the difference between a remedy and a cover-up."""
+    import inspect
+
+    p5 = _driver()
+    src = inspect.getsource(p5.step_abandon)
+    assert '"POST", f"{base}/v1/society/candidates/{candidate_id}/abandon"' in src
+    lowered = src.lower()
+    for forbidden in ("update code_candidates", "insert into", "delete from", "update wallets", "update task_sessions"):
+        assert forbidden not in lowered, f"abandoning must go through the API, never {forbidden!r}"
+    # the outcome is read back OUT of the tables rather than trusted from the response
+    assert "_candidate_row(conn, candidate_id)" in src
+    assert "_abandon_events(conn, candidate_id)" in src
+    # and it proves the row was closed, not erased
+    assert "A03" in src and "untouched" in src
+
+
+def test_abandon_proves_the_escrow_moved_once_and_only_once():
+    import inspect
+
+    p5 = _driver()
+    src = inspect.getsource(p5.step_abandon)
+    # the repeat call is what makes "exactly once" checkable at all
+    assert src.count('/abandon"') == 2, "the step must call abandon twice to prove idempotency"
+    assert "already_abandoned" in src
+    assert "A07" in src, "the repeat must be shown to release nothing further"
+    assert "A08" in src and "exactly 1 expected" in src
+
+
+def test_abandon_readers_are_read_only():
+    import inspect
+
+    p5 = _driver()
+    for fn in (p5._candidate_row, p5._abandon_events):
+        lowered = inspect.getsource(fn).lower()
+        for forbidden in ("update ", "insert ", "delete ", "drop "):
+            assert forbidden not in lowered, f"{fn.__name__} must stay read-only: {forbidden!r}"
