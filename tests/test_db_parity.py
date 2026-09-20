@@ -65,7 +65,45 @@ FRESH_DB = os.getenv("PARITY_FRESH_DB", "agentnet_parity_fresh")
 UPGRADE_DB = os.getenv("PARITY_UPGRADE_DB", "agentnet_parity_upgrade")
 BOOTSTRAP_DB = os.getenv("PARITY_BOOTSTRAP_DB", "agentnet_parity_bootstrap")
 
-EXPECTED_HEAD = "0011_expire_rehearsal_memory"
+def _latest_migration_head() -> str:
+    """The head as the migration files themselves define it.
+
+    A literal here is a place to go stale: during the Phase 5 window a
+    hard-coded expected head turned a staging validation RED while the
+    database was perfectly correct. Read the chain instead — the revision
+    no other file names as its ``down_revision`` is the head.
+
+    Parsed with ``ast`` rather than a regex because the revision files use
+    both plain (``revision = "x"``) and annotated
+    (``down_revision: Union[str, None] = "x"``) assignments.
+    """
+    import ast
+
+    versions = REGISTRY / "migrations" / "versions"
+    revisions: set[str] = set()
+    parents: set[str] = set()
+    for path in sorted(versions.glob("[0-9]*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                name, value = node.target.id, node.value
+            elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                name, value = node.targets[0].id, node.value
+            else:
+                continue
+            if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+                continue
+            if name == "revision":
+                revisions.add(value.value)
+            elif name == "down_revision":
+                parents.add(value.value)
+
+    heads = sorted(revisions - parents)
+    assert len(heads) == 1, f"expected exactly one migration head, found {heads}"
+    return heads[0]
+
+
+EXPECTED_HEAD = _latest_migration_head()
 PRE_SOCIETY_MAX_PREFIX = 15  # init-db files 01..15 = schema before the society runtime + app tables
 
 # The eight tables that had no DDL before app/schema_app_sql.py.
