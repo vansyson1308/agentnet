@@ -144,8 +144,10 @@ private key — no token is ever configured by hand, persisted, or given to the 
 not let it be the expected source of the status checks it needs. Owner setup: register the App (permissions
 above), install it on this repository only, generate one private key, mount it as a file in the controller's
 environment, set `SOCIETY_GITHUB_CREDENTIAL_PROVIDER=app`, `SOCIETY_GITHUB_APP_ID`,
-`SOCIETY_GITHUB_INSTALLATION_ID`, `SOCIETY_GITHUB_APP_PRIVATE_KEY_FILE`, `SOCIETY_GITHUB_REPOSITORY`; keep
-`SOCIETY_AUTO_MERGE_ENABLED=false`.
+`SOCIETY_GITHUB_INSTALLATION_ID`, `SOCIETY_GITHUB_APP_PRIVATE_KEY_FILE`, `SOCIETY_GITHUB_REPOSITORY`. Start
+with `SOCIETY_AUTO_MERGE_ENABLED=false` and turn it on only after a real promotion has reached
+`blocking == ["human_approval_satisfied"]` on that host — which is how this repository did it
+(docs/SOCIETY_LIVE_PROOF.md §9).
 
 ## `main` ruleset — OWNER ACTION REQUIRED
 
@@ -179,5 +181,9 @@ Society promotion identity. Proof of the promotion path therefore rests on `Fake
 (`tests/society/test_promotion.py`, `tests/society/test_e2e_self_development.py`,
 `examples/demo_autonomous_society.py --story code`) and on the inert `github` provider's refusal tests
 (no token → `ProviderUnavailable`; base branch / foreign prefix / non-fast-forward → refused or conflict).
-The first real run should be a single GREEN documentation candidate against a scratch branch of this
-repository, with `SOCIETY_AUTO_MERGE_ENABLED=false`, watched by an operator.
+The first real run was exactly that: a single GREEN documentation candidate (`b8cee13c`) on
+`agentnet-auto/b8cee13c-...`, opened as PR #30 by the App with `SOCIETY_AUTO_MERGE_ENABLED=false`
+and watched by an operator. It reached `blocking == ["human_approval_satisfied"]`, and only then
+was auto-merge enabled on the staging society-worker; the App merged it as `34ef7f6` on
+2026-09-20 with `human_approvals: []`. The shadow-provider proofs above remain the regression
+suite; the live record is docs/SOCIETY_LIVE_PROOF.md §9.

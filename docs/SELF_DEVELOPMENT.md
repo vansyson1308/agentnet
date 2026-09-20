@@ -88,7 +88,7 @@ candidate's isolated worktree.
 
 | Tier | Examples | Promotion policy (v1) |
 | --- | --- | --- |
-| GREEN | docs, dashboard templates/static, harmless acceptance tests, fixtures | PR + CI + fitness; human merge while `SOCIETY_AUTO_MERGE_ENABLED=false` (default); auto-merge only GREEN when on |
+| GREEN | docs, dashboard templates/static, harmless acceptance tests, fixtures | PR + CI + fitness; human merge while `SOCIETY_AUTO_MERGE_ENABLED=false` (repo default); autonomous merge **only** GREEN, and only when on (live in staging since 2026-09-20) |
 | AMBER | ordinary backend/worker/API logic, SDK, examples, `tests/*` | QA + Security + CI + fitness + human merge |
 | RED | `services/registry/app/society/**`, `tests/society/**`, auth/authz/config/rate limiter, task_service/contract, websocket, `services/payment/**`, migrations/init-db/db bootstrap, Dockerfiles/compose/deploy/CI, requirements/pytest.ini/scripts/ci | proposable; independent Security + full CI + human approval always; never auto-merged |
 | NEVER | `.env*`, keys/certs, secret stores, `.git/**`; diffs that skip/remove tests, remove warning gates, disable CI jobs, add `shell=True`/`os.system`, reference credential env vars outside the boundary | cannot be written (secrets) or cannot be promoted (diff findings) |
@@ -123,9 +123,9 @@ tokens (incl. `tokens_cached` when the provider reports it), requests, retries, 
 | Level | Meaning | State |
 | --- | --- | --- |
 | 0 | deterministic candidate only | proven since Phase 1 |
-| 1 | live model creates a candidate | mechanics ready; **not claimed** (no credential, canary not run) |
-| 2 | candidate automatically becomes a GitHub PR | proven in shadow (fake provider); real App not configured |
-| 3 | GREEN PR auto-merges after trusted CI/evaluation | implemented behind `SOCIETY_AUTO_MERGE_ENABLED` (default **off**); when on, GREEN only, never a draft PR, never under a merge freeze, and bounded by `SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY` (default 1) |
+| 1 | live model creates a candidate | **proven live** — candidate `b8cee13c` from a real signal, real diff, live model |
+| 2 | candidate automatically becomes a GitHub PR | **proven live** — PR #30 opened by `agentnet-society-vansyson1308[bot]` through the Society GitHub App |
+| 3 | GREEN PR auto-merges after trusted CI/evaluation | **proven live** 2026-09-20 — PR #30 merged by the App as `34ef7f6`, `human_approvals: []`. Behind `SOCIETY_AUTO_MERGE_ENABLED` (repo default **off**); when on: GREEN only, never a draft PR, never under a merge freeze, bounded by `SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY` (default 1) |
 | 4 | merged GREEN change auto-deploys to staging and is evaluated | interface + durable requests only (`BLOCKED_EXTERNAL`); no host |
 | 5 | positive staging evaluation promotes per policy | not implemented (needs Level 4) |
 

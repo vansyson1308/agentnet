@@ -37,9 +37,9 @@ MANAGED STAGING: GREEN (two consecutive full validations, distinct actors, on ma
 STAGING OPERATOR: CREATED
 SECRET LEAK CHECK: PASS
 CHAIN OF THOUGHT STORED: NO
-LIVE SOCIETY: QUALIFIED GO (runtime ON, autonomous code ON, promotion ARMED github/auto-merge OFF, deploy OFF)
-AUTONOMOUS CODE CANDIDATE (LIVE): REACHED, THEN REJECTED AS A NO-OP — see docs/SOCIETY_LIVE_PROOF.md §4
-AUTONOMOUS PROMOTION (LIVE): NOT PROVEN — 0 promotion records; credential proven, controller inert
+LIVE SOCIETY: AUTONOMOUS EVOLUTION LIVE (runtime ON, autonomous code ON, promotion github, GREEN auto-merge ON in staging, deploy OFF) — as of 2026-09-20T22:02Z
+AUTONOMOUS CODE CANDIDATE (LIVE): PROVEN — candidate b8cee13c, real diff, 1 file/+75 (docs/SOCIETY_LIVE_PROOF.md §9)
+AUTONOMOUS PROMOTION (LIVE): PROVEN — promotion c6a8a473 -> PR #30 -> merged by the Society App as 34ef7f6, human_approvals []
 SOCIETY RED-TEAM (LIVE, RUNTIME ON): ALL DEFENDED
 DEEPSEEK KEY PRESENT: YES (Railway society-worker only; never read, printed or copied)
 SOCIETY GITHUB SECRET PRESENT: NO
@@ -56,9 +56,11 @@ MAIN RULESET: ACTIVE (owner-configured 2026-09-19; required checks = the six CI 
 DEEPSEEK KEY: PROVIDED TO RAILWAY SOCIETY-WORKER ONLY
 ```
 
-Maturity levels (`docs/SELF_DEVELOPMENT.md`): level 0–1 mechanics are proven offline; levels 2–4
-(real PRs, CI-gated GREEN auto-merge, staging-live evaluation) are implemented as readiness and
-claimed only after their prerequisites (App, credential, host) exist; level 5 (production) is not a setting.
+Maturity levels (`docs/SELF_DEVELOPMENT.md`): levels 0–3 are **proven live** as of 2026-09-20 — a real
+signal became a real candidate, a real PR opened by the Society GitHub App, and a GREEN change merged to
+`main` by the App with no human approval (docs/SOCIETY_LIVE_PROOF.md §9). Level 4 (staging-live evaluation)
+remains interface-only: `SOCIETY_DEPLOYMENT_PROVIDER=disabled`, requests end `blocked_external`. Level 5
+(production) is not a setting and is refused by `config.py`.
 
 ## Services (what actually runs)
 
@@ -142,9 +144,12 @@ counts and the exact commands are in the Phase 2.6 report.
 * Live-model canaries, soak and GO/NO-GO are blocked on a rotated credential and a staging host. The DeepSeek
   key now exists only in the Railway `society-worker` (Phase 4.1: preflight probes only, no canary run); provider
   compatibility is proven only against a fake transport (`tests/society/test_deepseek_contract.py`).
-* Promotion runs in shadow mode only (`SOCIETY_PROMOTION_PROVIDER=disabled|fake`); `SOCIETY_AUTO_MERGE_ENABLED`
-  is `false` and cannot be enabled by any intent. `main` is protected by the owner-configured ruleset
-  (`deploy/github/main-ruleset.json`).
+* Promotion runs against the real GitHub provider on the staging society-worker, and GREEN autonomous merge
+  is ON there (repository default in `.env.example` and `docker-compose.staging.yml` stays `false`). No intent
+  can enable it, raise `SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY` (1), or merge anything that is not GREEN,
+  not a non-draft PR, or under a merge freeze — the controller persists its verdict and the provider
+  independently re-reads and re-checks it. `main` is protected by the owner-configured ruleset
+  (`deploy/github/main-ruleset.json`); every change goes through a pull request with required checks green.
 * Fitness is `offline` only; staging-live evaluation, rollback execution and any deployment need a
   `DeploymentProvider` that is `disabled` (requests end `blocked_external`).
 * Orchestrator/provisioning is an integration stub (in-memory OAuth codes), disabled by default.

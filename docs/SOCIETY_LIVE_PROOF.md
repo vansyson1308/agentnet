@@ -127,12 +127,17 @@ each reporting **GITHUB APP READY**:
 Requested permissions: `contents: write`, `pull_requests: write`, `checks: read`,
 `metadata: read`. Not Administration, Secrets, Actions-write, Workflows or Issues.
 
-Promotion is armed and inert: `SOCIETY_PROMOTION_PROVIDER=github`,
+Promotion was armed and inert at the time of that window: `SOCIETY_PROMOTION_PROVIDER=github`,
 `SOCIETY_AUTO_MERGE_ENABLED=false`, `SOCIETY_MAX_PROMOTIONS_PER_DAY=1`,
-`SOCIETY_MAX_OPEN_AUTONOMOUS_PRS=1`. `config.py` refuses `auto_merge_enabled` together with the
-github provider outright, so auto-merge is off at the configuration layer, not merely by a flag's
-value. `P02` (nothing merged autonomously) and `P03` (no promotion was ever auto-merge eligible)
-both pass over the whole history.
+`SOCIETY_MAX_OPEN_AUTONOMOUS_PRS=1`, and `config.py` refused `auto_merge_enabled` with the github
+provider outright as a phase guard.
+
+**Superseded on 2026-09-20** (§9). That phase guard has been replaced by the conditions that
+actually make an autonomous merge safe, auto-merge is enabled on the staging society-worker, and
+one GREEN change has been merged by the machine. The validator's `P02` ("nothing merged
+autonomously") and `P03` ("no promotion was auto-merge eligible") describe the auto-merge-OFF
+phase and therefore **now fail by design**; they are historical assertions, not current
+invariants. The authoritative record is the `PHASE5-JSON promotions.records` payload.
 
 ## 6. Known gaps, reported and not worked around
 
@@ -167,11 +172,9 @@ credential leaked, no chain of thought persisted, no escrow or accounting incons
 uncontrolled loop, no Builder escape, no public-surface leak, no approval executed after
 rejection, no cost-cap failure, and nothing merged autonomously.
 
-Steady state left running: `SOCIETY_RUNTIME_ENABLED=true`,
-`SOCIETY_AUTONOMOUS_CODE_ENABLED=true`, `SOCIETY_PROMOTION_PROVIDER=github`,
-`SOCIETY_GITHUB_CREDENTIAL_PROVIDER=app`, `SOCIETY_AUTO_MERGE_ENABLED=false`,
-`SOCIETY_STAGING_DEPLOY_ENABLED=false`, `SOCIETY_DEPLOYMENT_PROVIDER=disabled`. Production: none.
-The society can still reach a promotion on its own; it has not yet.
+Steady state at the close of that window was `SOCIETY_AUTO_MERGE_ENABLED=false`, and the sentence
+"nothing merged autonomously" was true of it. Both are superseded by §9; the current steady state
+is recorded there.
 
 ## 8. Integrity statement
 
@@ -190,3 +193,122 @@ The society can still reach a promotion on its own; it has not yet.
 - The GitHub App private key was never read, printed, copied, moved, written to a file, placed in
   a command or included in any report. Only its variable name, its source (`env-pem`) and the
   structural results above were ever observed.
+
+---
+
+## 9. Autonomous evolution — LIVE (2026-09-20)
+
+One GREEN change has now gone from a real signal to `main` **without a human in the loop**. This
+section is the durable record of that cycle; every line is a persisted row, a GitHub object or a
+Railway deployment, and nothing in it was produced by hand.
+
+### The cycle
+
+```
+real signal  doc_consistency_current_state
+   -> Scout proposal d6248715  "CURRENT_STATE.md contradicts itself"
+   -> Governor approved -> Architect spec -> Builder REAL DIFF
+   -> candidate b8cee13c   1 file, +75, docs/society/candidates/current-state-consistency-check.md
+   -> QA pass (attempt 1)  -> Security not required, 0 findings -> READY
+   -> promotion c6a8a473   trusted tier GREEN, classified from the BASE revision
+   -> branch agentnet-auto/b8cee13c-...  -> PR #30 opened by the Society GitHub App
+   -> required CI green    -> base moved twice; the controller reconciled twice
+   -> CI re-run on the head that would actually be merged
+   -> fitness experiment 219b1d60: every hard gate passed, no metric regressed, high confidence
+   -> GREEN eligibility    -> AUTONOMOUS MERGE -> main -> post-merge CI green
+```
+
+### The merge
+
+| fact | value |
+| --- | --- |
+| pull request | [#30](https://github.com/vansyson1308/agentnet/pull/30) |
+| merged at | 2026-09-20T22:02:19Z |
+| merged by | `agentnet-society-vansyson1308[bot]` — **not a human** |
+| merge SHA | `34ef7f671ebdb105c78dca76087185117e5c0a76` |
+| expected head | `09006f5d872b7c2a4e159e9d48db5a4df859b0f8` |
+| trusted tier | `green` |
+| post-merge main CI | run 156, success 2026-09-20T22:18:49Z |
+
+Eligibility as persisted on the promotion row at the moment of the merge:
+
+```
+merge_eligible true · auto_merge_enabled true · auto_merge_allowed true
+human_approval_required false · human_approval_satisfied true · human_approvals []
+blocking [] · ci_passed true · qa_pass true · security_pass true
+fitness_precheck true · trusted_risk_tier green
+```
+
+`human_approvals: []` is the load-bearing line: no human approved this change. It merged because
+`human_approval_required = tier != GREEN or not auto_merge_enabled` — and for a GREEN candidate
+with the flag on, that is false. For AMBER, RED or CONSTITUTIONAL the same flag changes nothing.
+
+### The defect this cycle found, which is the reason it is believable
+
+The promotion first reached every gate and then **killed itself**. GitHub's
+`PUT /pulls/{n}/update-branch` answers `202 Accepted` and lands the merge commit *asynchronously*;
+the controller read the head back immediately, saw the old sha, treated its own reconcile as
+failed, and on the next poll classified **its own merge commit as a third-party push** — moving
+the promotion to `superseded`, which was terminal. `merge_state` stayed `"stale"` while the branch
+really had been reconciled: the fingerprint of a success path never reached.
+
+It shipped because two things were wrong at once. A test asserted the conflict was correct
+behaviour, and `FakePromotionProvider` returned the new head synchronously — the double disagreed
+with the real API, so no test in the suite could contradict it. Only a real promotion running to
+the end against real GitHub could.
+
+The repair (PR #32, `b0869e8`) does not read the head back at all. The controller persists its
+intent *before* the call and then proves authorship from the **commit graph**: update-branch merges
+the base into the head, so the result must be a two-parent commit whose FIRST parent is the sha the
+controller validated. Proved -> adopt and re-run the required checks. Disproved -> `superseded`, as
+a genuine foreign push still is. **Unverifiable -> do nothing**, because destroying a promotion
+over one failed API read is the same fault one layer down.
+
+`SUPERSEDED` therefore has exactly one outgoing transition, `ci_pending`, reachable only by that
+proof. It was not a hypothetical: **63 seconds after the fixed controller deployed** it read PR
+#30's head, proved the commit was its own work, un-superseded the promotion, took the PR out of
+draft and reconciled again onto the new `main` — with no new PR, no new candidate, no human and no
+edited row. The evidence had been sitting in git since before the fix existed.
+
+```
+19:38:39  main CI 154 · b0869e8            success
+19:39:08  Railway 2f7f0ddf · b0869e8       SUCCESS   (fixed controller live)
+19:40:11  merge commit 09006f5d by the App           (recovery + second reconcile)
+19:51:14  CI 155 · 09006f5d                success
+21:58:46  blocking == ["human_approval_satisfied"]   (auto-merge still OFF)
+22:02:19  PR #30 merged by the App as 34ef7f6        (auto-merge ON)
+22:18:49  main CI 156 · 34ef7f6            success
+```
+
+### Safety boundaries, unchanged by any of this
+
+- **GREEN only.** AMBER, RED and CONSTITUTIONAL keep human approval at every level. The classifier
+  runs from the BASE revision, so a candidate that edits `risk.py`, `fitness.py` or `promotion.py`
+  is still judged by the old rules.
+- **Two independent layers.** The controller decides and persists the verdict on the promotion row;
+  the provider re-reads that row and refuses anything it did not authorise. An environment variable
+  being true is not authority to land a commit: flipping the flag, or calling the provider
+  directly, cannot merge on its own.
+- **Bounded.** `SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY=1`, counting only merges the controller
+  performed. No agent can raise it — `MODIFY_BUDGET` is a forbidden HIGH intent with no executor.
+- **Freezable.** `merge_freeze_reasons()` stops merging (and only merging) on a reached cap, a
+  previous autonomous merge under failed evaluation or wanting rollback, security findings, a
+  failed QA secret scan, or no recorded rollback point. Every reason is read from persisted rows.
+- **No direct push to main.** Every change went through a pull request with required checks green.
+  The App has `contents: write`, `pull_requests: write`, `checks: read`, `metadata: read` — not
+  Administration, Secrets, Actions-write, Workflows or Issues.
+- **Staging only.** `SOCIETY_AUTO_MERGE_ENABLED=true` is refused outright in production by
+  `config.py`, as are `SOCIETY_RUNTIME_ENABLED` and `SOCIETY_AUTONOMOUS_CODE_ENABLED`.
+- **No credential reaches cognition.** The GitHub App key is read only inside
+  `promotion_github.py` / `github_credentials.py` (`tests/society/test_secret_boundary.py`).
+
+### Current steady state (staging society-worker)
+
+`SOCIETY_RUNTIME_ENABLED=true`, `SOCIETY_AUTONOMOUS_CODE_ENABLED=true`,
+`SOCIETY_PROMOTION_PROVIDER=github`, `SOCIETY_GITHUB_CREDENTIAL_PROVIDER=app`,
+**`SOCIETY_AUTO_MERGE_ENABLED=true`**, `SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY=1`,
+`SOCIETY_STAGING_DEPLOY_ENABLED=false`, `SOCIETY_DEPLOYMENT_PROVIDER=disabled`. Production: none.
+
+The repository default in `.env.example` and `docker-compose.staging.yml` remains `false`. Enabling
+autonomous merge is a deliberate per-host operator act, not a property of the code.
+
