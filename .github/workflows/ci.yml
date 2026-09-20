@@ -6,9 +6,14 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `production` is here for two reasons, both load-bearing. Railway's
+    # Wait for CI requires an `on: push` directive for the branch it gates --
+    # without this line there is no check suite on a production push and the
+    # gate is vacuous (ADR-0008 D3). And the production branch deserves the
+    # same full suite as main: it is what the public actually runs.
+    branches: [main, production]
   pull_request:
-    branches: [main]
+    branches: [main, production]
 
 permissions:
   contents: read

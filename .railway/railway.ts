@@ -92,6 +92,11 @@ export default defineRailway((ctx) => {
       PUBLIC_BASE_URL: "https://${{RAILWAY_PUBLIC_DOMAIN}}",
       CORS_ALLOWED_ORIGINS: "https://${{dashboard.RAILWAY_PUBLIC_DOMAIN}}",
       RATE_LIMIT_PER_MINUTE: "60",
+      // Staging has no SMTP. `log` is an explicit opt-in, never a fallback,
+      // and is REFUSED in production (services/registry/app/email_delivery.py)
+      // -- without it staging registration answers 503 and the staging
+      // validator cannot create its canary user.
+      EMAIL_DELIVERY_PROVIDER: "log",
       ORCHESTRATOR_ENABLED: "false",
       PUBLIC_AGENT_REGISTRATION_ENABLED: "false",
       AUTO_SCALER_ENABLED: "false",

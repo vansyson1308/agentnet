@@ -37,3 +37,38 @@ update the ruleset in the same change or `main` locks. AgentNet's code refuses d
 to `main` and autonomous merges regardless of this ruleset
 (`services/registry/app/society/promotion.py`, `promotion_github.py`); the ruleset is defence in
 depth, not the control.
+
+---
+
+## PRODUCTION RULESET — OWNER ACTION REQUIRED (Phase 7 §16)
+
+`production-ruleset.json` protects the `production` branch — the branch Railway's production
+environment deploys. It is the same six required checks as `main`, which is only possible because
+Phase 7 added `production` to the CI workflow's `push` and `pull_request` triggers: without that,
+a push to `production` produces no check suite, every required check sits pending forever, and
+Railway's Wait for CI has nothing to wait for (ADR-0008 D3).
+
+```bash
+gh api --method POST -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" \
+  /repos/vansyson1308/agentnet/rulesets --input deploy/github/production-ruleset.json
+# verify
+gh api /repos/vansyson1308/agentnet/rules/branches/production
+```
+
+Two settings differ from `main`, deliberately:
+
+| Setting | `main` | `production` | Why |
+| --- | --- | --- | --- |
+| `do_not_enforce_on_create` | `false` | **`true`** | The branch does not exist yet. With enforcement on create, the ruleset would make its own bootstrap impossible. Because "Restrict deletions" and "Block force pushes" are both on, the branch can be created exactly **once** — so this exemption can only ever apply to the initial trusted bootstrap, and never again. |
+| `allowed_merge_methods` | squash, merge, rebase | **squash, merge** | Rebase rewrites the commits, and the release gate's last act before handing over is `verify_tree_equality` — the release branch's tree must equal the approved target's tree. A release whose tree no longer matches the SHA that was approved is not the change that was approved. |
+
+Everything else is identical and equally non-negotiable: **bypass actors empty** — in particular the
+Society GitHub App is *not* a bypass actor on `production` any more than on `main`, and there is no
+deploy key. The Society has no production authority at all: it cannot open a PR into `production`
+(`.railway/production.ts` declares no society-worker; `settings.production_deploy_enabled` is a hard
+`False`), so this ruleset is not what stops it — it is defence in depth behind a code-level boundary
+that `tests/test_production_release_gate.py` pins.
+
+Order matters: apply this ruleset **after** the initial trusted bootstrap creates `production`, or
+accept that `do_not_enforce_on_create: true` is what lets the bootstrap through if applied before.
+Either order works; applying it after is the one that needs no exemption at all.
