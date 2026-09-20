@@ -63,7 +63,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "taskfail")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -134,6 +134,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("refute takes exactly one memory item id")
         if name == "promotions" and (len(args) > 1 or (args and not args[0].isdigit())):
             raise ValueError("promotions[:<limit>]")
+        if name == "candidates" and (len(args) > 1 or (args and not args[0].isdigit())):
+            raise ValueError("candidates[:<limit>]")
         if name == "taskfail" and (len(args) > 1 or (args and not args[0].isdigit())):
             raise ValueError("taskfail[:<escrow-credits>]")
         plan.append((name, args))
@@ -755,6 +757,52 @@ def step_refute(out: Out, base: str, token: str, conn, memory_id: str) -> None:
     out.json("refute", "after", after)
 
 
+def step_candidates(out: Out, conn, limit: int) -> None:
+    """Read recent candidates and, crucially, WHY each one ended where it did.
+
+    A status alone cannot distinguish "the guard rejected busywork" (the system
+    working) from "the pipeline broke" (a defect), and the difference decides
+    whether anything needs repairing. Read-only; model-authored text is
+    scrubbed and bounded like every other untrusted string."""
+    with conn.cursor() as cur:
+        rows = _rows(
+            cur,
+            """
+            SELECT c.id, c.status::text, c.title, c.error, c.changed_files, c.diff_stat,
+                   c.branch_name, c.requires_security_review, c.risk_tier,
+                   c.qa_report, c.security_report, c.correlation_id, c.created_at
+            FROM code_candidates c
+            ORDER BY c.created_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+    view = []
+    for r in rows:
+        qa = r[9] if isinstance(r[9], dict) else {}
+        sec = r[10] if isinstance(r[10], dict) else {}
+        view.append(
+            {
+                "candidate": str(r[0])[:8],
+                "status": r[1],
+                "title": scrub(str(r[2] or ""))[:120],
+                "error": scrub(str(r[3]))[:300] if r[3] else None,
+                "changed_files": r[4],
+                "diff_stat": r[5],
+                "branch": r[6],
+                "requires_security_review": r[7],
+                "risk_tier": r[8],
+                "qa_verdict": qa.get("verdict"),
+                "qa_failures": [scrub(str(f))[:160] for f in (qa.get("failures") or [])][:4],
+                "security_verdict": sec.get("verdict"),
+                "correlation": str(r[11]),
+                "created_at": r[12].isoformat() if r[12] else None,
+            }
+        )
+    out.check("candidates", "N01", True, f"{len(view)} candidate(s); statuses={sorted({v['status'] for v in view})}")
+    out.json("candidates", "records", view)
+
+
 def step_promotions(out: Out, conn, limit: int) -> None:
     """Read the durable promotion records the CONTROLLER wrote.
 
@@ -1176,7 +1224,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions") and conn is None:
+            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates") and conn is None:
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -1200,6 +1248,8 @@ def main() -> int:
                 step_refute(out, base, token, conn, args[0])
             elif name == "promotions":
                 step_promotions(out, conn, int(args[0]) if args else 5)
+            elif name == "candidates":
+                step_candidates(out, conn, int(args[0]) if args else 5)
             elif name == "taskfail":
                 step_taskfail(out, base, token, conn, int(args[0]) if args else 5, timeout)
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence

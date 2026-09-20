@@ -450,3 +450,26 @@ def test_promotions_step_is_read_only_and_checks_the_gates_not_just_the_status()
     assert '"P02"' in src and '"P03"' in src
     assert "auto_merge_enabled" in src and "auto_merge_allowed" in src
     assert "human_approval_required" in src and "blocking" in src
+
+
+def test_plan_grammar_accepts_candidates_with_an_optional_limit():
+    p5 = _driver()
+    assert p5.parse_plan("candidates") == [("candidates", [])]
+    assert p5.parse_plan("candidates:3") == [("candidates", ["3"])]
+    for bad in ("candidates:all", "candidates:3:4"):
+        with pytest.raises(ValueError):
+            p5.parse_plan(bad)
+
+
+def test_candidates_step_is_read_only_and_reports_why_not_just_what():
+    """A status alone cannot tell a guard rejecting busywork (working) from a
+    pipeline break (a defect), and that difference decides whether to repair."""
+    import inspect
+
+    p5 = _driver()
+    src = inspect.getsource(p5.step_candidates)
+    lowered = src.lower()
+    for forbidden in ("update ", "delete ", "insert ", "drop "):
+        assert forbidden not in lowered, f"the candidate reader must stay read-only: {forbidden!r}"
+    assert "c.error" in src and "qa_failures" in src and "security_verdict" in src
+    assert "scrub(" in src, "model-authored titles and errors are untrusted text"
