@@ -309,13 +309,27 @@ class GitHubPromotionProvider:
         )
         if body is None:
             raise ProviderRefused("update-branch: pull request not found")
-        # 202 Accepted returns {"message": ..., "url": ...} and the merge commit
-        # lands asynchronously, so the new head is read back rather than assumed.
+        # The PUT answers 202 Accepted and GitHub lands the merge commit
+        # AFTERWARDS. Reading the head back immediately therefore shows the OLD
+        # sha in the normal case -- treating that as a failure is what made the
+        # first real promotion supersede itself over its own reconcile. The
+        # accepted request IS the success; the read-back is only an optimisation
+        # for the rare case where the merge is already visible. Returning ""
+        # tells the controller "accepted, head not visible yet": it has already
+        # persisted the request, and proves authorship of the new head from the
+        # commit's parents once it appears.
         pr = self._request("GET", f"/repos/{self.repo}/pulls/{promotion.external_pr_number}") or {}
         head = ((pr.get("head") or {}).get("sha")) or ""
-        if not head or head == expected_head_sha:
-            raise ProviderConflict("update-branch did not move the head (still reconciling or already up to date)")
-        return head
+        return head if head and head != expected_head_sha else ""
+
+    def commit_parents(self, sha: str) -> List[str]:
+        """Parent shas of one commit. Read-only, and the evidence the controller
+        uses to tell its OWN update-branch merge commit from a third-party push:
+        GitHub builds it with the previous head as the FIRST parent."""
+        if not sha:
+            return []
+        body = self._request("GET", f"/repos/{self.repo}/commits/{sha}") or {}
+        return [str(p.get("sha") or "") for p in (body.get("parents") or [])]
 
     def mark_ready_for_review(self, promotion, state) -> bool:
         """Take the PR out of draft.

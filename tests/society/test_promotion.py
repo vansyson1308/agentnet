@@ -439,8 +439,12 @@ def test_illegal_transitions_are_refused_and_terminal_states_are_final(db, socie
         pm._transition(db, promo2, cand, PromotionStatus.MERGED)  # cannot skip straight to merged
     for status, allowed in pm.TRANSITIONS.items():
         assert status not in allowed, "no self loops"
-        if status in pm.TERMINAL_STATUSES:
-            assert not allowed
+        if status in pm.FINAL_STATUSES:
+            assert not allowed, f"{status} must be final"
+    # SUPERSEDED is terminal for every actor EXCEPT the controller proving the
+    # head is its own update-branch merge commit, so it has exactly one edge.
+    assert pm.TRANSITIONS[PromotionStatus.SUPERSEDED] == {PromotionStatus.CI_PENDING}
+    assert pm.FINAL_STATUSES == (PromotionStatus.MERGED, PromotionStatus.REJECTED)
 
 
 def test_change_budget_limits_open_prs_and_daily_promotions(db, db_factory, temp_repo, tmp_path, monkeypatch):
@@ -832,3 +836,138 @@ def test_the_github_provider_checks_the_persisted_verdict_not_just_the_flag(monk
         assert why in str(exc.value), (gates, str(exc.value))
     assert not called, "not one merge request reached GitHub"
     reset_settings_cache()
+
+
+# ── the controller must recognise its own update-branch merge commit ──────
+#
+# GitHub answers PUT /pulls/{n}/update-branch with 202 Accepted and lands the
+# merge commit asynchronously. The first real promotion (c6a8a473 / PR #30)
+# read the head back immediately, saw the OLD sha, treated the reconcile as
+# failed -- and then, when GitHub's merge commit appeared, classified ITS OWN
+# COMMIT as a third-party push and superseded itself. These pin the repair.
+
+def test_an_accepted_but_not_yet_visible_update_branch_is_not_a_failed_reconcile(db, db_factory, society_settings, temp_repo):
+    report = seed_society(db)
+    cand = ready_candidate(db, society_settings, report, title="async-update-branch")
+    promo, _ = _request(db, society_settings, cand, report)
+    provider = pm.FakePromotionProvider()
+    assert provider.async_update_branch is True, "the double must model GitHub's 202, not a synchronous API"
+    drive(db_factory, society_settings, provider)
+    _experiment_pass(db, promo, cand)
+    db.refresh(promo)
+    stale_head = promo.candidate_sha
+    provider.move_base("base0001")
+    drive(db_factory, society_settings, provider)
+    db.refresh(promo)
+
+    assert _ev(promo.status) != "superseded", "the controller destroyed its own reconcile"
+    assert provider.update_branch_count == 1
+    new_head = provider.prs[cand.branch_name]["head_sha"]
+    assert new_head != stale_head
+    assert promo.candidate_sha == new_head, "the merge commit GitHub made is now the validated sha"
+    # Authorship was PROVED from the commit graph, not assumed from a flag.
+    assert ("commit_parents", new_head) in provider.calls
+    assert provider.parents[new_head][0] == stale_head, "update-branch merges the base INTO the head"
+    assert "base_reconcile_pending" not in (promo.evidence or {}), "the request is closed once adopted"
+    assert promo.evidence["base_reconciled_from"] == stale_head[:40]
+
+
+def test_a_promotion_superseded_over_its_own_reconcile_recovers_from_the_commit_graph(db, db_factory, society_settings, temp_repo):
+    """Exactly the state PR #30 was left in: the controller asked for
+    update-branch, recorded only that the response was inconclusive, and then
+    superseded itself when GitHub's merge commit appeared."""
+    report = seed_society(db)
+    cand = ready_candidate(db, society_settings, report, title="superseded-over-own-reconcile")
+    promo, _ = _request(db, society_settings, cand, report)
+    provider = pm.FakePromotionProvider()
+    drive(db_factory, society_settings, provider)
+    _experiment_pass(db, promo, cand)
+    db.refresh(promo)
+    validated = promo.candidate_sha
+
+    # Reproduce the damaged row: GitHub made the merge commit, the controller
+    # recorded an inconclusive response and superseded on the next poll.
+    merge_sha = "merged-by-github-0001"
+    provider.prs[cand.branch_name]["head_sha"] = merge_sha
+    provider.parents[merge_sha] = [validated, provider.base_sha]
+    promo.status = PromotionStatus.SUPERSEDED
+    promo.failure_reason = "PR head moved away from the validated candidate sha"
+    promo.evidence = {**(promo.evidence or {}), "base_reconcile_error": "update-branch did not move the head"}
+    db.commit()
+    assert pm.active_promotion_for(db, cand.id) is not None, "a recoverable promotion still owns the PR"
+
+    drive(db_factory, society_settings, provider)
+    db.refresh(promo)
+    assert _ev(promo.status) == "ci_pending", "recovered, and the required checks must re-run"
+    assert promo.candidate_sha == merge_sha
+    assert promo.eligibility.get("ci_passed") is False, "the reconciled head has NOT passed CI yet"
+    assert provider.merge_count == 0
+    seq = [e.event_type for e in db.query(SocietyEvent).filter(SocietyEvent.correlation_id == cand.correlation_id).order_by(SocietyEvent.created_at, SocietyEvent.id).all()]
+    assert seq.index("promotion.superseded") < len(seq) - 1, "recovery is recorded after the supersede, not instead of it"
+
+
+@pytest.mark.parametrize(
+    "parents, why",
+    [
+        (["f" * 40, "base0000"], "a merge built on someone else's commit"),
+        (["VALIDATED"], "a single-parent commit is a push, not update-branch"),
+        (["base0000", "VALIDATED"], "our sha must be the FIRST parent"),
+        ([], "an unknown commit proves nothing"),
+    ],
+)
+def test_a_superseded_promotion_never_recovers_from_a_head_it_cannot_prove(db, db_factory, society_settings, temp_repo, parents, why):
+    report = seed_society(db)
+    cand = ready_candidate(db, society_settings, report, title=f"foreign-{abs(hash(why)) % 9999}")
+    promo, _ = _request(db, society_settings, cand, report)
+    provider = pm.FakePromotionProvider()
+    drive(db_factory, society_settings, provider)
+    _experiment_pass(db, promo, cand)
+    db.refresh(promo)
+    validated = promo.candidate_sha
+
+    foreign = "foreign-head-0001"
+    provider.prs[cand.branch_name]["head_sha"] = foreign
+    provider.parents[foreign] = [validated if p == "VALIDATED" else p for p in parents]
+    promo.status = PromotionStatus.SUPERSEDED
+    promo.evidence = {**(promo.evidence or {}), "base_reconcile_error": "inconclusive"}
+    db.commit()
+
+    drive(db_factory, society_settings, provider)
+    db.refresh(promo)
+    assert _ev(promo.status) == "superseded", why
+    assert promo.candidate_sha == validated, "an unproven head is never adopted"
+    assert provider.merge_count == 0
+    # Proved not ours -> the row stops being re-examined and releases the PR.
+    assert "base_reconcile_error" not in (promo.evidence or {})
+    assert promo.evidence["base_reconcile_recovery"]
+    assert pm.active_promotion_for(db, cand.id) is None
+
+
+def test_a_transient_commit_read_never_supersedes_a_promotion(db, db_factory, society_settings, temp_repo):
+    """Destroying a promotion because one API read failed is the same bug one
+    layer down. Unverifiable means hold, not abandon."""
+    report = seed_society(db)
+    cand = ready_candidate(db, society_settings, report, title="transient-parents")
+    promo, _ = _request(db, society_settings, cand, report)
+    provider = pm.FakePromotionProvider()
+    drive(db_factory, society_settings, provider)
+    _experiment_pass(db, promo, cand)
+    db.refresh(promo)
+    before = _ev(promo.status)
+    validated = promo.candidate_sha
+
+    merge_sha = "merged-by-github-0002"
+    provider.prs[cand.branch_name]["head_sha"] = merge_sha
+    provider.parents[merge_sha] = [validated, provider.base_sha]
+    promo.evidence = {**(promo.evidence or {}), "base_reconcile_pending": {"from": validated, "attempt": 1}}
+    db.commit()
+    provider.inject(pm.ProviderTransient("GitHub transport error"))
+
+    drive(db_factory, society_settings, provider)
+    db.refresh(promo)
+    assert _ev(promo.status) != "superseded", "a failed read must never be the reason a promotion dies"
+    # Once the read works, the same head is adopted.
+    drive(db_factory, society_settings, provider)
+    db.refresh(promo)
+    assert promo.candidate_sha == merge_sha
+    assert _ev(promo.status) in ("ci_pending", "ci_passed", "awaiting_approval", "merge_eligible"), before

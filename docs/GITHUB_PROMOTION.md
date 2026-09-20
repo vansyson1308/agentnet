@@ -27,10 +27,25 @@ requested ─► validating ─► branch_ready ─► pr_open ─► ci_pending
 
 **Base moved.** When the base advances under an open promotion the controller does not park it: it asks the
 provider to merge the base INTO the head (GitHub's own *update branch* endpoint — a merge commit, never a rebase
-and never a force push), records the new head as the validated sha, and sends the promotion back to `ci_pending`
-so the **required checks run again on the commit that would actually be merged**. Bounded by
-`MAX_BASE_RECONCILES` (3) so a fast-moving base is not chased forever; a head the controller did not validate is
-still `superseded`, never reconciled.
+and never a force push) and sends the promotion back to `ci_pending` so the **required checks run again on the
+commit that would actually be merged**. Bounded by `MAX_BASE_RECONCILES` (3) so a fast-moving base is not chased
+forever.
+
+That endpoint answers **`202 Accepted`** and lands the merge commit *asynchronously*, so "the controller asked"
+and "the branch moved" are separated by a gap that may contain latency, a redeploy or a crash. The controller
+therefore writes its intent (`base_reconcile_pending`, carrying the sha it validated) and **commits it before**
+the call. When a head it does not recognise later appears, it asks whether that head is its own work — and
+answers from the **commit graph, never from a flag**: update-branch merges the base into the head, so the result
+must be a two-parent commit whose **first parent is the sha the controller validated**. Proved → the new head
+becomes the validated sha and the checks re-run. Disproved → `superseded`, as any third-party push still is.
+**Unverifiable** (the read failed) → nothing happens at all, because destroying a promotion over a transient
+error is the same fault one layer down.
+
+`superseded` is terminal for every actor except this proof: it has exactly one outgoing transition
+(`ci_pending`), reachable only from the commit graph. A promotion that superseded itself over its own reconcile
+therefore recovers without a new PR, a new candidate, a human, or an edited row — and a genuine foreign push is
+recorded as unrecoverable (`base_reconcile_recovery`) and stops being re-examined. `MERGED` and `REJECTED`
+(`FINAL_STATUSES`) have no way out at all.
 
 **Draft → ready for review.** The provider opens every PR as a draft, and a draft PR cannot be merged by anyone.
 The trusted controller takes it out of draft (GraphQL `markPullRequestReadyForReview` — REST cannot) only when
@@ -47,7 +62,10 @@ when the tier is AMBER/RED or findings exist; no secret-pattern finding; indepen
 Merge eligibility (`compute_eligibility`) — all must hold: `risk_promotable`, `ci_passed`, `branch_up_to_date`,
 `head_unchanged`, `qa_pass`, `security_pass`, `no_critical_findings`, `fitness_precheck`, `no_unresolved_review`,
 `change_budget`, `human_approval_satisfied`. `auto_merge_allowed` additionally needs tier GREEN,
-`SOCIETY_AUTO_MERGE_ENABLED=true` (default false) **and `pr_not_draft`**.
+`SOCIETY_AUTO_MERGE_ENABLED=true` (default false), **`pr_not_draft`** and **no merge freeze**. The daily bound
+is `SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY` (default 1), which counts only merges the *controller* performed
+(`evidence.auto_merged`) — a human merge is recorded but never spends the autonomous budget. No agent can raise
+it: `MODIFY_BUDGET` is a forbidden HIGH intent with no executor.
 
 `fitness_precheck` asks whether the fitness engine **raises no objection**, not whether it applauded. `fitness.py`
 only returns `pass` when a metric IMPROVED, so a documentation change — which moves no latency and no failure
