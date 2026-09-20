@@ -926,6 +926,43 @@ def _schema_props(schema: Dict[str, Any], defs: Dict[str, Any], depth: int = 0) 
     return {k: _schema_type(v, defs, depth) for k, v in (schema.get("properties") or {}).items()}
 
 
+def _required_paths(schema: Dict[str, Any], defs: Dict[str, Any], prefix: str = "", depth: int = 0) -> List[str]:
+    """Dotted paths of every MANDATORY field, nested models included.
+
+    The shape dict cannot express this. A live Builder sent
+    ``{candidate_id, edits}`` and was denied with *"summary: Field required"*,
+    because ``"summary": "string(1..4000 chars)"`` and
+    ``"must_compile": "boolean"`` render identically -- yet the first is
+    mandatory and the second has a default. ``|null`` marks what may be
+    omitted as null; nothing marked what may not be omitted at all.
+
+    Depth mirrors ``_schema_type``: past depth 3 a ``$ref`` is printed by name
+    rather than inlined, so there is no shape to qualify and no path to add.
+    """
+    out: List[str] = []
+    req = list(schema.get("required") or [])
+    props = schema.get("properties") or {}
+    for key in req:
+        out.append(f"{prefix}{key}")
+    for key, v in props.items():
+        if key not in req:
+            continue  # an optional object's own fields are only required IF it is sent
+        sub, sub_prefix = None, f"{prefix}{key}."
+        if "$ref" in v and depth < 3:
+            sub = defs.get(str(v["$ref"]).rsplit("/", 1)[-1]) or {}
+        elif v.get("type") == "array":
+            items = v.get("items") or {}
+            if "$ref" in items and depth < 3:
+                sub, sub_prefix = defs.get(str(items["$ref"]).rsplit("/", 1)[-1]) or {}, f"{prefix}{key}[]."
+            elif items.get("type") == "object":
+                sub, sub_prefix = items, f"{prefix}{key}[]."
+        elif v.get("type") == "object" and v.get("properties"):
+            sub = v
+        if sub:
+            out.extend(_required_paths(sub, defs, sub_prefix, depth + 1))
+    return out
+
+
 def _schemas_doc() -> str:
     """One line per allowed intent with its COMPLETE payload shape. The prompt
     tells the model that payloads must match the documented schema exactly, so
@@ -936,12 +973,20 @@ def _schemas_doc() -> str:
     parts = []
     for t in sorted(ALLOWED_INTENT_TYPES, key=lambda x: x.value):
         model = PAYLOAD_MODELS[t]
+        required: List[str] = []
         try:
             schema = model.model_json_schema()
-            props = _schema_props(schema, schema.get("$defs") or {})
+            defs = schema.get("$defs") or {}
+            props = _schema_props(schema, defs)
+            required = _required_paths(schema, defs)
         except Exception:  # noqa: BLE001 — a schema that cannot render is documented as empty, never crashes cognition
             props = {}
-        parts.append(f"- {t.value}: {json.dumps(props, default=str)}")
+        line = f"- {t.value}: {json.dumps(props, default=str)}"
+        if required:
+            # Which fields may NOT be omitted. The shape alone cannot say: a
+            # mandatory field and one with a default render the same.
+            line += f"  REQUIRED: {', '.join(required)}"
+        parts.append(line)
     return "\n".join(parts)
 
 

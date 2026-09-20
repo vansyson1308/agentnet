@@ -19,10 +19,25 @@ promotion instead of being overwritten.
 
 ```
 requested ─► validating ─► branch_ready ─► pr_open ─► ci_pending ─► ci_passed ─► awaiting_approval ─► merge_eligible ─► merged
-                │                                        │              │                 (human merges; observed)
-                ├─► blocked_external (no provider)       ├─► ci_failed  └─► superseded (base moved / head changed / branch conflict)
-                └─► rejected (validation) / superseded (sha changed, base not ancestor)
+                │                                        ▲   │              │
+                ├─► blocked_external (no provider)       │   ├─► ci_failed  └─► superseded (head changed / branch conflict)
+                └─► rejected (validation) / superseded   │
+                                                         └── base moved: the branch is RECONCILED and CI must re-run
 ```
+
+**Base moved.** When the base advances under an open promotion the controller does not park it: it asks the
+provider to merge the base INTO the head (GitHub's own *update branch* endpoint — a merge commit, never a rebase
+and never a force push), records the new head as the validated sha, and sends the promotion back to `ci_pending`
+so the **required checks run again on the commit that would actually be merged**. Bounded by
+`MAX_BASE_RECONCILES` (3) so a fast-moving base is not chased forever; a head the controller did not validate is
+still `superseded`, never reconciled.
+
+**Draft → ready for review.** The provider opens every PR as a draft, and a draft PR cannot be merged by anyone.
+The trusted controller takes it out of draft (GraphQL `markPullRequestReadyForReview` — REST cannot) only when
+the candidate is READY, QA passed, Security passed or was not required with no findings, the trusted tier is
+**GREEN**, and the head is unchanged. It never does this for AMBER/RED/CONSTITUTIONAL: a human may still take
+those out of draft and merge them, which is exactly the governance path those tiers keep. The decision is the
+controller's, never the model's, and it emits `promotion.ready_for_review`.
 
 Validation (`promotion.validate`) requires: candidate READY on the exact head; branch under `SOCIETY_BRANCH_PREFIX`;
 base sha an ancestor of the trusted base; **trusted risk tier** from the real diff (NEVER → rejected); no
@@ -30,9 +45,19 @@ never-writable file; files/diff-lines within budget; QA PASS for the exact head;
 when the tier is AMBER/RED or findings exist; no secret-pattern finding; independent reviewer for RED.
 
 Merge eligibility (`compute_eligibility`) — all must hold: `risk_promotable`, `ci_passed`, `branch_up_to_date`,
-`head_unchanged`, `qa_pass`, `security_pass`, `no_critical_findings`, `fitness_precheck` (experiment PASS),
-`no_unresolved_review`, `change_budget`, `human_approval_satisfied`. `auto_merge_allowed` additionally needs
-tier GREEN and `SOCIETY_AUTO_MERGE_ENABLED=true` (default false; refused with the GitHub provider in this phase).
+`head_unchanged`, `qa_pass`, `security_pass`, `no_critical_findings`, `fitness_precheck`, `no_unresolved_review`,
+`change_budget`, `human_approval_satisfied`. `auto_merge_allowed` additionally needs tier GREEN,
+`SOCIETY_AUTO_MERGE_ENABLED=true` (default false) **and `pr_not_draft`**.
+
+`fitness_precheck` asks whether the fitness engine **raises no objection**, not whether it applauded. `fitness.py`
+only returns `pass` when a metric IMPROVED, so a documentation change — which moves no latency and no failure
+rate — can only ever be `inconclusive`. Under an `experiment == PASS` test such a change is not merely unlikely to
+qualify, it can NEVER qualify: the first real promotion passed every hard gate, regressed nothing, and was blocked
+with no action that could ever clear it. So an `inconclusive` experiment satisfies the gate **only** when it
+actually looked and found nothing wrong — every hard gate passed (an empty gate list is not "all passed"), no
+metric regressed, and confidence is `high`. `fail` and a missing experiment stay blocking, and the
+attempt-budget-exhausted path (also `inconclusive`) is excluded twice over: it records a failed `attempts` gate
+with low confidence.
 
 States that wait on the outside world (`pr_open`, `ci_pending`, `awaiting_approval`, `merge_eligible`,
 `blocked_external`) are re-polled at most once per `SOCIETY_PROMOTION_POLL_INTERVAL_SECONDS` (default 60);

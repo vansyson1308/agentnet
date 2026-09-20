@@ -83,10 +83,14 @@ TRANSITIONS: Dict[PromotionStatus, set] = {
     PromotionStatus.BRANCH_READY: {PromotionStatus.PR_OPEN, PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED},
     PromotionStatus.PR_OPEN: {PromotionStatus.CI_PENDING, PromotionStatus.CI_PASSED, PromotionStatus.CI_FAILED, PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED, PromotionStatus.MERGED},
     PromotionStatus.CI_PENDING: {PromotionStatus.CI_PASSED, PromotionStatus.CI_FAILED, PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED, PromotionStatus.MERGED},
-    PromotionStatus.CI_PASSED: {PromotionStatus.AWAITING_APPROVAL, PromotionStatus.MERGE_ELIGIBLE, PromotionStatus.CI_FAILED, PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED, PromotionStatus.MERGED},
+    # CI_PENDING is reachable again from every post-CI state: when the base moves,
+    # the controller reconciles the branch and the required checks MUST re-run on
+    # the new head. Going backwards here is the point -- a promotion that has
+    # already passed CI has NOT passed it on the commit that would now be merged.
+    PromotionStatus.CI_PASSED: {PromotionStatus.AWAITING_APPROVAL, PromotionStatus.MERGE_ELIGIBLE, PromotionStatus.CI_PENDING, PromotionStatus.CI_FAILED, PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED, PromotionStatus.MERGED},
     PromotionStatus.CI_FAILED: {PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED},
-    PromotionStatus.AWAITING_APPROVAL: {PromotionStatus.MERGE_ELIGIBLE, PromotionStatus.MERGED, PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED, PromotionStatus.CI_FAILED},
-    PromotionStatus.MERGE_ELIGIBLE: {PromotionStatus.MERGED, PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED, PromotionStatus.AWAITING_APPROVAL, PromotionStatus.CI_FAILED},
+    PromotionStatus.AWAITING_APPROVAL: {PromotionStatus.MERGE_ELIGIBLE, PromotionStatus.MERGED, PromotionStatus.CI_PENDING, PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED, PromotionStatus.CI_FAILED},
+    PromotionStatus.MERGE_ELIGIBLE: {PromotionStatus.MERGED, PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED, PromotionStatus.AWAITING_APPROVAL, PromotionStatus.CI_PENDING, PromotionStatus.CI_FAILED},
     PromotionStatus.MERGED: set(),
     PromotionStatus.REJECTED: set(),
     PromotionStatus.SUPERSEDED: set(),
@@ -157,6 +161,8 @@ class PRState:
     approvals: List[str] = field(default_factory=list)
     unresolved_reviews: int = 0
     closed: bool = False
+    draft: bool = False
+    node_id: str = ""
     detail: str = ""
 
 
@@ -166,6 +172,8 @@ class PromotionProvider(Protocol):
     def publish_branch(self, promotion: CodePromotion, candidate: CodeCandidate, ws: ws_mod.Workspace) -> BranchRef: ...  # pragma: no cover - protocol
     def open_or_update_pr(self, promotion: CodePromotion, candidate: CodeCandidate, title: str, body: str) -> PRRef: ...  # pragma: no cover
     def get_pr_state(self, promotion: CodePromotion) -> PRState: ...  # pragma: no cover
+    def update_branch(self, promotion: CodePromotion, expected_head_sha: str) -> str: ...  # pragma: no cover
+    def mark_ready_for_review(self, promotion: CodePromotion, state: PRState) -> bool: ...  # pragma: no cover
     def merge(self, promotion: CodePromotion, expected_head_sha: str) -> str: ...  # pragma: no cover
 
 
@@ -179,6 +187,12 @@ class DisabledPromotionProvider:
         raise ProviderUnavailable("no promotion provider configured")
 
     def get_pr_state(self, promotion):
+        raise ProviderUnavailable("no promotion provider configured")
+
+    def update_branch(self, promotion, expected_head_sha):
+        raise ProviderUnavailable("no promotion provider configured")
+
+    def mark_ready_for_review(self, promotion, state):
         raise ProviderUnavailable("no promotion provider configured")
 
     def merge(self, promotion, expected_head_sha):
@@ -206,6 +220,8 @@ class FakePromotionProvider:
         self.publish_count = 0
         self.pr_create_count = 0
         self.merge_count = 0
+        self.update_branch_count = 0
+        self.ready_count = 0
 
     # test helpers
     def inject(self, exc: Exception) -> None:
@@ -260,7 +276,7 @@ class FakePromotionProvider:
         if pr is None:
             self._next_pr += 1
             self.pr_create_count += 1
-            pr = {"number": self._next_pr, "url": f"fake://pr/{self._next_pr}", "title": title, "body": body, "head_sha": candidate.head_sha, "base_sha": self.base_sha, "approvals": [], "merged": False, "merged_sha": "", "closed": False, "unresolved_reviews": 0}
+            pr = {"number": self._next_pr, "url": f"fake://pr/{self._next_pr}", "title": title, "body": body, "head_sha": candidate.head_sha, "base_sha": self.base_sha, "approvals": [], "merged": False, "merged_sha": "", "closed": False, "unresolved_reviews": 0, "draft": True}
             self.prs[candidate.branch_name] = pr
             return PRRef(number=pr["number"], url=pr["url"], created=True)
         pr["title"], pr["body"], pr["head_sha"] = title, body, candidate.head_sha
@@ -273,7 +289,35 @@ class FakePromotionProvider:
         if pr is None:
             return PRState(ci="unknown", detail="no such PR")
         ci = self.ci_by_branch.get(promotion.external_branch, self.default_ci)
-        return PRState(ci=ci, head_sha=pr["head_sha"], base_moved=pr["base_sha"] != self.base_sha, merged=pr["merged"], merged_sha=pr["merged_sha"], mergeable=not pr["closed"], approvals=list(pr["approvals"]), unresolved_reviews=pr["unresolved_reviews"], closed=pr["closed"])
+        return PRState(ci=ci, head_sha=pr["head_sha"], base_moved=pr["base_sha"] != self.base_sha, merged=pr["merged"], merged_sha=pr["merged_sha"], mergeable=not pr["closed"], approvals=list(pr["approvals"]), unresolved_reviews=pr["unresolved_reviews"], closed=pr["closed"], draft=bool(pr.get("draft", True)), node_id=f"fake-node-{pr['number']}")
+
+    def update_branch(self, promotion, expected_head_sha):
+        """Merge the base INTO the head, exactly as GitHub's update-branch does:
+        a new merge commit on the PR branch. Never a rewrite of history."""
+        self.calls.append(("update_branch", promotion.external_branch, expected_head_sha))
+        self._maybe_fault()
+        pr = self.prs.get(promotion.external_branch or "")
+        if pr is None:
+            raise ProviderRefused("no PR")
+        if pr["head_sha"] != expected_head_sha:
+            raise ProviderConflict("head moved since the reconcile was decided")
+        self.update_branch_count += 1
+        pr["head_sha"] = f"reconciled-{pr['number']}-{self.update_branch_count}"
+        pr["base_sha"] = self.base_sha
+        self.branches[promotion.external_branch or ""] = pr["head_sha"]
+        return pr["head_sha"]
+
+    def mark_ready_for_review(self, promotion, state):
+        self.calls.append(("mark_ready_for_review", promotion.external_branch))
+        self._maybe_fault()
+        pr = self.prs.get(promotion.external_branch or "")
+        if pr is None:
+            raise ProviderRefused("no PR")
+        if not pr.get("draft"):
+            return False
+        pr["draft"] = False
+        self.ready_count += 1
+        return True
 
     def merge(self, promotion, expected_head_sha):
         self.calls.append(("merge", promotion.external_branch, expected_head_sha))
@@ -513,6 +557,46 @@ def latest_experiment(db: Session, promotion: CodePromotion) -> Optional[ChangeE
     return db.query(ChangeExperiment).filter(ChangeExperiment.promotion_id == promotion.id).order_by(ChangeExperiment.created_at.desc()).first()
 
 
+def _fitness_satisfied(exp: Optional[ChangeExperiment]) -> bool:
+    """Does the fitness engine RAISE NO OBJECTION to merging this candidate?
+
+    ``pass`` requires a measured IMPROVEMENT (``fitness.py``: no improvement and
+    no regression is ``inconclusive``). A documentation candidate cannot move a
+    latency or failure-rate metric, so under an ``exp_status == PASS`` test it is
+    not merely unlikely to qualify -- it can NEVER qualify, and neither can any
+    other change whose value is not a metric. That is a defect in the law, not a
+    property of the change: the live promotion of candidate b8cee13c passed every
+    hard gate, regressed nothing, and was still blocked forever.
+
+    So an inconclusive experiment satisfies this gate ONLY when it actually
+    looked and found nothing wrong:
+
+    * every hard gate passed (no test regression, no test removal, no security
+      regression, no NEVER finding, no metric collection disabled, the candidate
+      test run completed) -- an empty gate list is NOT "all passed";
+    * no metric regressed;
+    * confidence is high, which ``fitness.py`` sets only when both the baseline
+      and candidate test runs completed without timing out.
+
+    The attempt-budget-exhausted path is also ``inconclusive``, but it records a
+    FAILED ``attempts`` gate with low confidence, so it is excluded on two
+    independent counts. ``fail`` and a missing experiment stay blocking.
+    """
+    if exp is None:
+        return False
+    status = getattr(exp.status, "value", exp.status)
+    if status == ExperimentStatus.PASS.value:
+        return True
+    if status != ExperimentStatus.INCONCLUSIVE.value:
+        return False
+    gates = list(exp.hard_gate_results or [])
+    if not gates or not all(g.get("passed") for g in gates):
+        return False
+    if any((v or {}).get("verdict") == "regression" for v in (exp.metric_deltas or {}).values()):
+        return False
+    return exp.confidence == "high"
+
+
 def compute_eligibility(db: Session, settings: SocietySettings, promotion: CodePromotion, candidate: CodeCandidate, state: Optional[PRState]) -> Dict[str, Any]:
     """Merge gates from persisted facts. Human approval is required for AMBER
     and RED always, and for GREEN whenever auto-merge is off."""
@@ -528,10 +612,14 @@ def compute_eligibility(db: Session, settings: SocietySettings, promotion: CodeP
         "qa_pass": bool((candidate.qa_report or {}).get("verdict") == "pass"),
         "security_pass": bool((candidate.security_report or {}).get("verdict") == "pass") or not (candidate.requires_security_review or tier != RiskTier.GREEN),
         "no_critical_findings": bool((promotion.eligibility or {}).get("no_critical_findings", True)),
-        "fitness_precheck": exp_status == ExperimentStatus.PASS.value,
+        "fitness_precheck": _fitness_satisfied(exp),
         "fitness_status": exp_status,
+        "fitness_decision": (exp.decision if exp else None),
+        "fitness_confidence": (exp.confidence if exp else None),
         "no_unresolved_review": (state.unresolved_reviews == 0) if state else True,
         "change_budget": open_prs(db) <= settings.max_open_autonomous_prs,
+        # A draft PR cannot be merged by anyone, so it can never be merge-eligible.
+        "pr_not_draft": (not state.draft) if state else True,
         "human_approval_required": tier != RiskTier.GREEN or not settings.auto_merge_enabled,
         "human_approvals": list(state.approvals) if state else [],
         "auto_merge_enabled": bool(settings.auto_merge_enabled),
@@ -540,7 +628,10 @@ def compute_eligibility(db: Session, settings: SocietySettings, promotion: CodeP
     hard = ["risk_promotable", "ci_passed", "branch_up_to_date", "head_unchanged", "qa_pass", "security_pass", "no_critical_findings", "fitness_precheck", "no_unresolved_review", "change_budget", "human_approval_satisfied"]
     gates["blocking"] = [g for g in hard if not gates.get(g)]
     gates["merge_eligible"] = not gates["blocking"]
-    gates["auto_merge_allowed"] = gates["merge_eligible"] and tier == RiskTier.GREEN and settings.auto_merge_enabled
+    # "PR not draft" gates AUTO-merge, not eligibility: a draft PR cannot be
+    # merged by anyone, but a human may take a non-GREEN PR out of draft and
+    # merge it themselves -- which is exactly the governance path RED keeps.
+    gates["auto_merge_allowed"] = gates["merge_eligible"] and tier == RiskTier.GREEN and settings.auto_merge_enabled and gates["pr_not_draft"]
     gates["computed_at"] = utcnow().isoformat()
     return gates
 
@@ -587,6 +678,125 @@ def pr_body_from_facts(db: Session, promotion: CodePromotion, candidate: CodeCan
         "_Generated by the AgentNet promotion controller from persisted runtime records. The model cannot edit this body._",
     ]
     return "\n".join(lines)
+
+
+#: A base that moves faster than CI finishes would reconcile forever. Bounded.
+MAX_BASE_RECONCILES = 3
+
+
+def _reconcile_base(db: Session, settings: SocietySettings, provider: PromotionProvider, promotion: CodePromotion, candidate: CodeCandidate, state: PRState) -> bool:
+    """Bring a stale autonomous branch up to date with its base, the ONLY way
+    that is allowed: ask the provider to merge the base INTO the head.
+
+    Before this, the controller detected ``base_moved``, wrote ``merge_state =
+    "stale"`` and returned -- so a promotion whose base moved while CI ran was
+    parked forever with no action that could ever clear it. That is what
+    happened to the first real promotion: main advanced twice while PR #30 sat
+    at ``awaiting_approval``.
+
+    What this deliberately does NOT do:
+
+    * it never rebases or force-pushes -- history on a published branch stays
+      valid for anyone who fetched it, and the ruleset is never bypassed;
+    * it never merges the PR, and never touches the base branch;
+    * it never runs when the head is not the sha the controller validated, so a
+      push by anyone else still lands in SUPERSEDED rather than being quietly
+      absorbed.
+
+    The new head is a merge commit the provider made, so it is recorded as the
+    validated sha and the promotion returns to CI_PENDING: the required checks
+    MUST run again on the reconciled head before any gate can pass. The
+    candidate's own ``head_sha`` is untouched -- its diff did not change.
+    """
+    evidence = dict(promotion.evidence or {})
+    done = int(evidence.get("base_reconciles") or 0)
+    if done >= MAX_BASE_RECONCILES:
+        promotion.evidence = {**evidence, "base_reconcile_note": f"base moved again after {done} reconciles; not chasing it further"}
+        return False
+    if state.head_sha and promotion.candidate_sha and state.head_sha != promotion.candidate_sha:
+        return False  # handled earlier as SUPERSEDED; never reconcile someone else's push
+    try:
+        new_head = provider.update_branch(promotion, promotion.candidate_sha or state.head_sha or "")
+    except (ProviderUnavailable, ProviderRefused, ProviderConflict) as exc:
+        promotion.evidence = {**evidence, "base_reconcile_error": str(exc)[:300]}
+        return False
+    if not new_head:
+        return False
+    promotion.candidate_sha = new_head
+    promotion.ci_state = "pending"
+    promotion.merge_state = "reconciling"
+    promotion.evidence = {
+        **evidence,
+        "base_reconciles": done + 1,
+        "base_reconciled_from": (state.head_sha or "")[:40],
+        "base_reconciled_to": new_head[:40],
+        "base_reconciled_at": utcnow().isoformat(),
+    }
+    promotion.eligibility = {**(promotion.eligibility or {}), "branch_up_to_date": True, "ci_passed": False}
+    _transition(db, promotion, candidate, PromotionStatus.CI_PENDING, reason="base moved: branch reconciled, required checks must re-run", head_sha=new_head[:12])
+    return True
+
+
+def _ready_blockers(candidate: CodeCandidate, promotion: CodePromotion, state: PRState) -> List[str]:
+    """Why this draft PR may NOT be offered for review yet.
+
+    A draft PR cannot merge, so leaving it draft is the safe default and the
+    transition out of it is an authority decision -- taken by the trusted
+    controller from persisted facts, never by the model, and never on a change
+    whose trusted tier is not GREEN (an AMBER/RED/CONSTITUTIONAL candidate may
+    be published for humans to read, but it is not put in the queue that
+    autonomous merge draws from).
+    """
+    blockers: List[str] = []
+    if getattr(candidate.status, "value", candidate.status) != CodeCandidateStatus.READY.value:
+        blockers.append("candidate_not_ready")
+    if (candidate.qa_report or {}).get("verdict") != "pass":
+        blockers.append("qa_not_passed")
+    sec = candidate.security_report or {}
+    if candidate.requires_security_review and sec.get("verdict") != "pass":
+        blockers.append("security_not_passed")
+    if sec.get("findings") or sec.get("static_findings"):
+        blockers.append("security_findings_present")
+    if str(promotion.risk_tier) != RiskTier.GREEN.value:
+        blockers.append(f"risk_tier_{promotion.risk_tier}")
+    if state.head_sha and promotion.candidate_sha and state.head_sha != promotion.candidate_sha:
+        blockers.append("head_moved")
+    return blockers
+
+
+def _offer_for_review(db: Session, provider: PromotionProvider, promotion: CodePromotion, candidate: CodeCandidate, state: PRState) -> None:
+    """Take a GREEN, fully gated draft PR out of draft. Records why, either way."""
+    if not state.draft:
+        return
+    blockers = _ready_blockers(candidate, promotion, state)
+    if blockers:
+        promotion.evidence = {**(promotion.evidence or {}), "ready_for_review_blocked_by": blockers}
+        return
+    try:
+        changed = provider.mark_ready_for_review(promotion, state)
+    except (ProviderUnavailable, ProviderRefused, ProviderConflict) as exc:
+        promotion.evidence = {**(promotion.evidence or {}), "ready_for_review_error": str(exc)[:300]}
+        return
+    if changed:
+        # The PR is no longer a draft, so the state this cycle reasons from must
+        # say so: otherwise pr_not_draft blocks eligibility for one more poll on
+        # a fact that is already false.
+        state.draft = False
+        promotion.evidence = {**(promotion.evidence or {}), "ready_for_review_at": utcnow().isoformat(), "ready_for_review_by": "promotion-controller"}
+        db.flush()
+        cause = db.query(SocietyEvent).filter(SocietyEvent.subject_type == "code_promotion", SocietyEvent.subject_id == promotion.id).order_by(SocietyEvent.created_at.desc()).first()
+        emit_event(
+            db,
+            event_type=EventType.PROMOTION_READY_FOR_REVIEW,
+            payload=_event_payload(promotion, candidate, reason="internal gates satisfied; offered for review"),
+            actor_type="system",
+            subject_type="code_promotion",
+            subject_id=promotion.id,
+            correlation_id=promotion.correlation_id,
+            causation=cause,
+            idempotency_key=f"promotion:{promotion.id}:ready_for_review",
+            notify=True,
+        )
 
 
 def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvider, promotion: CodePromotion, worker_id: str) -> str:
@@ -660,7 +870,10 @@ def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvid
                 promotion.eligibility = {**(promotion.eligibility or {}), "branch_up_to_date": False}
                 if status == PromotionStatus.MERGE_ELIGIBLE:
                     _transition(db, promotion, candidate, PromotionStatus.AWAITING_APPROVAL, reason="base moved: CI must re-run on an up-to-date branch")
+                reconciled = _reconcile_base(db, settings, provider, promotion, candidate, state)
                 _release(db, promotion)
+                if reconciled:
+                    return PromotionStatus.CI_PENDING.value
                 return promotion.status.value if isinstance(promotion.status, PromotionStatus) else str(promotion.status)
             if state.ci == "failed":
                 _transition(db, promotion, candidate, PromotionStatus.CI_FAILED, reason=state.detail or "CI failed")
@@ -676,6 +889,10 @@ def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvid
                 _transition(db, promotion, candidate, PromotionStatus.CI_PASSED)
                 _release(db, promotion)
                 return PromotionStatus.CI_PASSED.value
+            # Offer a fully gated GREEN candidate for review BEFORE eligibility is
+            # computed: a draft PR can never merge, so leaving it draft would make
+            # merge_eligible unreachable for exactly the changes that qualify.
+            _offer_for_review(db, provider, promotion, candidate, state)
             gates = compute_eligibility(db, settings, promotion, candidate, state)
             promotion.eligibility = {**(promotion.eligibility or {}), **gates}
             promotion.merge_state = "eligible" if gates["merge_eligible"] else "blocked"

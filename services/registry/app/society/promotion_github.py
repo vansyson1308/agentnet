@@ -282,8 +282,76 @@ class GitHubPromotionProvider:
             approvals=approvals,
             unresolved_reviews=changes_requested,
             closed=pr.get("state") == "closed" and not pr.get("merged"),
+            draft=bool(pr.get("draft")),
+            node_id=str(pr.get("node_id") or ""),
             detail=str(pr.get("mergeable_state") or ""),
         )
+
+    def update_branch(self, promotion, expected_head_sha: str) -> str:
+        """GitHub's own *Update branch* button: merge the base INTO the head.
+
+        ``PUT /pulls/{n}/update-branch`` creates a MERGE COMMIT on the PR
+        branch. It is not a rebase and not a force push, so a checkout anyone
+        already has stays valid, the branch protection ruleset applies exactly
+        as it does to any other push, and nothing about the base branch moves.
+
+        ``expected_head_sha`` is passed through so GitHub refuses the update if
+        the head is not what the controller validated -- the race between
+        deciding to reconcile and performing it is closed by the API itself,
+        not by our own re-check.
+        """
+        if not promotion.external_pr_number:
+            raise ProviderRefused("no PR number to update")
+        body = self._request(
+            "PUT",
+            f"/repos/{self.repo}/pulls/{promotion.external_pr_number}/update-branch",
+            json={"expected_head_sha": expected_head_sha} if expected_head_sha else {},
+        )
+        if body is None:
+            raise ProviderRefused("update-branch: pull request not found")
+        # 202 Accepted returns {"message": ..., "url": ...} and the merge commit
+        # lands asynchronously, so the new head is read back rather than assumed.
+        pr = self._request("GET", f"/repos/{self.repo}/pulls/{promotion.external_pr_number}") or {}
+        head = ((pr.get("head") or {}).get("sha")) or ""
+        if not head or head == expected_head_sha:
+            raise ProviderConflict("update-branch did not move the head (still reconciling or already up to date)")
+        return head
+
+    def mark_ready_for_review(self, promotion, state) -> bool:
+        """Take the PR out of draft.
+
+        REST cannot do this -- ``PATCH /pulls/{n}`` silently ignores ``draft``
+        -- so GitHub documents the GraphQL ``markPullRequestReadyForReview``
+        mutation as the only supported route. It needs the PR's node id, which
+        ``get_pr_state`` already read.
+        """
+        node_id = state.node_id
+        if not node_id:
+            pr = self._request("GET", f"/repos/{self.repo}/pulls/{promotion.external_pr_number}") or {}
+            node_id = str(pr.get("node_id") or "")
+        if not node_id:
+            raise ProviderRefused("no pull request node id; cannot leave draft")
+        status, body = self._send(
+            "POST",
+            f"{self.api}/graphql",
+            self._credential().token,
+            {
+                "query": "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}}",
+                "variables": {"id": node_id},
+            },
+            None,
+        )
+        if status in _RETRYABLE:
+            raise ProviderTransient(f"GitHub returned {status} for the ready-for-review mutation")
+        if status in (401, 403):
+            raise ProviderRefused(f"GitHub refused the ready-for-review mutation ({status})")
+        if status >= 400:
+            raise ProviderRefused(f"GitHub error {status} on the ready-for-review mutation")
+        errors = (body or {}).get("errors") or []
+        if errors:
+            raise ProviderRefused(f"ready-for-review refused: {str(errors[0].get('type') or errors[0].get('message'))[:120]}")
+        pr = (((body or {}).get("data") or {}).get("markPullRequestReadyForReview") or {}).get("pullRequest") or {}
+        return pr.get("isDraft") is False
 
     def merge(self, promotion, expected_head_sha: str) -> str:
         if not self.settings.auto_merge_enabled:

@@ -24,11 +24,21 @@ from services.registry.app.society.config import SocietySettings
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 
 
+#: Separates an intent's SHAPE from the clause naming its mandatory fields.
+REQUIRED_SEP = "  REQUIRED: "
+
+
 def _doc_lines() -> dict:
+    """The shape half of each documented intent, parsed as JSON.
+
+    The line also carries a trailing ``REQUIRED:`` clause (which fields may not
+    be omitted); it is stripped here so these tests keep asserting on the shape
+    alone. ``_required_line`` below asserts on the other half.
+    """
     out = {}
     for line in _schemas_doc().splitlines():
         name, _, body = line[2:].partition(": ")
-        out[name] = json.loads(body)
+        out[name] = json.loads(body.split(REQUIRED_SEP)[0])
     return out
 
 
@@ -257,3 +267,75 @@ def test_a_field_without_a_description_renders_exactly_as_before():
     assert _scalar_note({"description": "in BYTES"}) == " in BYTES"
     doc = _doc_lines()
     assert doc["WRITE_MEMORY"]["title"] == "string(1..255 chars)"
+
+
+def _required_line(intent: str) -> list:
+    """The REQUIRED clause the prompt shows for one intent, as a list."""
+    for line in _schemas_doc().splitlines():
+        if line.startswith(f"- {intent}: "):
+            _, _, tail = line.partition(REQUIRED_SEP)
+            return [p.strip() for p in tail.split(",") if p.strip()]
+    raise AssertionError(f"{intent} is not documented at all")
+
+
+def test_every_mandatory_field_is_named_in_the_prompt():
+    """A field the model cannot tell is mandatory is the same trap as a bound
+    it cannot see: ``parse_intent`` denies the intent outright and never asks
+    again.
+
+    A live Builder sent ``{candidate_id, edits}`` for SUBMIT_CODE_CANDIDATE and
+    was denied with *"summary: Field required"*, leaving its candidate stranded
+    in ``requested``. The shape dict could not have told it otherwise:
+    ``"summary": "string(1..4000 chars)"`` (mandatory) and
+    ``"must_compile": "boolean"`` (defaulted) render identically.
+    """
+    from services.registry.app.society.intents import ALLOWED_INTENT_TYPES, PAYLOAD_MODELS
+
+    missing = []
+    for t in sorted(ALLOWED_INTENT_TYPES, key=lambda x: x.value):
+        required = list(PAYLOAD_MODELS[t].model_json_schema().get("required") or [])
+        if not required:
+            continue
+        shown = _required_line(t.value)
+        for field in required:
+            if field not in shown:
+                missing.append(f"{t.value}.{field} is enforced as required but not shown ({shown})")
+    assert not missing, "mandatory fields never shown to the model:\n" + "\n".join(missing)
+
+
+def test_the_field_whose_absence_denied_a_live_submission_is_named():
+    assert _required_line("SUBMIT_CODE_CANDIDATE") == [
+        "candidate_id",
+        "edits",
+        "summary",
+        "edits[].path",
+        "edits[].content",
+    ]
+
+
+def test_optional_and_defaulted_fields_are_not_claimed_to_be_required():
+    """The clause must state a real boundary, not a stricter invented one: a
+    model that believes everything is mandatory cannot use a sensible default,
+    and would invent values for fields the runtime fills itself."""
+    shown = _required_line("REQUEST_CODE_CHANGE")
+    assert shown == ["title", "spec", "spec.description", "spec.files_allowed"]
+    for optional in ("proposal_id", "goal_id", "task_id", "requires_security_review", "spec.must_compile", "spec.kind", "spec.expected_effect", "spec.signal"):
+        assert optional not in shown, f"{optional} has a default or is nullable; claiming it is required is wrong"
+
+
+def test_an_intent_with_no_mandatory_field_gets_no_required_clause():
+    """SLEEP's only field has a default, so there is nothing to state."""
+    assert "REQUIRED" not in [ln for ln in _schemas_doc().splitlines() if ln.startswith("- SLEEP: ")][0]
+
+
+def test_required_paths_do_not_descend_into_an_optional_object():
+    """A nested model's own mandatory fields only bind IF that object is sent.
+    Claiming them at the top level would make an omittable field look forced."""
+    from services.registry.app.society.cognition import _required_paths
+
+    schema = {
+        "properties": {"maybe": {"$ref": "#/$defs/Inner"}, "always": {"type": "string"}},
+        "required": ["always"],
+    }
+    defs = {"Inner": {"properties": {"needed": {"type": "string"}}, "required": ["needed"]}}
+    assert _required_paths(schema, defs) == ["always"]
