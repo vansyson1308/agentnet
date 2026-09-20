@@ -487,6 +487,10 @@ def _event_payload(promotion: CodePromotion, candidate: CodeCandidate, **extra) 
         "pr_number": promotion.external_pr_number,
         "pr_url": promotion.external_pr_url,
         "ci_state": promotion.ci_state,
+        # The head this event is ABOUT. A promotion can pass CI on more than one
+        # commit (a base reconcile sends it back to ci_pending), so without the
+        # sha the audit trail cannot say which commit a gate was cleared on.
+        "candidate_sha": promotion.candidate_sha,
         "failure_reason": (promotion.failure_reason or "")[:300] or None,
     }
     payload.update(extra)
@@ -546,7 +550,26 @@ def _transition(db: Session, promotion: CodePromotion, candidate: CodeCandidate,
     promotion.updated_at = utcnow()
     db.flush()
     cause = db.query(SocietyEvent).filter(SocietyEvent.subject_type == "code_promotion", SocietyEvent.subject_id == promotion.id).order_by(SocietyEvent.created_at.desc()).first()
-    emit_event(db, event_type=_STATUS_EVENT[new_status], payload=_event_payload(promotion, candidate, reason=reason[:300] or None, **extra), actor_type="system", subject_type="code_promotion", subject_id=promotion.id, correlation_id=promotion.correlation_id, causation=cause, idempotency_key=f"promotion:{promotion.id}:{new_status.value}", notify=True)
+    # The key carries the VALIDATED SHA, not just the status. Since a base
+    # reconcile sends a promotion back to ci_pending, one promotion legitimately
+    # passes CI more than once -- on different commits. Keyed by status alone,
+    # the second pass is deduplicated away and the durable log cannot show that
+    # the required checks re-ran on the commit that would actually be merged,
+    # which is the entire point of reconciling. Per (promotion, status, head) is
+    # the real at-most-once boundary; a retry of the SAME transition on the SAME
+    # head is still emitted once.
+    emit_event(
+        db,
+        event_type=_STATUS_EVENT[new_status],
+        payload=_event_payload(promotion, candidate, reason=reason[:300] or None, **extra),
+        actor_type="system",
+        subject_type="code_promotion",
+        subject_id=promotion.id,
+        correlation_id=promotion.correlation_id,
+        causation=cause,
+        idempotency_key=f"promotion:{promotion.id}:{new_status.value}:{(promotion.candidate_sha or '-')[:40]}",
+        notify=True,
+    )
 
 
 def _release(db: Session, promotion: CodePromotion) -> None:

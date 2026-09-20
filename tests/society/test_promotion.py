@@ -890,9 +890,10 @@ def test_a_promotion_superseded_over_its_own_reconcile_recovers_from_the_commit_
     merge_sha = "merged-by-github-0001"
     provider.prs[cand.branch_name]["head_sha"] = merge_sha
     provider.parents[merge_sha] = [validated, provider.base_sha]
-    promo.status = PromotionStatus.SUPERSEDED
-    promo.failure_reason = "PR head moved away from the validated candidate sha"
     promo.evidence = {**(promo.evidence or {}), "base_reconcile_error": "update-branch did not move the head"}
+    # Through the state machine, not by assignment: the damaged row really does
+    # carry a promotion.superseded event, and the recovery must not erase it.
+    pm._transition(db, promo, cand, PromotionStatus.SUPERSEDED, reason="PR head moved away from the validated candidate sha")
     db.commit()
     assert pm.active_promotion_for(db, cand.id) is not None, "a recoverable promotion still owns the PR"
 
@@ -909,6 +910,12 @@ def test_a_promotion_superseded_over_its_own_reconcile_recovers_from_the_commit_
     after = seq[seq.index("promotion.superseded"):]
     assert "promotion.ci_pending" in after, after
     assert after.index("promotion.ci_pending") < after.index("promotion.ci_passed"), after
+    # The second ci_passed is on a DIFFERENT commit, so it is its own event:
+    # keyed by status alone it would be deduplicated away and the log could not
+    # show that the required checks re-ran on the head that would be merged.
+    passes = db.query(SocietyEvent).filter(SocietyEvent.subject_id == promo.id, SocietyEvent.event_type == "promotion.ci_passed").all()
+    assert len(passes) == 2, "one pass per head, not one per promotion"
+    assert {(e.payload or {}).get("candidate_sha") for e in passes} == {validated, merge_sha}
 
 
 @pytest.mark.parametrize(
