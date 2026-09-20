@@ -63,7 +63,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "taskfail")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "taskfail")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -132,6 +132,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("memory:<role>")
         if name == "refute" and (len(args) != 1 or not re.fullmatch(r"[0-9a-fA-F-]{32,36}", args[0])):
             raise ValueError("refute takes exactly one memory item id")
+        if name == "promotions" and (len(args) > 1 or (args and not args[0].isdigit())):
+            raise ValueError("promotions[:<limit>]")
         if name == "taskfail" and (len(args) > 1 or (args and not args[0].isdigit())):
             raise ValueError("taskfail[:<escrow-credits>]")
         plan.append((name, args))
@@ -753,6 +755,68 @@ def step_refute(out: Out, base: str, token: str, conn, memory_id: str) -> None:
     out.json("refute", "after", after)
 
 
+def step_promotions(out: Out, conn, limit: int) -> None:
+    """Read the durable promotion records the CONTROLLER wrote.
+
+    A PR that is not merged is weak evidence: it could simply not have been
+    tried yet. The eligibility record says WHY it is not merged -- which gate
+    blocked it and whether auto-merge was even allowed -- and that is the claim
+    "auto-merge is off" actually has to be checked against. Read-only."""
+    with conn.cursor() as cur:
+        rows = _rows(
+            cur,
+            """
+            SELECT p.id, p.status::text, p.provider, p.risk_tier, p.external_branch,
+                   p.external_pr_number, p.external_pr_url, p.ci_state, p.merge_state,
+                   p.merged_sha, p.failure_reason, p.eligibility, p.created_at,
+                   p.candidate_id, p.correlation_id, a.name
+            FROM code_promotions p
+            LEFT JOIN agents a ON a.id = p.requested_by_agent_id
+            ORDER BY p.created_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+    view = []
+    for r in rows:
+        gates = r[11] if isinstance(r[11], dict) else {}
+        view.append(
+            {
+                "promotion": str(r[0])[:8],
+                "status": r[1],
+                "provider": r[2],
+                "risk_tier": r[3],
+                "branch": r[4],
+                "pr": r[5],
+                "pr_url": r[6],
+                "ci_state": r[7],
+                "merge_state": r[8],
+                "merged_sha": (r[9] or "")[:12] or None,
+                "failure_reason": scrub(str(r[10]))[:200] if r[10] else None,
+                "requested_by": r[15],
+                "candidate": str(r[13])[:8],
+                "correlation": str(r[14]),
+                "created_at": r[12].isoformat() if r[12] else None,
+                "gates": {
+                    k: gates.get(k)
+                    for k in (
+                        "merge_eligible", "auto_merge_enabled", "auto_merge_allowed",
+                        "human_approval_required", "human_approval_satisfied",
+                        "human_approvals", "blocking", "ci_passed", "qa_pass",
+                        "security_pass", "fitness_precheck", "trusted_risk_tier",
+                    )
+                    if k in gates
+                },
+            }
+        )
+    out.check("promotions", "P01", True, f"{len(view)} promotion record(s)")
+    merged = [v for v in view if v["status"] == "merged" or v["merged_sha"]]
+    out.check("promotions", "P02", not merged, f"nothing merged autonomously ({len(merged)} merged record(s) found)")
+    auto = [v for v in view if v["gates"].get("auto_merge_enabled") or v["gates"].get("auto_merge_allowed")]
+    out.check("promotions", "P03", not auto, f"no promotion was auto-merge eligible ({len(auto)} found)")
+    out.json("promotions", "records", view)
+
+
 def step_intents(out: Out, base: str, token: str, correlation: str) -> None:
     detail = _story_detail(base, token, correlation)
     ok = bool(detail)
@@ -1112,7 +1176,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute") and conn is None:
+            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions") and conn is None:
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -1134,6 +1198,8 @@ def main() -> int:
                 step_memory(out, conn, args[0])
             elif name == "refute":
                 step_refute(out, base, token, conn, args[0])
+            elif name == "promotions":
+                step_promotions(out, conn, int(args[0]) if args else 5)
             elif name == "taskfail":
                 step_taskfail(out, base, token, conn, int(args[0]) if args else 5, timeout)
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence

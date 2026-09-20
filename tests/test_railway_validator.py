@@ -426,3 +426,27 @@ def test_memory_search_is_read_only_and_matches_a_literal_substring():
     assert hits[0]["id"] == "9f8e7d6c-5b4a-4938-8271-6f5e4d3c2b1a"
     assert hits[0]["validation"] == "unvalidated"
     assert hits[0]["correlation"] is None
+
+
+def test_plan_grammar_accepts_promotions_with_an_optional_limit():
+    p5 = _driver()
+    assert p5.parse_plan("promotions") == [("promotions", [])]
+    assert p5.parse_plan("promotions:5") == [("promotions", ["5"])]
+    for bad in ("promotions:all", "promotions:5:6"):
+        with pytest.raises(ValueError):
+            p5.parse_plan(bad)
+
+
+def test_promotions_step_is_read_only_and_checks_the_gates_not_just_the_status():
+    """A PR that is not merged could simply not have been tried yet; the
+    eligibility record is what 'auto-merge is off' has to be checked against."""
+    import inspect
+
+    p5 = _driver()
+    src = inspect.getsource(p5.step_promotions)
+    lowered = src.lower()
+    for forbidden in ("update ", "delete ", "insert ", "drop "):
+        assert forbidden not in lowered, f"the promotion reader must stay read-only: {forbidden!r}"
+    assert '"P02"' in src and '"P03"' in src
+    assert "auto_merge_enabled" in src and "auto_merge_allowed" in src
+    assert "human_approval_required" in src and "blocking" in src
