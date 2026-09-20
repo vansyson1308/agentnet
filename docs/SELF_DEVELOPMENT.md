@@ -99,7 +99,8 @@ Application code never classifies GREEN (`kind=code` floors at AMBER). Candidate
 ## Change budget and anti-busywork
 
 `SOCIETY_MAX_AUTONOMOUS_CANDIDATES_PER_DAY=10`, `SOCIETY_MAX_RED_CANDIDATES_PER_DAY=2`, `SOCIETY_MAX_PROMOTIONS_PER_DAY=10`,
-`SOCIETY_MAX_OPEN_AUTONOMOUS_PRS=3`, `SOCIETY_MAX_FILES_PER_CANDIDATE=8`, `SOCIETY_MAX_DIFF_LINES=600`. No agent can
+`SOCIETY_MAX_OPEN_AUTONOMOUS_PRS=3`, `SOCIETY_MAX_FILES_PER_CANDIDATE=8`, `SOCIETY_MAX_DIFF_LINES=600`,
+`SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY=1`. No agent can
 raise them. Rejected at submission: no-op diffs, whitespace-only churn, duplicate diffs (`diff_hash`), oversize
 changes; rejected at request: code changes without a linked proposal, without `expected_effect`, without acceptance
 tests. Signal-driven proposals must carry evidence; duplicate titles collapse into one workstream
@@ -124,7 +125,7 @@ tokens (incl. `tokens_cached` when the provider reports it), requests, retries, 
 | 0 | deterministic candidate only | proven since Phase 1 |
 | 1 | live model creates a candidate | mechanics ready; **not claimed** (no credential, canary not run) |
 | 2 | candidate automatically becomes a GitHub PR | proven in shadow (fake provider); real App not configured |
-| 3 | GREEN PR auto-merges after trusted CI/evaluation | implemented behind `SOCIETY_AUTO_MERGE_ENABLED` (default off, refused with the GitHub provider in this phase); **not claimed** |
+| 3 | GREEN PR auto-merges after trusted CI/evaluation | implemented behind `SOCIETY_AUTO_MERGE_ENABLED` (default **off**); when on, GREEN only, never a draft PR, never under a merge freeze, and bounded by `SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY` (default 1) |
 | 4 | merged GREEN change auto-deploys to staging and is evaluated | interface + durable requests only (`BLOCKED_EXTERNAL`); no host |
 | 5 | positive staging evaluation promotes per policy | not implemented (needs Level 4) |
 
