@@ -397,3 +397,31 @@ def test_memory_view_exposes_the_id_so_a_refutation_can_name_its_target():
     p5 = _driver()
     src = inspect.getsource(p5.memory_view)
     assert "m.id" in src and '"id": str(r[9])' in src
+
+
+def test_memory_search_is_read_only_and_matches_a_literal_substring():
+    """ILIKE wildcards in operator input would silently widen the search, and a
+    refutation must hit the row the operator meant."""
+    import inspect
+
+    p5 = _driver()
+    src = inspect.getsource(p5.memory_search)
+    lowered = src.lower()
+    for forbidden in ("update ", "delete ", "insert ", "drop ", "m.content"):
+        assert forbidden not in lowered, f"memory_search must stay read-only and title-only: {forbidden!r}"
+
+    class _Cur:
+        def execute(self, sql, params=()):
+            self.sql, self.params = sql, params
+            self._rows = [("9f8e7d6c-5b4a-4938-8271-6f5e4d3c2b1a", "Improvement raised for X", None, "unvalidated", None, "AGENT")]
+
+        def fetchall(self):
+            return self._rows
+
+    cur = _Cur()
+    hits = p5.memory_search(cur, "Society_Scout", "100%_raw\\")
+    assert isinstance(cur.params, tuple)  # parameterised, never interpolated
+    assert cur.params[1] == r"%100\%\_raw\\%", cur.params[1]
+    assert "ESCAPE" in cur.sql
+    assert hits[0]["id"] == "9f8e7d6c-5b4a-4938-8271-6f5e4d3c2b1a"
+    assert hits[0]["validation"] == "unvalidated"

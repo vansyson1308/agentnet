@@ -603,12 +603,54 @@ def memory_view(cur, agent_name: str, limit: int = 30) -> Dict[str, Any]:
     }
 
 
+def memory_search(cur, agent_name: str, needle: str, limit: int = 20) -> List[Dict[str, Any]]:
+    """Read-only title search across ALL live rows a role reads back.
+
+    memory_view shows the newest few, which is the wrong end of the list when
+    the row you need to correct is old and the fleet has been busy since. The
+    needle is matched as a LITERAL substring: ILIKE wildcards in operator input
+    would silently widen the search, and a refutation must hit the row the
+    operator meant."""
+    literal = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    rows = _rows(
+        cur,
+        """
+        SELECT m.id, m.title, m.created_at, m.validation_state, m.correlation_id, m.scope::text
+        FROM memory_items m
+        LEFT JOIN agents a ON a.id = m.agent_id
+        WHERE (a.name = %s OR m.scope::text = 'SOCIETY')
+          AND (m.expires_at IS NULL OR m.expires_at > now())
+          AND m.title ILIKE %s ESCAPE '\\'
+        ORDER BY m.created_at DESC
+        LIMIT %s
+        """,
+        (agent_name, f"%{literal}%", limit),
+    )
+    return [
+        {
+            "id": str(r[0]),
+            "title": scrub(str(r[1]))[:200],
+            "created_at": r[2].isoformat() if r[2] else None,
+            "validation": r[3],
+            "correlation": str(r[4])[:8] if r[4] else None,
+            "scope": r[5],
+        }
+        for r in rows
+    ]
+
+
 def step_memory(out: Out, conn, role: str) -> None:
     agent_name = "Society_" + role.capitalize()
+    needle = (os.getenv("PHASE5_MEMORY_MATCH", "") or "").strip()
     with conn.cursor() as cur:
         view = memory_view(cur, agent_name)
+        hits = memory_search(cur, agent_name, needle) if needle else []
     out.check("memory", "M01", True, f"{agent_name}: {view['live_rows']} live memory row(s) from {view['distinct_correlations']} correlation(s), {view['rows_with_expiry']} with an expiry")
-    out.json("memory", f"{role}.view", view)
+    if needle:
+        out.check("memory", "M02", True, f"{len(hits)} live row(s) whose title contains the literal {needle!r}")
+        out.json("memory", f"{role}.match", hits)
+    else:
+        out.json("memory", f"{role}.view", view)
 
 
 def _memory_row(conn, memory_id: str) -> Optional[Dict[str, Any]]:
