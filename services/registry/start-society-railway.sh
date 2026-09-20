@@ -20,6 +20,7 @@
 #   * only the SHA is logged, never a credential.
 #
 # SOCIETY_BOOTSTRAP_ONLY=1 performs the bootstrap and exits 0 (tests).
+# SOCIETY_GITHUB_PREFLIGHT=1 runs the App credential preflight before the worker.
 set -eu
 
 REPO_ROOT="${SOCIETY_REPO_ROOT:-/workspace/repo}"
@@ -95,4 +96,18 @@ export SOCIETY_WORKSPACE_ROOT="$WORKSPACE_ROOT"
 if [ "${SOCIETY_BOOTSTRAP_ONLY:-}" = "1" ]; then
   exit 0
 fi
+
+# Optional one-shot GitHub App credential preflight (SOCIETY_GITHUB_PREFLIGHT=1).
+# It runs HERE because this is the only process the App private key is given to,
+# and it is structural only: it mints a token, checks the installation scope and
+# that Actions secrets stay refused, then scans its own report for the token
+# before printing. Never key material, never the token.
+#
+# A blocked preflight does NOT stop the worker: cognition is independent of
+# promotion, so the runtime keeps observing while promotion stays inert.
+if [ "${SOCIETY_GITHUB_PREFLIGHT:-}" = "1" ]; then
+  log "running GitHub App credential preflight"
+  python -m app.society.github_preflight || log "github preflight reported a blocker — promotion stays inert, continuing to the worker"
+fi
+
 exec python -m app.society.worker
