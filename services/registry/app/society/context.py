@@ -55,6 +55,12 @@ from ..models import (
     WalletOwnerType,
 )
 from .config import SocietySettings
+from .engineering.docs_contract import (
+    DOCS_ACCEPTANCE_TEST,
+    DOCS_CANDIDATE_DIR,
+    DOCS_REQUIRED_SECTIONS,
+    conventions_line as _docs_conventions_line,
+)
 from .intents import ALLOWED_INTENT_TYPES, REPO_READ_INTENT_TYPES
 from .policy import risk_of, runs_last_hour, spend_today_usd
 
@@ -598,9 +604,11 @@ def _repo_reads(db: Session, agent: Agent, run: Optional[AgentRun], event: Socie
 # Repository conventions the trusted QA gate enforces mechanically
 # (engineering/qa.py + tests/society/acceptance/). They are CODE, never model
 # output: a live Architect must know them to design a candidate QA can verify.
-DOCS_CANDIDATE_DIR = "docs/society/candidates/"
-DOCS_ACCEPTANCE_TEST = "tests/society/acceptance/test_candidate_docs.py"
-DOCS_REQUIRED_SECTIONS = ("## Problem", "## Proposed change", "## Evidence", "## Verification")
+# ONE source of truth — engineering/docs_contract.py — is shared by this prompt
+# rendering, the design-time spec validation, the Builder allow-list and the
+# acceptance test, so a convention change cannot land in only some of them.
+# The names are re-exported here because callers and tests already import them
+# from this module.
 ENGINEERING_ROLES = ("architect", "builder", "qa", "security", "evaluator")
 
 
@@ -608,7 +616,7 @@ def engineering_conventions(settings: SocietySettings) -> Dict[str, Any]:
     return {
         "files_allowed": "hard allow-list of repository-relative paths; the Builder may only create/modify those",
         "acceptance_tests": "existing pytest paths (file or file::test) that QA runs inside the worktree; the Builder must not modify them and cannot invent them",
-        "docs_candidate": f"kind=docs: ONE new file {DOCS_CANDIDATE_DIR}<slug>.md — first line an H1 title, then the sections {', '.join(DOCS_REQUIRED_SECTIONS)} each with prose; acceptance test {DOCS_ACCEPTANCE_TEST}",
+        "docs_candidate": _docs_conventions_line(),
         "code_candidate": "kind=code: small change to existing source with existing tests covering the touched module as acceptance_tests; a new regression test file may be added when listed in files_allowed",
         "never": "auth, payment, wallets, migrations, secrets, deploy, workflows, dependencies, Dockerfiles, the society runtime",
         "branch_prefix": settings.branch_prefix,

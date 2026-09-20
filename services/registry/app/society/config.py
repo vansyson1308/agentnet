@@ -125,7 +125,12 @@ class SocietySettings:
     model_base_url: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_BASE_URL") or os.getenv("LLM_BASE_URL", ""))
     model_api_key: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_API_KEY") or os.getenv("LLM_API_KEY", ""))
     model_timeout_seconds: int = field(default_factory=lambda: _int("SOCIETY_MODEL_TIMEOUT_SECONDS", 45, minimum=5))
-    model_max_output_tokens: int = field(default_factory=lambda: _int("SOCIETY_MODEL_MAX_OUTPUT_TOKENS", 1200, minimum=100))
+    model_max_output_tokens: int = field(default_factory=lambda: _int("SOCIETY_MODEL_MAX_OUTPUT_TOKENS", 4000, minimum=100))
+    # 1200 was the original default and it is NOT enough: SUBMIT_CODE_CANDIDATE
+    # carries whole file contents in edits[].content, so a live Builder's JSON was
+    # cut off mid-object (finish_reason=length) and the run went DEAD. This is
+    # response CAPACITY, not permission -- the daily USD cap, the per-correlation
+    # run cap and the typed truncation failure are all unchanged.
     # USD per 1K tokens used for budget accounting when the provider does not
     # return cost. Conservative defaults; override per deployment.
     model_usd_per_1k_input: Decimal = field(default_factory=lambda: _decimal("SOCIETY_MODEL_USD_PER_1K_INPUT", "0.0005"))

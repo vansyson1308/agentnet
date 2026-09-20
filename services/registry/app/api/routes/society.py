@@ -61,6 +61,7 @@ from ...models import (
     WalletOwnerType,
 )
 from ...society import approvals as approvals_mod
+from ...society import candidate_admin as candidate_admin_mod
 from ...society import memory_validation as memory_validation_mod
 from ...society.config import get_settings
 from ...society.events import EventType, emit_event
@@ -565,6 +566,47 @@ def refute_memory(
             }
             for h in memory_validation_mod.history(db, memory_id)
         ],
+    }
+
+
+class AbandonCandidateBody(BaseModel):
+    """Abandoning must say why. The reason is persisted on the row."""
+
+    reason: str = Field(..., min_length=1, max_length=candidate_admin_mod.MAX_REASON_CHARS)
+
+
+@router.post("/candidates/{candidate_id}/abandon")
+def abandon_candidate(
+    candidate_id: uuid.UUID,
+    body: AbandonCandidateBody,
+    db: Session = Depends(get_db),
+    operator: User = Depends(require_operator),
+):
+    """Close a candidate that can never progress. Operator authority only.
+
+    There is no intent type for this either: a society that can retire its own
+    unfinished work can also retire the evidence that it failed. The row is
+    kept, and any in-flight implementation task is closed through the ordinary
+    escrow refund path so the money moves exactly once.
+    """
+    try:
+        res = candidate_admin_mod.abandon(db, candidate_id=candidate_id, reason=body.reason, operator=operator)
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="candidate not found")
+    except candidate_admin_mod.AbandonRefused as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    db.commit()
+    c = res.candidate
+    return {
+        "candidate": {
+            "id": str(c.id),
+            "status": _ev(c.status),
+            "title": c.title,
+            "correlation_id": str(c.correlation_id),
+            "reason": res.reason,
+        },
+        "already_abandoned": res.already_abandoned,
+        "task_refunded": res.task_refunded,
     }
 
 

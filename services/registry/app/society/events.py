@@ -57,12 +57,17 @@ class EventType:
     OFFER_ACCEPTED = "offer.accepted"
     TASK_CREATED = "task.created"
     CODE_CHANGE_REQUESTED = "code_change.requested"
+    # Design-time refusal: the spec broke the trusted engineering contract, so no
+    # candidate was created. Carries STRUCTURED errors and wakes the Architect ONCE.
+    CODE_CHANGE_SPEC_REJECTED = "code_change.spec_rejected"
     CODE_CANDIDATE_BUILT = "code_candidate.built"
     CODE_CANDIDATE_QA_PASSED = "code_candidate.qa_passed"
     CODE_CANDIDATE_QA_FAILED = "code_candidate.qa_failed"
     CODE_CANDIDATE_SECURITY_REVIEW = "code_candidate.security_review"
     CODE_CANDIDATE_READY = "code_candidate.ready"
     CODE_CANDIDATE_REJECTED = "code_candidate.rejected"
+    # Operator closed a candidate that could not progress (society/candidate_admin.py).
+    CODE_CANDIDATE_ABANDONED = "code_candidate.abandoned"
     STAGING_DEPLOY_REQUESTED = "staging_deploy.requested"
     INTENT_DENIED = "intent.denied"
     INTENT_APPROVAL_REQUIRED = "intent.approval_required"

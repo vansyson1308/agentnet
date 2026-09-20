@@ -23,6 +23,7 @@ UNIQUE idempotency key so re-execution is still safe.
 from __future__ import annotations
 
 import hashlib
+import pathlib
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -588,6 +589,51 @@ def _candidates_today(ctx: ExecContext, *, red_only: bool = False) -> int:
     return int(q.count())
 
 
+def _enforce_docs_contract(ctx: ExecContext, spec: Dict[str, Any], p) -> None:
+    """Refuse a docs spec the trusted QA gate could never pass, ONCE correctably.
+
+    The Architect gets exactly one corrective turn: the first refusal for a
+    proposal emits ``code_change.spec_rejected`` carrying machine-readable
+    errors, which wakes it. A second refusal for the same proposal is still
+    refused but emits nothing, so a model that cannot satisfy the contract
+    cannot spin on it. The errors say what the boundary is, never what to
+    write: the filename, the title and the content stay the Architect's.
+    """
+    from .engineering import docs_contract
+
+    root = pathlib.Path(ctx.settings.repo_root) if getattr(ctx.settings, "repo_root", "") else None
+    errors = docs_contract.validate_docs_spec(spec, repo_root=root)
+    if not errors:
+        return
+    detail = "; ".join(f"{e.field}: {e.code} (expected {e.expected})" for e in errors)
+    already = 0
+    if p.proposal_id is not None:
+        already = (
+            ctx.db.query(SocietyEvent.id)
+            .filter(
+                SocietyEvent.event_type == EventType.CODE_CHANGE_SPEC_REJECTED,
+                SocietyEvent.correlation_id == ctx.run.correlation_id,
+            )
+            .count()
+        )
+    if already == 0:
+        _emit(
+            ctx,
+            EventType.CODE_CHANGE_SPEC_REJECTED,
+            {
+                "proposal_id": str(p.proposal_id) if p.proposal_id else None,
+                "title": p.title,
+                "kind": spec.get("kind"),
+                "valid": False,
+                "errors": [e.as_dict() for e in errors],
+                "corrective_turns_remaining": 0,
+            },
+            subject_type="improvement_proposal",
+            subject_id=p.proposal_id,
+        )
+    raise ExecutionError(f"docs candidate spec violates the engineering contract -> {detail}")
+
+
 def _request_code_change(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
     spec = p.spec.model_dump()
@@ -608,6 +654,13 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
         raise ExecutionError("code candidates must state expected_effect (the metric/behaviour the change should move)")
     if not spec.get("acceptance_tests"):
         raise ExecutionError("a code change must name acceptance tests; QA never fabricates criteria")
+    # Design-time contract, LAST: the generic rules (proposal link, acceptance
+    # criteria, expected effect) own their own error messages, and this one is
+    # specific to the docs convention QA enforces mechanically. Refusing here
+    # means the candidate is never created, instead of the Builder discovering
+    # three steps later that it cannot produce a conforming diff.
+    if spec.get("kind") == "docs":
+        _enforce_docs_contract(ctx, spec, p)
     prelim = assess_risk(list(spec["files_allowed"]), "", spec_kind=str(spec.get("kind") or ""))
     if _candidates_today(ctx) >= ctx.settings.max_autonomous_candidates_per_day:
         raise ExecutionError(f"change budget exhausted: {ctx.settings.max_autonomous_candidates_per_day} autonomous candidates today")

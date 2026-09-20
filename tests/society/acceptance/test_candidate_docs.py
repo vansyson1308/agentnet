@@ -20,6 +20,13 @@ import re
 
 import pytest
 
+# These literals are the QA half of the docs-candidate contract. They are
+# duplicated from engineering/docs_contract.py ON PURPOSE: QA runs this file
+# with `python -m pytest` inside a bare Builder worktree, which cannot be
+# assumed to carry the application package, so importing it would make the
+# gate fail to collect rather than fail honestly.
+# tests/society/test_docs_contract.py parses this file and fails CI the moment
+# either half drifts, which is what makes them one contract in practice.
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent.parent
 CANDIDATE_DIR = REPO / "docs" / "society" / "candidates"
 REQUIRED_SECTIONS = ("## Problem", "## Proposed change", "## Evidence", "## Verification")

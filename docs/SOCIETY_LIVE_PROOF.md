@@ -62,8 +62,8 @@ now also subscribes to `SOCIETY_HEARTBEAT` — a liveness fix, not new authority
 **Configuration, not code:** `SOCIETY_MODEL_MAX_OUTPUT_TOKENS` defaulted to 1200, but
 `SUBMIT_CODE_CANDIDATE` must carry a whole file in `edits[].content`. The Builder's JSON was cut
 off mid-object and the run went DEAD (`finish_reason=length`). Raised to 4000 on staging; the
-next submission executed and DEAD runs returned to 0. **The repository default is still 1200 and
-is too small for the engineering path** — see §6.
+next submission executed and DEAD runs returned to 0. The repository default has since moved to
+4000 to match — see §6.
 
 ## 3. Memory refutation: the Phase 5 blocker, closed
 
@@ -139,15 +139,25 @@ both pass over the whole history.
 - **No promotion has run.** The controller has never been exercised against real GitHub beyond
   credential minting: branch publish, PR open, CI tracking and the `awaiting_approval` stop are
   still unproven live.
-- **`SOCIETY_MODEL_MAX_OUTPUT_TOKENS` defaults to 1200** in `config.py`, which cannot hold a
-  `SUBMIT_CODE_CANDIDATE` payload for a docs candidate. Staging overrides it to 4000; the default
-  should move, but changing it is a judgement call left to the operator.
-- **A stranded candidate has no operator remedy.** `/v1/society/candidates/{id}` is `GET` only.
-  PR #26 makes the Builder able to retry, but nothing lets an operator close a candidate that
-  should be abandoned.
-- **The Architect mis-specced the docs convention** (edit an existing doc rather than add one
-  under `docs/society/candidates/`). One occurrence; not repaired, because tuning the model to
-  produce a passing candidate is exactly what this record must not do.
+- ~~**`SOCIETY_MODEL_MAX_OUTPUT_TOKENS` defaults to 1200**~~ — **closed.** The repository default
+  is now 4000, matching what staging already ran. This is response *capacity*, not permission: the
+  daily USD cap, the per-correlation run cap, the per-run intent cap and the typed truncation
+  failure are all unchanged (`tests/society/test_output_capacity.py` asserts the money bounds did
+  not move with it).
+- ~~**A stranded candidate has no operator remedy**~~ — **closed.** `POST
+  /v1/society/candidates/{id}/abandon` (operator only, reason required, idempotent) closes a
+  candidate that cannot progress, refunding any in-flight `implement_change` escrow through the
+  ordinary `fail_task_with_refund` path. There is deliberately **no intent** for it: a society that
+  can retire its own unfinished work can also retire the evidence that it failed.
+- ~~**The Architect mis-specced the docs convention**~~ — **closed, at the boundary, not in the
+  model.** The convention was two objects that could disagree: the prompt said one thing and the
+  trusted acceptance test enforced another, and nothing compared them. It is now ONE object
+  (`society/engineering/docs_contract.py`) that renders the prompt line, validates the spec at
+  design time and backs a drift test against the acceptance test. A spec the QA gate could never
+  pass is refused before a candidate row exists, and the Architect gets exactly one corrective turn
+  (`code_change.spec_rejected`, carrying machine-readable errors). The contract states the
+  *boundary* only — the filename, the title and the prose remain the Architect's. No prompt was
+  tuned until the model agreed, and no candidate was hand-written.
 
 ## 7. GO / NO-GO
 

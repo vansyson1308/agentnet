@@ -144,9 +144,11 @@ def test_files_budget_and_daily_candidate_caps(db, SessionLocal, temp_repo, tmp_
     s = SocietySettings()
     row = _request_change(db, SessionLocal, s, {"description": "d", "files_allowed": ["docs/a.md", "docs/b.md", "docs/c.md"], "acceptance_tests": ["tests/society/acceptance/test_candidate_docs.py"]})
     assert _ev(row.execution_status) == "failed" and "change budget" in row.error
-    row = _request_change(db, SessionLocal, s, {"description": "d", "files_allowed": ["docs/a.md"], "acceptance_tests": ["tests/society/acceptance/test_candidate_docs.py"]}, title="first")
+    # These two are CONFORMING docs specs, so the only thing that can refuse the
+    # second one is the daily candidate cap this test is about.
+    row = _request_change(db, SessionLocal, s, {"description": "d", "files_allowed": ["docs/society/candidates/a.md"], "acceptance_tests": ["tests/society/acceptance/test_candidate_docs.py"], "expected_effect": "records the finding"}, title="first")
     assert _ev(row.execution_status) == "executed"
-    row = _request_change(db, SessionLocal, s, {"description": "d", "files_allowed": ["docs/b.md"], "acceptance_tests": ["tests/society/acceptance/test_candidate_docs.py"]}, title="second")
+    row = _request_change(db, SessionLocal, s, {"description": "d", "files_allowed": ["docs/society/candidates/b.md"], "acceptance_tests": ["tests/society/acceptance/test_candidate_docs.py"], "expected_effect": "records the finding"}, title="second")
     assert _ev(row.execution_status) == "failed" and "autonomous candidates today" in row.error
     reset_settings_cache()
 

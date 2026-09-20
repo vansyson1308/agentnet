@@ -197,6 +197,8 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             EventType.REPO_READ_RESULT,
             EventType.CODE_CANDIDATE_QA_FAILED,
             EventType.CODE_CANDIDATE_READY,
+            # ONE corrective turn when a design broke the engineering contract.
+            EventType.CODE_CHANGE_SPEC_REJECTED,
         ),
         risk_ceiling=IntentRiskClass.MEDIUM.value,
         resource_scopes={"memory_scopes": ["agent", "society"]},
