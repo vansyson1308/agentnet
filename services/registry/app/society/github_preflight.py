@@ -176,6 +176,13 @@ def _finish(rep: Report) -> Tuple[str, Dict[str, Any]]:
     return verdict, rep.as_dict(verdict)
 
 
+def _emit(line: str) -> None:
+    """CLI output. ``services/`` forbids ``print()`` (tests/test_logging_config.py);
+    the canary writes to stdout the same way."""
+    sys.stdout.write(line + "\n")
+    sys.stdout.flush()
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     import argparse
 
@@ -185,13 +192,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     verdict, payload = run()
     if args.json:
-        print(json.dumps(payload, default=str, sort_keys=True))
+        _emit(json.dumps(payload, default=str, sort_keys=True))
     else:
         for key in sorted(payload.get("facts", {})):
-            print(f"GITHUB-PREFLIGHT fact {key}={payload['facts'][key]}")
+            _emit(f"GITHUB-PREFLIGHT fact {key}={payload['facts'][key]}")
         for c in payload["checks"]:
-            print(f"GITHUB-PREFLIGHT {c['code']} {'PASS' if c['ok'] else 'FAIL'} {c['note']}")
-    print(verdict)
+            _emit(f"GITHUB-PREFLIGHT {c['code']} {'PASS' if c['ok'] else 'FAIL'} {c['note']}")
+    _emit(verdict)
     return 0 if verdict.startswith("GITHUB APP READY") else 1
 
 
