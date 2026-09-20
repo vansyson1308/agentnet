@@ -519,6 +519,11 @@ def _architect(context: AgentContext) -> Dict[str, Any]:
                                 f"'## Evidence', '## Verification'. Proposed change: {p.get('proposed_change', '')}"
                             )[:4000],
                             "files_allowed": [doc_path],
+                            "expected_effect": (
+                                f"{doc_path} exists on the candidate branch and states the problem, the proposed "
+                                f"change, the evidence and how to verify it, so a reviewer of proposal {pid} can "
+                                f"judge '{title}' without reading the event log."
+                            )[:2000],
                             "acceptance_tests": ["tests/society/acceptance/test_candidate_docs.py"],
                             "must_compile": True,
                         },

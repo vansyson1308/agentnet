@@ -39,14 +39,22 @@ Phase 3 self-development (repo intelligence, risk tiers, promotion controller, f
 
 Candidate status machine: `requested → building → built → qa_running → qa_passed → (security_review →) ready` · `qa_failed` (one retry) `→ rejected` · `failed/abandoned`.
 
+`abandoned` is reachable only by an **operator**, through
+`POST /v1/society/candidates/{id}/abandon` (`society/candidate_admin.py`). There is deliberately no
+intent for it: a society that can retire its own unfinished work can also retire the evidence that it
+failed. A merged candidate and the terminal `rejected`/`failed` states are refused, a reason is required
+and persisted on the row, the call is idempotent (no second event, no second refund, original reason
+preserved), and any in-flight `implement_change` task is closed through the ordinary
+`task_service.fail_task_with_refund` escrow path — this code never writes a wallet.
+
 ## Roles (v1 fleet)
 
 | Agent | Role | Wakes on | May emit |
 |---|---|---|---|
 | Society_Governor | governor (MEDIUM) | `proposal.created`, `code_candidate.ready/rejected`, `promotion.merge_eligible/rejected`, `experiment.finished`, `society.heartbeat` | messages, memory, goals, `REVIEW_IMPROVEMENT`, `READ_CANDIDATE_STATE`, `REQUEST_PR_PROMOTION`, `REQUEST_STAGING_EVALUATION` |
 | Society_Scout | scout | `platform.metric.anomaly`, `task.failed/timeout`, `qa.failed`, `agent.inactive`, candidate outcomes | messages, memory, `CREATE_IMPROVEMENT` (with structured evidence), agent goals |
-| Society_Architect | architect (MEDIUM) | `proposal.approved`, `code_candidate.qa_failed/ready`, `repo.read.result` | repo reads (`LIST_REPO_TREE`, `SEARCH_REPO`, `READ_REPO_FILE`, `READ_REPO_RANGE`), `REQUEST_CODE_CHANGE`, `CREATE_TASK` (≤50 credits), goal updates |
-| Society_Builder | builder (MEDIUM) | `code_change.requested`, `code_candidate.qa_failed/ready/rejected`, `repo.read.result` | repo reads, `SUBMIT_CODE_CANDIDATE`, `START/COMPLETE/FAIL_TASK` |
+| Society_Architect | architect (MEDIUM) | `proposal.approved`, `code_candidate.qa_failed/ready`, `repo.read.result`, `code_change.spec_rejected` | repo reads (`LIST_REPO_TREE`, `SEARCH_REPO`, `READ_REPO_FILE`, `READ_REPO_RANGE`), `REQUEST_CODE_CHANGE`, `CREATE_TASK` (≤50 credits), goal updates |
+| Society_Builder | builder (MEDIUM) | `code_change.requested`, `code_candidate.qa_failed/ready/rejected`, `repo.read.result`, `society.heartbeat` | repo reads, `SUBMIT_CODE_CANDIDATE`, `START/COMPLETE/FAIL_TASK` |
 | Society_QA | qa (MEDIUM) | `code_candidate.built` | `EVALUATE_CODE_CANDIDATE` (verdict computed by the runtime, not asserted) |
 | Society_Security | security (MEDIUM) | `code_candidate.security_review` | `READ_DIFF`, `READ_REPO_FILE`, `READ_CANDIDATE_STATE`, `SECURITY_REVIEW_CANDIDATE` (combined with static scan; fails closed) |
 | Society_Evaluator (Phase 3) | evaluator | `promotion.ci_passed`, `experiment.finished` | `READ_CANDIDATE_STATE`, `REQUEST_MERGE_EVALUATION`, `RECORD_EVALUATION_RECOMMENDATION` (advisory only), memory, messages — it cannot change thresholds, approve, merge, deploy or alter evidence |
@@ -103,6 +111,14 @@ All emit `loop_breaker.tripped` / `run.dead` events (deduped) for observability.
   the cognition worker never pushes or merges. Anti-busywork: no-op, whitespace-only, oversize
   (`SOCIETY_MAX_DIFF_LINES` / `SOCIETY_MAX_FILES_PER_CANDIDATE`) and duplicate diffs are rejected
   (`code_candidate.rejected`), and every candidate must link to a proposal with evidence.
+- **Design-time contract** (`society/engineering/docs_contract.py`): the directory, the acceptance test and
+  the required sections of a documentation candidate are ONE stdlib-only object, shared by the Architect's
+  prompt, the `REQUEST_CODE_CHANGE` validation and the acceptance test itself, so a convention cannot drift
+  into meaning two things. A spec that the trusted QA gate could never pass is refused *before* a candidate
+  row exists; the first refusal per correlation emits `code_change.spec_rejected` with machine-readable
+  `{field, code, expected}` errors, which wakes the Architect for exactly ONE corrective turn. A second
+  refusal is still refused but emits nothing, so a model that cannot satisfy the contract cannot spin on it.
+  The contract states the boundary only — the filename, the title and the prose stay the Architect's.
 - QA verdict is computed from facts: allow-list, protected paths, no self-judged tests, tests exist, changed
   `.py` compile in memory, no secret patterns in the diff, then `python -m pytest <acceptance targets>` in
   the worktree with a scrubbed environment (no `*_PASSWORD/_KEY/_SECRET/*TOKEN*`). Zero acceptance
