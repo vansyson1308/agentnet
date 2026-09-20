@@ -309,17 +309,32 @@ def test_ci_failure_base_move_head_change_and_closed_pr(db, db_factory, society_
     drive(db_factory, society_settings, provider)
     db.refresh(p1)
     assert _ev(p1.status) == "ci_failed"
-    # base moved after CI passed -> stale, never eligible
+    # base moved after CI passed -> reconciled, and CI must run again before any
+    # gate can pass. The promotion is NEVER eligible on the stale head.
     c2 = ready_candidate(db, society_settings, report, title="base-moved")
     p2, _ = _request(db, society_settings, c2, report)
     drive(db_factory, society_settings, provider)
     _experiment_pass(db, p2, c2)
     provider.approve(provider.prs[c2.branch_name]["number"], "human")
+    stale_head = provider.prs[c2.branch_name]["head_sha"]
     provider.move_base("base0001")
-    drive(db_factory, society_settings, provider)
+    drive(db_factory, society_settings, provider)   # drives to quiescence
     db.refresh(p2)
-    assert _ev(p2.status) != "merge_eligible" and p2.merge_state == "stale"
-    assert p2.eligibility.get("branch_up_to_date") is False
+    assert provider.update_branch_count == 1, "the base was merged INTO the head exactly once"
+    assert "update_branch" in [c[0] for c in provider.calls]
+    assert provider.merge_count == 0, "reconciling must never merge the PR"
+    assert provider.prs[c2.branch_name]["head_sha"] != stale_head, "the head is a new merge commit, not a rewrite"
+    assert p2.candidate_sha == provider.prs[c2.branch_name]["head_sha"], "the reconciled head is now the validated sha"
+    assert p2.evidence["base_reconciles"] == 1 and p2.evidence["base_reconciled_from"] == stale_head[:40]
+    assert p2.eligibility.get("branch_up_to_date") is True
+    # The durable order is the real proof: the promotion went BACK to ci_pending
+    # when the base moved, and only became eligible again afterwards -- it was
+    # never eligible on the stale head.
+    seq = [e.event_type for e in db.query(SocietyEvent).filter(SocietyEvent.correlation_id == c2.correlation_id).order_by(SocietyEvent.created_at, SocietyEvent.id).all()]
+    assert "promotion.ci_pending" in seq, seq
+    assert seq.index("promotion.ci_passed") < seq.index("promotion.ci_pending"), "ci_pending here is the RE-run after reconciling"
+    if "promotion.merge_eligible" in seq:
+        assert seq.index("promotion.ci_pending") < seq.index("promotion.merge_eligible"), "never eligible before the reconciled head passed CI"
     # head changed on the PR -> superseded
     c3 = ready_candidate(db, society_settings, report, title="head-moved")
     p3, _ = _request(db, society_settings, c3, report)
@@ -490,3 +505,170 @@ def test_waiting_states_are_polled_at_most_once_per_interval(db, db_factory, soc
     pm._release(db, claimed2)
     assert provider.pr_create_count == 1 and provider.merge_count == 0
     reset_settings_cache()
+
+
+# ── fitness "no objection", draft lifecycle, bounded reconcile ─────────
+
+
+def _experiment(db, promo, cand, *, status, decision, confidence="high", gates=None, deltas=None):
+    exp = ChangeExperiment(
+        id=uuid.uuid4(), candidate_id=cand.id, promotion_id=promo.id, correlation_id=cand.correlation_id,
+        baseline_sha=cand.base_sha, candidate_sha=cand.head_sha, status=status, decision=decision,
+        confidence=confidence, criteria_snapshot={"version": "fitness-v1"},
+        hard_gate_results=gates if gates is not None else [{"gate": "no_test_regression", "passed": True}],
+        metric_deltas=deltas or {},
+    )
+    db.add(exp)
+    db.commit()
+    return exp
+
+
+def test_a_docs_candidate_can_never_improve_a_metric_so_inconclusive_must_not_block_forever(db, db_factory, society_settings, temp_repo):
+    """fitness.py only says "pass" when a metric IMPROVED. A documentation
+    change moves no metric, so under an `exp_status == PASS` test it can never
+    qualify -- the live promotion of b8cee13c passed every hard gate, regressed
+    nothing, and was blocked with no action that could ever clear it."""
+    report = seed_society(db)
+    cand = ready_candidate(db, society_settings, report, title="inconclusive-ok")
+    promo, _ = _request(db, society_settings, cand, report)
+    provider = pm.FakePromotionProvider()
+    drive(db_factory, society_settings, provider)
+    _experiment(db, promo, cand, status="inconclusive", decision="inconclusive",
+                gates=[{"gate": "no_test_regression", "passed": True}, {"gate": "no_security_regression", "passed": True}],
+                deltas={"task_failure_rate": {"verdict": "neutral"}})
+    provider.approve(provider.prs[cand.branch_name]["number"], "human")
+    drive(db_factory, society_settings, provider)
+    db.refresh(promo)
+    assert promo.eligibility["fitness_precheck"] is True
+    assert promo.eligibility["fitness_status"] == "inconclusive"
+    assert _ev(promo.status) == "merge_eligible", promo.eligibility.get("blocking")
+
+
+@pytest.mark.parametrize(
+    "status,decision,confidence,gates,deltas,why",
+    [
+        ("fail", "fail", "high", [{"gate": "no_test_regression", "passed": False}], {}, "a failed experiment"),
+        ("inconclusive", "inconclusive", "low", [{"gate": "attempts", "passed": False}], {}, "attempt budget exhausted"),
+        ("inconclusive", "inconclusive", "high", [{"gate": "no_test_regression", "passed": False}], {}, "a hard gate failed"),
+        ("inconclusive", "inconclusive", "high", [], {}, "no gate was evaluated at all"),
+        ("inconclusive", "inconclusive", "high", [{"gate": "no_test_regression", "passed": True}], {"latency_p95_ms": {"verdict": "regression"}}, "a metric regressed"),
+    ],
+)
+def test_inconclusive_only_counts_when_it_actually_looked_and_found_nothing(db, db_factory, society_settings, temp_repo, status, decision, confidence, gates, deltas, why):
+    report = seed_society(db)
+    cand = ready_candidate(db, society_settings, report, title=f"blocked-{abs(hash(why)) % 9999}")
+    promo, _ = _request(db, society_settings, cand, report)
+    provider = pm.FakePromotionProvider()
+    drive(db_factory, society_settings, provider)
+    _experiment(db, promo, cand, status=status, decision=decision, confidence=confidence, gates=gates, deltas=deltas)
+    provider.approve(provider.prs[cand.branch_name]["number"], "human")
+    drive(db_factory, society_settings, provider)
+    db.refresh(promo)
+    assert promo.eligibility["fitness_precheck"] is False, why
+    assert "fitness_precheck" in promo.eligibility["blocking"], why
+    assert _ev(promo.status) != "merge_eligible" and provider.merge_count == 0
+
+
+def test_a_missing_experiment_still_blocks():
+    assert pm._fitness_satisfied(None) is False
+
+
+def test_a_green_candidate_is_offered_for_review_and_the_draft_gate_is_real(db, db_factory, society_settings, temp_repo):
+    report = seed_society(db)
+    cand = ready_candidate(db, society_settings, report, title="draft-green")
+    promo, _ = _request(db, society_settings, cand, report)
+    provider = pm.FakePromotionProvider()
+    provider.set_ci(cand.branch_name, "pending")
+    drive(db_factory, society_settings, provider)
+    assert provider.prs[cand.branch_name]["draft"] is True, "the provider opens PRs as drafts"
+    assert provider.ready_count == 0, "nothing is offered for review before its checks have passed"
+    _experiment_pass(db, promo, cand)
+    provider.set_ci(cand.branch_name, "passed")
+    drive(db_factory, society_settings, provider)
+    db.refresh(promo)
+    assert provider.ready_count == 1 and provider.prs[cand.branch_name]["draft"] is False
+    assert promo.evidence["ready_for_review_by"] == "promotion-controller"
+    assert promo.eligibility["pr_not_draft"] is True
+    types = [e.event_type for e in db.query(SocietyEvent).filter(SocietyEvent.correlation_id == cand.correlation_id).all()]
+    assert "promotion.ready_for_review" in types
+    # repeating is a no-op: one transition, one event
+    drive(db_factory, society_settings, provider)
+    assert provider.ready_count == 1
+    assert db.query(SocietyEvent).filter(SocietyEvent.event_type == "promotion.ready_for_review").count() == 1
+
+
+def test_a_red_candidate_is_never_taken_out_of_draft_by_the_controller(db, db_factory, society_settings, temp_repo):
+    """A human may still take it out of draft and merge it -- that is RED's
+    governance path. The CONTROLLER simply never does it for them."""
+    report = seed_society(db)
+    cand = ready_candidate(db, society_settings, report, path="services/registry/app/society/policy.py", content="# red\n", kind="code", title="draft-red")
+    promo, _ = _request(db, society_settings, cand, report)
+    provider = pm.FakePromotionProvider()
+    drive(db_factory, society_settings, provider)
+    _experiment_pass(db, promo, cand)
+    drive(db_factory, society_settings, provider)
+    db.refresh(promo)
+    assert promo.risk_tier == "red"
+    assert provider.ready_count == 0 and provider.prs[cand.branch_name]["draft"] is True
+    assert "risk_tier_red" in promo.evidence["ready_for_review_blocked_by"]
+    assert promo.eligibility["auto_merge_allowed"] is False
+
+
+def test_a_draft_pr_can_never_be_auto_merged(db, db_factory, temp_repo, tmp_path, monkeypatch):
+    """The draft gate belongs to the auto-merge law (§23), and it is checked
+    against the PR's real state, not against the controller's intention."""
+    from services.registry.app.society.config import SocietySettings, reset_settings_cache
+
+    for k, v in {"SOCIETY_RUNTIME_ENABLED": "true", "SOCIETY_AUTONOMOUS_CODE_ENABLED": "true", "SOCIETY_REPO_ROOT": str(temp_repo),
+                 "SOCIETY_WORKSPACE_ROOT": str(tmp_path / "ws"), "SOCIETY_PROMOTION_POLL_INTERVAL_SECONDS": "0",
+                 "SOCIETY_PROMOTION_PROVIDER": "fake", "SOCIETY_AUTO_MERGE_ENABLED": "true"}.items():
+        monkeypatch.setenv(k, v)
+    reset_settings_cache()
+    settings = SocietySettings()
+    report = seed_society(db)
+    cand = ready_candidate(db, settings, report, title="draft-blocks-automerge")
+    promo, _ = _request(db, settings, cand, report)
+    provider = pm.FakePromotionProvider()
+    # the provider refuses to leave draft, so the PR stays a draft throughout
+    provider.mark_ready_for_review = lambda promotion, state: False
+    drive(db_factory, settings, provider)
+    _experiment_pass(db, promo, cand)
+    drive(db_factory, settings, provider)
+    db.refresh(promo)
+    assert provider.prs[cand.branch_name]["draft"] is True
+    assert promo.eligibility["pr_not_draft"] is False
+    assert promo.eligibility["auto_merge_allowed"] is False
+    assert provider.merge_count == 0 and _ev(promo.status) != "merged"
+    reset_settings_cache()
+
+
+def test_base_reconciliation_is_bounded_and_never_chases_a_moving_base(db, db_factory, society_settings, temp_repo):
+    report = seed_society(db)
+    cand = ready_candidate(db, society_settings, report, title="moving-base")
+    promo, _ = _request(db, society_settings, cand, report)
+    provider = pm.FakePromotionProvider()
+    drive(db_factory, society_settings, provider)
+    _experiment_pass(db, promo, cand)
+    for i in range(pm.MAX_BASE_RECONCILES + 3):
+        provider.move_base(f"base{i:04d}")
+        drive(db_factory, society_settings, provider)
+    db.refresh(promo)
+    assert provider.update_branch_count == pm.MAX_BASE_RECONCILES, "bounded, not an endless chase"
+    assert "not chasing it further" in promo.evidence["base_reconcile_note"]
+    assert provider.merge_count == 0
+
+
+def test_reconciling_never_touches_a_head_someone_else_pushed(db, db_factory, society_settings, temp_repo):
+    report = seed_society(db)
+    cand = ready_candidate(db, society_settings, report, title="foreign-push")
+    promo, _ = _request(db, society_settings, cand, report)
+    provider = pm.FakePromotionProvider()
+    drive(db_factory, society_settings, provider)
+    _experiment_pass(db, promo, cand)
+    provider.prs[cand.branch_name]["head_sha"] = "f" * 40   # someone else pushed
+    provider.move_base("base0002")
+    drive(db_factory, society_settings, provider)
+    db.refresh(promo)
+    assert _ev(promo.status) == "superseded"
+    assert provider.update_branch_count == 0, "a head we did not validate is never reconciled, it is abandoned"
+    assert provider.merge_count == 0

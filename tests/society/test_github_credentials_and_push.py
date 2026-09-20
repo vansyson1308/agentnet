@@ -18,7 +18,7 @@ import pytest
 
 from services.registry.app.society import github_credentials as gc
 from services.registry.app.society.config import SocietyConfigError, SocietySettings, reset_settings_cache
-from services.registry.app.society.promotion import ProviderConflict, ProviderRefused, ProviderTransient, ProviderUnavailable
+from services.registry.app.society.promotion import PRState, ProviderConflict, ProviderRefused, ProviderTransient, ProviderUnavailable
 from services.registry.app.society.promotion_github import ASKPASS_SCRIPT, ASKPASS_TOKEN_ENV, ASKPASS_USER_ENV, GitHubPromotionProvider, push_base_url
 from .git_http_harness import GitHTTPServer
 
@@ -598,3 +598,95 @@ def test_promotion_controller_uses_the_github_provider_only_through_the_factory(
         assert "promotion_github" not in text and "github_credentials" not in text, name
     reset_settings_cache()
 
+
+
+# ── update-branch and the draft -> ready transition ────────────────────
+
+
+def _promo(number=30, branch="agentnet-auto/c", sha="head0"):
+    return type("P", (), {"external_pr_number": number, "external_branch": branch, "candidate_sha": sha, "id": "p"})()
+
+
+def test_update_branch_merges_base_into_head_and_never_force_pushes(monkeypatch):
+    """GitHub's own update-branch endpoint. It makes a MERGE COMMIT on the PR
+    branch, so nobody's checkout is invalidated and the ruleset applies as it
+    does to any other push."""
+    s = gh_settings(monkeypatch)
+    calls = []
+
+    def transport(method, url, payload):
+        calls.append((method, url, payload))
+        if url.endswith("/update-branch"):
+            return 202, {"message": "Updating pull request branch.", "url": "https://api.github.com/x"}
+        return 200, {"number": 30, "head": {"sha": "merged1"}, "base": {"sha": "b"}, "state": "open", "node_id": "PR_1"}
+
+    p = GitHubPromotionProvider(s, credentials=FakeCreds(["t"]), transport=transport)
+    assert p.update_branch(_promo(), "head0") == "merged1"
+    methods = [(m, u.rsplit("/repos/owner/repo", 1)[-1]) for m, u, _ in calls]
+    assert ("PUT", "/pulls/30/update-branch") in methods
+    # the expected head is handed to GitHub so IT closes the race, not us
+    assert calls[0][2] == {"expected_head_sha": "head0"}
+    # nothing here rewrites history or touches the base branch
+    assert not [m for m, u, _ in calls if m == "DELETE"]
+    assert not [u for _, u, _ in calls if u.endswith("/git/refs/heads/main")]
+
+
+def test_update_branch_that_did_not_move_the_head_is_a_conflict_not_a_success(monkeypatch):
+    s = gh_settings(monkeypatch)
+
+    def transport(method, url, payload):
+        if url.endswith("/update-branch"):
+            return 202, {"message": "queued"}
+        return 200, {"number": 30, "head": {"sha": "head0"}, "base": {"sha": "b"}, "state": "open"}
+
+    p = GitHubPromotionProvider(s, credentials=FakeCreds(["t"]), transport=transport)
+    with pytest.raises(ProviderConflict):
+        p.update_branch(_promo(), "head0")
+
+
+def test_leaving_draft_uses_the_graphql_mutation_rest_cannot_do_it(monkeypatch):
+    """`PATCH /pulls/{n}` silently ignores `draft`; GitHub documents
+    markPullRequestReadyForReview as the only supported route."""
+    s = gh_settings(monkeypatch)
+    sent = []
+
+    def transport(method, url, payload):
+        sent.append((method, url, payload))
+        return 200, {"data": {"markPullRequestReadyForReview": {"pullRequest": {"isDraft": False}}}}
+
+    p = GitHubPromotionProvider(s, credentials=FakeCreds(["t"]), transport=transport)
+    state = PRState(ci="passed", head_sha="head0", node_id="PR_kwDO")
+    assert p.mark_ready_for_review(_promo(), state) is True
+    method, url, payload = sent[0]
+    assert method == "POST" and url.endswith("/graphql")
+    assert "markPullRequestReadyForReview" in payload["query"]
+    assert payload["variables"] == {"id": "PR_kwDO"}
+    assert not [u for _, u, _ in sent if u.endswith("/pulls/30") and _ is not None and isinstance(_, dict) and "draft" in _]
+
+
+def test_a_graphql_error_is_a_refusal_not_a_silent_success(monkeypatch):
+    s = gh_settings(monkeypatch)
+
+    def transport(method, url, payload):
+        return 200, {"errors": [{"type": "FORBIDDEN", "message": "Resource not accessible by integration"}]}
+
+    p = GitHubPromotionProvider(s, credentials=FakeCreds(["t"]), transport=transport)
+    with pytest.raises(ProviderRefused):
+        p.mark_ready_for_review(_promo(), PRState(node_id="PR_1"))
+
+
+def test_pr_state_reports_draft_and_node_id(monkeypatch):
+    s = gh_settings(monkeypatch)
+
+    def transport(method, url, payload):
+        if "/check-runs" in url:
+            return 200, {"check_runs": [{"status": "completed", "conclusion": "success"}]}
+        if url.endswith("/reviews"):
+            return 200, []
+        if "/branches/" in url:
+            return 200, {"commit": {"sha": "b"}}
+        return 200, {"number": 30, "head": {"sha": "h"}, "base": {"sha": "b"}, "state": "open", "draft": True, "node_id": "PR_z"}
+
+    p = GitHubPromotionProvider(s, credentials=FakeCreds(["t"]), transport=transport)
+    st = p.get_pr_state(_promo())
+    assert st.draft is True and st.node_id == "PR_z" and st.ci == "passed"
