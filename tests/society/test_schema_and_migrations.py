@@ -115,8 +115,16 @@ def test_alembic_upgrade_persists_and_is_idempotent(society_db_url):
     assert "0009_app_tables -> 0010_self_development" in first.stderr + first.stdout
     assert "0010_self_development -> 0011_expire_rehearsal_memory" in first.stderr + first.stdout
 
+    # Assert against alembic's OWN head rather than a literal. A hard-coded
+    # revision here is a fourth place to update when a migration lands, and
+    # the Phase 5 window showed what that costs: the staging validator went
+    # RED on a stale expected head while the database was perfectly correct.
+    heads = _alembic(env, "heads")
+    head = heads.stdout.split()[0].strip()
+    assert head, f"could not read alembic head: {heads.stdout!r} {heads.stderr!r}"
+
     current = _alembic(env, "current")
-    assert "0011_expire_rehearsal_memory" in current.stdout + current.stderr, "alembic_version was not persisted"
+    assert head in current.stdout + current.stderr, "alembic_version was not persisted"
 
     second = _alembic(env, "upgrade", "head")
     assert second.returncode == 0, second.stderr

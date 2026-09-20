@@ -219,7 +219,7 @@ def main() -> int:
     secret = env("STAGING_VALIDATOR_SECRET")
     op_email = env("VALIDATOR_OPERATOR_EMAIL", "staging-operator@staging.agentnet.io.vn")
     user_email = env("VALIDATOR_USER_EMAIL", "staging-user@staging.agentnet.io.vn")
-    expected_head = env("EXPECTED_ALEMBIC_HEAD", "0011_expire_rehearsal_memory")
+    expected_head = env("EXPECTED_ALEMBIC_HEAD", "0012_memory_validation_history")
     expect_runtime = expected_runtime(env("VALIDATOR_EXPECT_RUNTIME"))
 
     sys.stdout.write(

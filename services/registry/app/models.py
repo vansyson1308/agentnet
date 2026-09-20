@@ -687,6 +687,32 @@ class MemoryItem(Base):
     author_agent = relationship("Agent", foreign_keys=[author_agent_id])
 
 
+class MemoryValidationEvent(Base):
+    """Append-only history of who changed a memory's standing, and why.
+
+    Memory is evidence, and evidence can turn out to be wrong. A belief that
+    was recorded in good faith and later disproved must not silently vanish:
+    it must be demoted, with the demotion itself auditable. This log is the
+    audit trail; ``memory_items.validation_state`` is only its latest value.
+
+    ``memory_id`` carries no foreign key on purpose — an audit record has to
+    outlive the row it describes, and a cascade would also collide with the
+    database-level append-only trigger.
+    """
+
+    __tablename__ = "memory_validation_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    memory_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    from_state = Column(String(16), nullable=False)
+    to_state = Column(String(16), nullable=False)
+    actor_type = Column(String(16), nullable=False)   # operator | evaluator
+    actor_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    reason = Column(Text, nullable=False)
+    evidence = Column(PG_JSONB, nullable=False, default=dict)
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # AgentNet Provisioning Protocol (APP) — AB-415 through AB-418
 # DDL for these tables (+ audit_log, orchestrator_partners and the payment
