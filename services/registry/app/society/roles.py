@@ -229,6 +229,17 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             EventType.CODE_CANDIDATE_QA_FAILED,
             EventType.CODE_CANDIDATE_READY,
             EventType.CODE_CANDIDATE_REJECTED,
+            # The Builder is the ONLY role that can move a candidate out of
+            # REQUESTED, and every other wake it has is a one-shot event. When
+            # one is lost -- the loop breaker swallowed a repo.read.result on a
+            # live run -- the candidate is stranded forever: nothing re-emits
+            # code_change.requested (a re-request returns duplicate=True without
+            # emitting), no operator route can close it, and the Scout then
+            # CORRECTLY declines to re-propose work that already has an open
+            # candidate. A periodic wake is what makes that recoverable; the
+            # Builder already sees open candidates in its context and SLEEPs
+            # when there is nothing to build.
+            EventType.SOCIETY_HEARTBEAT,
         ),
         risk_ceiling=IntentRiskClass.MEDIUM.value,
         resource_scopes={"memory_scopes": ["agent"]},
