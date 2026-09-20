@@ -17,6 +17,7 @@ import email
 import socket
 import threading
 import time
+import uuid
 
 import pytest
 
@@ -156,14 +157,20 @@ def test_smtp_unavailable_is_unavailable_not_a_crash():
 
 
 def test_smtp_authentication_failure_is_unavailable_and_leaks_no_password():
+    # Generated per run, never a literal: a password-shaped string committed to
+    # the repository is worth refusing even as bait (GitGuardian flags it, and
+    # it is right to). A fresh random value also proves absence more strongly
+    # than a fixed one -- it cannot be present by coincidence.
+    secret = "pw-" + uuid.uuid4().hex
     with TinySMTPServer(fail_auth=True) as server:
         with pytest.raises(EmailDeliveryUnavailable) as err:
             SMTPEmailProvider(
                 host="127.0.0.1", port=server.port, sender="no-reply@agentnet.test",
-                username="postmaster", password="hunter2-should-never-appear",
+                username="postmaster", password=secret,
                 use_starttls=False, timeout=10,
             ).send_verification(to="a@b.test", verify_url="https://x/y")
-    assert "hunter2-should-never-appear" not in str(err.value)
+    assert secret not in str(err.value)
+    assert secret not in repr(err.value)
 
 
 def test_smtp_timeout_is_unavailable():
