@@ -309,13 +309,27 @@ class GitHubPromotionProvider:
         )
         if body is None:
             raise ProviderRefused("update-branch: pull request not found")
-        # 202 Accepted returns {"message": ..., "url": ...} and the merge commit
-        # lands asynchronously, so the new head is read back rather than assumed.
+        # The PUT answers 202 Accepted and GitHub lands the merge commit
+        # AFTERWARDS. Reading the head back immediately therefore shows the OLD
+        # sha in the normal case -- treating that as a failure is what made the
+        # first real promotion supersede itself over its own reconcile. The
+        # accepted request IS the success; the read-back is only an optimisation
+        # for the rare case where the merge is already visible. Returning ""
+        # tells the controller "accepted, head not visible yet": it has already
+        # persisted the request, and proves authorship of the new head from the
+        # commit's parents once it appears.
         pr = self._request("GET", f"/repos/{self.repo}/pulls/{promotion.external_pr_number}") or {}
         head = ((pr.get("head") or {}).get("sha")) or ""
-        if not head or head == expected_head_sha:
-            raise ProviderConflict("update-branch did not move the head (still reconciling or already up to date)")
-        return head
+        return head if head and head != expected_head_sha else ""
+
+    def commit_parents(self, sha: str) -> List[str]:
+        """Parent shas of one commit. Read-only, and the evidence the controller
+        uses to tell its OWN update-branch merge commit from a third-party push:
+        GitHub builds it with the previous head as the FIRST parent."""
+        if not sha:
+            return []
+        body = self._request("GET", f"/repos/{self.repo}/commits/{sha}") or {}
+        return [str(p.get("sha") or "") for p in (body.get("parents") or [])]
 
     def mark_ready_for_review(self, promotion, state) -> bool:
         """Take the PR out of draft.
@@ -354,8 +368,24 @@ class GitHubPromotionProvider:
         return pr.get("isDraft") is False
 
     def merge(self, promotion, expected_head_sha: str) -> str:
+        """Second of two independent layers (§24).
+
+        An environment variable being true is NOT authority to land a commit on
+        main. This re-reads the verdict the trusted controller PERSISTED on the
+        promotion row and refuses anything it did not authorise -- so flipping
+        the flag, or calling this provider directly, cannot merge on its own.
+        """
         if not self.settings.auto_merge_enabled:
             raise ProviderRefused("auto-merge is disabled; a human merges through GitHub")
+        gates = dict(getattr(promotion, "eligibility", None) or {})
+        if gates.get("auto_merge_allowed") is not True:
+            raise ProviderRefused("the promotion controller did not authorise an autonomous merge (auto_merge_allowed is not true)")
+        if str(gates.get("trusted_risk_tier") or getattr(promotion, "risk_tier", "")) != "green":
+            raise ProviderRefused(f"autonomous merge is GREEN-only; this promotion is {gates.get('trusted_risk_tier') or promotion.risk_tier}")
+        if gates.get("merge_freeze"):
+            raise ProviderRefused(f"merge authority is frozen: {', '.join(list(gates['merge_freeze'])[:4])}")
+        if not expected_head_sha:
+            raise ProviderRefused("refusing to merge without an expected head sha")
         body = self._request("PUT", f"/repos/{self.repo}/pulls/{promotion.external_pr_number}/merge", json={"sha": expected_head_sha, "merge_method": "squash"})
         if not body or not body.get("merged"):
             raise ProviderConflict("merge was not performed (head moved or checks pending)")

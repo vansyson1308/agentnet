@@ -631,17 +631,51 @@ def test_update_branch_merges_base_into_head_and_never_force_pushes(monkeypatch)
     assert not [u for _, u, _ in calls if u.endswith("/git/refs/heads/main")]
 
 
-def test_update_branch_that_did_not_move_the_head_is_a_conflict_not_a_success(monkeypatch):
+def test_an_accepted_update_branch_whose_head_is_not_visible_yet_is_a_success(monkeypatch):
+    """202 Accepted means GitHub WILL make the merge commit, not that it has.
+
+    The head therefore still reads as the old sha in the normal case. Calling
+    that a conflict is what made the first real promotion (PR #30) treat its
+    own reconcile as failed and then supersede itself over the merge commit
+    that arrived a moment later. The accepted request IS the success; "" says
+    "accepted, head not visible yet".
+    """
     s = gh_settings(monkeypatch)
+    calls = []
 
     def transport(method, url, payload):
+        calls.append((method, url))
         if url.endswith("/update-branch"):
             return 202, {"message": "queued"}
         return 200, {"number": 30, "head": {"sha": "head0"}, "base": {"sha": "b"}, "state": "open"}
 
     p = GitHubPromotionProvider(s, credentials=FakeCreds(["t"]), transport=transport)
-    with pytest.raises(ProviderConflict):
+    assert p.update_branch(_promo(), "head0") == ""
+    assert [u for m, u in calls if m == "PUT" and u.endswith("/pulls/30/update-branch")], "the request was still made"
+
+
+def test_update_branch_reports_a_missing_pull_request_rather_than_guessing(monkeypatch):
+    s = gh_settings(monkeypatch)
+    p = GitHubPromotionProvider(s, credentials=FakeCreds(["t"]), transport=lambda m, u, j: (404, {}))
+    with pytest.raises(ProviderRefused):
         p.update_branch(_promo(), "head0")
+
+
+def test_commit_parents_is_the_evidence_that_a_moved_head_is_our_own_merge(monkeypatch):
+    """The controller proves authorship of a reconciled head from the commit
+    graph: update-branch merges the base INTO the head, so the previous head is
+    the FIRST parent. Read-only -- a GET and nothing else."""
+    s = gh_settings(monkeypatch)
+    calls = []
+
+    def transport(method, url, payload):
+        calls.append((method, url))
+        return 200, {"sha": "merged1", "parents": [{"sha": "head0"}, {"sha": "base9"}]}
+
+    p = GitHubPromotionProvider(s, credentials=FakeCreds(["t"]), transport=transport)
+    assert p.commit_parents("merged1") == ["head0", "base9"]
+    assert calls == [("GET", "https://api.github.com/repos/owner/repo/commits/merged1")]
+    assert p.commit_parents("") == [] and len(calls) == 1, "no sha, no request"
 
 
 def test_leaving_draft_uses_the_graphql_mutation_rest_cannot_do_it(monkeypatch):
