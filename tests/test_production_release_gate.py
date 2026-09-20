@@ -394,13 +394,30 @@ def _scan(log_text, values=None):
     return next(c for c in report.checks if c["id"] == "L01")
 
 
+def _bait() -> str:
+    """A credential-shaped value, generated rather than written down.
+
+    A literal here is what GitGuardian and the repository's own scanner exist
+    to refuse, and "it is only bait" is exactly the argument that lets a real
+    one through later. Generating it also strengthens the assertions below: a
+    random value cannot be absent from a message by coincidence.
+    """
+    import uuid
+
+    return uuid.uuid4().hex
+
+
 def test_log_scan_finds_a_leak_without_being_told_any_secret():
     """The operator running this is forbidden to retrieve production secrets.
     If the scan only worked with values in hand, "I have none" would silently
     turn it into a check that always passes."""
-    assert not _scan("boot REDIS_PASSWORD=s3cr3tvalue here")["ok"]
-    assert not _scan('{"jwt_secret_key": "abc123"}')["ok"]
-    assert not _scan("INTERNAL_WORKER_TOKEN: deadbeefcafe")["ok"]
+    leaked = _bait()
+    for line in (
+        f"boot REDIS_PASSWORD={leaked} here",
+        f'{{"jwt_secret_key": "{leaked}"}}',
+        f"INTERNAL_WORKER_TOKEN: {leaked}",
+    ):
+        assert not _scan(line)["ok"], line
 
 
 def test_log_scan_accepts_what_a_correct_log_looks_like():
@@ -409,10 +426,12 @@ def test_log_scan_accepts_what_a_correct_log_looks_like():
 
 
 def test_log_scan_never_prints_the_value_it_matched():
-    detail = _scan("REDIS_PASSWORD=s3cr3tvalue")["detail"]
-    assert "REDIS_PASSWORD" in detail and "s3cr3tvalue" not in detail
+    leaked = _bait()
+    detail = _scan(f"REDIS_PASSWORD={leaked}")["detail"]
+    assert "REDIS_PASSWORD" in detail and leaked not in detail
 
 
 def test_log_scan_still_honours_explicit_values_when_an_operator_has_them():
-    assert not _scan("the token is abc-123-xyz", {"JWT_SECRET_KEY": "abc-123-xyz"})["ok"]
-    assert _scan("nothing here", {"JWT_SECRET_KEY": "abc-123-xyz"})["ok"]
+    value = _bait()
+    assert not _scan(f"the token is {value}", {"JWT_SECRET_KEY": value})["ok"]
+    assert _scan("nothing here", {"JWT_SECRET_KEY": value})["ok"]

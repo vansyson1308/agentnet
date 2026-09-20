@@ -184,9 +184,12 @@ def check_core_smoke(report: Report, registry: str, *, email_delivery: str) -> N
 
 # ── secret leak scan ─────────────────────────────────────────────────────
 #: A secret-shaped name followed by a non-empty, non-redacted value. Catches a
-#: leak WITHOUT knowing any secret: `POSTGRES_PASSWORD=hunter`, `"jwt_secret_key":
-#: "abc"`, `REDIS_PASSWORD: xyz`. Redaction markers (***, [REDACTED], <hidden>)
-#: and empty values are what a correct log looks like, so they do not match.
+#: leak WITHOUT knowing any secret: a log line that assigns one of
+#: SECRET_NAMES_FOR_LEAK_SCAN -- with `=` or `:`, quoted or bare -- anything
+#: that is not a redaction marker. Markers and empty values are what a correct
+#: log shows instead, so they do not match. No example value is written here on
+#: purpose: a credential-shaped literal in a tracked file is the pattern the
+#: secret scanners refuse, and this file least of all should contain one.
 _ASSIGNMENT_RE = r"""(?ix) \b (%s) \b \s* ["']? \s* [:=] \s* ["']? ([^\s"',;}}\]]+)"""
 #: Compared after stripping quotes and bracket/angle wrappers, so "[REDACTED]",
 #: "<hidden>" and "***" all normalise onto these.
