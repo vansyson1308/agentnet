@@ -298,3 +298,77 @@ def test_production_iac_deploys_the_production_branch_not_main():
     the Society would hold production authority through a branch it can write."""
     ts = (REPO_ROOT / ".railway" / "production.ts").read_text(encoding="utf-8")
     assert 'const BRANCH = "production"' in ts
+
+
+# ── the branch rulesets (Phase 7 §16) ────────────────────────────────────────
+#
+# The rulesets are JSON an owner applies by hand, so nothing in CI would notice
+# them drifting out of sync with CI itself. That matters in both directions: a
+# required check whose job no longer exists is permanently pending, which LOCKS
+# the branch, and a job that exists but is not required is a gate that silently
+# does nothing. These tests make the JSON answerable to the workflow.
+
+def _ci_job_names() -> set:
+    import re
+
+    text = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    return set(re.findall(r"^    name: (.+)$", text, flags=re.M))
+
+
+def _ruleset(name: str) -> dict:
+    import json
+
+    return json.loads((REPO_ROOT / "deploy" / "github" / name).read_text(encoding="utf-8"))
+
+
+def _required_contexts(ruleset: dict) -> set:
+    for rule in ruleset["rules"]:
+        if rule["type"] == "required_status_checks":
+            return {c["context"] for c in rule["parameters"]["required_status_checks"]}
+    raise AssertionError("ruleset declares no required status checks")
+
+
+@pytest.mark.parametrize("name", ["main-ruleset.json", "production-ruleset.json"])
+def test_ruleset_required_checks_are_exactly_the_ci_jobs(name):
+    assert _required_contexts(_ruleset(name)) == _ci_job_names()
+
+
+@pytest.mark.parametrize("name", ["main-ruleset.json", "production-ruleset.json"])
+def test_ruleset_has_no_bypass_actors(name):
+    """No bypass actor at all -- in particular not the Society GitHub App,
+    which would otherwise turn every protection here into a suggestion."""
+    ruleset = _ruleset(name)
+    assert ruleset["bypass_actors"] == []
+    assert ruleset["enforcement"] == "active"
+    types = {rule["type"] for rule in ruleset["rules"]}
+    assert {"deletion", "non_fast_forward", "pull_request", "required_status_checks"} <= types
+
+
+def test_production_ruleset_targets_the_production_branch():
+    ruleset = _ruleset("production-ruleset.json")
+    assert ruleset["conditions"]["ref_name"]["include"] == ["refs/heads/production"]
+    assert ruleset["conditions"]["ref_name"]["exclude"] == []
+
+
+def test_production_ruleset_forbids_rebase_merges():
+    """A rebase rewrites the tree lineage the release gate verifies, so a
+    released commit could no longer be shown to be the approved target."""
+    for rule in _ruleset("production-ruleset.json")["rules"]:
+        if rule["type"] == "pull_request":
+            assert "rebase" not in rule["parameters"]["allowed_merge_methods"]
+            return
+    raise AssertionError("production ruleset declares no pull_request rule")
+
+
+def test_ci_runs_on_the_production_branch():
+    """Railway's Wait for CI needs an `on: push` directive for the branch it
+    gates (ADR-0008 D3); required status checks need the `pull_request` one.
+    Without both, production's gate is vacuous rather than strict."""
+    import re
+
+    text = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    branch_lists = re.findall(r"^    branches: \[(.+)\]$", text, flags=re.M)
+    assert len(branch_lists) == 2, "expected a push and a pull_request branch filter"
+    for entry in branch_lists:
+        names = {b.strip() for b in entry.split(",")}
+        assert "production" in names and "main" in names
