@@ -42,7 +42,9 @@
       "Bash(cp /tmp/video_frames/frame_019.jpg \"C:/Users/MSI/Desktop/agentnet/frame_019.jpg\")",
       "Bash(cp /tmp/video_frames/frame_020.jpg \"C:/Users/MSI/Desktop/agentnet/frame_020.jpg\")",
       "mcp__scrapling__fetch",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git checkout *)",
+      "Bash(git cherry-pick *)"
     ]
   }
 }
