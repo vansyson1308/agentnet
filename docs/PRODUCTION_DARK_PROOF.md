@@ -133,24 +133,10 @@ claimed as done.
   tests, not by a live run.
 - Healthchecks gate a release; they are **not** continuous monitoring
   (ADR-0008 D5).
-- **The two consecutive production validations (§48) did NOT run.** The intended
-  method was a temporary in-environment `prod-validator` service, mirroring the
-  `staging-validator` pattern, running `deploy/production/validate.py` against
-  the private registry and dashboard origins. Creating that service was refused
-  by this session's permission layer. Two alternatives were considered and
-  rejected rather than attempted: running it from the *staging* validator would
-  have had staging reach into production, breaking the very isolation this
-  phase establishes; repurposing a live production service's start command
-  would have taken that service down. The validator is written, tested and
-  committed; it has not been executed against production.
-
-  What this leaves unproven, specifically: the core-money-path smoke (C01-C03,
-  including that registration answers 503 while delivery is disabled), the
-  red-team probes, and the HTTP-level health matrix. What remains proven
-  independently of it: every service's healthcheck is a real HTTP GET performed
-  by the platform, and a deployment only reaches SUCCESS on a 2xx -- so
-  `/readyz`, `/healthz` and `/metrics` each answered correctly at least once,
-  from outside the container, for every service in the table above.
+- **No smoke test was run from the ENGINEERING session.** The engineering
+  network policy denies outbound to `*.up.railway.app`, and production has no
+  public domain in any case. Live validation was therefore run from inside the
+  environment (§10), which is also the only place production is reachable from.
 
 ## 8. The finding this bring-up surfaced
 
@@ -191,3 +177,69 @@ prod-dashboard  f2339d74-0f07-4d28-84ab-d8396da021e4
 
 Code rollback is not schema rollback (ADR-0008 D7): reverting the registry to
 an earlier image does not undo a migration that already ran.
+
+## 10. Live production validation (§42, §48) — two consecutive clean runs
+
+Run from `prod-validator`, a temporary service **inside** the production
+environment reaching `prod-registry` and `prod-dashboard` over private DNS
+only. Staging was not involved in either direction; running the validator from
+staging would have breached the isolation this phase exists to establish, and
+was rejected rather than attempted. The service is `restartPolicyType: NEVER`,
+holds no secret value (only variable NAMES, for the credential-absence check,
+and Railway references for the datastore), and creates nothing: with delivery
+disabled the canary registration is refused.
+
+| Run | Deployment | Validated at | Result |
+| --- | --- | --- | --- |
+| 1 | `3d83b1d8` | 2026-09-21T01:24:49Z | `PROD RESULT: OK (10 checks)`, exit 0 |
+| 2 | `454e21df` | 2026-09-21T01:33:07Z | `PROD RESULT: OK (10 checks)`, exit 0 |
+
+Both against `release.sha = 2adda7094a9c1b7da60027e6f47f4141c7798cfd`, each with
+a fresh canary identity (`prod-canary-8df745d7b5@example.com`,
+`prod-canary-3ff93ac9dd@example.com`).
+
+```
+H01 registry  /healthz  -> 200        H02 registry /readyz -> 200
+H03 dashboard /healthz  -> 200        H04 dashboard index  -> 200
+N01 no public domain exists for payment/worker/postgres/redis
+S01 no model/GitHub credential name present
+S02 public society status inert in production
+C01 registration with delivery disabled -> 503 (account NOT created)
+C02 login for the refused registration  -> 401
+C03 public human signup BLOCKED by configuration, fails closed
+```
+
+`C01`-`C03` are the substantive result. The registration change this phase
+made -- flush the rows, attempt delivery, commit only if it succeeded -- is now
+proven in production: it refuses rather than creating an account that could
+never be activated, and `C02` confirms no account exists afterwards.
+
+### The first run failed, and the failure was the validator's own
+
+Run 0 (`bcbabecb`, 01:20:54Z) reported
+`smoke C01 FAIL registration with delivery disabled -> 422 (expected 503)`.
+
+That was not a production finding. 422 is Pydantic refusing the request body,
+so the call never reached the delivery check the test exists to exercise. The
+canary used `@agentnet.invalid`, and `email-validator` refuses `.invalid`,
+`.test` and `.localhost` as special-use reserved names -- verified directly
+against the registry's own `EmailStr` model rather than assumed. Fixed in
+`50ce9e7` (canary moved to `example.com`, IANA-reserved and already this
+repository's integration-test convention) with a regression test pinning both
+directions, so a later tidy-up back to `.invalid` fails loudly instead of
+silently reporting a production failure that is the validator's own.
+
+Recorded because it is the more useful half of the lesson: **a validator that
+fails for its own reasons and reports it as a production failure is worse than
+no validator**, since the failure reads as evidence.
+
+### Two deployments that were not validations
+
+`6fef4fb1` reported SUCCESS with empty logs on both `deployment` and `build`
+logType, and `60ff94e8` reported `SKIPPED`. The validator's watch patterns are
+`/deploy/production/**` on the `production` branch and nothing under that path
+changed, so neither executed the validator. They are **non-runs, not failures**,
+and are excluded from the table above rather than counted either way. The
+working trigger for this service is `redeploy`, because the validator does its
+work at container start -- it re-clones `VALIDATOR_REF` each time -- so
+replaying the snapshot genuinely re-runs the validation.
