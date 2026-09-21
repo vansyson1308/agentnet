@@ -471,3 +471,58 @@ def test_the_validators_canary_address_is_acceptable_to_the_api_it_validates():
     for bad in ("agentnet.invalid", "agentnet.test", "agentnet.localhost"):
         with _pytest.raises(Exception):
             _Addr(email=f"{CANARY_PREFIX}-abc123@{bad}")
+
+
+# ── the production security suite (Phase 7 §38, §39) ─────────────────────────
+
+def test_security_probes_are_all_anonymous_or_deliberately_invalid():
+    """Every §38 probe must be safe to run against real production.
+
+    A probe that mutated state, or that needed a real account, would either
+    damage production or be impossible here -- registration is fail-closed
+    while delivery is disabled, and forcing an account through a direct
+    database write is the move that would invalidate the whole result.
+    """
+    import inspect
+
+    from deploy.production import validate as v
+
+    src = inspect.getsource(v.check_security)
+    # No credential is ever supplied except a deliberately invalid one.
+    assert 'token="not-a-real-token"' in src
+    # The only POSTs are to routes that must REFUSE an anonymous caller, or
+    # that are refused for another reason (malformed / oversized / rate limit).
+    assert "/v1/agents/" in src and "/v1/auth/user/register" in src
+    # Nothing deletes or patches.
+    for verb in ('"DELETE"', '"PATCH"', '"PUT"'):
+        assert verb not in src, f"{verb} is not production-safe in an anonymous probe"
+
+
+def test_redis_auth_check_needs_both_halves_to_mean_anything():
+    """R01 alone can pass because Redis is DOWN. R02 is what excludes that.
+
+    This is the ADR-0008 D11 lesson encoded: during bring-up Redis served with
+    no password while its config said otherwise, and only a real connection
+    revealed it. A refusal check that cannot tell 'refused' from 'unreachable'
+    would have reported PASS on an open Redis.
+    """
+    import inspect
+
+    from deploy.production import validate as v
+
+    src = inspect.getsource(v.check_redis_auth)
+    assert '"R01"' in src and '"R02"' in src
+    assert "may be a false pass" in src
+    # The password is used, never recorded or printed.
+    assert "report.record" not in src
+
+
+def test_security_checks_are_wired_into_the_run():
+    """A check that exists but is never called is worse than no check."""
+    import inspect
+
+    from deploy.production import validate as v
+
+    main_src = inspect.getsource(v.main)
+    assert "check_security(" in main_src
+    assert "check_redis_auth(" in main_src
