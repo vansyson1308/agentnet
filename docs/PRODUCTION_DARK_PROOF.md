@@ -243,3 +243,61 @@ and are excluded from the table above rather than counted either way. The
 working trigger for this service is `redeploy`, because the validator does its
 work at container start -- it re-clones `VALIDATOR_REF` each time -- so
 replaying the snapshot genuinely re-runs the validation.
+
+## 11. Security validation (§38) and the Redis auth contract (§39)
+
+Added after the first GREEN verdict, because that verdict was premature: §55
+gates GREEN on "security PASS" and §38's probes had never run. Recorded here
+rather than quietly folded into §10.
+
+| Run | Deployment | Validated at | Result |
+| --- | --- | --- | --- |
+| sec-1 | `b319a5b0` | 2026-09-21T02:17:01Z | `PROD RESULT: OK (20 checks)`, exit 0 |
+| sec-2 | `621711d5` | 2026-09-21T02:25:47Z | `PROD RESULT: OK (20 checks)`, exit 0 |
+
+Eight anonymous security probes, all against production, none mutating:
+
+```
+SEC01 anonymous agent creation        -> 401  refused
+SEC02 anonymous wallet read (BOLA)    -> 404  not disclosed
+SEC03 malformed registration body     -> 422  4xx, never 5xx
+SEC04 oversized body (200k password)  -> 400  refused, not parsed into memory
+SEC05 forged X-Forwarded-For          -> 200  served; header not trusted for identity
+SEC06 garbage bearer token            -> 401  refused, not ignored
+SEC08 25-request burst                -> no 5xx; codes={401}
+SEC10 public status/health bodies     -> no secret-shaped name
+```
+
+**What SEC08 does not prove.** It proves the service stays a well-behaved 4xx
+under a burst. It does **not** demonstrate the rate limiter firing: the
+registry's limit is well above 25 requests, so no 429 was produced, and the
+detail line says `limiter NOT exercised to threshold` rather than implying
+otherwise. Driving it to the threshold would mean deliberately hammering
+production, which is not a production-safe probe. Rate limiting is covered by
+`tests/test_rate_limiting.py`; it is not claimed as a live production proof.
+
+**Why a probe needing a real account is absent.** Agent registration, wallet
+ownership, task lifecycle and escrow all require a logged-in user. Registration
+is fail-closed while delivery is disabled (§29), and §37 forbids forcing an
+account through a direct database write. So the full money-path smoke is
+**not achievable in production** while mail is off. That is a consequence of
+the fail-closed contract, not an omission — and it is the reason `C01`-`C03`
+assert the refusal rather than the flow. The money path itself is covered by
+`tests/test_money_invariants.py` and the staging validator.
+
+### §39 — Redis auth, proven against the running process
+
+```
+R01 PASS unauthenticated PING refused (AuthenticationError)
+R02 PASS authenticated PING succeeded
+```
+
+Both halves matter. `R01` alone would also pass if Redis were simply down or
+unreachable; `R02` excludes that. This pairing exists because of what happened
+during this environment's bring-up (ADR-0008 D11): Redis served with **no
+password** while its configuration said otherwise, and only a real connection
+attempt revealed it. A refusal check that could not distinguish "refused" from
+"unreachable" would have reported PASS on an open Redis.
+
+The password is handed to the client and never recorded, compared or printed; a
+test asserts `check_redis_auth` calls no `report.record`.

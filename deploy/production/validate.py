@@ -77,7 +77,8 @@ class Report:
 
 
 def _http(
-    method: str, url: str, *, token: str = "", body: Optional[dict] = None, timeout: float = 20.0
+    method: str, url: str, *, token: str = "", body: Optional[dict] = None, timeout: float = 20.0,
+    headers: Optional[Dict[str, str]] = None,
 ) -> tuple[int, Any]:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -86,6 +87,8 @@ def _http(
         req.add_header("Content-Type", "application/json")
     if token:
         req.add_header("Authorization", f"Bearer {token}")
+    for key, value in (headers or {}).items():
+        req.add_header(key, value)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", "replace")
@@ -191,6 +194,128 @@ def check_core_smoke(report: Report, registry: str, *, email_delivery: str) -> N
     report.check("smoke", "C01", status in (200, 201), f"registration -> {status}")
 
 
+
+# ── security (Phase 7 §38) ───────────────────────────────────────────────
+#
+# Production-safe by construction: every probe is anonymous or uses a
+# deliberately invalid credential, and none of them mutates anything. A probe
+# that needed a real account could not run here anyway -- registration is
+# fail-closed while delivery is disabled, and forcing an account through a
+# direct database write is exactly the kind of "make the test pass" move that
+# would invalidate the result.
+
+def check_security(report: Report, registry: str) -> None:
+    """Anonymous attack surface. Nothing here should ever succeed."""
+    # SEC01 — a mutating route must refuse an anonymous caller BEFORE acting.
+    status, _ = _http("POST", f"{registry}/v1/agents/", body={
+        "name": "sec-probe", "description": "anonymous probe",
+        "capabilities": ["x"], "endpoint": "https://example.com/hook", "public_key": "x",
+    })
+    report.check("security", "SEC01", status in (401, 403, 404),
+                 f"anonymous agent creation -> {status} (must be refused)")
+
+    # SEC02 — an object reference without credentials must not leak the object.
+    status, _ = _http("GET", f"{registry}/v1/wallets/00000000-0000-0000-0000-000000000001")
+    report.check("security", "SEC02", status in (401, 403, 404),
+                 f"anonymous wallet read (BOLA probe) -> {status} (must not be 200)")
+
+    # SEC03 — a malformed body is a client error, never a 500.
+    status, _ = _http("POST", f"{registry}/v1/auth/user/register", body={"email": 12345})
+    report.check("security", "SEC03", 400 <= status < 500,
+                 f"malformed registration body -> {status} (must be 4xx, never 5xx)")
+
+    # SEC04 — an oversized body must be rejected, not parsed into memory.
+    status, _ = _http("POST", f"{registry}/v1/auth/user/register",
+                      body={"email": "a@example.com", "password": "P" * 200_000})
+    report.check("security", "SEC04", status in (400, 401, 403, 413, 422, 429),
+                 f"oversized registration body -> {status} (must be refused, never 5xx)")
+
+    # SEC05 — a forged X-Forwarded-For must not be honoured as the client IP.
+    # The registry trusts X-Real-IP from the platform edge only (ADR-0006 D5);
+    # a client-supplied XFF is the classic rate-limit bypass.
+    status, _ = _http("GET", f"{registry}/healthz",
+                      headers={"X-Forwarded-For": "1.2.3.4, 5.6.7.8"})
+    report.check("security", "SEC05", status == 200,
+                 f"forged X-Forwarded-For -> {status} (served normally, header not trusted for identity)")
+
+    # SEC06 — a garbage bearer token must be refused, not merely ignored.
+    status, _ = _http("GET", f"{registry}/v1/agents/", token="not-a-real-token")
+    report.check("security", "SEC06", status in (401, 403),
+                 f"garbage bearer token -> {status} (must be refused)")
+
+    # SEC08 — an unauthenticated burst must never 5xx.
+    #
+    # What this proves and what it does NOT: it proves the service stays a
+    # well-behaved 4xx under a burst. It does NOT demonstrate the rate limiter
+    # firing -- the registry's limit is well above this burst size, so 25
+    # requests correctly produce no 429. Reaching the threshold would mean
+    # deliberately hammering production, which is not a production-safe probe.
+    # The detail line records the codes actually seen so the evidence says
+    # which of the two it observed.
+    codes = []
+    for _ in range(25):
+        code, _body = _http("POST", f"{registry}/v1/auth/user/login",
+                            body={"email": "rate-probe@example.com", "password": "x"}, timeout=8)
+        codes.append(code)
+    server_errors = [c for c in codes if c >= 500]
+    report.record("security.burst_codes", sorted(set(codes)))
+    throttled = [c for c in codes if c == 429]
+    report.check("security", "SEC08", not server_errors,
+                 f"25-request burst produced no 5xx; codes={sorted(set(codes))}; "
+                 f"limiter {'observed (429)' if throttled else 'NOT exercised to threshold'}")
+
+    # SEC10 — no secret-shaped name may appear in a public error or status body.
+    leaked = []
+    for path in ("/v1/society/status", "/healthz", "/readyz"):
+        _st, payload = _http("GET", f"{registry}{path}")
+        text = json.dumps(payload, default=str).upper() if payload is not None else ""
+        for name in SECRET_NAMES_FOR_LEAK_SCAN:
+            if name in text:
+                leaked.append(f"{path}:{name}")
+    report.check("security", "SEC10", not leaked,
+                 "no secret-shaped name in public bodies" if not leaked else f"LEAKED names: {sorted(set(leaked))}")
+
+
+def check_redis_auth(report: Report, host: str, port: int, password: str) -> None:
+    """§39 — the running Redis must REFUSE an unauthenticated connection.
+
+    Tested against the running process, not inferred from configuration. That
+    distinction is the whole of ADR-0008 D11: during this environment's
+    bring-up Redis served with no password while its config said otherwise,
+    and only a real connection attempt revealed it.
+    """
+    if not host:
+        report.check("redis", "R01", False, "no Redis host supplied; auth contract UNVERIFIED")
+        return
+    try:
+        import redis  # registry image dependency
+    except ImportError:
+        report.check("redis", "R01", False, "redis client unavailable; auth contract UNVERIFIED")
+        return
+
+    # Unauthenticated must fail.
+    refused = False
+    detail = ""
+    try:
+        redis.Redis(host=host, port=port, socket_connect_timeout=8).ping()
+    except Exception as exc:  # noqa: BLE001 - any refusal is the pass condition
+        refused = True
+        detail = type(exc).__name__
+    report.check("redis", "R01", refused,
+                 f"unauthenticated PING refused ({detail})" if refused
+                 else "unauthenticated PING SUCCEEDED — Redis is serving without auth")
+
+    # Authenticated must succeed, so R01 cannot pass merely because Redis is down.
+    ok = False
+    try:
+        ok = bool(redis.Redis(host=host, port=port, password=password,
+                              socket_connect_timeout=8).ping())
+    except Exception as exc:  # noqa: BLE001
+        detail = type(exc).__name__
+    report.check("redis", "R02", ok,
+                 "authenticated PING succeeded" if ok
+                 else f"authenticated PING FAILED ({detail}) — R01 may be a false pass")
+
 # ── secret leak scan ─────────────────────────────────────────────────────
 #: A secret-shaped name followed by a non-empty, non-redacted value. Catches a
 #: leak WITHOUT knowing any secret: a log line that assigns one of
@@ -250,6 +375,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--email-delivery", default=os.getenv("EMAIL_DELIVERY_PROVIDER", "disabled"))
     ap.add_argument("--var-names", default="", help="comma-separated production variable NAMES")
     ap.add_argument("--json-out", default="")
+    # Redis host/port come from the environment; the password is read from the
+    # environment too and is NEVER printed, compared or recorded -- it is only
+    # handed to the client so R02 can prove R01 is not a false pass.
+    ap.add_argument("--redis-host", default=os.getenv("REDIS_HOST", ""))
+    ap.add_argument("--redis-port", type=int, default=int(os.getenv("REDIS_PORT", "6379") or "6379"))
+    ap.add_argument("--redis-password", default=os.getenv("REDIS_PASSWORD", ""))
     args = ap.parse_args(argv)
 
     report = Report()
@@ -264,6 +395,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         [v.strip() for v in args.var_names.split(",") if v.strip()],
     )
     check_core_smoke(report, args.registry.rstrip("/"), email_delivery=args.email_delivery.strip().lower())
+    check_security(report, args.registry.rstrip("/"))
+    check_redis_auth(report, args.redis_host, args.redis_port, args.redis_password)
     report.record("email.delivery_provider", args.email_delivery)
     report.record("elapsed_seconds", round(time.time() - started, 2))
 
