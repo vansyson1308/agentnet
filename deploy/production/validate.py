@@ -243,9 +243,15 @@ def check_security(report: Report, registry: str) -> None:
     report.check("security", "SEC06", status in (401, 403),
                  f"garbage bearer token -> {status} (must be refused)")
 
-    # SEC07 — an unauthenticated burst must eventually be throttled, and must
-    # never 5xx. 429 is the desired answer; a consistent 4xx is acceptable
-    # (the route refuses before the limiter). A 5xx is a finding.
+    # SEC08 — an unauthenticated burst must never 5xx.
+    #
+    # What this proves and what it does NOT: it proves the service stays a
+    # well-behaved 4xx under a burst. It does NOT demonstrate the rate limiter
+    # firing -- the registry's limit is well above this burst size, so 25
+    # requests correctly produce no 429. Reaching the threshold would mean
+    # deliberately hammering production, which is not a production-safe probe.
+    # The detail line records the codes actually seen so the evidence says
+    # which of the two it observed.
     codes = []
     for _ in range(25):
         code, _body = _http("POST", f"{registry}/v1/auth/user/login",
@@ -253,10 +259,12 @@ def check_security(report: Report, registry: str) -> None:
         codes.append(code)
     server_errors = [c for c in codes if c >= 500]
     report.record("security.burst_codes", sorted(set(codes)))
+    throttled = [c for c in codes if c == 429]
     report.check("security", "SEC08", not server_errors,
-                 f"25-request burst produced no 5xx (codes seen: {sorted(set(codes))})")
+                 f"25-request burst produced no 5xx; codes={sorted(set(codes))}; "
+                 f"limiter {'observed (429)' if throttled else 'NOT exercised to threshold'}")
 
-    # SEC09 — no secret-shaped name may appear in a public error or status body.
+    # SEC10 — no secret-shaped name may appear in a public error or status body.
     leaked = []
     for path in ("/v1/society/status", "/healthz", "/readyz"):
         _st, payload = _http("GET", f"{registry}{path}")
