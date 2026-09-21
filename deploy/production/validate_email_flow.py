@@ -54,6 +54,11 @@ from validate import Report, _http  # noqa: E402  (deliberate: same directory)
 #: without a human inbox, which is what a production canary should use.
 DEFAULT_CANARY_EMAIL = "delivered@resend.dev"
 
+#: Registration blocks on SMTP delivery, so it needs a timeout longer than the
+#: registry's own (``SMTP_TIMEOUT_SECONDS``, 15s by default) multiplied by the
+#: address families a connect can try.
+REGISTRATION_TIMEOUT_SECONDS = 90.0
+
 
 def canary_password() -> str:
     """A fresh password per run, satisfying the registry's policy.
@@ -121,8 +126,16 @@ def check_email_flow(report: Report, registry: str, payment: str, email: str) ->
     report.record("email_flow.canary_email", email)
 
     # ── E01 registration must now SUCCEED, where it used to answer 503 ──
+    #
+    # Registration attempts SMTP delivery BEFORE it commits, so this one call
+    # can take as long as the registry's SMTP timeout plus connect attempts to
+    # every address family. The default 20s timeout was shorter than that path:
+    # the first live run reported status 0 (the VALIDATOR's own timeout) for
+    # what was really a delivery failure, which hides the status code that
+    # would have named the problem. A validator must outlast what it measures.
     status, _ = _http("POST", f"{registry}/v1/auth/user/register",
-                      body={"email": email, "password": password})
+                      body={"email": email, "password": password},
+                      timeout=REGISTRATION_TIMEOUT_SECONDS)
     report.check("email_flow", "E01", status in (200, 201),
                  f"registration through the normal API -> {status} "
                  "(201 means SMTP accepted the verification message: delivery "

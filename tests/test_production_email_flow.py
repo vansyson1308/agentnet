@@ -94,3 +94,18 @@ def test_the_assertions_that_matter_are_actually_made():
     main_src = SOURCE[SOURCE.index("def main("):]
     assert "check_email_flow(" in main_src
     assert callable(module.check_email_flow)
+
+
+def test_registration_probe_outlasts_the_registrys_smtp_path():
+    """A validator must outlast what it measures.
+
+    The first live run reported `E01 -> 0` for what was actually an SMTP
+    failure: registration blocks on delivery, that path took ~29s, and the
+    probe gave up at its 20s default. The status code is the evidence, so the
+    probe has to still be there when it arrives.
+    """
+    module = _load()
+    assert module.REGISTRATION_TIMEOUT_SECONDS >= 60
+    register = SOURCE[SOURCE.index('"POST", f"{registry}/v1/auth/user/register"'):]
+    register = register[:register.index("report.check")]
+    assert "timeout=REGISTRATION_TIMEOUT_SECONDS" in register
