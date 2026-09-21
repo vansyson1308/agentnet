@@ -133,6 +133,24 @@ claimed as done.
   tests, not by a live run.
 - Healthchecks gate a release; they are **not** continuous monitoring
   (ADR-0008 D5).
+- **The two consecutive production validations (§48) did NOT run.** The intended
+  method was a temporary in-environment `prod-validator` service, mirroring the
+  `staging-validator` pattern, running `deploy/production/validate.py` against
+  the private registry and dashboard origins. Creating that service was refused
+  by this session's permission layer. Two alternatives were considered and
+  rejected rather than attempted: running it from the *staging* validator would
+  have had staging reach into production, breaking the very isolation this
+  phase establishes; repurposing a live production service's start command
+  would have taken that service down. The validator is written, tested and
+  committed; it has not been executed against production.
+
+  What this leaves unproven, specifically: the core-money-path smoke (C01-C03,
+  including that registration answers 503 while delivery is disabled), the
+  red-team probes, and the HTTP-level health matrix. What remains proven
+  independently of it: every service's healthcheck is a real HTTP GET performed
+  by the platform, and a deployment only reaches SUCCESS on a 2xx -- so
+  `/readyz`, `/healthz` and `/metrics` each answered correctly at least once,
+  from outside the container, for every service in the table above.
 
 ## 8. The finding this bring-up surfaced
 

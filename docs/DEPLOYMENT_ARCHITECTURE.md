@@ -8,7 +8,7 @@ under `deploy/legacy-vps/` and refuses to run.
 Current truth: Society deterministic/runtime mechanics **PROVEN**; Phase 2 safety hardening
 **PROVEN**; live model **NOT YET PROVEN**; A2A v1 migration **NOT STARTED**; managed staging
 hosting **Railway — DEPLOYED, `MANAGED STAGING — GREEN`** (Phase 4: project `AgentNet` / environment `staging`,
-two consecutive full validations on `main` ae42d7a — `docs/RAILWAY_STAGING.md`, ADR-0006 D12; production: none).
+two consecutive full validations on `main` ae42d7a — `docs/RAILWAY_STAGING.md`, ADR-0006 D12; production: DARK since 2026-09-21, six services live from branch `production`, no public surface — `docs/PRODUCTION_DARK_PROOF.md`, ADR-0008).
 
 ## 1. Components and what each one needs
 
@@ -89,8 +89,11 @@ SOCIETY_REDTEAM_TOKEN=<operator JWT> python3 deploy/society-staging-redteam.py -
 docker compose -f docker-compose.staging.yml down
 ```
 
-Production: there is **no** current production definition. When hosting is chosen, model
-`staging` and `production` as GitHub Environments (required reviewers, deployment branch
+Production: defined and deployed as of 2026-09-21 — Railway environment `production`,
+deploying the protected `production` branch, never `main` (ADR-0008 D8). The Society
+has no path to it: no society-worker service, no model or GitHub credential under any
+name, and `production_deploy_enabled` is a hard `False`. When further hardening is
+chosen, model `staging` and `production` as GitHub Environments (required reviewers, deployment branch
 rules, serialized `concurrency`, OIDC to the provider) and deploy the same images with the
 environment contract above; see ADR-0003.
 
@@ -145,4 +148,4 @@ operator runbook is `docs/RAILWAY_STAGING.md`. Summary of the mapping:
 | Client address | `TRUST_X_REAL_IP=true` on the registry (`app/proxy_headers.py`): `X-Real-IP` from Railway's edge; `X-Forwarded-For` never trusted; `FORWARDED_ALLOW_IPS` stays default — `*` would let callers mint rate-limit buckets |
 | Secrets | shared variables `JWT_SECRET_KEY`, `FLASK_SECRET_KEY`, `INTERNAL_WORKER_TOKEN` (generated locally, stored only in Railway); no model key, no GitHub credential |
 | Deploy gate | autodeploy from `main` + Wait for CI; healthchecks `/readyz` (registry, payment), `/healthz` (dashboard), `/metrics` (worker, society-worker); restart policy `Always` where the plan allows |
-| State | `MANAGED STAGING — GREEN` (2026-09-18): project `AgentNet`, environment `staging`, two consecutive full validations from the in-environment `staging-validator` on `main` ae42d7a — `docs/RAILWAY_STAGING.md` (inventory at the top, evidence per section, §20 table). Not done: *Wait for CI* (owner action), production environment (none), DNS (unchanged) |
+| State | `MANAGED STAGING — GREEN` (2026-09-18): project `AgentNet`, environment `staging`, two consecutive full validations from the in-environment `staging-validator` on `main` ae42d7a — `docs/RAILWAY_STAGING.md`. `PRODUCTION — DARK` (2026-09-21): environment `production` (`5e23ccb2`), six services live from branch `production` @ `2adda709`, zero public domains, zero TCP proxies, no Society, no model or GitHub credential — `docs/PRODUCTION_DARK_PROOF.md`, ADR-0008. Not done: production *Wait for CI* and the `production` branch ruleset (both owner actions), live production HTTP validation, DNS (unchanged) |
