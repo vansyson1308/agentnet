@@ -113,7 +113,16 @@ core smoke path and the email-delivery contract. It reports and never repairs.
 
 ## Email delivery / public signup
 
-`EMAIL_DELIVERY_PROVIDER=disabled` in production today.
+`EMAIL_DELIVERY_PROVIDER=smtp` in production, through Resend on the sending
+domain `mail.agentnet.io.vn`. The credential is a **send-only** Resend key
+restricted to that domain; it is set directly in Railway and has never been
+read, printed or committed.
+
+**Status as of 2026-09-21:** transport is proven (login, MAIL FROM and RCPT TO
+all accepted on port 2465) but the domain is `partially_verified` -- DKIM and
+the return-path CNAME verify, the SPF pair does not yet -- so Resend refuses
+the send and registration still answers 503. Public human signup is therefore
+still blocked, and still blocked *honestly*: nothing half-created.
 
 Registration is **atomic with delivery**: the user, wallet and verification
 token are written, delivery is attempted, and only then is the transaction
@@ -122,16 +131,40 @@ answers **503** — no account is created. This replaces the older behaviour whe
 an account was committed, the link was never sent, and the API still reported
 success, leaving an address that could neither log in nor be re-registered.
 
-So with `disabled`, **public human signup is blocked, honestly**. To open it:
+With `disabled`, **public human signup is blocked, honestly**. The live
+configuration that opens it:
 
 ```
 EMAIL_DELIVERY_PROVIDER=smtp
-SMTP_HOST=…  SMTP_PORT=587  SMTP_FROM=…
-SMTP_USERNAME=…  SMTP_PASSWORD=…   # set from stdin; never in a command line
-SMTP_STARTTLS=true                 # or SMTP_TLS=true for implicit TLS on 465
+SMTP_HOST=smtp.resend.com   SMTP_PORT=2465      # NOT 465 -- see below
+SMTP_USERNAME=resend        SMTP_PASSWORD=…     # set in Railway; never in a command line
+SMTP_FROM=AgentNet <noreply@mail.agentnet.io.vn>
+SMTP_TLS=true               SMTP_STARTTLS=false # implicit TLS
+PUBLIC_BASE_URL=https://api.agentnet.io.vn      # the link the message carries
 ```
 
-No vendor is chosen in code. `smtp` speaks to whatever host the owner configures.
+**Port 2465, not 465.** Railway's egress drops the standard submission ports.
+Measured from inside the production network:
+
+```
+smtp.resend.com:465  tls=True   FAIL 20.0s TimeoutError
+smtp.resend.com:587  tls=False  FAIL 20.0s TimeoutError
+smtp.resend.com:2465 tls=True   OK 0.1s  banner='220 Resend SMTP Relay ESMTP'
+```
+
+Resend publishes 2465 (implicit TLS) and 2587 (STARTTLS) for exactly this. A
+blocked port looks like a 20s hang and then a 503 from registration, which is
+indistinguishable from a dead vendor unless you measure the port.
+
+**A domain-scoped key will not send from an unverified domain.** Resend answers
+`550 The associated domain with your API key is not verified` at DATA -- after
+a successful login and an accepted MAIL FROM/RCPT TO, so auth and sender look
+healthy right up to the point of failure. Check the domain's records are all
+`verified`, not `partially_verified`, before concluding anything about the
+credential.
+
+No vendor is chosen in code. `smtp` speaks to whatever host the owner
+configures; Resend is a deployment choice, recorded here and in Railway.
 
 ## Recovery
 
