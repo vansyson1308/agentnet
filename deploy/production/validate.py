@@ -31,6 +31,15 @@ from typing import Any, Dict, List, Optional
 
 CANARY_PREFIX = "prod-canary"
 
+#: Canary addresses must be REJECTABLE BY POLICY, not by syntax. `.invalid`,
+#: `.test` and `.localhost` look like the obvious choice and are refused by
+#: email-validator as special-use reserved names -- which made registration
+#: answer 422 from Pydantic before it ever reached the delivery check, so the
+#: validator reported a production failure that was its own. `example.com` is
+#: IANA-reserved for documentation, accepted by the validator, and is what this
+#: repository's integration tests already use.
+CANARY_DOMAIN = "example.com"
+
 #: Names that must NOT exist on any production service. Checked by NAME only --
 #: values are never read, printed or compared (Phase 7 §9, §34, §35).
 FORBIDDEN_PRODUCTION_VARS = (
@@ -150,7 +159,7 @@ def check_society_absent(report: Report, registry: str, variable_names: List[str
 def check_core_smoke(report: Report, registry: str, *, email_delivery: str) -> None:
     """Registration, auth and the escrow round trip, with canary identities."""
     suffix = uuid.uuid4().hex[:10]
-    email = f"{CANARY_PREFIX}-{suffix}@agentnet.invalid"
+    email = f"{CANARY_PREFIX}-{suffix}@{CANARY_DOMAIN}"
     # Built from short fragments and a fresh uuid rather than written as a
     # literal: a password-shaped string in a tracked file is exactly what the
     # repository's own secret scan refuses, and it is right to.

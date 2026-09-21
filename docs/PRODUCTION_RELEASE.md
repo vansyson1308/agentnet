@@ -25,6 +25,49 @@ production. This document is the release flow that keeps that true.
         PRODUCTION Railway environment
 ```
 
+## The initial bootstrap (happens exactly once)
+
+The diagram above describes a release into a `production` branch that already
+exists. Creating it is a different act, and it happened once, on
+2026-09-21.
+
+The ordinary flow cannot bootstrap itself: `release.py --execute` creates
+`release/prod-<shortsha>` and hands it to an operator to open a PR **into
+`production`**, and on the first release there is no such branch to target.
+So the first `production` is created directly at an approved SHA:
+
+```bash
+# 1. The gate still runs in full, and must pass. Nothing is skipped.
+python deploy/production/release.py --target <MAIN_SHA> \
+  --staging-sha registry=<SHA> --staging-sha payment=<SHA> \
+  --staging-sha worker=<SHA> --staging-sha dashboard=<SHA>
+
+# 2. Create the branch AT the approved SHA, and prove the tree matches.
+git branch production <MAIN_SHA>
+test "$(git rev-parse production^{tree})" = "$(git rev-parse <MAIN_SHA>^{tree})"
+git push -u origin production
+
+# 3. Apply the ruleset (deploy/github/README.md). After this the branch can
+#    never be deleted or force-pushed, so step 2 can never happen again.
+```
+
+Two properties make this safe rather than a hole:
+
+* **Every gate still ran.** The bootstrap skips the PR, not the preflight. On
+  2026-09-21 the target was `2adda709` with main CI run 166 green, staging
+  evidence for all four services, and tree `0bd98264a279` verified identical
+  across the target, the release branch and `production`.
+* **It is unrepeatable.** `production-ruleset.json` blocks deletion and
+  non-fast-forward. Once applied, the branch cannot be removed and recreated,
+  so the one-time path closes behind itself. This is also why that ruleset sets
+  `do_not_enforce_on_create: true` — see deploy/github/README.md.
+
+One gate is structurally vacuous for the bootstrap and says so rather than
+passing silently: `no_sensitive_changes` reports *"initial bootstrap: no
+current production release to diff against"*. There is no prior release, so
+"which sensitive areas changed" has no meaning. Every subsequent release has a
+real baseline and a real sensitive-diff gate.
+
 **Production does not follow `main`.** If it did, staging evaluation would be
 decorative and the Society would hold production authority through a branch it
 can write (ADR-0008 D8).

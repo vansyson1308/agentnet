@@ -168,6 +168,71 @@ dashboard) at one replica each and no volume. No plan upgrade, billing-limit cha
 add-on is made; if a usage limit objectively blocks production, that is reported as an
 owner action rather than silently resolved by spending money.
 
+## D11 — A datastore's config saying "password required" is not evidence that the running process requires one
+
+Found on 2026-09-21, during the first production bring-up, by the registry
+refusing to start.
+
+`prod-redis` was created from the `redis:8.2` image. Creating a service **from
+an image deploys it immediately**, and its start command --
+
+```
+redis-server --requirepass "$REDIS_PASSWORD" --save 60 1 --dir "$RAILWAY_VOLUME_MOUNT_PATH"
+```
+
+-- was set afterwards. The service read `SUCCESS`, `get-service-config` showed
+the right start command, and the variable existed. Redis was nevertheless
+serving with **no password at all**, and only said so when something tried to
+authenticate:
+
+```
+redis.exceptions.AuthenticationError: AUTH <password> called without any
+password configured for the default user. Are you sure your configuration is correct?
+```
+
+That message points the wrong way. It reads as a *client* misconfiguration; it
+means the **server** has no password and is rejecting an AUTH it never asked
+for. For the window it lasted, anything on the production private network could
+read and write that Redis without a credential. It had no public domain and no
+TCP proxy, so it was never internet-reachable -- but "not externally exposed"
+is not "authenticated", and only the second one is a control.
+
+**The rule.** Never infer that a datastore requires authentication from the
+fact that its configuration says so. Configuration describes a future
+deployment; only the running process describes now. Prove it from the running
+process.
+
+**How that is enforced here.** The start command fails closed and announces
+itself:
+
+```sh
+if [ -z "$REDIS_PASSWORD" ]; then
+  echo "FATAL: REDIS_PASSWORD is empty; refusing to start an unauthenticated Redis"; exit 1
+fi
+echo "redis: requirepass will be set (length ${#REDIS_PASSWORD})"
+```
+
+Two properties matter. An empty variable now **refuses to boot** rather than
+starting an open Redis -- previously an empty expansion let `--requirepass`
+consume the following `--save` flag and silently yield no password. And the
+marker line makes the runtime state checkable from logs; the live evidence for
+this environment is `redis: requirepass will be set (length 32)` on deployment
+`a1cd9245`.
+
+**What this entry deliberately does not claim.** While diagnosing it I asserted
+that Railway's `redeploy` replays a previous snapshot and ignores current
+config. That is **not established**. The evidence was a log tail: `get-logs`
+with a small `limit` returns the LAST n lines, and the marker prints before
+Redis boots, so it was never in the window I was reading. By the time that
+could be checked properly the deployment was `REMOVED` and its logs were gone.
+What is established is only the sequence above: configured after the first
+deployment, unauthenticated at runtime, authenticated once a new deployment
+carried the command.
+
+The cheap operational lesson from that mistake is worth as much as the finding:
+**when grepping deployment logs for a startup marker, raise the limit or filter
+for the marker** -- a tail read will confirm whatever you already believe.
+
 ## Consequences
 
 * Production exists, is isolated, and holds no Society or model credential.

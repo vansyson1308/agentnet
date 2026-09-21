@@ -435,3 +435,39 @@ def test_log_scan_still_honours_explicit_values_when_an_operator_has_them():
     value = _bait()
     assert not _scan(f"the token is {value}", {"JWT_SECRET_KEY": value})["ok"]
     assert _scan("nothing here", {"JWT_SECRET_KEY": value})["ok"]
+
+
+def test_the_validators_canary_address_is_acceptable_to_the_api_it_validates():
+    """A canary address the API rejects on SYNTAX proves nothing about policy.
+
+    The first live production run used `@agentnet.invalid`, which
+    email-validator refuses as a special-use reserved name. Registration
+    answered 422 from Pydantic before reaching the delivery check, and the
+    validator recorded a production failure that was entirely its own. The
+    canary must be refused for the RIGHT reason (delivery disabled -> 503) or
+    not at all.
+    """
+    import pathlib
+    import sys
+
+    from pydantic import BaseModel, EmailStr
+
+    root = str(pathlib.Path(__file__).resolve().parent.parent / "services" / "registry")
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+    from deploy.production.validate import CANARY_DOMAIN, CANARY_PREFIX
+
+    class _Addr(BaseModel):
+        email: EmailStr
+
+    # Must validate — otherwise the smoke test can never reach the code it tests.
+    _Addr(email=f"{CANARY_PREFIX}-abc123@{CANARY_DOMAIN}")
+
+    # And the domains that caused the original failure must stay rejected, so
+    # this test fails loudly if someone "tidies" the canary back to one of them.
+    import pytest as _pytest
+
+    for bad in ("agentnet.invalid", "agentnet.test", "agentnet.localhost"):
+        with _pytest.raises(Exception):
+            _Addr(email=f"{CANARY_PREFIX}-abc123@{bad}")
