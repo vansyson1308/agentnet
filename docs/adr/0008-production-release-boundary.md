@@ -168,6 +168,161 @@ dashboard) at one replica each and no volume. No plan upgrade, billing-limit cha
 add-on is made; if a usage limit objectively blocks production, that is reported as an
 owner action rather than silently resolved by spending money.
 
+## D11 — A datastore's config saying "password required" is not evidence that the running process requires one
+
+Found on 2026-09-21, during the first production bring-up, by the registry
+refusing to start.
+
+`prod-redis` was created from the `redis:8.2` image. Creating a service **from
+an image deploys it immediately**, and its start command --
+
+```
+redis-server --requirepass "$REDIS_PASSWORD" --save 60 1 --dir "$RAILWAY_VOLUME_MOUNT_PATH"
+```
+
+-- was set afterwards. The service read `SUCCESS`, `get-service-config` showed
+the right start command, and the variable existed. Redis was nevertheless
+serving with **no password at all**, and only said so when something tried to
+authenticate:
+
+```
+redis.exceptions.AuthenticationError: AUTH <password> called without any
+password configured for the default user. Are you sure your configuration is correct?
+```
+
+That message points the wrong way. It reads as a *client* misconfiguration; it
+means the **server** has no password and is rejecting an AUTH it never asked
+for. For the window it lasted, anything on the production private network could
+read and write that Redis without a credential. It had no public domain and no
+TCP proxy, so it was never internet-reachable -- but "not externally exposed"
+is not "authenticated", and only the second one is a control.
+
+**The rule.** Never infer that a datastore requires authentication from the
+fact that its configuration says so. Configuration describes a future
+deployment; only the running process describes now. Prove it from the running
+process.
+
+**How that is enforced here.** The start command fails closed and announces
+itself:
+
+```sh
+if [ -z "$REDIS_PASSWORD" ]; then
+  echo "FATAL: REDIS_PASSWORD is empty; refusing to start an unauthenticated Redis"; exit 1
+fi
+echo "redis: requirepass will be set (length ${#REDIS_PASSWORD})"
+```
+
+Two properties matter. An empty variable now **refuses to boot** rather than
+starting an open Redis -- previously an empty expansion let `--requirepass`
+consume the following `--save` flag and silently yield no password. And the
+marker line makes the runtime state checkable from logs; the live evidence for
+this environment is `redis: requirepass will be set (length 32)` on deployment
+`a1cd9245`.
+
+**What this entry deliberately did not claim, and what later settled it.**
+While diagnosing it I asserted that Railway's `redeploy` replays a previous
+snapshot and ignores current config, then withdrew that as unproven: the
+evidence had been a log tail (`get-logs` with a small `limit` returns the LAST
+n lines, and the marker prints before Redis boots, so it was never in the
+window I was reading), and by the time it could be checked properly the
+deployment was `REMOVED` and its logs were gone. What this entry established on
+its own is only the sequence above: configured after the first deployment,
+unauthenticated at runtime, authenticated once a new deployment carried the
+command. The general claim is now proven separately -- see D12.
+
+The cheap operational lesson from that mistake is worth as much as the finding:
+**when grepping deployment logs for a startup marker, raise the limit or filter
+for the marker** -- a tail read will confirm whatever you already believe.
+
+## D12 — `redeploy` replays the previous deployment; only a NEW deployment picks up changed config
+
+Proven on 2026-09-21 by a controlled experiment on `prod-validator`, which
+exists to run one command and print the result, so its behaviour is directly
+observable.
+
+| Step | Action | What the container ran |
+| --- | --- | --- |
+| 1 | `update-service` set a new `startCommand` (a DNS probe) | — |
+| 2 | `redeploy` → deployment `7425ef2b` | the **OLD** command: `PROD RESULT: OK (20 checks)` |
+| 3 | `set-variables` → deployment `b77919d9` | the **NEW** command: `DNSPROBE …` |
+
+So `redeploy` is what its own description says -- it re-runs the most recent
+deployment *reusing that deployment's existing build* -- and the start command
+travels with that snapshot. `update-service` reporting `updatedFields:
+["startCommand"]` means the service record changed, not that anything running
+will change, and not that the next `redeploy` will honour it.
+
+This is the same shape as D11 one level up: **the platform's stored
+configuration is a description of a future deployment, not of the process
+running now.** D11 says prove a datastore's auth from the running process; D12
+says prove a config change took effect by forcing a genuinely new deployment
+and reading what that deployment did.
+
+**The rule.** To apply a changed `startCommand`, `preDeployCommand` or similar,
+trigger a new deployment (a variable change does it, so does a push to the
+watched branch) -- never a `redeploy` -- and confirm from the new deployment's
+own logs, filtered for a marker the command prints, that the new command ran.
+
+## D13 — The production IaC describes what is live, because applying it deletes whatever it omits
+
+**Found in the pre-DNS audit (2026-09-24).** `.railway/production.ts` was
+written in Phase 7 before production existed, and production was then built
+through the Railway API instead of by applying it. The two never met. Read
+against the live environment, the file was not merely stale; applying it would
+have been the most destructive action available to anyone holding it:
+
+| Old file declared | Live production has | Consequence of `apply` |
+| --- | --- | --- |
+| `service("registry")`, `payment`, `worker`, `dashboard` | `prod-registry` … `prod-dashboard` | Railway services are **project-wide**: the unprefixed names are STAGING's services. Apply would pull them into production. |
+| `postgres("postgres")`, `redis("redis")` | plain image services `prod-postgres`, `prod-redis` with volumes | new, empty databases created |
+| *(nothing)* | the six `prod-*` services, two volumes | "in a one-file project, **omitting a resource means deleting it**" (Railway IaC docs): `prod-postgres` **and its volume** deleted |
+| `redis()` default: `railwayapp/redis:8.2`, mount `/bitnami` | `redis:8.2`, `/data`, fail-closed `requirepass` start command (D11) | data path and the D11 guard lost |
+| `PUBLIC_BASE_URL: https://${{RAILWAY_PUBLIC_DOMAIN}}` | `https://api.agentnet.io.vn`; no public domain exists | renders `https://` -> `https:`, which `config.py` refuses at boot |
+| no `CORS_ALLOWED_ORIGINS` on payment | set | payment refuses to start outside development without it |
+| `EMAIL_DELIVERY_PROVIDER: "disabled"`, no `SMTP_*` | `smtp` + six `SMTP_*` + owner-managed `SMTP_PASSWORD` | public signup silently switched off; the owner's key **deleted** |
+
+An offline evaluation of the old file with the real `railway/iac` SDK against a
+live snapshot: **6 to add, 0 to change, 9 to destroy**.
+
+**Decision.** The file declares the live environment resource for resource and
+variable for variable:
+
+* names are the live `prod-*` names; data services are declared as what they
+  are (`service(image(...))` + `volume(...)`), not through the database-product
+  helpers, whose image, mount path and resource address all differ;
+* every live variable is declared, because an omitted variable is a deleted
+  one. Secrets are never values: cross-service ones are references
+  (`${{prod-postgres.POSTGRES_PASSWORD}}`, `${{shared.JWT_SECRET_KEY}}`), and the
+  ones created inside Railway -- the generated `POSTGRES_PASSWORD` and
+  `REDIS_PASSWORD`, and the owner-managed `SMTP_PASSWORD` -- are `preserve()`,
+  which Railway defines as "keep the value that is already set". `SMTP_PASSWORD`
+  therefore has one owner (the operator, in Railway) and one failure mode
+  (absent -> registration answers 503 and commits nothing);
+* `PUBLIC_BASE_URL` is the literal canonical origin -- a verification link must
+  name the canonical API, not whatever domain Railway assigns;
+* while dark, `CORS_ALLOWED_ORIGINS` is the private dashboard origin, which no
+  browser can present. The DNS cutover replaces exactly that one constant with
+  the dashboard's public https origin, in the change that attaches the domain;
+* Wait for CI, watch paths, restart policy and region are declared -- SDK 3.11
+  expresses them, contrary to the Phase 7 header's claim;
+* `prod-validator` is deliberately NOT declared: it is an instrument, and a plan
+  listing it for removal is the correct outcome.
+
+The same evaluation of the new file: **0 to add, 0 to change, 1 to destroy**
+(`prod-validator`). A mutation run (port 465, `checkSuites: false`, Redis on
+`/bitnami`, `SMTP_PASSWORD` removed) is reported as 5 changes and 3 destroys,
+so the clean result is not an evaluator that sees nothing.
+
+**What this does not claim.** The authoritative `railway config plan` was not
+run: this repository's automation holds no Railway CLI token (its Railway
+access is an OAuth connector that can read variable *names* only). The live
+snapshot's non-secret values were read from the running environment by a
+reference-variable probe on `prod-validator`; secret values were never read.
+The first operator with a CLI session should run the real plan and expect the
+result above; nothing has been applied, and nothing needed to be -- live was
+already correct. Tests in `tests/test_production_release_gate.py` pin the
+properties whose loss would be destructive.
+
 ## Consequences
 
 * Production exists, is isolated, and holds no Society or model credential.
@@ -176,3 +331,4 @@ owner action rather than silently resolved by spending money.
   production branch tree, and the Railway deployment ids.
 * Recovery inside 72h is a rollback; outside it, a redeploy or a Git revert release.
 * Continuous production monitoring and DNS cutover remain deliberately outside Phase 7.
+* The production IaC is a description of the live environment, verified by plan; it is never applied to make it true (D13).

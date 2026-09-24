@@ -386,3 +386,46 @@ def test_every_provider_declares_whether_it_can_deliver():
     assert DisabledEmailProvider.available is False
     assert LogEmailProvider.available is True
     assert SMTPEmailProvider.available is True
+
+
+def test_smtp_failure_text_names_the_host_and_cause_but_no_credential():
+    """A delivery outage must be diagnosable from the exception alone.
+
+    In production the registration handler logs this text. It has to say
+    enough to tell a blocked port from a rejected credential, and nothing
+    that would put a secret in the log.
+    """
+    secret = "pw-" + uuid.uuid4().hex
+    provider = SMTPEmailProvider(
+        host="smtp.example.org", port=2465, username="user", password=secret,
+        sender="AgentNet <noreply@example.org>", use_starttls=False, use_tls=True,
+        timeout=0.001,
+    )
+    with pytest.raises(EmailDeliveryUnavailable) as excinfo:
+        provider.send_verification(to="someone@example.com", verify_url="https://example.org/v1/x?token=abc")
+
+    text = str(excinfo.value)
+    assert "smtp.example.org:2465" in text          # which host, which port
+    assert text.rstrip(")").rsplit("(", 1)[-1]      # and the underlying cause
+    assert secret not in text
+    assert "someone@example.com" not in text
+    assert "token=abc" not in text
+
+
+def test_the_registration_handler_logs_the_failure_text_not_just_its_class():
+    """`type(exc).__name__` here is a restatement of the log line itself.
+
+    A production delivery outage was invisible for exactly this reason: the
+    log said "undeliverable (EmailDeliveryUnavailable)", which cannot tell a
+    blocked port from a rejected credential. The text above is safe to log and
+    is the only thing that names the cause.
+    """
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1].joinpath(
+        "services/registry/app/api/routes/auth.py"
+    ).read_text(encoding="utf-8")
+    line = [ln for ln in source.splitlines() if "verification email undeliverable" in ln]
+    assert len(line) == 1, line
+    assert "type(exc).__name__" not in line[0]
+    assert line[0].rstrip().endswith(", exc)")

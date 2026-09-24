@@ -274,11 +274,36 @@ def _ts_code_only(text: str) -> str:
     model credential; a raw substring scan would flag that prose and force the
     documentation to be deleted to make the test pass. The claim under test is
     about the declared topology, so read the code.
-    """
-    import re
 
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-    return re.sub(r"//[^\n]*", "", text)
+    Quote-aware: a `//` inside a string is a URL (`"https://..."`), not a
+    comment, and stripping it would delete exactly the values under test.
+    """
+    out, i, quote = [], 0, ""
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            out.append(ch)
+            if ch == "\\" and i + 1 < len(text):
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'`":
+            quote = ch
+            out.append(ch)
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = len(text) if end < 0 else end + 2
+            continue
+        elif text.startswith("//", i):
+            end = text.find("\n", i)
+            i = len(text) if end < 0 else end
+            continue
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def test_production_iac_declares_no_society_and_no_model_credential():
@@ -376,12 +401,127 @@ def test_ci_runs_on_the_production_branch():
 
 def test_production_declares_email_delivery_and_never_logs_the_link():
     """Production must not fall back to the log provider: the verification link
-    is a live credential. `disabled` is the honest posture until an owner wires
-    a real sender -- registration then refuses with 503 rather than creating
-    accounts nobody can activate."""
+    is a live credential. Delivery is live SMTP (Resend) since the email
+    cutover, and the IaC must say so -- an apply of a file still declaring
+    `disabled` would silently turn public signup back off."""
     ts = _ts_code_only((REPO_ROOT / ".railway" / "production.ts").read_text(encoding="utf-8"))
-    assert 'EMAIL_DELIVERY_PROVIDER: "disabled"' in ts
+    assert 'EMAIL_DELIVERY_PROVIDER: "smtp"' in ts
     assert 'EMAIL_DELIVERY_PROVIDER: "log"' not in ts
+    assert 'EMAIL_DELIVERY_PROVIDER: "disabled"' not in ts
+
+
+# ── IaC parity with the live environment (ADR-0008 D13) ─────────────────────
+#
+# In a one-file Railway IaC project, omitting a resource or a variable DELETES
+# it on apply. These tests pin the properties whose loss would be destructive
+# or would silently change what production is.
+
+def _prod_ts() -> str:
+    return _ts_code_only((REPO_ROOT / ".railway" / "production.ts").read_text(encoding="utf-8"))
+
+
+def test_production_iac_names_the_live_production_services_not_stagings():
+    """Railway services are project-wide: the unprefixed names are STAGING's.
+    Declaring them here would pull staging services into production, and
+    leaving the prod-* services undeclared would delete them."""
+    import re
+
+    ts = _prod_ts()
+    declared = set(re.findall(r'\bservice\("([^"]+)"', ts))
+    assert declared == {
+        "prod-postgres", "prod-redis", "prod-registry", "prod-payment", "prod-worker", "prod-dashboard",
+    }
+    # the database-product helpers carry their own image/mount defaults and a
+    # different resource address than the live image services
+    assert "postgres(" not in ts and "redis(" not in ts
+    for staging_ref in ("${{registry.", "${{dashboard.", "${{payment.", "${{worker."):
+        assert staging_ref not in ts, staging_ref
+
+
+def test_production_iac_keeps_the_data_volumes_mounted_where_the_data_is():
+    ts = _prod_ts()
+    assert 'volume("prod-postgres-volume", { region: REGION, sizeMB: 5000 })' in ts
+    assert 'volume("prod-redis-volume", { region: REGION, sizeMB: 5000 })' in ts
+    assert '"/var/lib/postgresql/data": postgresVolume' in ts
+    assert '"/data": redisVolume' in ts
+    assert 'image("ghcr.io/railwayapp-templates/postgres-ssl:18")' in ts
+    assert 'image("redis:8.2")' in ts
+    # the fail-closed Redis start command (ADR-0008 D11) is part of the topology
+    assert "refusing to start an unauthenticated Redis" in ts
+    assert '--requirepass \\"$REDIS_PASSWORD\\"' in ts
+
+
+def test_production_iac_pins_the_canonical_public_api_origin():
+    """Verification links are built from PUBLIC_BASE_URL. It must be the
+    canonical API origin, never `${{RAILWAY_PUBLIC_DOMAIN}}`: production is
+    dark, so that renders `https://`, which the registry refuses at boot."""
+    ts = _prod_ts()
+    assert 'const PUBLIC_API_ORIGIN = "https://api.agentnet.io.vn";' in ts
+    assert "PUBLIC_BASE_URL: PUBLIC_API_ORIGIN," in ts
+    assert "RAILWAY_PUBLIC_DOMAIN" not in ts
+
+
+def test_production_iac_pins_the_proven_smtp_configuration():
+    """Railway egress blocks 465 and 587; 2465 is the port measured to work."""
+    ts = _prod_ts()
+    for line in (
+        'SMTP_HOST: "smtp.resend.com"',
+        'SMTP_PORT: "2465"',
+        'SMTP_USERNAME: "resend"',
+        'SMTP_FROM: "AgentNet <noreply@mail.agentnet.io.vn>"',
+        'SMTP_TLS: "true"',
+        'SMTP_STARTTLS: "false"',
+    ):
+        assert line in ts, line
+
+
+def test_production_iac_never_holds_a_secret_value():
+    """Owner-managed and generated secrets are preserve(); cross-service ones
+    are references. A literal would put a credential in git -- and an omitted
+    one would be DELETED on apply, which is why each is declared at all."""
+    import re
+
+    ts = _prod_ts()
+    assert "SMTP_PASSWORD: preserve()," in ts
+    assert "POSTGRES_PASSWORD: preserve()," in ts
+    assert "REDIS_PASSWORD: preserve()," in ts
+    # EVERY occurrence, whatever its quoting: one correct declaration must not
+    # vouch for a literal on another service.
+    allowed = ("preserve()", "ctx.shared.", "db.env.", "cache.env.", '"${{')
+    for name in ("SMTP_PASSWORD", "POSTGRES_PASSWORD", "REDIS_PASSWORD", "JWT_SECRET_KEY",
+                 "FLASK_SECRET_KEY", "INTERNAL_WORKER_TOKEN", "PGPASSWORD", "REDISPASSWORD"):
+        values = re.findall(rf"\b{name}\s*:\s*(\S+)", ts)
+        assert values, f"{name} is not declared at all (an omitted variable is DELETED on apply)"
+        for value in values:
+            assert value.startswith(allowed), f"{name} must be a reference or preserve(), not {value[:6]}..."
+    for secret in ("JWT_SECRET_KEY", "FLASK_SECRET_KEY", "INTERNAL_WORKER_TOKEN"):
+        assert f"{secret}: ctx.shared.{secret}" in ts
+
+
+def test_production_iac_waits_for_ci_on_every_app_service():
+    """Wait for CI is expressible (`checkSuites`) and every app service shares
+    the one helper that sets it, so no service can drop it alone."""
+    ts = _prod_ts()
+    assert "checkSuites: true" in ts
+    assert "branch: BRANCH" in ts
+    for svc in ("registry", "payment", "worker", "dashboard"):
+        assert f'...app("services/{svc}")' in ts
+
+
+def test_production_iac_exposes_nothing_publicly_while_dark():
+    """No custom domain, no TCP proxy: production is dark until the DNS cutover,
+    and payment/worker/Postgres/Redis stay private forever."""
+    ts = _prod_ts()
+    for exposure in ("domains:", "tcp:", "tcpProxies", "serviceDomains", "customDomains"):
+        assert exposure not in ts, exposure
+
+
+def test_production_iac_gives_payment_the_cors_list_it_requires():
+    """Payment refuses to start outside development without an explicit list."""
+    ts = _prod_ts()
+    assert ts.count("CORS_ALLOWED_ORIGINS: DARK_CORS_ORIGIN,") == 2
+    assert 'const DARK_CORS_ORIGIN = "http://prod-dashboard.railway.internal:8080";' in ts
+    assert '"*"' not in ts
 
 
 # ── the production validator's log scan (Phase 7 §35) ────────────────────────
@@ -435,3 +575,94 @@ def test_log_scan_still_honours_explicit_values_when_an_operator_has_them():
     value = _bait()
     assert not _scan(f"the token is {value}", {"JWT_SECRET_KEY": value})["ok"]
     assert _scan("nothing here", {"JWT_SECRET_KEY": value})["ok"]
+
+
+def test_the_validators_canary_address_is_acceptable_to_the_api_it_validates():
+    """A canary address the API rejects on SYNTAX proves nothing about policy.
+
+    The first live production run used `@agentnet.invalid`, which
+    email-validator refuses as a special-use reserved name. Registration
+    answered 422 from Pydantic before reaching the delivery check, and the
+    validator recorded a production failure that was entirely its own. The
+    canary must be refused for the RIGHT reason (delivery disabled -> 503) or
+    not at all.
+    """
+    import pathlib
+    import sys
+
+    from pydantic import BaseModel, EmailStr
+
+    root = str(pathlib.Path(__file__).resolve().parent.parent / "services" / "registry")
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+    from deploy.production.validate import CANARY_DOMAIN, CANARY_PREFIX
+
+    class _Addr(BaseModel):
+        email: EmailStr
+
+    # Must validate — otherwise the smoke test can never reach the code it tests.
+    _Addr(email=f"{CANARY_PREFIX}-abc123@{CANARY_DOMAIN}")
+
+    # And the domains that caused the original failure must stay rejected, so
+    # this test fails loudly if someone "tidies" the canary back to one of them.
+    import pytest as _pytest
+
+    for bad in ("agentnet.invalid", "agentnet.test", "agentnet.localhost"):
+        with _pytest.raises(Exception):
+            _Addr(email=f"{CANARY_PREFIX}-abc123@{bad}")
+
+
+# ── the production security suite (Phase 7 §38, §39) ─────────────────────────
+
+def test_security_probes_are_all_anonymous_or_deliberately_invalid():
+    """Every §38 probe must be safe to run against real production.
+
+    A probe that mutated state, or that needed a real account, would either
+    damage production or be impossible here -- registration is fail-closed
+    while delivery is disabled, and forcing an account through a direct
+    database write is the move that would invalidate the whole result.
+    """
+    import inspect
+
+    from deploy.production import validate as v
+
+    src = inspect.getsource(v.check_security)
+    # No credential is ever supplied except a deliberately invalid one.
+    assert 'token="not-a-real-token"' in src
+    # The only POSTs are to routes that must REFUSE an anonymous caller, or
+    # that are refused for another reason (malformed / oversized / rate limit).
+    assert "/v1/agents/" in src and "/v1/auth/user/register" in src
+    # Nothing deletes or patches.
+    for verb in ('"DELETE"', '"PATCH"', '"PUT"'):
+        assert verb not in src, f"{verb} is not production-safe in an anonymous probe"
+
+
+def test_redis_auth_check_needs_both_halves_to_mean_anything():
+    """R01 alone can pass because Redis is DOWN. R02 is what excludes that.
+
+    This is the ADR-0008 D11 lesson encoded: during bring-up Redis served with
+    no password while its config said otherwise, and only a real connection
+    revealed it. A refusal check that cannot tell 'refused' from 'unreachable'
+    would have reported PASS on an open Redis.
+    """
+    import inspect
+
+    from deploy.production import validate as v
+
+    src = inspect.getsource(v.check_redis_auth)
+    assert '"R01"' in src and '"R02"' in src
+    assert "may be a false pass" in src
+    # The password is used, never recorded or printed.
+    assert "report.record" not in src
+
+
+def test_security_checks_are_wired_into_the_run():
+    """A check that exists but is never called is worse than no check."""
+    import inspect
+
+    from deploy.production import validate as v
+
+    main_src = inspect.getsource(v.main)
+    assert "check_security(" in main_src
+    assert "check_redis_auth(" in main_src
