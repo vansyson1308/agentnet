@@ -40,6 +40,33 @@ CANARY_PREFIX = "prod-canary"
 #: repository's integration tests already use.
 CANARY_DOMAIN = "example.com"
 
+#: ...but only while delivery is DISABLED, when no message is ever sent. With
+#: live delivery a canary registration sends a real verification email, and
+#: `example.com` publishes a null MX: every such send is a guaranteed bounce,
+#: and bounces count against the sending domain's reputation with the provider.
+#: A live canary goes to a SINK instead -- Resend's simulated-delivery address,
+#: which accepts a `+label`, records the send as delivered and reaches no human.
+#: Another provider's sink can be named with CANARY_EMAIL_SINK.
+LIVE_CANARY_SINK = "delivered@resend.dev"
+
+
+def labelled_sink(sink: str, label: str) -> str:
+    """`delivered@resend.dev` + `x` -> `delivered+x@resend.dev`.
+
+    A fresh label per run matters: an address can register only once, so a
+    fixed canary makes every run after the first fail on its own leftovers.
+    """
+    local, _, domain = sink.partition("@")
+    return f"{local}+{label}@{domain}"
+
+
+def canary_email(email_delivery: str, suffix: str) -> str:
+    """The canary address for this run, chosen by whether mail is really sent."""
+    if email_delivery == "disabled":
+        return f"{CANARY_PREFIX}-{suffix}@{CANARY_DOMAIN}"
+    sink = os.getenv("CANARY_EMAIL_SINK", "").strip() or LIVE_CANARY_SINK
+    return labelled_sink(sink, f"{CANARY_PREFIX}-{suffix}")
+
 #: Names that must NOT exist on any production service. Checked by NAME only --
 #: values are never read, printed or compared (Phase 7 §9, §34, §35).
 FORBIDDEN_PRODUCTION_VARS = (
@@ -162,7 +189,7 @@ def check_society_absent(report: Report, registry: str, variable_names: List[str
 def check_core_smoke(report: Report, registry: str, *, email_delivery: str) -> None:
     """Registration, auth and the escrow round trip, with canary identities."""
     suffix = uuid.uuid4().hex[:10]
-    email = f"{CANARY_PREFIX}-{suffix}@{CANARY_DOMAIN}"
+    email = canary_email(email_delivery, suffix)
     # Built from short fragments and a fresh uuid rather than written as a
     # literal: a password-shaped string in a tracked file is exactly what the
     # repository's own secret scan refuses, and it is right to.

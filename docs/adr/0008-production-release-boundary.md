@@ -263,6 +263,66 @@ trigger a new deployment (a variable change does it, so does a push to the
 watched branch) -- never a `redeploy` -- and confirm from the new deployment's
 own logs, filtered for a marker the command prints, that the new command ran.
 
+## D13 — The production IaC describes what is live, because applying it deletes whatever it omits
+
+**Found in the pre-DNS audit (2026-09-24).** `.railway/production.ts` was
+written in Phase 7 before production existed, and production was then built
+through the Railway API instead of by applying it. The two never met. Read
+against the live environment, the file was not merely stale; applying it would
+have been the most destructive action available to anyone holding it:
+
+| Old file declared | Live production has | Consequence of `apply` |
+| --- | --- | --- |
+| `service("registry")`, `payment`, `worker`, `dashboard` | `prod-registry` … `prod-dashboard` | Railway services are **project-wide**: the unprefixed names are STAGING's services. Apply would pull them into production. |
+| `postgres("postgres")`, `redis("redis")` | plain image services `prod-postgres`, `prod-redis` with volumes | new, empty databases created |
+| *(nothing)* | the six `prod-*` services, two volumes | "in a one-file project, **omitting a resource means deleting it**" (Railway IaC docs): `prod-postgres` **and its volume** deleted |
+| `redis()` default: `railwayapp/redis:8.2`, mount `/bitnami` | `redis:8.2`, `/data`, fail-closed `requirepass` start command (D11) | data path and the D11 guard lost |
+| `PUBLIC_BASE_URL: https://${{RAILWAY_PUBLIC_DOMAIN}}` | `https://api.agentnet.io.vn`; no public domain exists | renders `https://` -> `https:`, which `config.py` refuses at boot |
+| no `CORS_ALLOWED_ORIGINS` on payment | set | payment refuses to start outside development without it |
+| `EMAIL_DELIVERY_PROVIDER: "disabled"`, no `SMTP_*` | `smtp` + six `SMTP_*` + owner-managed `SMTP_PASSWORD` | public signup silently switched off; the owner's key **deleted** |
+
+An offline evaluation of the old file with the real `railway/iac` SDK against a
+live snapshot: **6 to add, 0 to change, 9 to destroy**.
+
+**Decision.** The file declares the live environment resource for resource and
+variable for variable:
+
+* names are the live `prod-*` names; data services are declared as what they
+  are (`service(image(...))` + `volume(...)`), not through the database-product
+  helpers, whose image, mount path and resource address all differ;
+* every live variable is declared, because an omitted variable is a deleted
+  one. Secrets are never values: cross-service ones are references
+  (`${{prod-postgres.POSTGRES_PASSWORD}}`, `${{shared.JWT_SECRET_KEY}}`), and the
+  ones created inside Railway -- the generated `POSTGRES_PASSWORD` and
+  `REDIS_PASSWORD`, and the owner-managed `SMTP_PASSWORD` -- are `preserve()`,
+  which Railway defines as "keep the value that is already set". `SMTP_PASSWORD`
+  therefore has one owner (the operator, in Railway) and one failure mode
+  (absent -> registration answers 503 and commits nothing);
+* `PUBLIC_BASE_URL` is the literal canonical origin -- a verification link must
+  name the canonical API, not whatever domain Railway assigns;
+* while dark, `CORS_ALLOWED_ORIGINS` is the private dashboard origin, which no
+  browser can present. The DNS cutover replaces exactly that one constant with
+  the dashboard's public https origin, in the change that attaches the domain;
+* Wait for CI, watch paths, restart policy and region are declared -- SDK 3.11
+  expresses them, contrary to the Phase 7 header's claim;
+* `prod-validator` is deliberately NOT declared: it is an instrument, and a plan
+  listing it for removal is the correct outcome.
+
+The same evaluation of the new file: **0 to add, 0 to change, 1 to destroy**
+(`prod-validator`). A mutation run (port 465, `checkSuites: false`, Redis on
+`/bitnami`, `SMTP_PASSWORD` removed) is reported as 5 changes and 3 destroys,
+so the clean result is not an evaluator that sees nothing.
+
+**What this does not claim.** The authoritative `railway config plan` was not
+run: this repository's automation holds no Railway CLI token (its Railway
+access is an OAuth connector that can read variable *names* only). The live
+snapshot's non-secret values were read from the running environment by a
+reference-variable probe on `prod-validator`; secret values were never read.
+The first operator with a CLI session should run the real plan and expect the
+result above; nothing has been applied, and nothing needed to be -- live was
+already correct. Tests in `tests/test_production_release_gate.py` pin the
+properties whose loss would be destructive.
+
 ## Consequences
 
 * Production exists, is isolated, and holds no Society or model credential.
@@ -271,3 +331,4 @@ own logs, filtered for a marker the command prints, that the new command ran.
   production branch tree, and the Railway deployment ids.
 * Recovery inside 72h is a rollback; outside it, a redeploy or a Git revert release.
 * Continuous production monitoring and DNS cutover remain deliberately outside Phase 7.
+* The production IaC is a description of the live environment, verified by plan; it is never applied to make it true (D13).

@@ -109,3 +109,48 @@ def test_registration_probe_outlasts_the_registrys_smtp_path():
     register = SOURCE[SOURCE.index('"POST", f"{registry}/v1/auth/user/register"'):]
     register = register[:register.index("report.check")]
     assert "timeout=REGISTRATION_TIMEOUT_SECONDS" in register
+
+
+def test_every_run_registers_a_fresh_sink_address(monkeypatch):
+    """An address registers once. A fixed default made every run after the
+    first fail at E01 on the validator's own leftover account."""
+    module = _load()
+    monkeypatch.delenv("CANARY_EMAIL", raising=False)
+    first, second = module.fresh_canary_email(), module.fresh_canary_email()
+    assert first != second
+    for address in (first, second):
+        assert re.fullmatch(r"delivered\+prod-email-[0-9a-f]{10}@resend\.dev", address), address
+
+
+def test_the_default_address_is_the_fresh_one_not_the_bare_sink():
+    assert "default=os.getenv(\"CANARY_EMAIL\", DEFAULT_CANARY_EMAIL)" not in SOURCE
+    assert "args.email = fresh_canary_email()" in SOURCE
+
+
+def test_live_delivery_never_mails_a_null_mx_domain(monkeypatch):
+    """With delivery live, a canary on example.com (null MX) is a guaranteed
+    bounce against the sending domain's reputation. Disabled delivery sends
+    nothing, so example.com stays the right canary there."""
+    from deploy.production.validate import canary_email
+
+    monkeypatch.delenv("CANARY_EMAIL_SINK", raising=False)
+    assert canary_email("disabled", "abc123") == "prod-canary-abc123@example.com"
+    live = canary_email("smtp", "abc123")
+    assert live == "delivered+prod-canary-abc123@resend.dev"
+    assert not live.endswith("@example.com")
+    monkeypatch.setenv("CANARY_EMAIL_SINK", "sink@provider.test")
+    assert canary_email("smtp", "abc123") == "sink+prod-canary-abc123@provider.test"
+
+
+def test_the_live_sink_address_is_acceptable_to_the_registration_api():
+    """A canary the API rejects on SYNTAX proves nothing (the Phase 7 lesson)."""
+    from pydantic import BaseModel, EmailStr
+
+    from deploy.production.validate import canary_email
+
+    class _Addr(BaseModel):
+        email: EmailStr
+
+    for delivery in ("disabled", "smtp"):
+        address = canary_email(delivery, "abc123")
+        assert _Addr(email=address).email == address

@@ -3,30 +3,61 @@
  *
  * Applied with the Railway CLI from a linked checkout:
  *   railway link --project AgentNet --environment production
- *   railway config plan --config .railway/production.ts   # preview
- *   railway config apply --config .railway/production.ts  # apply after confirmation
+ *   railway config plan --file .railway/production.ts    # preview; READ it
+ *   railway config apply --file .railway/production.ts   # only after the plan is clean
  *
  * This is a SEPARATE declaration from .railway/railway.ts on purpose. One file
  * with staging/production conditionals would put the two environments one typo
  * apart; here each file refuses the other's environment outright (ADR-0008 D1).
+ *
+ * THIS FILE DESCRIBES WHAT IS LIVE (ADR-0008 D13). It was rewritten to match the
+ * running environment exactly, resource for resource, after a pre-DNS audit
+ * showed the first version would have been destructive to apply:
+ *
+ *   - Railway services are project-wide; the unprefixed names (registry,
+ *     payment, worker, dashboard) are the STAGING services. Production runs
+ *     prod-* services. Declaring the unprefixed names here would have pulled
+ *     staging's services into production.
+ *   - In a one-file project, omitting a resource means DELETING it. The old
+ *     file declared none of the prod-* services, so an apply would have deleted
+ *     prod-postgres (and its volume) and prod-redis, then created empty ones.
+ *   - postgres()/redis() are database-product helpers with their own image and
+ *     mount defaults (redis: railwayapp/redis:8.2 on /bitnami). The live data
+ *     services are plain image services with volumes, so they are declared as
+ *     exactly that: service(image(...)) + volume(...).
+ *   - `https://${{RAILWAY_PUBLIC_DOMAIN}}` renders to `https://` while
+ *     production is dark (no public domain exists), which the registry's own
+ *     config refuses at boot; payment requires CORS_ALLOWED_ORIGINS outside
+ *     development and the old file never set it.
+ *
+ * Every variable a service has live is declared, because an omitted variable is
+ * a deleted variable. Values that are secrets are never written here: they are
+ * references (`${{prod-postgres.POSTGRES_PASSWORD}}`, `${{shared.JWT_SECRET_KEY}}`)
+ * or `preserve()`, which means "keep the value already set in Railway".
  *
  * What production deliberately does NOT contain:
  *   - no society-worker, and no Society workspace volume: the Society is a
  *     staging faculty. Production runs the public application only (ADR-0008 D8).
  *   - no model credential and no GitHub App key. Their NAMES never appear here,
  *     so they cannot be set by this file even by accident.
- *   - no Jaeger, no simulation, no validator.
+ *   - no Jaeger, no simulation.
+ *   - no public domain of any kind. Production is DARK until the owner performs
+ *     the DNS/custom-domain cutover (docs/PRODUCTION_RUNBOOK.md); that change is
+ *     made here in the same pull request that makes it live.
+ *   - no prod-validator. It is a disposable operator instrument, not part of
+ *     the application; while it exists a plan lists it for removal, which is
+ *     the correct outcome and is marked destructive (docs/PRODUCTION_RUNBOOK.md).
  *
  * Secrets: JWT_SECRET_KEY, FLASK_SECRET_KEY and INTERNAL_WORKER_TOKEN are
- * production-scoped SHARED variables the operator creates once, from stdin,
- * and never reads back. They are NOT copied from staging — a shared JWT secret
- * would make a staging token valid in production (ADR-0008 D9).
- *
- * Not expressible here (set once after apply — docs/PRODUCTION_RUNBOOK.md):
- * generated public domains, Wait for CI, and marking Postgres/Redis "no public
- * networking" (the default). Sealing variables is a UI action; ADR-0008 D9.
+ * production-scoped SHARED variables the operator creates once and never reads
+ * back. They are NOT copied from staging — a shared JWT secret would make a
+ * staging token valid in production (ADR-0008 D9). SMTP_PASSWORD is an
+ * OWNER-MANAGED secret (the Resend sending key): set by the owner directly in
+ * Railway, never in git, never read back. If it is ever absent, registration
+ * fails closed with 503 and creates nothing (registration is atomic with
+ * delivery), so its absence is loud and harmless.
  */
-import { defineRailway, github, group, postgres, project, redis, service } from "railway/iac";
+import { defineRailway, github, image, preserve, project, service, volume } from "railway/iac";
 
 const REPO = "vansyson1308/agentnet";
 
@@ -37,6 +68,12 @@ const REPO = "vansyson1308/agentnet";
  */
 const BRANCH = "production";
 
+/** The single region every production resource runs in today. */
+const REGION = "us-east4-eqdc4a";
+
+/** The canonical public API origin. Verification links are built from it. */
+const PUBLIC_API_ORIGIN = "https://api.agentnet.io.vn";
+
 export default defineRailway((ctx) => {
   if (ctx.environment !== "production") {
     throw new Error(
@@ -45,23 +82,74 @@ export default defineRailway((ctx) => {
     );
   }
 
-  const db = postgres("postgres");
-  const cache = redis("redis");
+  /**
+   * An app service built from this repository's `production` branch.
+   * `checkSuites: true` is Railway's "Wait for CI": a push to `production` is
+   * not deployed until GitHub reports the CI workflow run succeeded on it.
+   */
+  const app = (root: string) => ({
+    source: github(REPO, { branch: BRANCH, rootDirectory: `/${root}`, checkSuites: true }),
+    build: { builder: "RAILPACK" as const, watchPatterns: [`/${root}/**`] },
+    deploy: { restartPolicyType: "ALWAYS" as const },
+    regions: { [REGION]: 1 },
+  });
 
-  // Managed Postgres/Redis wired through reference variables. These are NEW
-  // resources in the production environment: production must never point at
-  // staging data, and the service ids differ so isolation is checkable.
+  // ── data: private, persistent, never recreated ─────────────────────────
+  // Declared as the plain image services they are live. Their generated
+  // passwords were created once in Railway and are preserved, never re-set.
+  const postgresVolume = volume("prod-postgres-volume", { region: REGION, sizeMB: 5000 });
+  const db = service("prod-postgres", {
+    source: image("ghcr.io/railwayapp-templates/postgres-ssl:18"),
+    regions: { [REGION]: 1 },
+    volumeMounts: { "/var/lib/postgresql/data": postgresVolume },
+    env: {
+      POSTGRES_USER: "agentnet",
+      POSTGRES_DB: "agentnet",
+      POSTGRES_PASSWORD: preserve(),
+      PGDATA: "/var/lib/postgresql/data/pgdata",
+      SSL_CERT_DAYS: "820",
+      PGHOST: "${{RAILWAY_PRIVATE_DOMAIN}}",
+      PGPORT: "5432",
+      PGUSER: "${{POSTGRES_USER}}",
+      PGPASSWORD: "${{POSTGRES_PASSWORD}}",
+      PGDATABASE: "${{POSTGRES_DB}}",
+      RAILWAY_DEPLOYMENT_DRAINING_SECONDS: "60",
+    },
+  });
+
+  const redisVolume = volume("prod-redis-volume", { region: REGION, sizeMB: 5000 });
+  const cache = service("prod-redis", {
+    source: image("redis:8.2"),
+    // Fail closed: a Redis that would start without a password refuses to
+    // start at all. Proven necessary during bring-up (ADR-0008 D11).
+    start:
+      "/bin/sh -c 'if [ -z \"$REDIS_PASSWORD\" ]; then echo \"FATAL: REDIS_PASSWORD is empty; refusing to start an unauthenticated Redis\"; exit 1; fi; " +
+      "echo \"redis: requirepass will be set (length ${#REDIS_PASSWORD})\"; rm -rf \"$RAILWAY_VOLUME_MOUNT_PATH/lost+found/\"; " +
+      "exec docker-entrypoint.sh redis-server --requirepass \"$REDIS_PASSWORD\" --save 60 1 --dir \"$RAILWAY_VOLUME_MOUNT_PATH\"'",
+    deploy: { restartPolicyType: "ALWAYS" },
+    regions: { [REGION]: 1 },
+    volumeMounts: { "/data": redisVolume },
+    env: {
+      REDIS_PASSWORD: preserve(),
+      REDISHOST: "${{RAILWAY_PRIVATE_DOMAIN}}",
+      REDISPORT: "6379",
+      REDISUSER: "default",
+      REDISPASSWORD: "${{REDIS_PASSWORD}}",
+    },
+  });
+
+  // Wired exactly as live: host by private DNS, credentials by reference.
   const dbEnv = {
-    POSTGRES_HOST: db.env.PGHOST,
-    POSTGRES_PORT: db.env.PGPORT,
-    POSTGRES_USER: db.env.PGUSER,
-    POSTGRES_PASSWORD: db.env.PGPASSWORD,
-    POSTGRES_DB: db.env.PGDATABASE,
+    POSTGRES_HOST: db.env.RAILWAY_PRIVATE_DOMAIN,
+    POSTGRES_PORT: "5432",
+    POSTGRES_USER: db.env.POSTGRES_USER,
+    POSTGRES_PASSWORD: db.env.POSTGRES_PASSWORD,
+    POSTGRES_DB: db.env.POSTGRES_DB,
   };
   const redisEnv = {
-    REDIS_HOST: cache.env.REDISHOST,
-    REDIS_PORT: cache.env.REDISPORT,
-    REDIS_PASSWORD: cache.env.REDISPASSWORD,
+    REDIS_HOST: cache.env.RAILWAY_PRIVATE_DOMAIN,
+    REDIS_PORT: "6379",
+    REDIS_PASSWORD: cache.env.REDIS_PASSWORD,
   };
 
   const common = {
@@ -71,6 +159,15 @@ export default defineRailway((ctx) => {
     // client-controlled leftmost X-Forwarded-For entry (rate-limit bypass).
     // The registry trusts X-Real-IP instead — ADR-0006 D5.
   };
+
+  /**
+   * While production is dark there is no browser origin to allow. The private
+   * dashboard origin is not one a browser can ever present, so this admits
+   * nothing -- and it satisfies the services' refusal to start without an
+   * explicit list (never "*"). At the DNS cutover it becomes the dashboard's
+   * public https origin, in the same change that attaches that domain.
+   */
+  const DARK_CORS_ORIGIN = "http://prod-dashboard.railway.internal:8080";
 
   /**
    * Defense in depth. No society-worker exists in production, so nothing here
@@ -91,9 +188,26 @@ export default defineRailway((ctx) => {
     SOCIETY_MODEL_PROVIDER: "scripted",
   };
 
-  // ── registry: public API; sole owner of the schema (ADR-0008 D4) ──
-  const registry = service("registry", {
-    source: github(REPO, { branch: BRANCH, rootDirectory: "services/registry" }),
+  /**
+   * Verification email through Resend's SMTP relay. Port 2465 is Resend's
+   * implicit-TLS alternate: Railway egress blocks 465 and 587, measured from
+   * inside production (docs/PRODUCTION_RUNBOOK.md). The sender domain is the
+   * verified `mail.agentnet.io.vn`, which is independent of the web DNS.
+   */
+  const smtp = {
+    EMAIL_DELIVERY_PROVIDER: "smtp",
+    SMTP_HOST: "smtp.resend.com",
+    SMTP_PORT: "2465",
+    SMTP_USERNAME: "resend",
+    SMTP_PASSWORD: preserve(),
+    SMTP_FROM: "AgentNet <noreply@mail.agentnet.io.vn>",
+    SMTP_TLS: "true",
+    SMTP_STARTTLS: "false",
+  };
+
+  // ── registry: the public API (once DNS exists); sole owner of the schema ──
+  const registry = service("prod-registry", {
+    ...app("services/registry"),
     // Runs in a separate container BEFORE the new deployment starts and must
     // exit non-zero on failure. No Society fleet seed: production runs no
     // Society, so those rows would be dead weight the public app never reads.
@@ -110,8 +224,10 @@ export default defineRailway((ctx) => {
       JWT_SECRET_KEY: ctx.shared.JWT_SECRET_KEY,
       JWT_ALGORITHM: "HS256",
       JWT_EXPIRATION: "3600",
-      PUBLIC_BASE_URL: "https://${{RAILWAY_PUBLIC_DOMAIN}}",
-      CORS_ALLOWED_ORIGINS: "https://${{dashboard.RAILWAY_PUBLIC_DOMAIN}}",
+      // A literal, not `${{RAILWAY_PUBLIC_DOMAIN}}`: the link in a verification
+      // email must name the canonical API, not whatever domain Railway assigns.
+      PUBLIC_BASE_URL: PUBLIC_API_ORIGIN,
+      CORS_ALLOWED_ORIGINS: DARK_CORS_ORIGIN,
       RATE_LIMIT_PER_MINUTE: "60",
       ORCHESTRATOR_ENABLED: "false",
       PUBLIC_AGENT_REGISTRATION_ENABLED: "false",
@@ -119,17 +235,14 @@ export default defineRailway((ctx) => {
       // No operator is bootstrapped into production: the Society operator API
       // is a staging faculty and must have no privileged identity here.
       SOCIETY_OPERATOR_BOOTSTRAP_EMAILS: "",
-      // Verification email delivery. `disabled` fails registration honestly
-      // rather than creating an account nobody can ever log into; switching to
-      // `smtp` needs SMTP_* on this service (docs/PRODUCTION_RUNBOOK.md).
-      EMAIL_DELIVERY_PROVIDER: "disabled",
+      ...smtp,
       ...societyOff,
     },
   });
 
-  // ── payment: PRIVATE (no public domain); wallets/approvals API ──
-  const payment = service("payment", {
-    source: github(REPO, { branch: BRANCH, rootDirectory: "services/payment" }),
+  // ── payment: PRIVATE (no public domain, ever); wallets/approvals API ──
+  const payment = service("prod-payment", {
+    ...app("services/payment"),
     healthcheck: "/readyz",
     healthcheckTimeout: 300,
     env: {
@@ -141,12 +254,14 @@ export default defineRailway((ctx) => {
       JWT_ALGORITHM: "HS256",
       RATE_LIMIT_PER_MINUTE: "60",
       INTERNAL_WORKER_TOKEN: ctx.shared.INTERNAL_WORKER_TOKEN,
+      // Required outside development (payment refuses to start without it).
+      CORS_ALLOWED_ORIGINS: DARK_CORS_ORIGIN,
     },
   });
 
   // ── worker: PRIVATE; metrics on 9100 double as the deploy healthcheck ──
-  const worker = service("worker", {
-    source: github(REPO, { branch: BRANCH, rootDirectory: "services/worker" }),
+  const worker = service("prod-worker", {
+    ...app("services/worker"),
     healthcheck: "/metrics",
     healthcheckTimeout: 120,
     env: {
@@ -159,13 +274,13 @@ export default defineRailway((ctx) => {
       // Least privilege: the worker talks to PostgreSQL/Redis and (for
       // presence) the registry. It never calls payment, so it gets neither
       // payment's URL nor INTERNAL_WORKER_TOKEN.
-      REGISTRY_API_URL: "http://${{registry.RAILWAY_PRIVATE_DOMAIN}}:8000",
+      REGISTRY_API_URL: "http://${{prod-registry.RAILWAY_PRIVATE_DOMAIN}}:8000",
     },
   });
 
-  // ── dashboard: public Flask UI; reaches the registry over private DNS ──
-  const dashboard = service("dashboard", {
-    source: github(REPO, { branch: BRANCH, rootDirectory: "services/dashboard" }),
+  // ── dashboard: the public UI (once DNS exists); calls the registry privately ──
+  const dashboard = service("prod-dashboard", {
+    ...app("services/dashboard"),
     healthcheck: "/healthz",
     healthcheckTimeout: 120,
     env: {
@@ -175,11 +290,11 @@ export default defineRailway((ctx) => {
       BEHIND_PROXY: "true",
       FLASK_SECRET_KEY: ctx.shared.FLASK_SECRET_KEY,
       // The registry is the only backend the dashboard calls (api_client.py).
-      REGISTRY_URL: "http://${{registry.RAILWAY_PRIVATE_DOMAIN}}:8000",
+      REGISTRY_URL: "http://${{prod-registry.RAILWAY_PRIVATE_DOMAIN}}:8000",
     },
   });
 
-  const data = group("Data", [db, cache]);
-  const apps = group("AgentNet production", [registry, payment, worker, dashboard]);
-  return project("AgentNet", { resources: [data, apps] });
+  return project("AgentNet", {
+    resources: [postgresVolume, db, redisVolume, cache, registry, payment, worker, dashboard],
+  });
 });

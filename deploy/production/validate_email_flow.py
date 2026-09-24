@@ -48,11 +48,21 @@ from typing import Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from validate import Report, _http  # noqa: E402  (deliberate: same directory)
+from validate import Report, _http, labelled_sink  # noqa: E402  (deliberate: same directory)
 
 #: Resend's simulated-delivery address. It accepts and records a real send
 #: without a human inbox, which is what a production canary should use.
 DEFAULT_CANARY_EMAIL = "delivered@resend.dev"
+
+
+def fresh_canary_email() -> str:
+    """A NEW sink address per run: `delivered+prod-email-<hex>@resend.dev`.
+
+    An address registers once. The first live run used the bare sink, so the
+    same default on any later run would answer "already registered" at E01 and
+    report a production failure that is the validator's own leftover.
+    """
+    return labelled_sink(DEFAULT_CANARY_EMAIL, f"prod-email-{uuid.uuid4().hex[:10]}")
 
 #: Registration blocks on SMTP delivery, so it needs a timeout longer than the
 #: registry's own (``SMTP_TIMEOUT_SECONDS``, 15s by default) multiplied by the
@@ -226,8 +236,10 @@ def main(argv: Optional[list] = None) -> int:
     ap = argparse.ArgumentParser(description="AgentNet production email/account flow validation")
     ap.add_argument("--registry", default=os.getenv("PROD_REGISTRY_URL", ""))
     ap.add_argument("--payment", default=os.getenv("PROD_PAYMENT_URL", ""))
-    ap.add_argument("--email", default=os.getenv("CANARY_EMAIL", DEFAULT_CANARY_EMAIL))
+    ap.add_argument("--email", default=os.getenv("CANARY_EMAIL", "").strip() or None)
     args = ap.parse_args(argv)
+    if not args.email:
+        args.email = fresh_canary_email()
 
     if not args.registry:
         print("PROD-EMAIL RESULT: FAILED (no registry URL)")
