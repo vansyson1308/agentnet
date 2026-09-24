@@ -219,19 +219,49 @@ marker line makes the runtime state checkable from logs; the live evidence for
 this environment is `redis: requirepass will be set (length 32)` on deployment
 `a1cd9245`.
 
-**What this entry deliberately does not claim.** While diagnosing it I asserted
-that Railway's `redeploy` replays a previous snapshot and ignores current
-config. That is **not established**. The evidence was a log tail: `get-logs`
-with a small `limit` returns the LAST n lines, and the marker prints before
-Redis boots, so it was never in the window I was reading. By the time that
-could be checked properly the deployment was `REMOVED` and its logs were gone.
-What is established is only the sequence above: configured after the first
-deployment, unauthenticated at runtime, authenticated once a new deployment
-carried the command.
+**What this entry deliberately did not claim, and what later settled it.**
+While diagnosing it I asserted that Railway's `redeploy` replays a previous
+snapshot and ignores current config, then withdrew that as unproven: the
+evidence had been a log tail (`get-logs` with a small `limit` returns the LAST
+n lines, and the marker prints before Redis boots, so it was never in the
+window I was reading), and by the time it could be checked properly the
+deployment was `REMOVED` and its logs were gone. What this entry established on
+its own is only the sequence above: configured after the first deployment,
+unauthenticated at runtime, authenticated once a new deployment carried the
+command. The general claim is now proven separately -- see D12.
 
 The cheap operational lesson from that mistake is worth as much as the finding:
 **when grepping deployment logs for a startup marker, raise the limit or filter
 for the marker** -- a tail read will confirm whatever you already believe.
+
+## D12 — `redeploy` replays the previous deployment; only a NEW deployment picks up changed config
+
+Proven on 2026-09-21 by a controlled experiment on `prod-validator`, which
+exists to run one command and print the result, so its behaviour is directly
+observable.
+
+| Step | Action | What the container ran |
+| --- | --- | --- |
+| 1 | `update-service` set a new `startCommand` (a DNS probe) | — |
+| 2 | `redeploy` → deployment `7425ef2b` | the **OLD** command: `PROD RESULT: OK (20 checks)` |
+| 3 | `set-variables` → deployment `b77919d9` | the **NEW** command: `DNSPROBE …` |
+
+So `redeploy` is what its own description says -- it re-runs the most recent
+deployment *reusing that deployment's existing build* -- and the start command
+travels with that snapshot. `update-service` reporting `updatedFields:
+["startCommand"]` means the service record changed, not that anything running
+will change, and not that the next `redeploy` will honour it.
+
+This is the same shape as D11 one level up: **the platform's stored
+configuration is a description of a future deployment, not of the process
+running now.** D11 says prove a datastore's auth from the running process; D12
+says prove a config change took effect by forcing a genuinely new deployment
+and reading what that deployment did.
+
+**The rule.** To apply a changed `startCommand`, `preDeployCommand` or similar,
+trigger a new deployment (a variable change does it, so does a push to the
+watched branch) -- never a `redeploy` -- and confirm from the new deployment's
+own logs, filtered for a marker the command prints, that the new command ran.
 
 ## Consequences
 

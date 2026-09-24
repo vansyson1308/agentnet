@@ -135,9 +135,15 @@ async def user_register(user_data: UserRegister, db: Session = Depends(get_db)):
         _deliver_verification(user.email, token_value)
     except EmailDeliveryUnavailable as exc:
         db.rollback()
-        logger.warning(
-            "registration refused: verification email undeliverable (%s)", type(exc).__name__
-        )
+        # The exception TEXT, not just its class. EmailDeliveryUnavailable is
+        # constructed to carry only the host, the port and the underlying
+        # exception's class name -- never the password, the recipient or the
+        # token -- so it is safe to log and it is the only thing that makes a
+        # delivery outage diagnosable. Logging the class alone says
+        # "EmailDeliveryUnavailable", which is a restatement of the log line
+        # itself: it cannot distinguish a blocked port from a rejected
+        # credential from a refused sender.
+        logger.warning("registration refused: verification email undeliverable (%s)", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(

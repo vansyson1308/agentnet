@@ -301,3 +301,101 @@ attempt revealed it. A refusal check that could not distinguish "refused" from
 
 The password is handed to the client and never recorded, compared or printed; a
 test asserts `check_redis_auth` calls no `report.record`.
+
+## 12. The email and account flow, proven live (2026-09-24)
+
+Phase 7 could only prove the **refusal**: with delivery disabled, registration
+answered 503 and created nothing. That was the honest contract at the time, but
+it left every authenticated production path unproven, because each of them needs
+a logged-in user and no user could exist. This is the other half.
+
+Run: `prod-validator` deployment `d8d3f4e5`, from inside the production private
+network, against the registry and payment services on their private addresses.
+
+```
+PROD-JSON email_flow.validated_at "2026-09-24T06:16:38Z"
+PROD-JSON email_flow.canary_email "delivered@resend.dev"
+E01 PASS registration through the normal API        -> 201
+E02 PASS login BEFORE verification                  -> 403
+E03 PASS one unconsumed token found
+PROD-JSON email_flow.token_fingerprint "4307d67ccfd1328b"
+E04 PASS verify-email with the delivered token      -> 200
+E05 PASS replay of the SAME token                   -> 400
+E06 PASS login AFTER verification                   -> 200  (token issued, never printed)
+E07 PASS authenticated task list                    -> 200  (empty, as a new account must be)
+E08 PASS someone else's task id with a valid token  -> 404
+E09 PASS owner reads own wallet -> 200; exactly one user wallet at zero balance
+E10 PASS another wallet's balance with a valid token -> 404
+E11 PASS anonymous wallet list                      -> 401
+PROD-EMAIL RESULT: OK (11 checks)   exit 0
+```
+
+`E01 -> 201` is the load-bearing line. Registration attempts delivery **before**
+it commits, so a 201 is itself the statement that SMTP accepted the message.
+
+### The message was AgentNet's, not a hand-sent test
+
+Resend's outbound log holds exactly one message, created at `06:16:39.069Z` —
+the same second as `E01`:
+
+```
+From:       "AgentNet" <noreply@mail.agentnet.io.vn>
+To:         delivered@resend.dev
+Subject:    Verify your AgentNet email address
+Status:     delivered
+Message-ID: <010001a0d20f1642-130c6b7f-240a-4cf2-84c2-dd726e4e92c3-000000@email.amazonses.com>
+```
+
+Its body carries the activation link the application built from
+`PUBLIC_BASE_URL`. The body, the link and the token are **not reproduced here**.
+
+### What is proven, and what is not
+
+The token the endpoint accepted is the token the message carried. Three facts
+give that, without anyone printing it: registration passes the same
+`token_value` it inserted straight into the delivery call (`auth.py`, one
+variable, one transaction); `E03` found **exactly one** unconsumed token for that
+address; and the message was created in the same second by that registration.
+
+The designed cross-check — comparing `token_fingerprint` against the SHA-256 of
+the link in the delivered message — was **not performed**, and deliberately so.
+Computing it here would have required putting the raw token into a command, and
+a consumed token is still a credential that would then live in a transcript
+forever. The identity argument above costs nothing and leaks nothing.
+
+**Public clickability is a separate claim and is NOT proven.** The delivered
+link points at `https://api.agentnet.io.vn`, which does not resolve: no web DNS
+cutover has happened. The token was consumed over the private validator path. A
+human on the internet still cannot complete this flow — not because the flow is
+broken, but because production has no public surface yet.
+
+### Secret-leak audit
+
+The production registry's **complete** deploy log for the running deployment
+(`94276750`, container start 2026-09-21T15:22Z through this run) is 20 lines:
+startup, and two `registration refused: verification email undeliverable`
+warnings from the blocked attempts on the 21st. The successful registration
+logged **nothing at all** — the handler logs only refusals.
+
+No SMTP password, no API key, no verification token, no activation link, no
+`Authorization` header and no JWT appears anywhere in it. This is a whole log,
+not a sample of one.
+
+```
+EMAIL SECRET LEAK CHECK: PASS
+```
+
+### Configuration of record
+
+| | |
+| --- | --- |
+| Sending domain | `mail.agentnet.io.vn` — **verified** (DKIM, SPF MX, SPF TXT, return-path CNAME) |
+| Credential | `agentnet-production-smtp` — sending access, restricted to that domain |
+| Transport | `smtp.resend.com:2465`, implicit TLS (the platform drops 465/587) |
+| Sender | `AgentNet <noreply@mail.agentnet.io.vn>` |
+| Link origin | `PUBLIC_BASE_URL=https://api.agentnet.io.vn` — configured, not yet routable |
+| Set on | `prod-registry` only |
+
+The canary account `delivered@resend.dev` and its zero-balance wallet remain in
+production. They are the evidence; removing them would need a direct database
+write, which is the one thing this environment does not permit itself.
