@@ -108,17 +108,27 @@ document does not guess them. Copy them from:
 | --- | --- | --- | --- | --- | --- |
 | 1 | ADD | CNAME | `api` | `0m6buta9.up.railway.app` | 300 |
 | 2 | ADD | TXT | *the TXT name Railway shows for `api.agentnet.io.vn`* | *the TXT value Railway shows for it* | 300 |
-| 3 | DELETE | A | `dashboard` | `139.180.143.222` | — |
-| 4 | ADD | CNAME | `dashboard` | `b0vdfe25.up.railway.app` | 300 |
-| 5 | ADD | TXT | *the TXT name Railway shows for `dashboard.agentnet.io.vn`* | *the TXT value Railway shows for it* | 300 |
+| 3 | ADD | TXT | *the TXT name Railway shows for `dashboard.agentnet.io.vn`* | *the TXT value Railway shows for it* | 300 |
+| 4 | DELETE | A | `dashboard` | `139.180.143.222` | — |
+| 5 | ADD | CNAME | `dashboard` | `b0vdfe25.up.railway.app` | 300 |
 
 Entry notes:
 
 * If ZoneDNS wants the host relative to the zone, type `api` / `dashboard`,
   and type Railway's TXT name with the zone suffix removed. Do not end up
   with `api.agentnet.io.vn.agentnet.io.vn`.
-* Rows 3 and 4 go in back to back. Between them `dashboard` does not resolve,
-  so the gap is the only moment of dashboard downtime the cutover causes.
+* Row 3 (the dashboard TXT) goes in BEFORE the swap. It sits at its own name,
+  so it can coexist with the old A record, and Railway can verify ownership
+  as soon as the CNAME lands.
+* Rows 4 and 5 go in back to back. Between them `dashboard` does not resolve,
+  and a resolver that asks during the gap may cache the negative answer up
+  to the zone's SOA minimum.
+* **The real dashboard window.** Railway can obtain the certificate only
+  after the CNAME points at it. From row 5 until the certificate is `ISSUED`
+  (A7), HTTPS visitors get a certificate error. That usually takes minutes,
+  and Railway says normally within the hour. Doing `api` first (A3) proves
+  the verification and certificate flow on this zone, and shows how long it
+  takes, before the one name people reach today is touched.
 * Not in this table, and so not to be touched: the apex, `www`, `payment`,
   `staging`, MX, NS, and every record under `mail.agentnet.io.vn` (the Resend
   DKIM, SPF and MX records that email delivery depends on).
@@ -155,11 +165,13 @@ never a Railway-generated domain.
 **A2 — merge the cutover PR** (`cutover/production-public-cors`). This is the
 IaC record, and from then on main's production file equals live again.
 
-**A3 — owner: DNS rows 1 and 2** (`api` CNAME + TXT).
+**A3 — owner: DNS rows 1 and 2** (`api` CNAME + TXT). Wait until `api`
+shows `verified: true` and certificate `ISSUED` (A6/A7 below) before touching
+`dashboard`. `api` resolves nowhere today, so nothing can break while it settles.
 
-**A4 — owner: DNS rows 3 and 4** (`dashboard` A → CNAME).
+**A4 — owner: DNS row 3** (`dashboard` TXT, alongside the still-present A record).
 
-**A5 — owner: DNS row 5** (`dashboard` TXT).
+**A5 — owner: DNS rows 4 and 5, back to back** (`dashboard` A → CNAME).
 
 **A6 — wait for ownership verification.** Railway shows each domain's DNS
 record as valid and `verified: true`. Check propagation against the
@@ -199,23 +211,25 @@ code() { curl -sS -o /dev/null -w '%{http_code}' "$@"; }
 | E1 | liveness | `code $API/healthz` | `200` |
 | E2 | readiness: DB + Redis reachable | `code $API/readyz` | `200` (a `503` names only `db`/`redis`, nothing more) |
 | E3 | dashboard liveness | `code $DASH/healthz` | `200` |
-| E4 | dashboard renders | `code $DASH/` | `200`, HTML |
+| E4 | dashboard renders | `code $DASH/` then `code -L $DASH/` | `302` to `/metaverse` (the root redirects), then `200` HTML after following it |
 | E5 | TLS: valid chain + hostname | `curl -sS -o /dev/null $API/healthz && curl -sS -o /dev/null $DASH/healthz` (no `-k`) | both succeed |
 | E6 | TLS: certificate detail | `openssl s_client -connect api.agentnet.io.vn:443 -servername api.agentnet.io.vn </dev/null 2>/dev/null \| openssl x509 -noout -issuer -enddate -ext subjectAltName` (same for `dashboard`) | Let's Encrypt issuer; SAN names the host; `notAfter` in the future |
 | E7 | HTTP → HTTPS | `curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' http://api.agentnet.io.vn/healthz` (same for `dashboard`) | a 30x to `https://…`. A `200` over plain http is a FINDING to record, not a pass |
-| E8 | HSTS | `curl -sSI $API/healthz \| grep -i strict-transport` | `max-age=31536000; includeSubDomains` |
+| E8 | HSTS | `curl -sS -o /dev/null -D - $API/healthz \| grep -i strict-transport` (a GET: `curl -I` sends HEAD, which the API answers 405) | `max-age=31536000; includeSubDomains` |
 | E9 | CORS admits the dashboard origin | `curl -sS -o /dev/null -D - -X OPTIONS $API/v1/auth/user/login -H 'Origin: https://dashboard.agentnet.io.vn' -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: content-type'` | `200`; `access-control-allow-origin: https://dashboard.agentnet.io.vn`; `access-control-allow-credentials: true` |
 | E10 | CORS refuses any other origin | same, with `-H 'Origin: https://evil.example'` | `400`; **no** `access-control-allow-origin` header |
 | E11 | anonymous mutation refused | `code -X POST $API/v1/agents/ -H 'content-type: application/json' -d '{"name":"edge-probe","description":"x","capabilities":["x"],"endpoint":"https://example.com/h","public_key":"x"}'` | `401`/`403`/`404`, never 2xx (the same expectation as validator SEC01) |
 | E12 | garbage bearer refused | `code $API/v1/agents/ -H 'Authorization: Bearer not-a-real-token'` | `401`/`403` |
-| E13 | XFF / X-Real-IP spoof at the edge | `code $API/healthz -H 'X-Forwarded-For: 203.0.113.9, 198.51.100.9' -H 'X-Real-IP: 198.51.100.7'`, then Railway → prod-registry → HTTP logs for that request | `200`, and the logged source IP is the caller's real address, not `198.51.100.7`/`203.0.113.9` |
+| E13 | forged XFF / X-Real-IP served normally | `code $API/healthz -H 'X-Forwarded-For: 203.0.113.9, 198.51.100.9' -H 'X-Real-IP: 198.51.100.7'`, then Railway → prod-registry → HTTP logs for that request | `200`, and the edge logged the caller's real address, not the forged values |
 | E14 | payment is not public | `code https://payment.agentnet.io.vn/healthz` | not served by Railway: the name still points at the VPS until Stage B. `dig` shows no `up.railway.app` target |
-| E15 | no secret-shaped content | fetch `/`, `/healthz`, `/readyz`, `/openapi.json`, `/metrics` and `$DASH/` and grep for `eyJ[A-Za-z0-9_-]{10,}\.`, `re_[A-Za-z0-9]{16,}`, `-----BEGIN`, `postgres(ql)?://`, `redis://`, `SMTP_PASSWORD`, `JWT_SECRET`, `railway.internal`, `sk-` | no match |
+| E15 | no secret-shaped content | fetch `/`, `/healthz`, `/readyz`, `/openapi.json`, `/metrics` and `$DASH/metaverse` and grep for `eyJ[A-Za-z0-9_-]{10,}\.`, `re_[A-Za-z0-9]{16,}`, `-----BEGIN`, `postgres(ql)?://`, `redis://`, `SMTP_PASSWORD`, `JWT_SECRET`, `railway.internal`, `sk-` | no match |
 
-E13 checks only the property the edge controls: which address it logs and
-forwards. It deliberately does not burst. The rate-limit bucket proof, same
-edge, same code and same `TRUST_X_REAL_IP=true`, is the staging spoof test
-(`docs/RAILWAY_STAGING.md` §11). By owner instruction it is not re-driven
+E13 shows only the edge's own view of the caller, and that forged headers
+don't break serving. The registry doesn't log client addresses, so E13
+cannot show which address reached the app. That property, and the
+rate-limit bucket that depends on it, is proven by the staging spoof test
+(`docs/RAILWAY_STAGING.md` §11): same edge, same code, same
+`TRUST_X_REAL_IP=true`. By owner instruction the burst is not re-driven
 against production.
 
 **Known exposure, not a blocker.** Once `api` resolves, three routes become
@@ -237,8 +251,15 @@ The dashboard has no signup or login page. Those routes were removed before
 the Railway move and render as inert `#` links. So the signup goes through the
 public API directly. The only browser step is clicking the link.
 
-```bash
-python3 - <<'PY'
+Save the script as a file and run it with `python3 signup.py`. Don't pipe it
+through `python3 -` with a heredoc: stdin would then be the script itself,
+and the first prompt would fail with `EOFError`. Type the address in
+lowercase. Registration normalises the stored address, but login compares
+what you type, so a mixed-case domain fails login with `401` even though the
+account exists.
+
+```python
+# signup.py
 import getpass, json, urllib.request, urllib.error
 API = "https://api.agentnet.io.vn"
 def call(method, path, body=None, token=None):
@@ -251,7 +272,7 @@ def call(method, path, body=None, token=None):
             return r.status, json.loads(r.read() or b"null")
     except urllib.error.HTTPError as e:
         return e.code, None
-email = input("your own inbox address: ").strip()
+email = input("your own inbox address (lowercase): ").strip().lower()
 pw = getpass.getpass("new password (>=12, upper+lower+digit): ")
 print("register ->", call("POST", "/v1/auth/user/register", {"email": email, "password": pw})[0], "(expect 201)")
 print("login before verify ->", call("POST", "/v1/auth/user/login", {"email": email, "password": pw})[0], "(expect 403)")
@@ -262,7 +283,6 @@ print("login after verify ->", status, "(expect 200; token", "issued" if jwt els
 if jwt:
     s, tasks = call("GET", "/v1/tasks/", token=jwt)
     print("authenticated task list ->", s, "empty" if tasks == [] else "NOT EMPTY", "(expect 200 empty)")
-PY
 ```
 
 | Step | PASS |
@@ -270,7 +290,7 @@ PY
 | register | `201`. Registration is atomic with delivery, so a 201 means SMTP accepted the message |
 | login before verify | `403` |
 | the message | arrives from `AgentNet <noreply@mail.agentnet.io.vn>`; the link starts with `https://api.agentnet.io.vn/v1/auth/verify-email?token=` |
-| clicking the link | the browser shows `{"ok": true, "message": "verified"}` over a valid certificate |
+| clicking the link | the browser shows `{"ok":true,"message":"verified"}` over a valid certificate. If it shows `400` instead, a mail link scanner may have used the single-use link first. That is not a FAIL as long as the next row passes |
 | clicking it again | `400` "Invalid or expired token" (single use) |
 | login after verify | `200`, token issued (never printed) |
 | authenticated read | `200`, an empty task list |
