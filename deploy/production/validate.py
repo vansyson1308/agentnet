@@ -40,6 +40,43 @@ CANARY_PREFIX = "prod-canary"
 #: repository's integration tests already use.
 CANARY_DOMAIN = "example.com"
 
+#: ...which is no longer what the smoke canary uses. A canary registration
+#: sends a real verification email whenever delivery is live, and `example.com`
+#: publishes a null MX: every such send is a guaranteed bounce, and bounces
+#: count against the sending domain's reputation with the provider. So the
+#: canary is ALWAYS a sink -- Resend's simulated-delivery address, which accepts
+#: a `+label`, records the send as delivered and reaches no human -- whatever
+#: `--email-delivery` says. That flag is the operator's CLAIM about production;
+#: if it is wrong or missing, the address must still be harmless. With delivery
+#: disabled nothing is sent, and the sink is just as valid a refused address.
+#: Another provider's sink can be named with CANARY_EMAIL_SINK.
+LIVE_CANARY_SINK = "delivered@resend.dev"
+
+#: Registration blocks on SMTP delivery when it is live, so the probe must
+#: outlast the registry's own SMTP path; a shorter client timeout reports its
+#: own status 0 and hides the API's real answer (validate_email_flow.py).
+REGISTRATION_TIMEOUT_SECONDS = 90.0
+
+
+def live_canary_sink() -> str:
+    """The sink both validators send canaries to (CANARY_EMAIL_SINK or Resend's)."""
+    return os.getenv("CANARY_EMAIL_SINK", "").strip() or LIVE_CANARY_SINK
+
+
+def labelled_sink(sink: str, label: str) -> str:
+    """`delivered@resend.dev` + `x` -> `delivered+x@resend.dev`.
+
+    A fresh label per run matters: an address can register only once, so a
+    fixed canary makes every run after the first fail on its own leftovers.
+    """
+    local, _, domain = sink.partition("@")
+    return f"{local}+{label}@{domain}"
+
+
+def canary_email(suffix: str) -> str:
+    """The smoke canary for this run: always a labelled sink, never a real domain."""
+    return labelled_sink(live_canary_sink(), f"{CANARY_PREFIX}-{suffix}")
+
 #: Names that must NOT exist on any production service. Checked by NAME only --
 #: values are never read, printed or compared (Phase 7 §9, §34, §35).
 FORBIDDEN_PRODUCTION_VARS = (
@@ -162,14 +199,15 @@ def check_society_absent(report: Report, registry: str, variable_names: List[str
 def check_core_smoke(report: Report, registry: str, *, email_delivery: str) -> None:
     """Registration, auth and the escrow round trip, with canary identities."""
     suffix = uuid.uuid4().hex[:10]
-    email = f"{CANARY_PREFIX}-{suffix}@{CANARY_DOMAIN}"
+    email = canary_email(suffix)
     # Built from short fragments and a fresh uuid rather than written as a
     # literal: a password-shaped string in a tracked file is exactly what the
     # repository's own secret scan refuses, and it is right to.
     canary_pw = "Pc" + uuid.uuid4().hex[:14].capitalize() + "1!"
 
     status, payload = _http("POST", f"{registry}/v1/auth/user/register",
-                            body={"email": email, "password": canary_pw})
+                            body={"email": email, "password": canary_pw},
+                            timeout=REGISTRATION_TIMEOUT_SECONDS)
     report.record("smoke.canary_email", email)
 
     if email_delivery == "disabled":

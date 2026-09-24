@@ -16,3 +16,10 @@ The file refuses to render for any environment other than `staging`. Everything 
 (generated domains, Wait for CI, watch paths, restart policy, pre-deploy timeout) is listed in
 `docs/RAILWAY_STAGING.md`. Config-as-code (`railway.toml` / `railway.json`) is deprecated by Railway
 (hard cutoff 2026-12-01) and is deliberately not used.
+
+`production.ts` describes the **production** environment and refuses any other. It declares the live
+environment resource for resource (`prod-*` services, both data volumes, every variable; secrets only as
+references or `preserve()`), because in a one-file project **omitting a resource or variable deletes it on
+apply**. Plan it with `railway config plan --file .railway/production.ts` and read the plan before anything
+else: the expected result is 0 to add, 0 to change, and at most one destroy (`prod-validator`, an operator
+instrument). See `docs/PRODUCTION_RUNBOOK.md` and ADR-0008 D13.

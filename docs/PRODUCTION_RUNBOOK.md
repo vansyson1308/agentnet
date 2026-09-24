@@ -1,39 +1,61 @@
 # Production runbook (dark)
 
 Production is a **dark** environment: real, isolated, running, and reachable
-only on Railway-generated domains. DNS has not moved. `agentnet.io.vn` and its
-subdomains are untouched.
+from nowhere outside Railway's private network. **No service has a public
+domain** -- not even a Railway-generated one. DNS has not moved.
+`agentnet.io.vn` and its web subdomains are untouched; only the mail subdomain
+`mail.agentnet.io.vn` (Resend sending domain) is in use.
 
 ## Topology
 
 ```
-production environment (Railway)
-├── Postgres     private, NEW, no staging data
-├── Redis        private, NEW
-├── registry     PUBLIC (Railway-generated domain) — owns migrations
-├── payment      private
-├── worker       private
-└── dashboard    PUBLIC (Railway-generated domain)
+production environment (Railway)            source: branch `production`, Wait for CI ON
+├── prod-postgres   private  image postgres-ssl:18, volume prod-postgres-volume (/var/lib/postgresql/data)
+├── prod-redis      private  image redis:8.2, volume prod-redis-volume (/data), requirepass fail-closed
+├── prod-registry   private until DNS  — owns migrations (pre-deploy), the future public API
+├── prod-payment    private  forever
+├── prod-worker     private  forever
+├── prod-dashboard  private until DNS  — the future public UI
+└── prod-validator  private  operator instrument, not part of the application (see "Validation")
 ```
 
-No `society-worker`. No `staging-validator`. No simulation. No Jaeger. No
-volumes — so production redeploys are zero-downtime (a volume would force brief
-downtime even with a healthcheck; ADR-0008 D5).
+No `society-worker`. No `staging-validator`. No simulation. No Jaeger. The four
+application services have no volume, so their redeploys are zero-downtime (a
+volume would force brief downtime even with a healthcheck; ADR-0008 D5).
 
 Services reach each other over the environment's own private network as
-`SERVICE.railway.internal`. Each environment has an isolated network, so
-production cannot address staging and vice versa.
+`prod-<service>.railway.internal`. Each environment has an isolated network, so
+production cannot address staging and vice versa. Railway services are
+project-wide: the unprefixed `registry`, `payment`, `worker`, `dashboard`,
+`Postgres`, `Redis` are **staging's** services and must never be named in the
+production IaC.
 
-## Bring-up
+## Infrastructure as Code
 
-Declared in `.railway/production.ts`, which refuses any environment but
-`production`:
+`.railway/production.ts` declares exactly what is live (ADR-0008 D13) and
+refuses any environment but `production`. **Read the plan before any apply** --
+in a one-file Railway project, omitting a resource or a variable DELETES it:
 
 ```bash
 railway link --project AgentNet --environment production
-railway config plan  --config .railway/production.ts   # preview first
-railway config apply --config .railway/production.ts
+railway config plan  --file .railway/production.ts    # must show 0 add / 0 change
+railway config apply --file .railway/production.ts    # never with --confirm-destructive unless the plan was read
 ```
+
+The expected plan against today's environment is **0 to add, 0 to change, 1 to
+destroy**: the one destroy is `prod-validator`, which is deliberately not part
+of the declared application. Anything else in the plan -- above all any line
+touching `prod-postgres`, `prod-redis`, a volume, a `*_PASSWORD` or
+`SMTP_*` variable -- means the file and the environment have drifted; stop and
+reconcile instead of applying. (No Railway CLI token is available to the
+automation that maintains this repository, so the recorded plan is an offline
+evaluation of the file with the real `railway/iac` SDK against a live snapshot;
+ADR-0008 D13.)
+
+Declared since the SDK can express them: Wait for CI (`checkSuites: true`),
+watch paths, restart policy, region, the Redis start command and both volumes.
+Not declared, on purpose: public domains (there are none while dark) and the
+values of secrets.
 
 ### Secrets (create once, never read back)
 
@@ -47,18 +69,43 @@ openssl rand -hex 32 | railway variable set FLASK_SECRET_KEY     --stdin
 openssl rand -hex 32 | railway variable set INTERNAL_WORKER_TOKEN --stdin
 ```
 
-**Recommended owner hardening:** seal these three in the dashboard (variable →
-3-dot menu → *Seal*). A sealed value is supplied to builds and deployments but
-can never be read back through the UI or the API. Sealing is one-way and is a
-UI action, so it is not applied by automation here (ADR-0008 D9).
+`POSTGRES_PASSWORD` (prod-postgres) and `REDIS_PASSWORD` (prod-redis) were
+generated once inside Railway; every consumer references them. The IaC declares
+them as `preserve()`, so no plan can re-generate or overwrite them.
 
-### Settings not expressible in IaC
+`SMTP_PASSWORD` (prod-registry) is **owner-managed**: the Resend sending key,
+restricted to `mail.agentnet.io.vn`, pasted by the owner directly into Railway.
+It is never in git, never in chat, never read back; the IaC declares it as
+`preserve()`. If it is ever absent or wrong, registration fails **closed** --
+503, nothing committed -- because registration is atomic with delivery. To
+rotate it: create a new domain-restricted sending key in Resend, paste it into
+`prod-registry → Variables → SMTP_PASSWORD`, let the registry redeploy, run the
+email-flow validator, then revoke the old key.
 
-Set once after apply:
+**Recommended owner hardening:** seal the shared secrets and `SMTP_PASSWORD` in
+the dashboard (variable → 3-dot menu → *Seal*). A sealed value is supplied to
+builds and deployments but can never be read back through the UI or the API.
+Sealing is one-way and is a UI action, so it is not applied by automation here
+(ADR-0008 D9).
 
-* generated public domains for **registry** and **dashboard** only;
-* **Wait for CI = ON** for all four application services;
-* Postgres/Redis remain **no public networking** (the default — do not add a TCP proxy).
+### CORS while dark, and the exact change at the DNS cutover
+
+`CORS_ALLOWED_ORIGINS` on prod-registry and prod-payment is
+`http://prod-dashboard.railway.internal:8080`: an origin no browser can
+present, so it admits nothing, while satisfying both services' refusal to start
+without an explicit list. The dashboard itself calls the registry server-side
+over private DNS and needs no CORS at all.
+
+At the DNS cutover -- and only once the dashboard's public custom domain is
+attached and serving -- change, in `.railway/production.ts` and live, in one
+reviewed change:
+
+```
+DARK_CORS_ORIGIN  ->  https://<the dashboard's public custom domain>
+```
+
+Nothing else in the file moves for CORS. Do not invent the domain ahead of the
+owner's decision, and never use `*`.
 
 ## What must never be here
 
@@ -101,15 +148,33 @@ claimed to be.
 
 ## Validation
 
+Production has no public domain, so validation runs **inside** its private
+network, from `prod-validator`: a non-public service built from the registry
+image, restart policy NEVER, which clones `$VALIDATOR_REF` at start and runs
+one validator. Its only credentials are references to the Postgres/Redis
+passwords (the Redis auth check and the verification-token read need them); the
+rest of its variables are non-secret -- private URLs, the production variable
+NAMES, and `EMAIL_DELIVERY_PROVIDER` as a reference to the registry's. It has no
+model credential, no GitHub credential and no SMTP password.
+
 ```bash
+# core: health, exposure, Society absence, name audit, smoke, security, Redis auth
 python deploy/production/validate.py \
-  --registry https://<generated> --dashboard https://<generated> \
-  --var-names "$(railway variables --kv | cut -d= -f1 | paste -sd,)" \
-  --email-delivery disabled
+  --registry "$PROD_REGISTRY_URL" --dashboard "$PROD_DASHBOARD_URL" \
+  --var-names "$PROD_VAR_NAMES"          # EMAIL_DELIVERY_PROVIDER = ${{prod-registry.EMAIL_DELIVERY_PROVIDER}}
+# the account path: register -> deliver -> verify -> login -> authenticated reads
+python deploy/production/validate_email_flow.py --registry "$PROD_REGISTRY_URL" --payment "$PROD_PAYMENT_URL"
 ```
 
-Reports health, network exposure, Society absence, the secret-name audit, the
-core smoke path and the email-delivery contract. It reports and never repairs.
+Both report and never repair. Every canary is a fresh
+`delivered+<label>@resend.dev` address -- Resend's simulated-delivery sink --
+never `example.com`, whose null MX would turn each run into a bounce against
+the sending domain's reputation. The address does not depend on
+`--email-delivery`, so a wrong or missing value cannot make it a real one.
+
+To run one: point the start command at the validator, then change any variable
+(e.g. `VALIDATION_RUN`) so Railway creates a NEW deployment -- a *redeploy*
+replays the previous deployment, start command included (ADR-0008 D12).
 
 ## Email delivery / public signup
 
@@ -192,7 +257,7 @@ the release gate refuses migrations without explicit owner acknowledgement.
 
 ## Boundaries
 
-* **DNS**: unchanged. Railway-generated domains only, and they are validation
-  surfaces — not advertised, not linked publicly, no custom domain.
+* **DNS**: unchanged. No public domain of any kind -- not even a
+  Railway-generated one -- and no custom domain until the owner's DNS cutover.
 * **A2A**: untouched.
 * **Production Society**: OFF, and refused by `config.py` in production.

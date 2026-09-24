@@ -106,18 +106,23 @@ configured otherwise fails at startup instead of running.
 registry, and nothing else. That secret stays on `prod-payment`, which is the
 only service that needs it.
 
-## 6. Owner actions still outstanding
+## 6. Owner actions — both DONE (verified 2026-09-24)
 
-Neither is settable from an engineering session; both are recorded rather than
-claimed as done.
+This section once listed two owner actions as outstanding. Both were completed
+by the owner and are verified live, read-only:
 
-1. **Apply `deploy/github/production-ruleset.json`** to protect the
-   `production` branch. Until then the branch has no ruleset. The command and
-   the two deliberate differences from `main` are in `deploy/github/README.md`.
-2. **Enable Wait for CI** on the four application services. Verified off:
-   `checkSuites: false`. The `on: push` trigger for `production` that makes the
-   gate meaningful is already in `.github/workflows/ci.yml` (CI run 167 ran on
-   the branch), so this is a single dashboard toggle per service.
+1. **The `production` branch ruleset is active** (ruleset `23748786`): target
+   `refs/heads/production`, bypass list empty, pull request required with
+   thread resolution, deletion and non-fast-forward blocked, and the six CI
+   jobs as strict required status checks. One drift from
+   `deploy/github/production-ruleset.json`: live `allowed_merge_methods`
+   includes `rebase`, which the file (and its test) forbid. Rebase is never
+   used for a release -- the release PR is merged with a merge commit, whose
+   tree the gate verifies -- but the owner should remove `rebase` to make the
+   rule structural rather than procedural.
+2. **Wait for CI is ON** for all four application services
+   (`checkSuites: true`), and is now declared in `.railway/production.ts`
+   (ADR-0008 D13).
 
 ## 7. What is NOT proven here
 
