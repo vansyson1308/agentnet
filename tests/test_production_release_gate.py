@@ -485,10 +485,15 @@ def test_production_iac_never_holds_a_secret_value():
     assert "SMTP_PASSWORD: preserve()," in ts
     assert "POSTGRES_PASSWORD: preserve()," in ts
     assert "REDIS_PASSWORD: preserve()," in ts
+    # EVERY occurrence, whatever its quoting: one correct declaration must not
+    # vouch for a literal on another service.
+    allowed = ("preserve()", "ctx.shared.", "db.env.", "cache.env.", '"${{')
     for name in ("SMTP_PASSWORD", "POSTGRES_PASSWORD", "REDIS_PASSWORD", "JWT_SECRET_KEY",
                  "FLASK_SECRET_KEY", "INTERNAL_WORKER_TOKEN", "PGPASSWORD", "REDISPASSWORD"):
-        for value in re.findall(rf"\b{name}: (\"[^\"]*\")", ts):
-            assert value.startswith('"${{'), f"{name} must be a reference or preserve(), not {value[:6]}..."
+        values = re.findall(rf"\b{name}\s*:\s*(\S+)", ts)
+        assert values, f"{name} is not declared at all (an omitted variable is DELETED on apply)"
+        for value in values:
+            assert value.startswith(allowed), f"{name} must be a reference or preserve(), not {value[:6]}..."
     for secret in ("JWT_SECRET_KEY", "FLASK_SECRET_KEY", "INTERNAL_WORKER_TOKEN"):
         assert f"{secret}: ctx.shared.{secret}" in ts
 

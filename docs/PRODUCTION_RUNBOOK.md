@@ -151,9 +151,11 @@ claimed to be.
 Production has no public domain, so validation runs **inside** its private
 network, from `prod-validator`: a non-public service built from the registry
 image, restart policy NEVER, which clones `$VALIDATOR_REF` at start and runs
-one validator. It holds references to the Postgres/Redis credentials (the
-Redis auth check and the verification-token read need them) and nothing else;
-it has no model credential, no GitHub credential and no SMTP password.
+one validator. Its only credentials are references to the Postgres/Redis
+passwords (the Redis auth check and the verification-token read need them); the
+rest of its variables are non-secret -- private URLs, the production variable
+NAMES, and `EMAIL_DELIVERY_PROVIDER` as a reference to the registry's. It has no
+model credential, no GitHub credential and no SMTP password.
 
 ```bash
 # core: health, exposure, Society absence, name audit, smoke, security, Redis auth
@@ -164,10 +166,11 @@ python deploy/production/validate.py \
 python deploy/production/validate_email_flow.py --registry "$PROD_REGISTRY_URL" --payment "$PROD_PAYMENT_URL"
 ```
 
-Both report and never repair. With delivery live, every canary is a fresh
+Both report and never repair. Every canary is a fresh
 `delivered+<label>@resend.dev` address -- Resend's simulated-delivery sink --
 never `example.com`, whose null MX would turn each run into a bounce against
-the sending domain's reputation.
+the sending domain's reputation. The address does not depend on
+`--email-delivery`, so a wrong or missing value cannot make it a real one.
 
 To run one: point the start command at the validator, then change any variable
 (e.g. `VALIDATION_RUN`) so Railway creates a NEW deployment -- a *redeploy*

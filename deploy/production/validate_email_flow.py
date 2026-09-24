@@ -48,7 +48,7 @@ from typing import Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from validate import Report, _http, labelled_sink  # noqa: E402  (deliberate: same directory)
+from validate import Report, _http, labelled_sink, live_canary_sink  # noqa: E402  (deliberate: same directory)
 
 #: Resend's simulated-delivery address. It accepts and records a real send
 #: without a human inbox, which is what a production canary should use.
@@ -62,7 +62,7 @@ def fresh_canary_email() -> str:
     same default on any later run would answer "already registered" at E01 and
     report a production failure that is the validator's own leftover.
     """
-    return labelled_sink(DEFAULT_CANARY_EMAIL, f"prod-email-{uuid.uuid4().hex[:10]}")
+    return labelled_sink(live_canary_sink(), f"prod-email-{uuid.uuid4().hex[:10]}")
 
 #: Registration blocks on SMTP delivery, so it needs a timeout longer than the
 #: registry's own (``SMTP_TIMEOUT_SECONDS``, 15s by default) multiplied by the

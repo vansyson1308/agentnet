@@ -116,6 +116,7 @@ def test_every_run_registers_a_fresh_sink_address(monkeypatch):
     first fail at E01 on the validator's own leftover account."""
     module = _load()
     monkeypatch.delenv("CANARY_EMAIL", raising=False)
+    monkeypatch.delenv("CANARY_EMAIL_SINK", raising=False)
     first, second = module.fresh_canary_email(), module.fresh_canary_email()
     assert first != second
     for address in (first, second):
@@ -127,22 +128,46 @@ def test_the_default_address_is_the_fresh_one_not_the_bare_sink():
     assert "args.email = fresh_canary_email()" in SOURCE
 
 
-def test_live_delivery_never_mails_a_null_mx_domain(monkeypatch):
-    """With delivery live, a canary on example.com (null MX) is a guaranteed
-    bounce against the sending domain's reputation. Disabled delivery sends
-    nothing, so example.com stays the right canary there."""
+def test_both_validators_send_canaries_to_the_same_sink(monkeypatch):
+    """After a provider change, one CANARY_EMAIL_SINK must move both."""
     from deploy.production.validate import canary_email
 
+    module = _load()
+    monkeypatch.setenv("CANARY_EMAIL_SINK", "sink@provider.example")
+    assert canary_email("abc123") == "sink+prod-canary-abc123@provider.example"
+    assert module.fresh_canary_email().startswith("sink+prod-email-")
+    assert module.fresh_canary_email().endswith("@provider.example")
+
+
+def test_the_smoke_canary_never_mails_a_null_mx_domain(monkeypatch):
+    """A canary on example.com (null MX) is a guaranteed bounce against the
+    sending domain's reputation whenever delivery is live. The address does not
+    depend on the operator's --email-delivery claim, so a wrong or missing
+    claim cannot turn it back into a bounce."""
+    import inspect
+
+    from deploy.production import validate
+
     monkeypatch.delenv("CANARY_EMAIL_SINK", raising=False)
-    assert canary_email("disabled", "abc123") == "prod-canary-abc123@example.com"
-    live = canary_email("smtp", "abc123")
-    assert live == "delivered+prod-canary-abc123@resend.dev"
-    assert not live.endswith("@example.com")
-    monkeypatch.setenv("CANARY_EMAIL_SINK", "sink@provider.test")
-    assert canary_email("smtp", "abc123") == "sink+prod-canary-abc123@provider.test"
+    assert validate.canary_email("abc123") == "delivered+prod-canary-abc123@resend.dev"
+    assert list(inspect.signature(validate.canary_email).parameters) == ["suffix"]
+    smoke = inspect.getsource(validate.check_core_smoke)
+    assert "CANARY_DOMAIN" not in smoke and "example.com" not in smoke
+    assert "email = canary_email(suffix)" in smoke
 
 
-def test_the_live_sink_address_is_acceptable_to_the_registration_api():
+def test_the_smoke_registration_outlasts_the_registrys_smtp_path():
+    """With live delivery the smoke registration blocks on SMTP too; a 20s probe
+    would report its own status 0 instead of the API's answer."""
+    import inspect
+
+    from deploy.production import validate
+
+    assert validate.REGISTRATION_TIMEOUT_SECONDS >= 60
+    assert "timeout=REGISTRATION_TIMEOUT_SECONDS" in inspect.getsource(validate.check_core_smoke)
+
+
+def test_the_sink_address_is_acceptable_to_the_registration_api(monkeypatch):
     """A canary the API rejects on SYNTAX proves nothing (the Phase 7 lesson)."""
     from pydantic import BaseModel, EmailStr
 
@@ -151,6 +176,7 @@ def test_the_live_sink_address_is_acceptable_to_the_registration_api():
     class _Addr(BaseModel):
         email: EmailStr
 
-    for delivery in ("disabled", "smtp"):
-        address = canary_email(delivery, "abc123")
+    monkeypatch.delenv("CANARY_EMAIL_SINK", raising=False)
+    monkeypatch.delenv("CANARY_EMAIL", raising=False)
+    for address in (canary_email("abc123"), _load().fresh_canary_email()):
         assert _Addr(email=address).email == address
