@@ -118,11 +118,17 @@ domain `mail.agentnet.io.vn`. The credential is a **send-only** Resend key
 restricted to that domain; it is set directly in Railway and has never been
 read, printed or committed.
 
-**Status as of 2026-09-21:** transport is proven (login, MAIL FROM and RCPT TO
-all accepted on port 2465) but the domain is `partially_verified` -- DKIM and
-the return-path CNAME verify, the SPF pair does not yet -- so Resend refuses
-the send and registration still answers 503. Public human signup is therefore
-still blocked, and still blocked *honestly*: nothing half-created.
+**Status as of 2026-09-24: PROVEN LIVE.** `mail.agentnet.io.vn` is fully
+verified and the whole flow ran against production -- register -> AgentNet's own
+message delivered -> verify -> replay rejected -> login -> authenticated reads,
+11/11 checks, exit 0. `docs/PRODUCTION_DARK_PROOF.md` §12 has the record.
+
+The account path is therefore READY. What is still not true is that a human on
+the internet can complete it: the link the message carries points at
+`https://api.agentnet.io.vn`, which does not resolve, because the web DNS
+cutover has not happened. The proof consumed the token over the private
+validator path instead. **Mail transport readiness and public clickability are
+different claims** -- do not let a green flow report imply the second.
 
 Registration is **atomic with delivery**: the user, wallet and verification
 token are written, delivery is attempted, and only then is the transaction

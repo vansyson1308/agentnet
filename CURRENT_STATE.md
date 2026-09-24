@@ -18,7 +18,7 @@ the code and tests win and this file is stale — fix it in the same change.
 | `main` ruleset | **ACTIVE** — configured by the owner (2026-09-19) from `deploy/github/main-ruleset.json`: pull request required, review threads resolved, the six CI jobs required and strict, no bypass actors; enforced on the Phase 4.1 PR |
 | Live model | **LIVE — OPERATIONAL; autonomous promotion NOT yet proven (Phase 6, 2026-09-20)** — the Society runs on real DeepSeek against Railway staging with `SOCIETY_RUNTIME_ENABLED=true`: 175 completed live runs, 0 non-live, 0 DEAD in the final window, $0.082 spent. Proven live: the full engineering chain from one world event to a real `CodeCandidate` (causation depth 7); multi-agent operation on a REAL `task.failed`; both approval lifecycles; operator memory refutation with an append-only audit row; the GitHub App credential minting a correctly scoped installation token (**GITHUB APP READY** ×4, installation scoped to exactly this repository, Actions secrets refused 403); the promotion controller **refusing** a `REQUEST_PR_PROMOTION` for a candidate that was not READY; the anti-busywork guard rejecting a no-op candidate before QA; `SOCIETY RED-TEAM: ALL DEFENDED` twice against live cognition. **Not** proven live: any candidate producing a real diff, and therefore no promotion record exists — see `docs/SOCIETY_LIVE_PROOF.md` §4 |
 | Staging deployment | **Railway managed staging — GREEN** (2026-09-18, `main` ae42d7a): project `AgentNet`, environment `staging`, Postgres + Redis (private), registry + dashboard on Railway-generated domains, payment / worker / society-worker private, one `society-workspace` volume, registry pre-deploy as the only migration owner (`0010_self_development`, fleet seed), `TRUST_X_REAL_IP` spoof test PASS at the live edge, Society flags OFF, scripted model only. Two consecutive full validations by the in-environment `staging-validator` (`deploy/railway/validate_staging.py`, 26 checks each, distinct operators) plus restart / persistence / rollback / secret-leak / resource proofs — `docs/RAILWAY_STAGING.md` §20. Open owner action: *Wait for CI* on each service (the flag does not persist through the connector). `docker-compose.staging.yml` remains the Compose alternative |
-| Production deployment | **DARK — deployed, private, serving nobody** (2026-09-21): Railway environment `production` (`5e23ccb2`), six services live from branch `production` @ `2adda709`. Zero public domains, zero TCP proxies, no DNS change. Two consecutive clean live validations (`PROD RESULT: OK`, 10 checks, exit 0) from an in-environment validator — `docs/PRODUCTION_DARK_PROOF.md` §10. Retired VPS artifacts stay quarantined under `deploy/legacy-vps/` |
+| Production deployment | **DARK — deployed, private, serving nobody** (2026-09-21, email flow proven 2026-09-24): Railway environment `production` (`5e23ccb2`), six services live from branch `production` @ `2adda709`. Zero public domains, zero TCP proxies, no DNS change. Four clean live validations (`PROD RESULT: OK` — 10 checks, then 20 with security + Redis auth) plus the email/account flow `PROD-EMAIL RESULT: OK (11 checks)` from an in-environment validator — `docs/PRODUCTION_DARK_PROOF.md` §10-§12. Retired VPS artifacts stay quarantined under `deploy/legacy-vps/` |
 | A2A v1 migration | **NOT STARTED** (`app/a2a.py` still emits a v0.3-shaped card; readiness plan is written only after a live-model GO) |
 | Final managed hosting | **Railway** — staging DEPLOYED AND VALIDATED (`docs/RAILWAY_STAGING.md`, ADR-0006 D12); production DEPLOYED DARK, live validation outstanding (`docs/PRODUCTION_DARK_PROOF.md`, ADR-0008) |
 
@@ -45,7 +45,15 @@ DEEPSEEK KEY PRESENT: YES (Railway society-worker only; never read, printed or c
 SOCIETY GITHUB SECRET PRESENT: NO
 WAIT FOR CI ON RAILWAY: ACTIVE (verified holding deployments through Phase 5)
 PRODUCTION DEPLOYMENT: DARK (six services live from branch `production` @ 2adda709;
-  no public surface; two consecutive clean live validations)
+  no public surface; four clean live validations)
+EMAIL DELIVERY: smtp via Resend on mail.agentnet.io.vn (domain VERIFIED, send-only
+  domain-scoped key, smtp.resend.com:2465 — the platform drops 465/587)
+EMAIL/ACCOUNT FLOW: PROVEN LIVE 2026-09-24 — register -> AgentNet's own message delivered
+  -> verify -> replay rejected -> login -> authenticated reads (11/11, exit 0)
+PUBLIC HUMAN SIGNUP BACKEND: READY
+PUBLIC INTERNET CLICKABILITY: PENDING WEB DNS CUTOVER (the link points at
+  api.agentnet.io.vn, which does not resolve; the token was consumed privately)
+EMAIL SECRET LEAK CHECK: PASS (complete registry log, not a sample)
 DNS CHANGED: NO
 A2A V1: NOT STARTED
 PRODUCTION SOCIETY: OFF
