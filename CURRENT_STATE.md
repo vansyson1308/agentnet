@@ -46,7 +46,10 @@ SOCIETY GITHUB SECRET PRESENT: NO
 WAIT FOR CI ON RAILWAY: ACTIVE (verified holding deployments through Phase 5)
 PRODUCTION DEPLOYMENT: DARK (six services live from branch `production` @ 60559d7f,
   released from main adbe0a53 through the gate; no public surface; validated 18 + 11 checks)
-PRODUCTION IaC: .railway/production.ts == live (offline plan 0 add / 0 change; ADR-0008 D13)
+PRODUCTION IaC: .railway/production.ts declares the two custom domains + the public dashboard CORS origin;
+  == live once cutover step A1 sets that origin (offline plan 1 change before A1, 0 after; ADR-0008 D13)
+PRODUCTION CUSTOM DOMAINS: CREATED ON RAILWAY, PENDING OWNER DNS — api.agentnet.io.vn -> prod-registry:8000,
+  dashboard.agentnet.io.vn -> prod-dashboard:8080; cutover not before 2026-09-24T15:22Z (docs/PRODUCTION_CUTOVER.md)
 EMAIL DELIVERY: smtp via Resend on mail.agentnet.io.vn (domain VERIFIED, send-only
   domain-scoped key, smtp.resend.com:2465 — the platform drops 465/587)
 EMAIL/ACCOUNT FLOW: PROVEN LIVE 2026-09-24 — register -> AgentNet's own message delivered

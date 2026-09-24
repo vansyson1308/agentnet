@@ -90,22 +90,22 @@ Sealing is one-way and is a UI action, so it is not applied by automation here
 
 ### CORS while dark, and the exact change at the DNS cutover
 
-`CORS_ALLOWED_ORIGINS` on prod-registry and prod-payment is
-`http://prod-dashboard.railway.internal:8080`: an origin no browser can
-present, so it admits nothing, while satisfying both services' refusal to start
-without an explicit list. The dashboard itself calls the registry server-side
-over private DNS and needs no CORS at all.
+While dark, `CORS_ALLOWED_ORIGINS` on prod-registry and prod-payment is
+`http://prod-dashboard.railway.internal:8080`. No browser can present that
+origin, so it admits nothing, but it satisfies both services' refusal to
+start without an explicit list. The dashboard itself calls the registry
+server-side over private DNS and needs no CORS at all.
 
-At the DNS cutover -- and only once the dashboard's public custom domain is
-attached and serving -- change, in `.railway/production.ts` and live, in one
-reviewed change:
+The cutover change sets prod-registry to the dashboard's public origin. It is
+declared in `.railway/production.ts` (`PUBLIC_DASHBOARD_ORIGIN`) and applied
+live as Stage A step A1 of `docs/PRODUCTION_CUTOVER.md`:
 
 ```
-DARK_CORS_ORIGIN  ->  https://<the dashboard's public custom domain>
+prod-registry CORS_ALLOWED_ORIGINS  ->  https://dashboard.agentnet.io.vn
 ```
 
-Nothing else in the file moves for CORS. Do not invent the domain ahead of the
-owner's decision, and never use `*`.
+prod-payment keeps the private-only value (`PRIVATE_ONLY_CORS_ORIGIN`), because
+payment never becomes public. Never use `*`, and never a Railway-generated domain.
 
 ## What must never be here
 
@@ -257,7 +257,10 @@ the release gate refuses migrations without explicit owner acknowledgement.
 
 ## Boundaries
 
-* **DNS**: unchanged. No public domain of any kind -- not even a
-  Railway-generated one -- and no custom domain until the owner's DNS cutover.
+* **DNS**: unchanged until the owner's cutover (`docs/PRODUCTION_CUTOVER.md`).
+  Railway holds exactly two custom domains: `api.agentnet.io.vn` → prod-registry
+  and `dashboard.agentnet.io.vn` → prod-dashboard. They route nothing until the
+  owner publishes the DNS records. There is no Railway-generated domain and no
+  TCP proxy, and payment, worker, Postgres and Redis have no domain at all.
 * **A2A**: untouched.
 * **Production Society**: OFF, and refused by `config.py` in production.

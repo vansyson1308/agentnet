@@ -508,20 +508,44 @@ def test_production_iac_waits_for_ci_on_every_app_service():
         assert f'...app("services/{svc}")' in ts
 
 
-def test_production_iac_exposes_nothing_publicly_while_dark():
-    """No custom domain, no TCP proxy: production is dark until the DNS cutover,
-    and payment/worker/Postgres/Redis stay private forever."""
+def test_production_iac_exposes_exactly_the_two_public_domains():
+    """Exactly api -> registry:8000 and dashboard -> dashboard:8080, created on
+    Railway before the DNS cutover. An undeclared custom domain is DELETED on
+    apply; any other exposure (a TCP proxy, a Railway service domain, a domain
+    on payment/worker/Postgres/Redis) is a new public surface."""
+    import re
+
     ts = _prod_ts()
-    for exposure in ("domains:", "tcp:", "tcpProxies", "serviceDomains", "customDomains"):
+    domains = re.findall(r'domains: \[\{ domain: "([^"]+)", port: (\d+) \}\]', ts)
+    assert sorted(domains) == [("api.agentnet.io.vn", "8000"), ("dashboard.agentnet.io.vn", "8080")]
+    assert ts.count("domains:") == 2
+    registry = ts[ts.index('service("prod-registry"'):ts.index('service("prod-payment"')]
+    dashboard = ts[ts.index('service("prod-dashboard"'):]
+    assert '"api.agentnet.io.vn", port: 8000' in registry
+    assert '"dashboard.agentnet.io.vn", port: 8080' in dashboard
+    # the port a domain routes to must be the port the service listens on
+    assert 'PORT: "8000"' in registry and 'PORT: "8080"' in dashboard
+    for exposure in ("tcp:", "tcpProxies", "serviceDomains", "customDomains"):
         assert exposure not in ts, exposure
+    for private in ("prod-payment", "prod-worker", "prod-postgres", "prod-redis"):
+        start = ts.index(f'service("{private}"')
+        end = ts.index("});", start)
+        assert "domains:" not in ts[start:end], f"{private} must stay private"
 
 
-def test_production_iac_gives_payment_the_cors_list_it_requires():
-    """Payment refuses to start outside development without an explicit list."""
+def test_production_iac_admits_only_the_public_dashboard_origin():
+    """The registry admits exactly the dashboard's public https origin; payment
+    is private and admits no browser origin, but still gets the explicit list it
+    refuses to start without. Never "*", never a Railway-generated domain."""
     ts = _prod_ts()
-    assert ts.count("CORS_ALLOWED_ORIGINS: DARK_CORS_ORIGIN,") == 2
-    assert 'const DARK_CORS_ORIGIN = "http://prod-dashboard.railway.internal:8080";' in ts
-    assert '"*"' not in ts
+    assert 'const PUBLIC_DASHBOARD_ORIGIN = "https://dashboard.agentnet.io.vn";' in ts
+    assert 'const PRIVATE_ONLY_CORS_ORIGIN = "http://prod-dashboard.railway.internal:8080";' in ts
+    registry = ts[ts.index('service("prod-registry"'):ts.index('service("prod-payment"')]
+    payment = ts[ts.index('service("prod-payment"'):ts.index('service("prod-worker"')]
+    assert "CORS_ALLOWED_ORIGINS: PUBLIC_DASHBOARD_ORIGIN," in registry
+    assert "CORS_ALLOWED_ORIGINS: PRIVATE_ONLY_CORS_ORIGIN," in payment
+    assert ts.count("CORS_ALLOWED_ORIGINS:") == 2
+    assert '"*"' not in ts and "up.railway.app" not in ts
 
 
 # ── the production validator's log scan (Phase 7 §35) ────────────────────────
