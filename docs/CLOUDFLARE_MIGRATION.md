@@ -1,8 +1,8 @@
 # Authoritative DNS: ZoneDNS → Cloudflare, and the apex on Railway
 
-**Status: PREPARED, NOT DELEGATED.** The Cloudflare zone exists in `pending`
-state with the complete final record set, SSL mode, and a prepared redirect
-rule. Nothing public has changed: ZoneDNS is still authoritative, and
+**Status: READY FOR DELEGATION (2026-09-25).** The Cloudflare zone exists in
+`pending` state with the complete final record set, SSL mode, and a prepared
+redirect rule. Both assigned nameservers serve every intended record (51/51, §10). Nothing public has changed: ZoneDNS is still authoritative, and
 production still runs `60559d7f`. The owner does one thing at Nhân Hòa: replace
 the ZoneDNS nameservers with the two Cloudflare nameservers (§7). Everything
 after that is the post-delegation sequence in §8.
@@ -35,7 +35,7 @@ routing and a certificate. Its only visible behaviour is the edge 301.
 | --- | --- | --- | --- | --- |
 | `api.agentnet.io.vn` | prod-registry:8000 | `9b1bd905-a1c3-46a6-84e5-c31d16c599d9` | `0m6buta9.up.railway.app` | `_railway-verify.api` = `railway-verify=b9d28e46f55a0dce9ed5779a71045881eb65382ed6d009b32f7345682c70bf25` |
 | `dashboard.agentnet.io.vn` | prod-dashboard:8080 | `a9d8d553-57b5-4f9d-849f-3e34a83ce636` | `b0vdfe25.up.railway.app` | `_railway-verify.dashboard` = `railway-verify=3893ac0628e856af7a2d211214d7dd3ea6e972a0639ec5759f2d3338dd96c6a2` |
-| `agentnet.io.vn` (apex) | prod-dashboard:8080 | `e9d21cc2-fe75-4cb5-9783-9c9bb8c021d5` (created 2026-09-25T04:1xZ, no redeploy) | `rfnmkrkb.up.railway.app` | name and value shown only in the Railway dashboard (§2.1) |
+| `agentnet.io.vn` (apex) | prod-dashboard:8080 | `e9d21cc2-fe75-4cb5-9783-9c9bb8c021d5` (created 2026-09-25T04:1xZ, no redeploy) | `rfnmkrkb.up.railway.app` | `_railway-verify` = `railway-verify=43bfe3f41ff59f899b2fd3fbe398555a53d19640b2873ea0a8bc9bcbf461c16d` (§2.1) |
 
 The api and dashboard TXT values were copied byte-for-byte from the
 authoritative ZoneDNS answers (`AA` set, one string segment each), not typed.
@@ -56,14 +56,15 @@ cannot be derived.
 Source of truth: Railway → AgentNet → **production** → **prod-dashboard** →
 Settings → Networking → `agentnet.io.vn`. The record goes into the Cloudflare
 zone as `TXT <name Railway shows> "<value Railway shows>"`, DNS-only, TTL Auto.
-It is public DNS data, not a credential.
+It is public DNS data, not a credential. The owner read it from that panel on
+2026-09-25, and it was loaded as record `681af9d00909019c07aa3de53212f1a3`.
 
 ## 3. The record set (Cloudflare zone, loaded before delegation)
 
 | Type | Name | Content | Proxy | Purpose |
 | --- | --- | --- | --- | --- |
 | CNAME | `@` | `rfnmkrkb.up.railway.app` | **proxied** | apex → prod-dashboard (Cloudflare flattens the apex CNAME) |
-| TXT | *apex name from Railway* | *apex value from Railway* | — | Railway ownership for the apex (§2.1) |
+| TXT | `_railway-verify` | `railway-verify=43bfe3f4…61c16d` (full value §2) | — | Railway ownership for the apex |
 | CNAME | `api` | `0m6buta9.up.railway.app` | **proxied** | prod-registry |
 | TXT | `_railway-verify.api` | `railway-verify=b9d28e46…70bf25` (full value §2) | — | Railway ownership |
 | CNAME | `dashboard` | `b0vdfe25.up.railway.app` | **proxied** | prod-dashboard compatibility host (edge 301 to apex) |
@@ -332,9 +333,14 @@ Both `aarav` and `leanna.ns.cloudflare.com` were queried directly:
 * **Result 49/51.** The two failures are the apex ownership TXT, absent on both
   nameservers (§2.1).
 
+**Final pre-delegation proof, deployment `7eb4cc88`, 2026-09-25T07:47Z**, after
+the apex TXT was loaded: both nameservers serve `_railway-verify` exactly, and
+every other check above repeats. **Result 51/51:
+`CLOUDFLARE PRE-DELEGATION DNS: PASS`.** SOA serial `2415808028`.
+
 **Cloudflare API state.**
-* 9 of the 10 intended records are loaded. The tenth is the apex ownership TXT
-  (§2.1).
+* All 10 intended records are loaded. The apex ownership TXT was added after
+  the owner supplied it (§2.1).
 * Proxied: `@`, `api`, `dashboard`. DNS only: `rsend.mail`.
 * Rulesets: only the redirect entrypoint (1 rule, disabled) and Cloudflare's
   default managed sets. No cache, custom firewall, rate-limit, transform or

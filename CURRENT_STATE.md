@@ -49,8 +49,8 @@ PRODUCTION DEPLOYMENT: PUBLIC ON api + dashboard (branch `production` @ 60559d7f
 PRODUCTION IaC: .railway/production.ts declares api -> prod-registry:8000, agentnet.io.vn +
   dashboard.agentnet.io.vn -> prod-dashboard:8080, and the FINAL CORS origin https://agentnet.io.vn;
   merged only after the post-delegation CORS change (offline plan today: 1 change = that CORS value)
-PRODUCTION CUSTOM DOMAINS: api (VALID), dashboard (VALID), apex agentnet.io.vn (CREATED 2026-09-25,
-  pending DNS: Railway ownership TXT + Cloudflare delegation)
+PRODUCTION CUSTOM DOMAINS: api (VALID), dashboard (VALID), apex agentnet.io.vn (CREATED 2026-09-25;
+  CNAME + ownership TXT loaded in Cloudflare, verifies after the delegation)
 CLOUDFLARE ZONE: PENDING (3a07bbdc..., Free, NS aarav/leanna.ns.cloudflare.com), full record set loaded,
   SSL Full, Universal SSL on, dashboard->apex 301 rule prepared (disabled), DNSSEC off
 EMAIL DELIVERY: smtp via Resend on mail.agentnet.io.vn (domain VERIFIED, send-only
