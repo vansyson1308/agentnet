@@ -1,18 +1,24 @@
 # Authoritative DNS: ZoneDNS → Cloudflare, and the apex on Railway
 
-**Status: READY FOR DELEGATION (2026-09-25).** The Cloudflare zone exists in
-`pending` state with the complete final record set, SSL mode, and a prepared
-redirect rule. Both assigned nameservers serve every intended record (51/51, §10). Nothing public has changed: ZoneDNS is still authoritative, and
-production still runs `60559d7f`. The owner does one thing at Nhân Hòa: replace
-the ZoneDNS nameservers with the two Cloudflare nameservers (§7). Everything
-after that is the post-delegation sequence in §8.
+**Status: DELEGATED AND ACTIVE; the apex waits on Railway's ownership check (2026-09-25).**
+The owner moved the nameservers to Cloudflare, and the zone went `active` at
+07:57:22Z. Universal SSL is live. `https://api.agentnet.io.vn` and
+`https://dashboard.agentnet.io.vn` serve through Cloudflare. Public signup and
+email verification pass 11/11 through the edge, the security and identity tests
+pass, and no production service was redeployed (§10.1).
+
+Railway has not yet verified the apex custom domain (`VALIDATING_OWNERSHIP`),
+so `https://agentnet.io.vn` still answers 404 from Railway. Until it passes,
+§8 steps 5–8 are on hold: the apex check, the dashboard→apex 301, the CORS
+cutover to the apex and the IaC merge. Everything they need is in place and
+publicly visible.
 
 | | |
 | --- | --- |
 | Why | the apex `https://agentnet.io.vn` has no HTTPS listener. ZoneDNS serves it with a URL-redirect A record (`103.28.36.94`) that answers only on port 80. ZoneDNS offers no apex CNAME/ALIAS, so Railway cannot serve the apex while ZoneDNS is authoritative |
 | Registrar | **Nhân Hòa**, unchanged. No transfer. Only the delegation (NS) changes |
 | Cloudflare account | `5e30088859e3aaa23f829fc8c072ce60` ("Sonnv.hd34@gmail.com's Account"). It is the only account the connector can reach, and it holds the `sofa-proxy` and `bongda365` Workers |
-| Zone | `agentnet.io.vn`, id `3a07bbdcc045e2388a2f1023f353cb95`, type `full`, plan **Free Website**, created 2026-09-25T04:13Z, status `pending` |
+| Zone | `agentnet.io.vn`, id `3a07bbdcc045e2388a2f1023f353cb95`, type `full`, plan **Free Website**, created 2026-09-25T04:13Z, status **`active`** since 2026-09-25T07:57:22Z |
 | Assigned nameservers | **`aarav.ns.cloudflare.com`**, **`leanna.ns.cloudflare.com`** |
 | Production runtime | branch `production` @ `60559d7f`, frozen. No release is part of this migration |
 
@@ -102,8 +108,9 @@ migration does not create one.
 | Rocket Loader, Polish, Mirage, Always Online | off | defaults, untouched |
 | Cache | default (`cache_level: aggressive` = standard, no cache rules) | no Cache Everything. Dynamic `/v1/*`, auth, wallet, tasks and health responses are not cached by default |
 | Bot Fight Mode, Under Attack, WAF custom rules, Access, Turnstile, rate limiting, Workers, Pages, R2, KV, D1 | none | only the Free managed ruleset and L7 DDoS, both present by default |
+| Browser Integrity Check | zone default `on`; **off for `api.agentnet.io.vn` only** | a configuration rule added after activation, because BIC blocked non-browser API clients (§4.2) |
 
-### 4.1 Redirect rule (prepared, disabled)
+### 4.1 Redirect rule (prepared, disabled until the apex serves 200)
 
 Zone ruleset `bc20463c0b2b4630b12322e06f46c7bf`, phase
 `http_request_dynamic_redirect`, rule `83096c03992c49e281a0d11d137de729`
@@ -123,6 +130,29 @@ It is created **disabled**. The first post-delegation step enables it once the
 apex answers 200 over HTTPS. Enabled at delegation, it would send every
 dashboard user to an apex that Railway may not have verified yet. A 301 is also
 cached by browsers, so it must not point at a broken target even briefly.
+
+### 4.2 Configuration rule: Browser Integrity Check off for the API host only
+
+Zone ruleset `94f0bf6b232b44f8ac4a0dd396ef9d81`, phase `http_config_settings`,
+rule `b2071e0ea2f54190bceabf34d204f97a` (`ref: api_no_bic`), added
+2026-09-25T08:13Z:
+
+```
+when   http.host eq "api.agentnet.io.vn"
+then   set_config  bic: false
+```
+
+Found by measurement, not assumed. After activation, public registration
+through `https://api.agentnet.io.vn` answered **403** to the email-flow
+validator (deployment `44da21ba`, E01). Cloudflare's GraphQL analytics
+attributed it to `securitySource: bic`. Browser Integrity Check is on by
+default on every zone. It challenges requests whose User-Agent looks
+non-browser, and a JSON API is called by exactly such clients: SDKs, agents,
+`curl`, Python. The registry has its own authentication and rate limiter, so
+BIC adds nothing there and breaks legitimate API clients. The rule turns it off
+for the API host only. The apex and `dashboard.*` keep the zone default (`on`),
+and nothing else changed: no WAF, rate-limiting or bot product was added. The
+re-run (deployment `fae33b11`) passed 11/11.
 
 ## 5. DNSSEC / DS gate
 
@@ -217,32 +247,31 @@ target (§11).
     no TCP proxy.
 14. **Secrets.** A log and response scan finds no credential.
 
-### 8.1 Client identity through Cloudflare: prediction and fix path
+### 8.1 Client identity through Cloudflare: measured, not predicted
 
 The registry trusts only `X-Real-IP`, set by Railway's edge
-(`app/proxy_headers.py`, `TRUST_X_REAL_IP=true`). Railway's edge sets it to
-the TCP peer. Once Cloudflare proxies a name, the peer is a **Cloudflare edge
-address**, so:
+(`app/proxy_headers.py`, `TRUST_X_REAL_IP=true`). The pre-delegation version of
+this section predicted that, once Cloudflare proxied a name, Railway's edge
+would see a Cloudflare address as the peer and every client behind one
+Cloudflare egress would share a rate-limit bucket. **The measurement
+(2026-09-25, deployment `02d50b82`) disproved that prediction.** Railway's
+edge recognises the Cloudflare hop and sets `X-Real-IP` to the real client:
 
-* **Spoofing stays closed.** A client-supplied `X-Real-IP`,
-  `X-Forwarded-For` or `CF-Connecting-IP` is still overwritten or ignored.
-  The post-delegation test repeats the S8 identity test with all three
-  headers forged: `X-RateLimit-Remaining` must keep decrementing on one
-  bucket.
-* **Identity collapses** to Cloudflare's egress addresses. Everyone behind one
-  Cloudflare egress IP shares a rate-limit bucket. That causes false 429s under
-  load, and one abuser can drain a bucket shared with others. It is not a
-  bypass, but it is a real regression in fairness.
-* **Direct-to-origin still works.** Requests sent straight to Railway with the
-  public Host skip Cloudflare and are identified by their own address.
+| Test | What was sent | Measured |
+| --- | --- | --- |
+| I1 (through Cloudflare) | plain ×3, forged `X-Forwarded-For`, forged `X-Real-IP`, forged `True-Client-IP` | one bucket, `X-RateLimit-Remaining` 91→90→89→88→87→86, strictly decreasing: no forged header opened a fresh bucket |
+| I1 (through Cloudflare) | forged `CF-Connecting-IP`, and all headers forged at once | **403 at the Cloudflare edge**: the request never reaches the origin |
+| I2 | Cloudflare path, then direct to the Railway origin with the public Host, then Cloudflare again | 85, 84 → 83, 82 → 81: **the same bucket** on both paths, so the Cloudflare path is keyed on the real client address, not on a Cloudflare egress |
+| I3 (direct to origin) | plain, then forged `CF-Connecting-IP`, `True-Client-IP`, `X-Real-IP`, `X-Forwarded-For`, all at once, plain | one bucket 80→74, strictly decreasing: a direct caller cannot choose an identity either |
 
-If the post-delegation test confirms the collapse, the fix is a runtime change
-through the normal release gate, not a header allow-list. Trust
-`CF-Connecting-IP` **only** when the Railway-set `X-Real-IP` falls in
-Cloudflare's published ranges, pinned in the repository. Keep `X-Real-IP`
-otherwise, so a direct-to-origin caller cannot pick an identity. Test both
-paths. Whether the collapse blocks the LIVE verdict is decided on the measured
-result, not assumed here.
+So spoofing stays closed on both paths, identity does not collapse, and no
+code change or header allow-list is needed. The registry keeps trusting only
+the Railway-set `X-Real-IP`. `CF-Connecting-IP` is not read anywhere, and a
+forged one is refused before the origin. If Railway ever stops recognising
+the Cloudflare hop, I2 is the test that shows it: the two paths would land in
+different buckets. The fix would then be the pinned-range rule (trust
+`CF-Connecting-IP` only when the Railway-set peer is inside Cloudflare's
+published ranges), shipped through the release gate.
 
 ### 8.2 Post-delegation test matrix (prepared; run from prod-validator, which has real egress)
 
@@ -268,8 +297,9 @@ result, not assumed here.
 | S3 | malformed JSON body | 4xx (422/400), no stack trace |
 | S4 | `/docs`, `/openapi.json`, `/metrics` | recorded as today (public). No new exposure |
 | S5 | response bodies and headers | no secret-shaped value (the validator's L1 scan) |
-| I1 | 5 requests on one connection: plain, then forged `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`, and all three | `X-RateLimit-Remaining` strictly decreasing by 1: one identity, never a fresh bucket |
-| I2 | the same from a second egress (a direct-to-origin request with the public Host, if reachable) | its own bucket, independent of I1 |
+| I1 | through Cloudflare: plain, then forged `X-Forwarded-For`, `X-Real-IP`, `True-Client-IP`, `CF-Connecting-IP`, and all at once | accepted requests strictly decreasing `X-RateLimit-Remaining` (one identity, never a fresh bucket); a forged `CF-Connecting-IP` may be refused at the edge (403) |
+| I2 | Cloudflare path, then direct to the Railway origin with the public Host, then Cloudflare again | recorded: the same bucket means the Cloudflare path is keyed on the real client (§8.1) |
+| I3 | direct to the origin with every header forged | one bucket strictly decreasing: the origin path is not spoofable either |
 | E1 | fresh signup with a new address | registered → email from `noreply@mail.agentnet.io.vn` → link on `https://api.agentnet.io.vn` → verified → login 200 |
 | E2 | Resend domain `mail.agentnet.io.vn` | `verified`; the E1 message `delivered` |
 | P1 | Railway: payment, worker, Postgres, Redis | no domain, no TCP proxy |
@@ -352,6 +382,95 @@ dashboard `f2339d74`, payment `80dd8d66`, worker `42f2afba`, postgres
 domain shows `DNS_RECORD_STATUS_REQUIRES_UPDATE` / `VALIDATING_OWNERSHIP`,
 which is expected before delegation.
 
+### 10.1 Post-delegation evidence (2026-09-25)
+
+**Delegation.** The owner replaced `ns1`–`ns4.zonedns.vn` at Nhân Hòa with
+exactly `aarav` + `leanna.ns.cloudflare.com` (replaced, not added alongside).
+All eight parent servers `a`–`h.dns-servers.vn` delegate to the two Cloudflare
+NS, with a delegation **TTL of 43200 s (12 h)**. There is still no DS at the
+parent.
+
+**Activation.** The zone became `active` at **2026-09-25T07:57:22Z**. The
+Universal SSL pack `99a75511…` (Let's Encrypt, `agentnet.io.vn` +
+`*.agentnet.io.vn`, expires 2026-12-24) became `active` about five minutes
+later.
+
+**The TLS gap.** Between activation and certificate deployment (about
+07:57–08:02Z), the edge had no certificate for the zone. HTTPS handshakes to
+api and dashboard failed for those few minutes (edge probe `62319800`, 4/22).
+It resolved on its own, and no rollback was needed. The gap is inherent to
+activating a Free full-setup zone whose records are already proxied, because
+Cloudflare issues Universal SSL only after activation. For a future migration
+of a live name, keep the proxied records DNS-only through activation and switch
+proxying on once the certificate pack is `active`.
+
+**Public DNS.**
+* The first delegation probe (`92a98419`, 07:57Z) scored 53/68. The zone was
+  not yet active, so proxied names still answered DNS-only. `8.8.8.8` also
+  still served its cached ZoneDNS delegation.
+* By 08:14Z (`f4972843`), the Railway system resolver (`fd12::10`), `1.1.1.1`,
+  `8.8.8.8`, `9.9.9.9` and OpenDNS all returned the Cloudflare NS and the exact
+  apex ownership TXT.
+* Both Cloudflare NS answer SOA serial `2415808984` authoritatively. The apex
+  answers Cloudflare anycast (`104.21.48.12`, `172.67.175.181`) and
+  `_railway-verify` exactly (`d5114e5d`, 08:23Z).
+
+**The old authority is still up.** `ns1`–`ns4.zonedns.vn` still answer
+`agentnet.io.vn` authoritatively with the pre-migration zone: apex
+`A 103.28.36.94`, `NXDOMAIN` for `_railway-verify`, `NS` TTL 3600, SOA
+`2026092505`. That keeps rollback instant (§11). It also means a resolver that
+cached the old delegation before the change can keep seeing the old zone until
+that cache expires, at most the 12 h parent TTL.
+
+**Edge** (prod-validator, pinned-resolution probe, deployment `02d50b82`,
+08:10Z):
+* TLS to all three names: handshake OK, hostname match, Cloudflare Universal
+  SSL. api `/healthz` and `/readyz` 200. The dashboard is served through
+  Cloudflare.
+* S1–S6 pass: anonymous mutation 401/403, random bearer 401, malformed JSON
+  4xx without a stack trace, `/docs` `/openapi.json` `/metrics` unchanged, and
+  no secret-shaped value in 66 bodies and headers.
+* I1–I3 as in §8.1.
+
+**Signup** (deployment `fae33b11`, 08:14Z, validator source `60559d7f`):
+E01–E11 11/11 through `https://api.agentnet.io.vn`. Register 201, login before
+verification 403, the delivered token verifies (200), a replay is refused
+(400), login 200, own task list 200 and empty, a foreign task 404, own wallet
+200 with exactly one zero-balance wallet, a foreign wallet 404, an anonymous
+wallet list 401. The message from `noreply@mail.agentnet.io.vn` was
+`delivered` by Resend and landed in the Gmail inbox. The Resend domain
+`mail.agentnet.io.vn` is still `verified`: every mail record moved byte-for-byte
+and stayed DNS-only. The verification link carries its single-use token in the
+query string by design. Edge request logs may record it, but E05 proves a
+consumed token is refused.
+
+**Private services.** payment, worker, Postgres, Redis and the validator have
+no domain. There is no TCP proxy on any production service. No forbidden
+credential name appears among the variables of registry, payment or worker.
+
+**Logs.** From 07:30Z on:
+* prod-registry emitted no deploy-log lines after its 2026-09-24T23:46Z start
+  (it logs no requests).
+* prod-dashboard emitted request lines only.
+* A filter for `eyJ`, `Bearer`, `Authorization`, `token=`, `SMTP_PASSWORD`,
+  `BEGIN`, `re_`, `password` and `secret` matched **0** lines in both.
+
+**Frozen runtime.** No production application service was redeployed. registry
+`785df9b2`, dashboard `f2339d74`, payment `80dd8d66`, worker `42f2afba`,
+postgres `037a330a` and redis `a1cd9245` are all still the live deployments.
+
+**Railway apex.** Domain `e9d21cc2` stays `verified: false` /
+`CERTIFICATE_STATUS_TYPE_VALIDATING_OWNERSHIP`, so Railway answers the apex
+with 404 (A1/A2 fail).
+* Everything on the DNS side is in place and public: the proxied flattened
+  CNAME, SSL Full, and the exact TXT on every resolver measured.
+* A same-port `update-domain` was a no-op. One `retry-domain-certificate`
+  (Railway's documented non-destructive re-check) was requested at 08:24Z.
+* Railway re-checks on its own schedule and documents up to 72 h. The 12 h
+  parent TTL above bounds any stale delegation cache.
+* The redirect stays disabled and live CORS stays on the dashboard origin until
+  the apex serves 200 (§8 steps 5–7).
+
 ## 11. Rollback
 
 | Symptom after delegation | Action | Converges in |
@@ -360,4 +479,5 @@ which is expected before delegation.
 | apex broken, the rest fine | leave the redirect disabled; dashboard.* keeps serving the UI | immediate |
 | redirect misbehaves | disable rule `83096c03…` | immediate at the edge (browsers may keep a cached 301) |
 | origin TLS errors (525/526) | confirm SSL mode is `full`, not `strict` | immediate |
+| an API client is challenged or blocked at the edge | confirm configuration rule `api_no_bic` (§4.2) is enabled; check GraphQL `securitySource` for the blocking product | immediate |
 | CORS change misbehaves | set prod-registry `CORS_ALLOWED_ORIGINS` back to `https://dashboard.agentnet.io.vn` | one deployment |

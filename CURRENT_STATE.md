@@ -18,9 +18,9 @@ the code and tests win and this file is stale — fix it in the same change.
 | `main` ruleset | **ACTIVE** — configured by the owner (2026-09-19) from `deploy/github/main-ruleset.json`: pull request required, review threads resolved, the six CI jobs required and strict, no bypass actors; enforced on the Phase 4.1 PR |
 | Live model | **LIVE — OPERATIONAL; autonomous promotion NOT yet proven (Phase 6, 2026-09-20)** — the Society runs on real DeepSeek against Railway staging with `SOCIETY_RUNTIME_ENABLED=true`: 175 completed live runs, 0 non-live, 0 DEAD in the final window, $0.082 spent. Proven live: the full engineering chain from one world event to a real `CodeCandidate` (causation depth 7); multi-agent operation on a REAL `task.failed`; both approval lifecycles; operator memory refutation with an append-only audit row; the GitHub App credential minting a correctly scoped installation token (**GITHUB APP READY** ×4, installation scoped to exactly this repository, Actions secrets refused 403); the promotion controller **refusing** a `REQUEST_PR_PROMOTION` for a candidate that was not READY; the anti-busywork guard rejecting a no-op candidate before QA; `SOCIETY RED-TEAM: ALL DEFENDED` twice against live cognition. **Not** proven live: any candidate producing a real diff, and therefore no promotion record exists — see `docs/SOCIETY_LIVE_PROOF.md` §4 |
 | Staging deployment | **Railway managed staging — GREEN** (2026-09-18, `main` ae42d7a): project `AgentNet`, environment `staging`, Postgres + Redis (private), registry + dashboard on Railway-generated domains, payment / worker / society-worker private, one `society-workspace` volume, registry pre-deploy as the only migration owner (`0010_self_development`, fleet seed), `TRUST_X_REAL_IP` spoof test PASS at the live edge, Society flags OFF, scripted model only. Two consecutive full validations by the in-environment `staging-validator` (`deploy/railway/validate_staging.py`, 26 checks each, distinct operators) plus restart / persistence / rollback / secret-leak / resource proofs — `docs/RAILWAY_STAGING.md` §20. Open owner action: *Wait for CI* on each service (the flag does not persist through the connector). `docker-compose.staging.yml` remains the Compose alternative |
-| Production deployment | **PUBLIC on api + dashboard; apex pending the Cloudflare delegation** (2026-09-25): Railway environment `production` (`5e23ccb2`), six services from branch `production` @ `60559d7f` (first gated release 2026-09-24, approved `main` `adbe0a53`, tree-identical; frozen since). `https://api.agentnet.io.vn` → prod-registry and `https://dashboard.agentnet.io.vn` → prod-dashboard serve through ZoneDNS since the Stage A cutover (`docs/PRODUCTION_CUTOVER.md`): edge smoke 34/36, the two failures being the apex's missing HTTPS; public signup → Resend email → verify → login proven through `https://api.agentnet.io.vn` (11/11). The legacy VPS is retired. The apex becomes the canonical UI once the owner delegates `agentnet.io.vn` to the prepared Cloudflare zone (`docs/CLOUDFLARE_MIGRATION.md`). Zero TCP proxies, no Railway-generated domain, payment/worker/Postgres/Redis private. `.railway/production.ts` declares three domains and the final apex CORS origin (merged only after the post-delegation CORS change; ADR-0008 D13) |
+| Production deployment | **PUBLIC on api + dashboard through Cloudflare; apex pending Railway's ownership check** (2026-09-25): Railway environment `production` (`5e23ccb2`), six services from branch `production` @ `60559d7f` (first gated release 2026-09-24, approved `main` `adbe0a53`, tree-identical; frozen since). `https://api.agentnet.io.vn` → prod-registry and `https://dashboard.agentnet.io.vn` → prod-dashboard serve through ZoneDNS since the Stage A cutover (`docs/PRODUCTION_CUTOVER.md`): edge smoke 34/36, the two failures being the apex's missing HTTPS; public signup → Resend email → verify → login proven through `https://api.agentnet.io.vn` (11/11). The legacy VPS is retired. The owner delegated `agentnet.io.vn` to Cloudflare (zone active 2026-09-25T07:57Z); api/dashboard, signup and email re-proven through the edge. The apex becomes the canonical UI once Railway verifies its ownership TXT (`docs/CLOUDFLARE_MIGRATION.md` §10.1). Zero TCP proxies, no Railway-generated domain, payment/worker/Postgres/Redis private. `.railway/production.ts` declares three domains and the final apex CORS origin (merged only after the post-delegation CORS change; ADR-0008 D13) |
 | A2A v1 migration | **NOT STARTED** (`app/a2a.py` still emits a v0.3-shaped card; readiness plan is written only after a live-model GO) |
-| Final managed hosting | **Railway** — staging DEPLOYED AND VALIDATED (`docs/RAILWAY_STAGING.md`, ADR-0006 D12); production PUBLIC on api/dashboard, apex pending the Cloudflare delegation (`docs/PRODUCTION_CUTOVER.md`, `docs/CLOUDFLARE_MIGRATION.md`, ADR-0008) |
+| Final managed hosting | **Railway** — staging DEPLOYED AND VALIDATED (`docs/RAILWAY_STAGING.md`, ADR-0006 D12); production PUBLIC on api/dashboard through Cloudflare, apex pending Railway's ownership check (`docs/PRODUCTION_CUTOVER.md`, `docs/CLOUDFLARE_MIGRATION.md`, ADR-0008) |
 
 Self-development status (Phase 3). PROVEN means the mechanics are exercised by deterministic
 tests and the demo — not that any model, GitHub App or host has been connected:
@@ -50,18 +50,20 @@ PRODUCTION IaC: .railway/production.ts declares api -> prod-registry:8000, agent
   dashboard.agentnet.io.vn -> prod-dashboard:8080, and the FINAL CORS origin https://agentnet.io.vn;
   merged only after the post-delegation CORS change (offline plan today: 1 change = that CORS value)
 PRODUCTION CUSTOM DOMAINS: api (VALID), dashboard (VALID), apex agentnet.io.vn (CREATED 2026-09-25;
-  CNAME + ownership TXT loaded in Cloudflare, verifies after the delegation)
-CLOUDFLARE ZONE: PENDING (3a07bbdc..., Free, NS aarav/leanna.ns.cloudflare.com), full record set loaded,
-  SSL Full, Universal SSL on, dashboard->apex 301 rule prepared (disabled), DNSSEC off
+  CNAME + ownership TXT public through Cloudflare; Railway ownership check PENDING -> apex 404)
+CLOUDFLARE ZONE: ACTIVE since 2026-09-25T07:57Z (3a07bbdc..., Free, NS aarav/leanna.ns.cloudflare.com),
+  SSL Full, Universal SSL active, BIC off for api only, dashboard->apex 301 rule prepared (disabled), DNSSEC off
 EMAIL DELIVERY: smtp via Resend on mail.agentnet.io.vn (domain VERIFIED, send-only
   domain-scoped key, smtp.resend.com:2465 — the platform drops 465/587)
 EMAIL/ACCOUNT FLOW: PROVEN LIVE 2026-09-24 — register -> AgentNet's own message delivered
   -> verify -> replay rejected -> login -> authenticated reads (11/11, exit 0)
 PUBLIC HUMAN SIGNUP BACKEND: READY
-PUBLIC INTERNET CLICKABILITY: LIVE through https://api.agentnet.io.vn (2026-09-25, real inbox,
-  real link); the apex https://agentnet.io.vn refuses HTTPS until the Cloudflare delegation
+PUBLIC INTERNET CLICKABILITY: LIVE through https://api.agentnet.io.vn behind Cloudflare (2026-09-25,
+  11/11, real inbox, real link); the apex https://agentnet.io.vn serves HTTPS at the edge but answers
+  404 until Railway verifies its ownership TXT
 EMAIL SECRET LEAK CHECK: PASS (complete registry log, not a sample)
-DNS CHANGED: YES — api/dashboard at ZoneDNS (Stage A); nameserver move to Cloudflare PENDING (owner, Nhân Hòa)
+DNS CHANGED: YES — authoritative DNS delegated to Cloudflare by the owner (2026-09-25); ZoneDNS retired
+  from the delegation, its zone untouched as the rollback target
 A2A V1: NOT STARTED
 PRODUCTION SOCIETY: OFF
 LEGACY FILE BACKLOG: RETIRED FROM ACTIVE RUNTIME
