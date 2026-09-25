@@ -104,7 +104,7 @@ prod-registry CORS_ALLOWED_ORIGINS  =  https://dashboard.agentnet.io.vn   (until
 ```
 
 The **live value** since 2026-09-25T13:06Z (deployment `34bd9c7b`, same
-`60559d7f` source) is the canonical UI at the apex, declared in
+`60559d7f` source; carried into the `95830331` release, registry `8c903a22`) is the canonical UI at the apex, declared in
 `.railway/production.ts` as `PUBLIC_UI_ORIGIN`. It was applied after the
 Cloudflare delegation, once the apex served the dashboard over HTTPS
 (`docs/CLOUDFLARE_MIGRATION.md` §10.2):

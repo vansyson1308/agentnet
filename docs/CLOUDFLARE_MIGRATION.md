@@ -1,19 +1,18 @@
 # Authoritative DNS: ZoneDNS → Cloudflare, and the apex on Railway
 
-**Status: CANONICAL CUTOVER COMPLETE (2026-09-25); PUBLIC LAUNCH BLOCKED on two registry defects (§10.2).**
-Cloudflare is authoritative and active. Railway verified all three custom
-domains. `https://agentnet.io.vn` serves the production dashboard.
-`dashboard.agentnet.io.vn` answers 301 to the apex, keeping the path and query.
-Live CORS admits exactly `https://agentnet.io.vn` (registry deployment
-`34bd9c7b`, same `60559d7f` source).
+**Status: PUBLIC PRODUCTION LIVE (2026-09-25).** Cloudflare is authoritative
+and active. Railway verified all three custom domains. `https://agentnet.io.vn`
+serves the production dashboard. `dashboard.agentnet.io.vn` answers 301 to the
+apex, keeping the path and query. Live CORS admits exactly
+`https://agentnet.io.vn`.
 
-The final edge validation also found two pre-existing registry defects that
-block the LIVE verdict:
-* a rate-limit identity bypass through unverified bearer tokens;
-* request paths (object ids, scanner paths) leaking into a public `/metrics`.
+The final edge validation had found two pre-existing registry defects (§10.2):
+* a rate-limit identity bypass through unverified bearer tokens (B1);
+* request paths leaking into a public `/metrics` (X1).
 
-A fix with regression tests is prepared. It ships only through the trusted
-release gate (§10.2).
+Both are closed. The fix (#43) shipped through the trusted release gate as
+`production` @ `95830331` (#44), and both were re-proven on the public edge
+(§10.3).
 
 | | |
 | --- | --- |
@@ -22,7 +21,7 @@ release gate (§10.2).
 | Cloudflare account | `5e30088859e3aaa23f829fc8c072ce60` ("Sonnv.hd34@gmail.com's Account"). It is the only account the connector can reach, and it holds the `sofa-proxy` and `bongda365` Workers |
 | Zone | `agentnet.io.vn`, id `3a07bbdcc045e2388a2f1023f353cb95`, type `full`, plan **Free Website**, created 2026-09-25T04:13Z, status **`active`** since 2026-09-25T07:57:22Z |
 | Assigned nameservers | **`aarav.ns.cloudflare.com`**, **`leanna.ns.cloudflare.com`** |
-| Production runtime | branch `production` @ `60559d7f`, frozen. No release is part of this migration |
+| Production runtime | branch `production` @ `60559d7f` during the migration (no release was part of it); `95830331` since the B1/X1 security release (§10.3) |
 
 ## 1. Final architecture
 
@@ -511,17 +510,17 @@ No other production service was redeployed.
 and describe routes only. There are no debug or admin endpoints (`/debug`,
 `/admin`, `/v1/debug`, `/.env`, `/config` all 404).
 
-**The fix** is prepared, with regression tests; nothing is pushed or released yet:
+**The fix** was prepared with regression tests (at this point nothing was pushed or released):
 * **Rate limiter:** only a JWT the registry signed and that has not expired
   names a bucket (keyed on its subject). Anything unverified falls back to
   the edge-reported peer address at the default tier.
 * **Metrics:** labels come from the route table (`<unmatched>` otherwise).
   `/metrics` is not served when `ENVIRONMENT=production`.
 
-The eight new tests fail on the current code and pass on the fix; the full
-suite passes. It ships through the normal gate: PR → CI → main → staging
-evidence → `deploy/production/release.py`. The LIVE verdict waits for that
-release and a re-run of B1 and X1.
+The new tests fail on the current code and pass on the fix, and the full
+suite passes. The fix shipped through the normal gate: PR → CI → main →
+staging evidence → `deploy/production/release.py`. §10.3 records the release
+and the re-run of B1 and X1.
 
 **Signup and email after the cutover** (validator deployment `3accd540`, source
 `60559d7f`, 13:20Z, a fresh canary address, all through
@@ -536,6 +535,102 @@ Resend shows the message ("Verify your AgentNet email address", sender
 `AgentNet <noreply@mail.agentnet.io.vn>` per IaC) as `delivered`.
 The Resend domain `mail.agentnet.io.vn` is still `verified`, and each record
 (DKIM, MX, SPF, return path) is `verified`.
+
+### 10.3 Security closure release (2026-09-25)
+
+**Source.**
+* #42 (docs/IaC, `6d00af9a`) and #43 (the B1/X1 fix, `57dab99c`) merged to
+  `main` through the ruleset.
+* **FINAL_MAIN_SHA = `57dab99c0c8f38cd6f0958b65bc3e5283e281422`**, pinned.
+* Main CI run `36144428064`: success, six jobs.
+* Diff from production `60559d7f`: 12 files. The runtime part is
+  `services/registry/app/api/rate_limiter.py` and
+  `services/registry/app/health.py` only (payment, worker and dashboard: 0
+  files). The rest is the #42 IaC declaration, docs and tests. The service
+  diff is byte-identical to the reviewed patch.
+
+**Gate.**
+* `release.py` without `--allow-sensitive` refused on exactly one category,
+  `release_machinery` (`.railway/production.ts`, the #42 declaration).
+* Every other check passed: target on `main`, main CI green, no freeze.
+* Staging evidence:
+  * registry deployed the target itself (staging `b2a72e6f`, SUCCESS);
+  * payment, worker and dashboard subtrees are unchanged.
+* Re-run with the owner's scoped acknowledgement and `--execute` to create
+  `release/prod-57dab99c0c8f`, whose tree equals the target tree
+  (`ec2dae95`).
+* #44 into `production`: PR CI `36146838123` green, merged with a merge
+  commit (`95830331`, parents `60559d7f` + `57dab99c`), tree `ec2dae95` =
+  target.
+* Production push CI `36148686204`: success.
+
+**Deploy.**
+* Wait for CI held prod-registry `8c903a22` (WAITING 14:37Z) until CI
+  succeeded. It then built and reached `SUCCESS` at 14:55:07Z after
+  `/readyz`. The migration step was a no-op.
+* prod-payment, prod-worker, prod-dashboard and prod-validator were
+  `SKIPPED` by their watch paths, so no unchanged service was redeployed.
+* Rollback target: registry `34bd9c7b` (source `60559d7f`, apex CORS).
+
+**B1/X1 re-proof, run first** (validator deployment `be9f8d5c`, 15:05Z,
+public edge), **10/10**:
+
+| Check | Result |
+| --- | --- |
+| B1 `GET /` | 5 distinct unverified bearers (random 24/1/80 chars, a forged HS256 "agent" JWT and an `alg=none` "agent" JWT), interleaved with plain requests on one connection. **One** bucket: limit 100, remaining 99 → 89, exactly −1 per request |
+| B1 login | same sequence on `POST /v1/auth/user/login` with an empty body (422, no credential is ever tried): one bucket, 88 → 78 |
+| B1 register | same on `POST /v1/auth/user/register` (422, no account is created): one bucket, 77 → 67 |
+| B1 tier | every unverified request stays at the default tier (100); the agent tier (300) is never granted |
+| X1 | `/metrics`, `/metrics/` and `/metrics?x=1` all return 404 with no Prometheus payload. The apex does not proxy it |
+| Society | public `/v1/society/status` reports `runtime_enabled=false` |
+
+The probe was dry-run first against the real middleware. The released
+limiter passed 10/10. The pre-release limiter (`60559d7f`) failed every B1
+check: separate buckets, and the 300 tier for short garbage tokens. No load
+was used; counters are the evidence.
+
+**Full edge suite** (validator `c8a27846`, 15:11Z): **40/40**.
+* Apex, TLS, redirect, CORS and the security checks all pass.
+* B1 passes. Identity checks I1 and I3 pass: forged `X-Forwarded-For`,
+  `X-Real-IP` and `True-Client-IP` are ignored, and a forged
+  `CF-Connecting-IP` is refused at the edge.
+* X1 returns 404.
+* No secret-shaped value appears in 142 response bodies and headers.
+
+**Signup** (validator `85f01a11`, source `95830331`, 15:14Z, fresh canary
+address): **11/11**.
+* Register 201. Login before verification 403.
+* The delivered token verifies (200), and a replay is refused (400).
+* Login 200. A foreign task 404. Own wallet 200 (one wallet at zero). A
+  foreign wallet 404. Anonymous wallet list 401.
+
+Resend shows the message as `delivered`, and `mail.agentnet.io.vn` is still
+`verified`.
+
+**Audits.**
+* **Private services:** payment, worker, Postgres and Redis have no domain
+  and no TCP proxy. The registry has only `api.*`; the dashboard only the
+  apex and `dashboard.*`.
+* **Secret audit:** clean for the new registry deployment and the live
+  payment, worker and dashboard deployments. The registry logs no requests,
+  and Railway's HTTP log records paths without query strings, so the
+  verification token never appears. No JWT, Authorization header, SMTP
+  password, Resend key, DB/Redis password, GitHub or model credential.
+* **Society boundary:** there is no production Society service. No model or
+  GitHub credential variable exists on prod-registry. The Society runtime is
+  inert (`runtime_enabled=false`), auto-merge is declared `false` and
+  promotion `disabled`. The staging Society is untouched: its only change is
+  the routine auto-deploy of `main`.
+
+**Non-blocking follow-ups (not part of the LIVE verdict):**
+* the dashboard still runs `flask run`; move it to a WSGI server;
+* the owner should remove `rebase` from the `production` ruleset's allowed
+  merge methods, since releases always use a merge commit;
+* enable DNSSEC and publish the DS record at Nhân Hòa (§9).
+
+Also observed: the Railway origin is reachable directly, bypassing
+Cloudflare (I2). That path shares the client's rate-limit bucket (I3), so it
+is not an identity bypass.
 
 ## 11. Rollback
 
