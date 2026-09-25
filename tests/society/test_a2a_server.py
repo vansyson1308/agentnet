@@ -285,6 +285,32 @@ def test_free_skill_full_lifecycle_projects_economic_states(a2a, pair, db):
     assert "history" not in got
 
 
+def test_a_start_and_confirm_between_observations_still_records_working(a2a, pair, db, SessionLocal):
+    """COMPLETED is reachable only through IN_PROGRESS, so the durable event
+    log must show WORKING even when no projection ran while the callee was
+    working (the streaming flake: SUBMITTED -> COMPLETED)."""
+    from services.registry.app.a2a import store
+    from services.registry.app.task_service import confirm_task_completion, start_task
+
+    caller, callee, tok, ctok = pair
+    task = ok(send(a2a, tok, callee.id, _msg(data={}, metadata={"skillId": "echo"})))["task"]
+    sid = _session_for(db, task["id"])
+    s = SessionLocal()
+    try:  # straight through task_service: nothing observes the in-between state
+        start_task(db=s, task_id=sid, callee_agent=s.merge(callee))
+        confirm_task_completion(db=s, callee_agent=s.merge(callee), task_id=sid, output={"text": "fast"})
+    finally:
+        s.close()
+    got = ok(rpc(a2a, "GetTask", {"id": task["id"], "tenant": str(callee.id)}, tok))
+    assert got["status"]["state"] == "TASK_STATE_COMPLETED"
+    db.expire_all()
+    log = [
+        payload["status"]["state"] if kind == "status" else "artifact"
+        for _, kind, payload in store.events_after(db, uuid.UUID(task["id"]), 0)
+    ]
+    assert log == ["TASK_STATE_SUBMITTED", "TASK_STATE_WORKING", "artifact", "TASK_STATE_COMPLETED"], log
+
+
 def test_failure_and_timeout_map_to_failed_with_a_structured_message(a2a, pair, db):
     caller, callee, tok, ctok = pair
     task = ok(send(a2a, tok, callee.id, _msg(data={}, metadata={"skillId": "echo"})))["task"]

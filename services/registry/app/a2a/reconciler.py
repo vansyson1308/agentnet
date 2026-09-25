@@ -87,6 +87,12 @@ def apply_projection(db: Session, task: A2ATask) -> bool:
     if target == mapping.WORKING:
         store.set_state(db, task, mapping.WORKING)
     elif target == mapping.COMPLETED:
+        if task.state == mapping.SUBMITTED:
+            # A TaskSession reaches COMPLETED only through IN_PROGRESS
+            # (task_contract.ALLOWED_TRANSITIONS); a fast callee can start and
+            # confirm between two observations, so record the start that
+            # really happened instead of skipping it in the event log.
+            store.set_state(db, task, mapping.WORKING)
         store.add_artifact(db, task, mapping.artifact_from_output(session.output))
         store.set_state(db, task, mapping.COMPLETED, mapping.agent_message(str(task.id), str(task.context_id), "completed", _COMPLETED_TEXT))
     elif target in (mapping.FAILED, mapping.CANCELED):
