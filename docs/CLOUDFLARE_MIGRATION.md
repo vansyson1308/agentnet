@@ -135,10 +135,27 @@ stale, the delegation change cannot produce SERVFAIL. Cloudflare DNSSEC is
 The pending zone is served by the two assigned nameservers before delegation.
 The proof queries **both** of them directly, never a recursive resolver, for
 every name in §3, and compares each answer with the table
-(`CLOUDFLARE PRE-DELEGATION DNS`). Proxied names answer with Cloudflare
-anycast A/AAAA addresses, not the CNAME. That is how the proxy works, and the
-CNAME target is checked through the API instead. The recorded result is in
-§10.
+(`CLOUDFLARE PRE-DELEGATION DNS`).
+
+While the zone is **pending**, Cloudflare serves proxied records DNS-only.
+`api` and `dashboard` answer with their plain CNAME to the Railway target. The
+apex answers with the flattened A record of `rfnmkrkb.up.railway.app` (Railway's
+edge, `69.46.46.47` when measured), not with Cloudflare anycast addresses.
+Proxying begins at activation, and the post-delegation check D3 then expects
+anycast answers. The proxied flag itself is verified through the API.
+
+Consequence for the delegation window: between the NS change and activation,
+a resolver that already follows Cloudflare reaches Railway directly.
+`api` and `dashboard` keep working that way, because their Railway certificates
+are valid. The apex works once Railway has verified its ownership TXT. This
+is one more reason the redirect rule stays disabled until the apex is proven.
+Activation can be requested early through the API (`activation_check`) once the
+parent shows the new NS.
+
+A Free zone that stays **pending for 28 days is deleted automatically**
+(Cloudflare, *Pending nameservers*). If the delegation is postponed that long,
+the zone and its records must be recreated, and the assigned nameservers may
+change. The recorded result is in §10.
 
 ## 7. The owner action
 
@@ -265,7 +282,69 @@ That is a separate change, never mixed into the delegation.
 
 ## 10. Recorded evidence
 
-*Filled in by the preparation run. See the final section of this document's commit.*
+All DNS evidence was captured from **prod-validator** (Railway egress), because
+the operator sandbox's DNS is intercepted: an authoritative query there comes
+back SERVFAIL without the AA bit. Public DNS data only. No secret was read or
+printed.
+
+**ZoneDNS truth, deployment `476ace83`, 2026-09-25T04:18–04:34Z.** Every name
+was queried non-recursively at `ns1`–`ns4.zonedns.vn`. ZoneDNS drops many UDP
+queries, so each answer is taken from the servers that replied with `AA`.
+
+| Name | Authoritative answer (TTL 300 unless noted) |
+| --- | --- |
+| apex | `A 103.28.36.94` (URL redirect), `NS ns1–4.zonedns.vn` (3600), `SOA ns1.zonedns.vn … 2026092505`; no TXT, MX, CAA or AAAA |
+| `api` | `CNAME 0m6buta9.up.railway.app` |
+| `dashboard` | `CNAME b0vdfe25.up.railway.app` |
+| `_railway-verify.api` / `.dashboard` | the two TXT values of §2, one string each |
+| `resend._domainkey.mail` | TXT, 4 strings that concatenate to the 218-char key; byte-identical to Resend |
+| `send.mail` | `MX 10 feedback-smtp.us-east-1.amazonses.com`, `TXT "v=spf1 include:amazonses.com ~all"` |
+| `rsend.mail` | `CNAME send.forge.rmta.net` |
+| `mail` | exists, no data (NODATA) |
+| `www`, `payment`, `staging`, `_railway-verify` (apex), `_dmarc`, `_dmarc.mail`, `_acme-challenge{,.api,.dashboard}`, `send`, `resend._domainkey`, random label | NXDOMAIN (no wildcard) |
+| AXFR | refused by all four servers |
+
+**DNSSEC gate.** All eight parent servers (`a`–`h.dns-servers.vn`, which
+serve both `io.vn` and `vn`) delegate to `ns1`–`ns4.zonedns.vn` and answer
+`DS agentnet.io.vn` authoritatively **empty**. `1.1.1.1` and `8.8.8.8` return
+no DS and no DNSKEY; ZoneDNS returns no DNSKEY. **No DS blocker.**
+
+**Current edge.** The apex answers `tcp/443` connection-refused and `tcp/80`
+open. `https://api…/healthz`, `/readyz` and `https://dashboard…/healthz`,
+`/readyz` are all 200, and both certificates are Let's Encrypt, valid to
+2026-12-24. Society flags are all off (`scripted`, `disabled`, fleet 0). Live
+CORS: the dashboard origin is allowed with credentials, while the apex and
+foreign origins get 400 with no ACAO.
+
+**Cloudflare pre-delegation proof, deployment `b58dd602`, 2026-09-25T04:41Z.**
+Both `aarav` and `leanna.ns.cloudflare.com` were queried directly:
+
+* SOA and NS authoritative (`aarav.ns.cloudflare.com. dns.cloudflare.com.`,
+  NS = exactly the two).
+* Routing, pending mode: apex `A 69.46.46.47` (= `rfnmkrkb.up.railway.app`),
+  `api CNAME 0m6buta9.up.railway.app`, `dashboard CNAME b0vdfe25.up.railway.app`.
+* `_railway-verify.api`, `_railway-verify.dashboard`, DKIM and SPF TXT exact
+  byte-for-byte. MX exact. `rsend.mail` a real CNAME (not proxied).
+* `payment`, `staging`, `www`, `_dmarc` and a random label: NXDOMAIN. No
+  `139.180.143.222` or `103.28.36.94` in any answer.
+* Parity: every carried record is identical to what ZoneDNS serves at the same
+  moment.
+* **Result 49/51.** The two failures are the apex ownership TXT, absent on both
+  nameservers (§2.1).
+
+**Cloudflare API state.**
+* 9 of the 10 intended records are loaded. The tenth is the apex ownership TXT
+  (§2.1).
+* Proxied: `@`, `api`, `dashboard`. DNS only: `rsend.mail`.
+* Rulesets: only the redirect entrypoint (1 rule, disabled) and Cloudflare's
+  default managed sets. No cache, custom firewall, rate-limit, transform or
+  origin rules; no page rules; no Worker routes.
+
+**Railway.** No production service was redeployed. registry `785df9b2`,
+dashboard `f2339d74`, payment `80dd8d66`, worker `42f2afba`, postgres
+`037a330a` and redis `a1cd9245` are all still the live deployments. The apex
+domain shows `DNS_RECORD_STATUS_REQUIRES_UPDATE` / `VALIDATING_OWNERSHIP`,
+which is expected before delegation.
 
 ## 11. Rollback
 
