@@ -97,21 +97,20 @@ start without an explicit list. The dashboard itself calls the registry
 server-side over private DNS and needs no CORS at all.
 
 Stage A of `docs/PRODUCTION_CUTOVER.md` set prod-registry to the dashboard's
-public origin. That is the **live value today** (deployment `785df9b2`,
-2026-09-24T23:46Z):
+public origin until 2026-09-25 (deployment `785df9b2`):
 
 ```
-prod-registry CORS_ALLOWED_ORIGINS  =  https://dashboard.agentnet.io.vn
+prod-registry CORS_ALLOWED_ORIGINS  =  https://dashboard.agentnet.io.vn   (until 2026-09-25)
 ```
 
-The **final value** is the canonical UI at the apex. It is declared in
-`.railway/production.ts` as `PUBLIC_UI_ORIGIN` and is applied live only after
-the Cloudflare delegation, once the apex serves the dashboard over HTTPS
-(`docs/CLOUDFLARE_MIGRATION.md` §8 step 7). The PR that declares it merges
-after that live change, never before:
+The **live value** since 2026-09-25T13:06Z (deployment `34bd9c7b`, same
+`60559d7f` source) is the canonical UI at the apex, declared in
+`.railway/production.ts` as `PUBLIC_UI_ORIGIN`. It was applied after the
+Cloudflare delegation, once the apex served the dashboard over HTTPS
+(`docs/CLOUDFLARE_MIGRATION.md` §10.2):
 
 ```
-prod-registry CORS_ALLOWED_ORIGINS  ->  https://agentnet.io.vn
+prod-registry CORS_ALLOWED_ORIGINS  =  https://agentnet.io.vn
 ```
 
 `get_cors_origins()` accepts a comma-separated list of exact origins, but no

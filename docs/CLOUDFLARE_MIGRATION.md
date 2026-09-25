@@ -1,17 +1,19 @@
 # Authoritative DNS: ZoneDNS → Cloudflare, and the apex on Railway
 
-**Status: DELEGATED AND ACTIVE; the apex waits on Railway's ownership check (2026-09-25).**
-The owner moved the nameservers to Cloudflare, and the zone went `active` at
-07:57:22Z. Universal SSL is live. `https://api.agentnet.io.vn` and
-`https://dashboard.agentnet.io.vn` serve through Cloudflare. Public signup and
-email verification pass 11/11 through the edge, the security and identity tests
-pass, and no production service was redeployed (§10.1).
+**Status: CANONICAL CUTOVER COMPLETE (2026-09-25); PUBLIC LAUNCH BLOCKED on two registry defects (§10.2).**
+Cloudflare is authoritative and active. Railway verified all three custom
+domains. `https://agentnet.io.vn` serves the production dashboard.
+`dashboard.agentnet.io.vn` answers 301 to the apex, keeping the path and query.
+Live CORS admits exactly `https://agentnet.io.vn` (registry deployment
+`34bd9c7b`, same `60559d7f` source).
 
-Railway has not yet verified the apex custom domain (`VALIDATING_OWNERSHIP`),
-so `https://agentnet.io.vn` still answers 404 from Railway. Until it passes,
-§8 steps 5–8 are on hold: the apex check, the dashboard→apex 301, the CORS
-cutover to the apex and the IaC merge. Everything they need is in place and
-publicly visible.
+The final edge validation also found two pre-existing registry defects that
+block the LIVE verdict:
+* a rate-limit identity bypass through unverified bearer tokens;
+* request paths (object ids, scanner paths) leaking into a public `/metrics`.
+
+A fix with regression tests is prepared. It ships only through the trusted
+release gate (§10.2).
 
 | | |
 | --- | --- |
@@ -110,7 +112,7 @@ migration does not create one.
 | Bot Fight Mode, Under Attack, WAF custom rules, Access, Turnstile, rate limiting, Workers, Pages, R2, KV, D1 | none | only the Free managed ruleset and L7 DDoS, both present by default |
 | Browser Integrity Check | zone default `on`; **off for `api.agentnet.io.vn` only** | a configuration rule added after activation, because BIC blocked non-browser API clients (§4.2) |
 
-### 4.1 Redirect rule (prepared, disabled until the apex serves 200)
+### 4.1 Redirect rule (enabled 2026-09-25T13:03:48Z)
 
 Zone ruleset `bc20463c0b2b4630b12322e06f46c7bf`, phase
 `http_request_dynamic_redirect`, rule `83096c03992c49e281a0d11d137de729`
@@ -126,8 +128,8 @@ then   301 -> concat("https://agentnet.io.vn", http.request.uri.path), preserve_
 mail and the verification names are untouched. The ACME path is excluded so
 Railway can still validate the compatibility host.
 
-It is created **disabled**. The first post-delegation step enables it once the
-apex answers 200 over HTTPS. Enabled at delegation, it would send every
+It was created **disabled** and enabled at 2026-09-25T13:03:48Z (ruleset
+version 2), after the apex had answered 200 over HTTPS. Enabled at delegation, it would send every
 dashboard user to an apex that Railway may not have verified yet. A 301 is also
 cached by browsers, so it must not point at a broken target even briefly.
 
@@ -470,6 +472,70 @@ with 404 (A1/A2 fail).
   parent TTL above bounds any stale delegation cache.
 * The redirect stays disabled and live CORS stays on the dashboard origin until
   the apex serves 200 (§8 steps 5–7).
+
+### 10.2 Canonical cutover and final validation (2026-09-25)
+
+**Railway.** `agentnet.io.vn` (`e9d21cc2`), `dashboard.agentnet.io.vn` and
+`api.agentnet.io.vn` are all `verified: true`, certificate `VALID`. The apex
+verified hours after delegation. Two `retry-domain-certificate` requests had
+changed nothing earlier, so the most likely cause was cached delegation data
+(parent TTL 12 h).
+
+**Phase 0**, before any mutation (probe deployment `3185d5a2`, 12:58Z):
+* TLS to all three names valid (Let's Encrypt YE2, apex + wildcard).
+* Apex `/healthz` and `/readyz` 200.
+* Apex `/` 302 → `/metaverse`, which answers 200 (8.5 kB, "J.A.R.V.I.S. —
+  Metaverse"). No loop, no Railway 404, same-origin assets 200.
+* The API's health and readiness 200.
+
+**Mutations, in order:**
+1. The redirect rule enabled (13:03:48Z).
+2. prod-registry `CORS_ALLOWED_ORIGINS=https://agentnet.io.vn`, as a variable
+   change. That was a genuine new deployment `34bd9c7b`, `SUCCESS` 13:06:51Z,
+   source `60559d7f`. The rollback target is `785df9b2`.
+
+No other production service was redeployed.
+
+**Phase 1** (probe deployment `2024e6fd`, 13:18Z), **38/40**:
+
+| Area | Result |
+| --- | --- |
+| Redirect | `http://` and `https://dashboard…/` → 301 `https://agentnet.io.vn/`; `/metaverse`, `/metaverse?x=1&y=2`, `/a/b%20c?x=1&y=2`, `http://…/x?y=2` all keep path and query; the target loads 200; api not redirected |
+| CORS | apex admitted on preflight and on a simple GET (ACAO = apex, credentials `true`, `Vary: Origin`); `https://dashboard.agentnet.io.vn` and a foreign origin refused (400, no ACAO) |
+| Security | anonymous mutation 401, random bearer 401, malformed and 1.5 MiB bodies 422, anonymous object reference 404, unknown route 404, no 5xx, no secret-shaped value in 136 bodies and headers |
+| Identity (headers) | I1–I3 as in §8.1: forged `X-Forwarded-For`, `X-Real-IP`, `True-Client-IP` ignored; forged `CF-Connecting-IP` refused at the edge; the Cloudflare path and the direct path share the real client's bucket |
+| **B1: FAIL** | an **unverified** `Authorization: Bearer <random>` gets its own bucket at the agent tier (limit 300, remaining 299), each time. The caller chooses its rate-limit identity, so the limiter can be bypassed on login and register |
+| **X1: FAIL** | public `/metrics` labels requests with the **literal** path. The route-template lookup never sees `scope["route"]`, because the edge client-address middleware copies the scope. Real object UUIDs and every scanner path (`/.env`, `/.aws/credentials`, …) appear there (199 series after one day), and every new URL creates a new series |
+
+`/docs`, `/redoc` and `/openapi.json` are public by design. They carry no secret
+and describe routes only. There are no debug or admin endpoints (`/debug`,
+`/admin`, `/v1/debug`, `/.env`, `/config` all 404).
+
+**The fix** is prepared, with regression tests; nothing is pushed or released yet:
+* **Rate limiter:** only a JWT the registry signed and that has not expired
+  names a bucket (keyed on its subject). Anything unverified falls back to
+  the edge-reported peer address at the default tier.
+* **Metrics:** labels come from the route table (`<unmatched>` otherwise).
+  `/metrics` is not served when `ENVIRONMENT=production`.
+
+The eight new tests fail on the current code and pass on the fix; the full
+suite passes. It ships through the normal gate: PR → CI → main → staging
+evidence → `deploy/production/release.py`. The LIVE verdict waits for that
+release and a re-run of B1 and X1.
+
+**Signup and email after the cutover** (validator deployment `3accd540`, source
+`60559d7f`, 13:20Z, a fresh canary address, all through
+`https://api.agentnet.io.vn`): **11/11**.
+* Register 201. Login before verification 403.
+* The delivered token verifies (200), and a replay is refused (400).
+* Login 200. Own task list 200 and empty. A foreign task 404.
+* Own wallet 200 (one wallet at zero). A foreign wallet 404. Anonymous
+  wallet list 401.
+
+Resend shows the message ("Verify your AgentNet email address", sender
+`AgentNet <noreply@mail.agentnet.io.vn>` per IaC) as `delivered`.
+The Resend domain `mail.agentnet.io.vn` is still `verified`, and each record
+(DKIM, MX, SPF, return path) is `verified`.
 
 ## 11. Rollback
 
