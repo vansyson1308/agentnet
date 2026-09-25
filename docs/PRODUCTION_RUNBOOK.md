@@ -88,21 +88,35 @@ builds and deployments but can never be read back through the UI or the API.
 Sealing is one-way and is a UI action, so it is not applied by automation here
 (ADR-0008 D9).
 
-### CORS while dark, and the exact change at the DNS cutover
+### CORS: the dark value, the dashboard cutover, and the apex
 
-While dark, `CORS_ALLOWED_ORIGINS` on prod-registry and prod-payment is
+While dark, `CORS_ALLOWED_ORIGINS` on prod-registry and prod-payment was
 `http://prod-dashboard.railway.internal:8080`. No browser can present that
 origin, so it admits nothing, but it satisfies both services' refusal to
 start without an explicit list. The dashboard itself calls the registry
 server-side over private DNS and needs no CORS at all.
 
-The cutover change sets prod-registry to the dashboard's public origin. It is
-declared in `.railway/production.ts` (`PUBLIC_DASHBOARD_ORIGIN`) and applied
-live as Stage A step A1 of `docs/PRODUCTION_CUTOVER.md`:
+Stage A of `docs/PRODUCTION_CUTOVER.md` set prod-registry to the dashboard's
+public origin until 2026-09-25 (deployment `785df9b2`):
 
 ```
-prod-registry CORS_ALLOWED_ORIGINS  ->  https://dashboard.agentnet.io.vn
+prod-registry CORS_ALLOWED_ORIGINS  =  https://dashboard.agentnet.io.vn   (until 2026-09-25)
 ```
+
+The **live value** since 2026-09-25T13:06Z (deployment `34bd9c7b`, same
+`60559d7f` source) is the canonical UI at the apex, declared in
+`.railway/production.ts` as `PUBLIC_UI_ORIGIN`. It was applied after the
+Cloudflare delegation, once the apex served the dashboard over HTTPS
+(`docs/CLOUDFLARE_MIGRATION.md` §10.2):
+
+```
+prod-registry CORS_ALLOWED_ORIGINS  =  https://agentnet.io.vn
+```
+
+`get_cors_origins()` accepts a comma-separated list of exact origins, but no
+transition list is needed. The compatibility host `dashboard.agentnet.io.vn`
+is answered by a Cloudflare 301 and serves no page, so it never needs to be an
+allowed origin.
 
 prod-payment keeps the private-only value (`PRIVATE_ONLY_CORS_ORIGIN`), because
 payment never becomes public. Never use `*`, and never a Railway-generated domain.
@@ -257,10 +271,13 @@ the release gate refuses migrations without explicit owner acknowledgement.
 
 ## Boundaries
 
-* **DNS**: unchanged until the owner's cutover (`docs/PRODUCTION_CUTOVER.md`).
-  Railway holds exactly two custom domains: `api.agentnet.io.vn` → prod-registry
-  and `dashboard.agentnet.io.vn` → prod-dashboard. They route nothing until the
-  owner publishes the DNS records. There is no Railway-generated domain and no
-  TCP proxy, and payment, worker, Postgres and Redis have no domain at all.
+* **DNS**: `api` and `dashboard` are live through ZoneDNS since the Stage A
+  cutover (`docs/PRODUCTION_CUTOVER.md`). Authoritative DNS moves to Cloudflare
+  when the owner changes the nameservers at Nhân Hòa
+  (`docs/CLOUDFLARE_MIGRATION.md`). Railway holds exactly three custom domains:
+  `api.agentnet.io.vn` → prod-registry:8000, and `agentnet.io.vn` (canonical
+  UI) plus `dashboard.agentnet.io.vn` (compatibility host, redirected to the
+  apex at the edge) → prod-dashboard:8080. There is no Railway-generated domain
+  and no TCP proxy, and payment, worker, Postgres and Redis have no domain at all.
 * **A2A**: untouched.
 * **Production Society**: OFF, and refused by `config.py` in production.

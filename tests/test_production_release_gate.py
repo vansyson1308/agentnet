@@ -9,6 +9,7 @@ reach production, and that the Society cannot reach the gate at all.
 from __future__ import annotations
 
 import pathlib
+import re
 import subprocess
 
 import pytest
@@ -508,21 +509,37 @@ def test_production_iac_waits_for_ci_on_every_app_service():
         assert f'...app("services/{svc}")' in ts
 
 
-def test_production_iac_exposes_exactly_the_two_public_domains():
-    """Exactly api -> registry:8000 and dashboard -> dashboard:8080, created on
-    Railway before the DNS cutover. An undeclared custom domain is DELETED on
-    apply; any other exposure (a TCP proxy, a Railway service domain, a domain
-    on payment/worker/Postgres/Redis) is a new public surface."""
-    import re
+def _domains_of(block):
+    """(domain, port) pairs declared inside one service block, in order."""
+    start = block.find("domains: [")
+    if start == -1:
+        return []
+    end = block.index("]", start)
+    return re.findall(r'\{ domain: "([^"]+)", port: (\d+) \}', block[start:end])
 
+
+def test_production_iac_exposes_exactly_the_three_public_domains():
+    """Exactly api -> registry:8000, and the apex (canonical UI) plus the
+    dashboard compatibility host -> dashboard:8080. All three exist on Railway;
+    an undeclared custom domain is DELETED on apply, so dropping one here would
+    take it down. Any other exposure (a TCP proxy, a Railway service domain, a
+    domain on payment/worker/Postgres/Redis, www, payment, staging) is a new
+    public surface."""
     ts = _prod_ts()
-    domains = re.findall(r'domains: \[\{ domain: "([^"]+)", port: (\d+) \}\]', ts)
-    assert sorted(domains) == [("api.agentnet.io.vn", "8000"), ("dashboard.agentnet.io.vn", "8080")]
-    assert ts.count("domains:") == 2
     registry = ts[ts.index('service("prod-registry"'):ts.index('service("prod-payment"')]
     dashboard = ts[ts.index('service("prod-dashboard"'):]
-    assert '"api.agentnet.io.vn", port: 8000' in registry
-    assert '"dashboard.agentnet.io.vn", port: 8080' in dashboard
+    dashboard = dashboard[:dashboard.index("});")]
+    assert _domains_of(registry) == [("api.agentnet.io.vn", "8000")]
+    assert _domains_of(dashboard) == [("agentnet.io.vn", "8080"), ("dashboard.agentnet.io.vn", "8080")]
+    assert ts.count("domains:") == 2
+    # every declared domain, anywhere in the file
+    assert sorted(re.findall(r'\{ domain: "([^"]+)", port: (\d+) \}', ts)) == [
+        ("agentnet.io.vn", "8080"),
+        ("api.agentnet.io.vn", "8000"),
+        ("dashboard.agentnet.io.vn", "8080"),
+    ]
+    for retired in ("www.agentnet.io.vn", "payment.agentnet.io.vn", "staging.agentnet.io.vn"):
+        assert retired not in ts, retired
     # the port a domain routes to must be the port the service listens on
     assert 'PORT: "8000"' in registry and 'PORT: "8080"' in dashboard
     for exposure in ("tcp:", "tcpProxies", "serviceDomains", "customDomains"):
@@ -533,16 +550,20 @@ def test_production_iac_exposes_exactly_the_two_public_domains():
         assert "domains:" not in ts[start:end], f"{private} must stay private"
 
 
-def test_production_iac_admits_only_the_public_dashboard_origin():
-    """The registry admits exactly the dashboard's public https origin; payment
-    is private and admits no browser origin, but still gets the explicit list it
-    refuses to start without. Never "*", never a Railway-generated domain."""
+def test_production_iac_admits_only_the_canonical_ui_origin():
+    """The registry admits exactly the canonical public UI origin (the apex);
+    the dashboard compatibility host is redirected at the edge and admitted
+    nowhere. Payment is private and admits no browser origin, but still gets
+    the explicit list it refuses to start without. Never "*", never a
+    Railway-generated domain."""
     ts = _prod_ts()
-    assert 'const PUBLIC_DASHBOARD_ORIGIN = "https://dashboard.agentnet.io.vn";' in ts
+    assert 'const PUBLIC_UI_ORIGIN = "https://agentnet.io.vn";' in ts
     assert 'const PRIVATE_ONLY_CORS_ORIGIN = "http://prod-dashboard.railway.internal:8080";' in ts
+    assert "PUBLIC_DASHBOARD_ORIGIN" not in ts
+    assert '"https://dashboard.agentnet.io.vn"' not in ts
     registry = ts[ts.index('service("prod-registry"'):ts.index('service("prod-payment"')]
     payment = ts[ts.index('service("prod-payment"'):ts.index('service("prod-worker"')]
-    assert "CORS_ALLOWED_ORIGINS: PUBLIC_DASHBOARD_ORIGIN," in registry
+    assert "CORS_ALLOWED_ORIGINS: PUBLIC_UI_ORIGIN," in registry
     assert "CORS_ALLOWED_ORIGINS: PRIVATE_ONLY_CORS_ORIGIN," in payment
     assert ts.count("CORS_ALLOWED_ORIGINS:") == 2
     assert '"*"' not in ts and "up.railway.app" not in ts
