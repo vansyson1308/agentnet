@@ -11,7 +11,9 @@ Three endpoints, mounted at the root of the app:
   for Kubernetes ``readinessProbe`` so traffic isn't routed in until
   the service can actually serve a request.
 * ``GET /metrics`` — Prometheus text-format metrics. Counters for HTTP
-  requests, escrow lifecycle, and span persistence failures.
+  requests, escrow lifecycle, and span persistence failures. Labelled by
+  route template; not served when ``ENVIRONMENT=production``
+  (``metrics_endpoint_enabled``).
 
 Metrics are global, single-process — fine for the registry / payment /
 simulation services since each replica scrapes its own ``/metrics``.
@@ -22,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Optional
 
@@ -37,6 +40,7 @@ from prometheus_client import (
 )
 from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.routing import Match
 
 from .config import REDIS_URL
 from .database import engine
@@ -109,6 +113,46 @@ active_websocket_connections = _gauge(
 )
 
 
+#: Label for a request no route matched (404s, scanners). One constant value
+#: keeps the label set bounded by the route table: a caller must never be able
+#: to create a new time series, or plant a string in /metrics, by choosing a URL.
+UNMATCHED_PATH_LABEL = "<unmatched>"
+
+
+def route_path_label(request: Request) -> str:
+    """The route TEMPLATE for a request (``/v1/tasks/{task_id}``), never the
+    literal path. Object ids in a URL are not metrics labels.
+
+    Matched against the app's route table instead of reading
+    ``scope["route"]``: a middleware that copies the scope (the edge
+    client-address middleware does, on every proxied request) hides the
+    router's annotation from outer middleware, and the literal-path fallback
+    then leaked every id and scanner path into /metrics."""
+    route = request.scope.get("route")
+    if route is not None and getattr(route, "path", None):
+        return route.path
+    app = request.scope.get("app")
+    for candidate in getattr(getattr(app, "router", None), "routes", ()):
+        try:
+            match, _ = candidate.matches(request.scope)
+        except Exception:  # noqa: BLE001 - a route that cannot match this scope
+            continue
+        if match in (Match.FULL, Match.PARTIAL) and getattr(candidate, "path", None):
+            return candidate.path
+    return UNMATCHED_PATH_LABEL
+
+
+def metrics_endpoint_enabled() -> bool:
+    """``GET /metrics`` is not served in production.
+
+    It is an operator surface (process memory, request and escrow volumes),
+    and in production the registry is reachable only through the public edge,
+    where no Prometheus scrapes it. Staging and development keep it. The
+    middleware still records, so a future private, authenticated scrape needs
+    only a route, not new instrumentation."""
+    return os.getenv("ENVIRONMENT", "development").strip().lower() != "production"
+
+
 def make_metrics_middleware(service_name: str):
     """Build a Starlette middleware that times every request and bumps counters."""
 
@@ -120,10 +164,7 @@ def make_metrics_middleware(service_name: str):
             start = time.perf_counter()
             response = await call_next(request)
             duration = time.perf_counter() - start
-            # Use the route template (e.g. /tasks/{id}) where possible to
-            # keep cardinality low; fall back to the literal path.
-            route = request.scope.get("route")
-            path_label = getattr(route, "path", request.url.path) if route else request.url.path
+            path_label = route_path_label(request)
             http_requests_total.labels(
                 service=service_name,
                 method=request.method,
@@ -184,9 +225,11 @@ def make_health_router(service_name: str) -> APIRouter:
             media_type="application/json",
         )
 
-    @router.get("/metrics")
-    async def metrics() -> Response:
-        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    if metrics_endpoint_enabled():
+
+        @router.get("/metrics")
+        async def metrics() -> Response:
+            return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return router
 

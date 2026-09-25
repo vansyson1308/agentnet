@@ -213,13 +213,114 @@ class TestClientIdentityIsNotSpoofable:
         assert set(spoofed) == {base}, "a caller-controlled header must not mint new buckets"
         assert base == "203.0.113.9"
 
-    def test_bearer_token_keys_by_token_not_ip(self):
+    @staticmethod
+    def _jwt(sub="7b0a6a53-1f2f-4f55-9a58-4d7d0c2f1e11", token_type="user", secret=None, expires_in=600):
+        from datetime import datetime, timedelta, timezone
+
+        from jose import jwt
+
+        from services.registry.app.config import JWT_ALGORITHM, JWT_SECRET_KEY
+
+        claims = {"sub": sub, "type": token_type, "exp": datetime.now(timezone.utc) + timedelta(seconds=expires_in)}
+        return jwt.encode(claims, secret or JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+    def test_unverified_bearer_cannot_mint_a_bucket(self):
+        """Regression (public-edge measurement, 2026-09-25): a random bearer
+        per request used to get a fresh bucket each time. An unverified token
+        is now exactly like no token: the caller's peer bucket."""
         limiter = self._limiter()
-        a = limiter._get_client_key(self._request({"Authorization": "Bearer tok-a"}, client=("1.1.1.1", 1)))
-        b = limiter._get_client_key(self._request({"Authorization": "Bearer tok-a"}, client=("2.2.2.2", 1)))
-        c = limiter._get_client_key(self._request({"Authorization": "Bearer tok-b"}, client=("1.1.1.1", 1)))
-        assert a == b != c
-        assert "tok-a" not in a, "the key is a digest, the token itself is never used as a key"
+        base = limiter._get_client_key(self._request({}, client=("1.1.1.1", 1)))
+        garbage = {
+            limiter._get_client_key(self._request({"Authorization": f"Bearer tok-{i}"}, client=("1.1.1.1", 1)))
+            for i in range(5)
+        }
+        assert garbage == {base} == {"1.1.1.1"}
+
+    def test_forged_expired_and_scoped_tokens_fall_back_to_the_peer(self):
+        limiter = self._limiter()
+        for token in (
+            self._jwt(secret="not-the-server-secret-0123456789abcdef"),
+            self._jwt(expires_in=-60),
+            self._jwt(token_type="root"),
+            "spt_" + "a" * 43,
+        ):
+            key = limiter._get_client_key(self._request({"Authorization": f"Bearer {token}"}, client=("1.1.1.1", 1)))
+            assert key == "1.1.1.1", token[:12]
+
+    def test_verified_token_keys_by_subject_not_ip(self):
+        limiter = self._limiter()
+        tok_a, tok_b = self._jwt(), self._jwt(sub="0f9d2a1e-4a55-4d7a-8c2e-9a1b2c3d4e5f")
+        a1 = limiter._get_client_key(self._request({"Authorization": f"Bearer {tok_a}"}, client=("1.1.1.1", 1)))
+        a2 = limiter._get_client_key(self._request({"Authorization": f"Bearer {tok_a}"}, client=("2.2.2.2", 1)))
+        b = limiter._get_client_key(self._request({"Authorization": f"Bearer {tok_b}"}, client=("1.1.1.1", 1)))
+        assert a1 == a2 != b
+        assert a1.startswith("sub:") and tok_a not in a1, "the key is a digest of the subject, never the token"
+
+    def test_agent_tier_requires_a_verified_agent_token(self):
+        import asyncio
+
+        limiter = self._limiter()
+
+        def is_agent(headers):
+            return asyncio.run(limiter._is_agent(self._request(headers)))
+
+        assert is_agent({"Authorization": "Bearer short-garbage"}) is False
+        assert is_agent({"Authorization": f"Bearer {self._jwt(token_type='user')}"}) is False
+        assert is_agent({"Authorization": f"Bearer {self._jwt(token_type='agent')}"}) is True
+
+    def _auth_app(self, default_rate=3, agent_rate=300):
+        import sys
+
+        sys.path.insert(0, "services/registry")
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from services.registry.app.api.rate_limiter import RateLimitMiddleware
+
+        app = FastAPI()
+        app.add_middleware(
+            RateLimitMiddleware, default_rate=default_rate, default_burst=default_rate,
+            agent_rate=agent_rate, agent_burst=agent_rate,
+        )
+
+        @app.post("/v1/auth/user/login")
+        def login():
+            return {"ok": True}
+
+        @app.post("/v1/auth/user/register")
+        def register():
+            return {"ok": True}
+
+        @app.get("/v1/tasks/")
+        def tasks():
+            return []
+
+        return TestClient(app)
+
+    def test_login_and_register_stay_bounded_under_rotating_garbage_bearers(self):
+        """The exploit, end to end through the real middleware (in-memory path):
+        a caller rotates a fresh bogus bearer on every login/register attempt.
+        All attempts share ONE default-tier bucket and the limiter still bites."""
+        client = self._auth_app(default_rate=3)
+        responses = []
+        for i in range(6):
+            path = "/v1/auth/user/login" if i % 2 == 0 else "/v1/auth/user/register"
+            responses.append(client.post(path, headers={"Authorization": f"Bearer bogus-{i}-{'x' * (i % 3)}"}))
+        assert [r.status_code for r in responses] == [200, 200, 200, 429, 429, 429]
+        assert {r.headers.get("X-RateLimit-Limit") for r in responses[:3]} == {"3"}, "garbage never earns the agent tier"
+        assert [r.headers.get("X-RateLimit-Remaining") for r in responses[:3]] == ["2", "1", "0"], "one shared bucket"
+
+    def test_verified_token_keeps_its_own_tier_and_bucket(self):
+        """The fix must not break real callers: a verified agent token gets the
+        agent tier in its own bucket, unaffected by an exhausted IP bucket."""
+        client = self._auth_app(default_rate=2, agent_rate=5)
+        for i in range(3):  # exhaust the peer's unauthenticated bucket
+            client.post("/v1/auth/user/login", headers={"Authorization": f"Bearer junk-{i}"})
+        agent = client.get("/v1/tasks/", headers={"Authorization": f"Bearer {self._jwt(token_type='agent')}"})
+        assert agent.status_code == 200
+        assert agent.headers.get("X-RateLimit-Limit") == "5"
+        user = client.get("/v1/tasks/", headers={"Authorization": f"Bearer {self._jwt(token_type='user')}"})
+        assert user.status_code == 200 and user.headers.get("X-RateLimit-Limit") == "2"
 
     def test_rate_limiter_source_never_parses_forwarded_headers(self):
         import pathlib

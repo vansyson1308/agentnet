@@ -192,6 +192,103 @@ class TestMetrics:
         assert 'path="/metrics"' not in resp
 
 
+class TestMetricsLabelsAreBounded:
+    """Regression (public-edge measurement, 2026-09-25): every production
+    label was a literal path, so /metrics carried real object ids and every
+    scanner path, and each new URL created a new series."""
+
+    def _production_shaped_app(self, health):
+        """The production middleware order: the REAL edge client-address
+        middleware (which copies the scope whenever X-Real-IP is present, i.e.
+        on every request through Railway's edge), with metrics outermost."""
+        from fastapi import FastAPI
+
+        from services.registry.app.proxy_headers import EdgeClientAddressMiddleware
+
+        app = FastAPI()
+
+        @app.get("/v1/things/{thing_id}")
+        def thing(thing_id: str):
+            return {"id": thing_id}
+
+        @app.get("/v1/list")
+        def listing():
+            return []
+
+        app.add_middleware(EdgeClientAddressMiddleware)
+        health.install_health_and_metrics(app, service_name="labels-test")
+        return app
+
+    @staticmethod
+    def _path_labels(text, service="labels-test"):
+        """Path label values recorded for ONE service label. The registry is
+        process-global, so other tests' apps share the counter."""
+        import re
+
+        found = set()
+        for labels in re.findall(r"agentnet_http_requests_total\{([^}]*)\}", text):
+            if f'service="{service}"' in labels:
+                found.update(re.findall(r'path="([^"]*)"', labels))
+        return found
+
+    def test_labels_are_route_templates_behind_the_real_edge_middleware(self, registry_app):
+        from fastapi.testclient import TestClient
+
+        _, health = registry_app
+        client = TestClient(self._production_shaped_app(health))
+        edge = {"X-Real-IP": "203.0.113.7"}
+        client.get("/v1/things/6f1c2b7e-2d4a-4c1e-9a0b-1234567890ab", headers=edge)
+        client.get("/.env", headers=edge)
+        client.get("/.aws/credentials", headers=edge)
+        text = client.get("/metrics").text
+        assert 'path="/v1/things/{thing_id}"' in text
+        assert "6f1c2b7e-2d4a-4c1e-9a0b-1234567890ab" not in text
+        assert "/.env" not in text and "/.aws/credentials" not in text
+        assert f'path="{health.UNMATCHED_PATH_LABEL}"' in text
+
+    def test_arbitrary_paths_cannot_grow_the_label_set(self, registry_app):
+        """Attacker-chosen URLs must not create new series: 40 unique paths
+        (random ids under a real route, random unknown paths) add no label
+        value beyond the route table plus one constant."""
+        import uuid
+
+        from fastapi.testclient import TestClient
+
+        _, health = registry_app
+        client = TestClient(self._production_shaped_app(health))
+        edge = {"X-Real-IP": "203.0.113.8"}
+        client.get("/v1/list", headers=edge)
+        before = self._path_labels(client.get("/metrics").text)
+        probes = [f"/v1/things/{uuid.uuid4()}" for _ in range(20)] + [f"/{uuid.uuid4().hex}/x" for _ in range(20)]
+        for path in probes:
+            client.get(path, headers=edge)
+        after = self._path_labels(client.get("/metrics").text)
+        allowed = {"/v1/things/{thing_id}", "/v1/list", "/healthz", "/readyz", health.UNMATCHED_PATH_LABEL}
+        assert after <= allowed, sorted(after - allowed)
+        assert after - before <= {"/v1/things/{thing_id}", health.UNMATCHED_PATH_LABEL}, sorted(after - before)
+        assert not any(p.split("/")[-1] in "".join(after) for p in probes)
+
+    def test_metrics_is_not_served_in_production(self, registry_app, monkeypatch):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        _, health = registry_app
+        monkeypatch.setenv("ENVIRONMENT", "production")
+        app = FastAPI()
+        health.install_health_and_metrics(app, service_name="prod-test")
+        client = TestClient(app)
+        assert client.get("/metrics").status_code == 404
+        assert client.get("/healthz").status_code == 200
+
+    def test_metrics_is_served_outside_production(self, registry_app, monkeypatch):
+        _, health = registry_app
+        for env in ("development", "staging", "test"):
+            monkeypatch.setenv("ENVIRONMENT", env)
+            assert health.metrics_endpoint_enabled() is True
+        monkeypatch.setenv("ENVIRONMENT", "Production")
+        assert health.metrics_endpoint_enabled() is False
+
+
 class TestWiring:
     """The main.py of each service must invoke install_health_and_metrics."""
 

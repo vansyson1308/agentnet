@@ -12,6 +12,9 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 import redis.asyncio as aioredis
+from jose import JWTError, jwt
+
+from ..config import JWT_ALGORITHM, JWT_SECRET_KEY
 
 class TokenBucket:
     """In-memory token bucket fallback (khi Redis chưa available)."""
@@ -75,30 +78,56 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 self._redis = None
         return self._redis
 
+    @staticmethod
+    def _verified_identity(request: Request) -> Optional[tuple[str, str]]:
+        """``(bucket_key, token_type)`` for a bearer JWT this service itself
+        signed and that has not expired; ``None`` for anything else.
+
+        Only a VERIFIED token may name a bucket. Keying on the raw header let
+        any caller mint a fresh bucket per request by sending
+        ``Authorization: Bearer <random>`` (measured on the public edge: each
+        garbage token got its own 300/min agent-tier bucket), which is a
+        rate-limit bypass on login/register. A forged, expired or unverifiable
+        token (including ``spt_`` scoped tokens, which need a database lookup
+        this middleware does not do) falls back to the peer address."""
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return None
+        token = auth[len("Bearer "):].strip()
+        if not token or token.startswith("spt_"):
+            return None
+        try:
+            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        except (JWTError, ValueError):
+            return None
+        subject, token_type = payload.get("sub"), payload.get("type")
+        if not subject or token_type not in ("user", "agent"):
+            return None
+        digest = hashlib.sha256(f"{token_type}:{subject}".encode()).hexdigest()[:16]
+        return f"sub:{digest}", token_type
+
     def _get_client_key(self, request: Request) -> str:
-        """Unique key per caller — token subject if present, otherwise the
-        peer address as uvicorn reports it.
+        """Unique key per caller: the verified token subject if there is one,
+        otherwise the peer address as the trusted edge reports it.
 
         We deliberately do NOT read X-Forwarded-For here. Any client can
         send that header, so parsing it in the application would let an
         unauthenticated caller pick a fresh bucket per request (rate-limit
-        bypass on login/register). uvicorn's ``--proxy-headers`` rewrites
-        ``request.client`` from X-Forwarded-For ONLY when the peer is listed
-        in ``FORWARDED_ALLOW_IPS`` (the hosting platform's proxy), so the
-        trust decision lives in one place, configured per deployment."""
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            return hashlib.sha256(auth.encode()).hexdigest()[:16]
+        bypass on login/register). The peer address comes from
+        ``request.client``, which only the trusted edge middleware
+        (``proxy_headers.py``) or uvicorn's ``--proxy-headers`` may rewrite,
+        so the trust decision lives in one place, configured per deployment.
+        An unverified bearer token is treated exactly like no token."""
+        identity = self._verified_identity(request)
+        if identity is not None:
+            return identity[0]
         return (request.client.host if request.client else None) or "unknown"
 
     async def _is_agent(self, request: Request) -> bool:
-        """Check if request comes from an agent token."""
-        auth = request.headers.get("Authorization", "")
-        if not auth.startswith("Bearer "):
-            return False
-        # Agent tokens typically have 'agent_' prefix or specific claims
-        # For now, heuristic: tokens > 40 chars are likely user JWTs
-        return len(auth) < 50
+        """The agent tier requires a verified agent token. A caller cannot
+        claim the higher agent rate by sending an arbitrary short token."""
+        identity = self._verified_identity(request)
+        return identity is not None and identity[1] == "agent"
 
     async def _redis_consume(self, client_key: str, rate: int) -> tuple[bool, int]:
         """Fixed-window per-minute counter via Redis INCR + EX.
