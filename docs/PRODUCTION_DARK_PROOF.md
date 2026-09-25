@@ -404,3 +404,96 @@ EMAIL SECRET LEAK CHECK: PASS
 The canary account `delivered@resend.dev` and its zero-balance wallet remain in
 production. They are the evidence; removing them would need a direct database
 write, which is the one thing this environment does not permit itself.
+
+## 13. First ordinary release through the gate (2026-09-24) — pre-DNS production candidate
+
+The first release after the one-time bootstrap, and the first one that went
+through every gate the ordinary flow has: `release.py` preflight, a release
+branch, a pull request into `production`, required CI on that PR, Railway Wait
+for CI, and a validation run of the released code.
+
+### Release record (what the runbook requires to be written down)
+
+| | |
+| --- | --- |
+| Approved `main` SHA (TARGET) | `adbe0a53b0afe37369d1f9af58562a674fa1c352` (#38) — main CI run `35970555459` success |
+| Previous production | `2adda7094a9c1b7da60027e6f47f4141c7798cfd` (bootstrap, 2026-09-21) |
+| Release branch | `release/prod-adbe0a53b0af` @ the target itself (created by `release.py --execute`) |
+| Release PR | #39 → `production`, PR CI run `35972297806` success (all six jobs), merged with a **merge commit** |
+| Production after release | `60559d7f1654436c1062de9cc8a3e6ddde29ce07` (parents `2adda709`, `adbe0a53`) |
+| Tree | `ed81c8c84fb9` — target = release branch = `production` |
+| Production push CI | run `35973969474` success, 08:23:45Z |
+| Migration head | unchanged — the pre-deploy step ran `alembic upgrade` as a no-op ("already stamped") |
+
+Preflight without `--allow-sensitive` **refused** (`no_sensitive_changes: auth,
+release_machinery`); every other gate passed. The sensitive files were exactly:
+`services/registry/app/api/routes/auth.py` (#37 — the refusal warning logs the
+exception text instead of its class; diagnostic only), the two production
+validators, and `.railway/production.ts` + `.railway/README.md` (#38 IaC
+parity). The flag was used under the owner's scoped authorization covering
+exactly those files. The CLI's `no_autonomous_merge_freeze` gate is not fed
+freeze data and so passed vacuously; independently, no autonomous merge reached
+`main` after 2026-09-20.
+
+### Staging evidence (subtree identity)
+
+| Service | Staging deployed | Subtree at target |
+| --- | --- | --- |
+| registry | `8c1d097a1c71` (deployment `0fc1843c`) | `02b11cc5545b` — staged |
+| payment | `ac1b57ef82e7` | `508342ce3dea` — staged, = previous production |
+| worker | `ac1b57ef82e7` | `3a7f80c0832d` — staged, = previous production |
+| dashboard | `1a26dcdbddf0` | `3ae4c1df5f05` — staged, = previous production |
+
+### Wait for CI, observed on the real release
+
+```
+08:13:14Z  prod-registry c1232e72  WAITING    (production push CI 35973969474 queued)
+08:13:15Z  prod-payment/worker/dashboard  SKIPPED  (watch paths not matched — subtrees unchanged)
+08:23:45Z  CI 35973969474 success
+08:23:49Z  prod-registry c1232e72  BUILDING   (4 s after CI success)
+08:25:25Z  prod-registry c1232e72  SUCCESS    (/readyz gate passed)
+```
+
+### Validation of the released code (from `prod-validator`, source `60559d7`)
+
+```
+PROD RESULT: OK (18 checks)          exit 0   08:27:59Z  deployment 717f89bf
+PROD-EMAIL RESULT: OK (11 checks)    exit 0   08:28:00Z  canary delivered+prod-email-0134602947@resend.dev
+                                                          token_fingerprint 6c73923ebddd5fc2
+```
+
+Both canaries now go to a labelled Resend sink (`delivered+<label>@resend.dev`),
+never `example.com` (#38). Resend recorded both messages — `01a0d287-5306…`
+(smoke) and `01a0d287-5618…` (email flow), subject "Verify your AgentNet email
+address" — as **delivered**, which also proves `+label` sink addresses work.
+The message bodies were not read: they carry the activation link.
+
+Secret-leak audit of the current deployments — registry `c1232e72` (complete,
+18 lines, nothing logged during validation), validator `717f89bf` (complete, 46
+lines), worker, payment and dashboard since 06:00Z: no password, key, token,
+verification link, JWT or `Authorization` header. `PRODUCTION SECRET LEAK
+CHECK: PASS`.
+
+### Known-good deployments after the release
+
+| Service | Deployment | Created | Note |
+| --- | --- | --- | --- |
+| prod-registry | `c1232e72` | 2026-09-24T08:13Z | new; rollback target `94276750` (`canRollback` true until its image ages past the 72h Hobby retention, ≈2026-09-24T15:21Z) |
+| prod-payment | `80dd8d66` | 2026-09-21T01:03Z | unchanged (> 72h old: recover by restart or redeploy-from-source, not by image rollback) |
+| prod-worker | `42f2afba` | 2026-09-21T01:04Z | unchanged (same) |
+| prod-dashboard | `f2339d74` | 2026-09-21T01:04Z | unchanged (same) |
+| prod-postgres | `037a330a` | 2026-09-20T23:11Z | public image + volume `prod-postgres-volume` |
+| prod-redis | `a1cd9245` | 2026-09-21T00:59Z | public image + volume `prod-redis-volume` |
+
+No schema rollback is ever implied: the release carried no migration.
+
+### Soak continuity
+
+PRESERVED. The release's runtime delta is one diagnostic log line; it changed
+no schema, migration, auth semantics, authorization, wallet, network topology,
+secret scope, healthcheck, mail configuration or runtime dependency. The
+relevant continuous-configuration start is **2026-09-21T15:22Z** — the registry
+deployment that introduced the SMTP configuration, which is a mail change and
+therefore the last event that would have reset it; the Phase 7 start
+(2026-09-21T01:16Z) predates that change. Its 72-hour mark is
+**2026-09-24T15:22Z**.

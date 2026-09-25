@@ -41,9 +41,15 @@
  *   - no model credential and no GitHub App key. Their NAMES never appear here,
  *     so they cannot be set by this file even by accident.
  *   - no Jaeger, no simulation.
- *   - no public domain of any kind. Production is DARK until the owner performs
- *     the DNS/custom-domain cutover (docs/PRODUCTION_RUNBOOK.md); that change is
- *     made here in the same pull request that makes it live.
+ *   - no public surface beyond exactly three custom domains
+ *     (docs/PRODUCTION_CUTOVER.md, docs/CLOUDFLARE_MIGRATION.md):
+ *     api.agentnet.io.vn -> prod-registry :8000; agentnet.io.vn (the canonical
+ *     public UI) -> prod-dashboard :8080; and dashboard.agentnet.io.vn ->
+ *     prod-dashboard :8080, kept as a compatibility host that the Cloudflare
+ *     edge answers with a 301 to the apex. No Railway service domain, no TCP
+ *     proxy, and never a domain on payment, worker, Postgres or Redis. An
+ *     undeclared custom domain would be DELETED on apply, which is why all three
+ *     are declared here.
  *   - no prod-validator. It is a disposable operator instrument, not part of
  *     the application; while it exists a plan lists it for removal, which is
  *     the correct outcome and is marked destructive (docs/PRODUCTION_RUNBOOK.md).
@@ -161,13 +167,28 @@ export default defineRailway((ctx) => {
   };
 
   /**
-   * While production is dark there is no browser origin to allow. The private
-   * dashboard origin is not one a browser can ever present, so this admits
-   * nothing -- and it satisfies the services' refusal to start without an
-   * explicit list (never "*"). At the DNS cutover it becomes the dashboard's
-   * public https origin, in the same change that attaches that domain.
+   * The one browser origin the public API accepts: the canonical public UI,
+   * served at the apex. Today's dashboard calls the registry server-side over
+   * private DNS (REGISTRY_URL below) and needs no CORS at all; this admits
+   * exactly the origin any future in-browser call would come from, and nothing
+   * else -- never "*", never a Railway-generated domain. The compatibility host
+   * dashboard.agentnet.io.vn is not admitted: the Cloudflare edge answers every
+   * request to it with a 301 to this origin, so no page is ever served from it.
+   *
+   * Sequencing (docs/CLOUDFLARE_MIGRATION.md §8): this is the FINAL value. The
+   * live variable changes to it only after the owner delegates the zone to
+   * Cloudflare and the apex serves the dashboard over HTTPS; until then this
+   * file is merged no earlier than that live change, so the file never
+   * declares a value production does not have.
    */
-  const DARK_CORS_ORIGIN = "http://prod-dashboard.railway.internal:8080";
+  const PUBLIC_UI_ORIGIN = "https://agentnet.io.vn";
+
+  /**
+   * Payment is private forever: no browser can reach it, so no browser origin
+   * is admitted. The private dashboard origin is not one a browser can present;
+   * it only satisfies payment's refusal to start without an explicit list.
+   */
+  const PRIVATE_ONLY_CORS_ORIGIN = "http://prod-dashboard.railway.internal:8080";
 
   /**
    * Defense in depth. No society-worker exists in production, so nothing here
@@ -205,9 +226,10 @@ export default defineRailway((ctx) => {
     SMTP_STARTTLS: "false",
   };
 
-  // ── registry: the public API (once DNS exists); sole owner of the schema ──
+  // ── registry: the public API; sole owner of the schema ──
   const registry = service("prod-registry", {
     ...app("services/registry"),
+    domains: [{ domain: "api.agentnet.io.vn", port: 8000 }],
     // Runs in a separate container BEFORE the new deployment starts and must
     // exit non-zero on failure. No Society fleet seed: production runs no
     // Society, so those rows would be dead weight the public app never reads.
@@ -227,7 +249,7 @@ export default defineRailway((ctx) => {
       // A literal, not `${{RAILWAY_PUBLIC_DOMAIN}}`: the link in a verification
       // email must name the canonical API, not whatever domain Railway assigns.
       PUBLIC_BASE_URL: PUBLIC_API_ORIGIN,
-      CORS_ALLOWED_ORIGINS: DARK_CORS_ORIGIN,
+      CORS_ALLOWED_ORIGINS: PUBLIC_UI_ORIGIN,
       RATE_LIMIT_PER_MINUTE: "60",
       ORCHESTRATOR_ENABLED: "false",
       PUBLIC_AGENT_REGISTRATION_ENABLED: "false",
@@ -255,7 +277,7 @@ export default defineRailway((ctx) => {
       RATE_LIMIT_PER_MINUTE: "60",
       INTERNAL_WORKER_TOKEN: ctx.shared.INTERNAL_WORKER_TOKEN,
       // Required outside development (payment refuses to start without it).
-      CORS_ALLOWED_ORIGINS: DARK_CORS_ORIGIN,
+      CORS_ALLOWED_ORIGINS: PRIVATE_ONLY_CORS_ORIGIN,
     },
   });
 
@@ -278,9 +300,15 @@ export default defineRailway((ctx) => {
     },
   });
 
-  // ── dashboard: the public UI (once DNS exists); calls the registry privately ──
+  // ── dashboard: the public UI; calls the registry privately ──
+  // The apex is canonical; dashboard.* stays attached so its certificate and
+  // routing survive, and the Cloudflare edge redirects it to the apex.
   const dashboard = service("prod-dashboard", {
     ...app("services/dashboard"),
+    domains: [
+      { domain: "agentnet.io.vn", port: 8080 },
+      { domain: "dashboard.agentnet.io.vn", port: 8080 },
+    ],
     healthcheck: "/healthz",
     healthcheckTimeout: 120,
     env: {
