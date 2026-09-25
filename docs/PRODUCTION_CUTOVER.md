@@ -1,9 +1,15 @@
 # Production DNS cutover — api / dashboard
 
-**Status: PREPARED, NOT EXECUTED.** Every step below that is not a DNS edit has
-been done, or prepared and checked, before the soak gate. The only thing left is
-the owner's ZoneDNS change, which is irreducible: nothing in this repository or
-its connectors holds authority over the `agentnet.io.vn` zone.
+**Status: STAGE A EXECUTED (2026-09-25). Stage B apex SUPERSEDED by
+`docs/CLOUDFLARE_MIGRATION.md`.** The owner published the api/dashboard records
+in ZoneDNS. `https://api.agentnet.io.vn` and `https://dashboard.agentnet.io.vn`
+serve production with valid certificates, and public signup with email
+verification is proven through them (edge smoke 34/36; the two failures are the
+apex HTTPS checks). The owner also retired the legacy VPS: `payment`, `staging`
+and `www` are NXDOMAIN, no VPS address remains, and the apex is a ZoneDNS
+URL-redirect A record (`103.28.36.94`) that answers only on port 80. The apex
+is completed by moving authoritative DNS to Cloudflare. The text below is the
+record of how Stage A was prepared.
 
 | | |
 | --- | --- |
@@ -302,7 +308,10 @@ only its status. The body contains the token.
 
 ## 7. Rollback
 
-The VPS `139.180.143.222` stays online, unchanged, through the cutover and after it.
+*As executed:* the VPS `139.180.143.222` was retired by the owner after Stage A
+passed and is **no longer a rollback target**. The rows below that re-point a
+name at it are historical. After the Cloudflare delegation, rollback is
+`docs/CLOUDFLARE_MIGRATION.md` §11.
 
 | Symptom | Action | Converges in |
 | --- | --- | --- |
@@ -332,18 +341,21 @@ complete, and it is the primary one.
 
 ## 8. Stage B — after Stage A PASS (separate owner decisions)
 
-1. **Apex `agentnet.io.vn`**: a ZoneDNS URL redirect (301) to
-   `https://dashboard.agentnet.io.vn`, replacing the apex A record. Check
-   whether ZoneDNS's redirect service terminates HTTPS for the apex. If it
-   serves plain HTTP only, `https://agentnet.io.vn` shows a certificate error.
-   The alternative is to serve the apex from Railway, which needs CNAME
-   flattening/ALIAS at the apex. Not every DNS host offers that, and it uses
-   another custom-domain slot. Decide after checking; not part of Stage A.
-2. **`payment`**: delete A `payment → 139.180.143.222`. Production payment is
-   private forever, so nothing replaces the name.
-3. **`staging`**: delete A `staging → 139.180.143.222` once nothing needs the
-   legacy VPS stack. Railway staging uses its `up.railway.app` domains.
-4. **The VPS stays online** until a later, explicit decision to retire it.
+As executed (2026-09-25):
+
+1. **Apex `agentnet.io.vn`**: the owner replaced the VPS A record with a ZoneDNS
+   URL redirect (A `103.28.36.94`). Checked from the production network, it
+   listens on port 80 only: `http://agentnet.io.vn/` answers 301 to the
+   dashboard, while `https://agentnet.io.vn` refuses the connection. ZoneDNS
+   offers no apex CNAME/ALIAS, so Railway cannot serve the apex under ZoneDNS.
+   **Superseded:** authoritative DNS moves to Cloudflare (apex CNAME
+   flattening), and the apex becomes the canonical UI on prod-dashboard —
+   `docs/CLOUDFLARE_MIGRATION.md`.
+2. **`payment`**: deleted by the owner; NXDOMAIN. Production payment is
+   private forever.
+3. **`staging`**: deleted by the owner; NXDOMAIN. Railway staging uses its
+   `up.railway.app` domains.
+4. **The VPS** is retired and no longer a rollback target.
 
 ## 9. Housekeeping around the cutover
 
