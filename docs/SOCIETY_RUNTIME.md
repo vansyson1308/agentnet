@@ -51,8 +51,8 @@ preserved), and any in-flight `implement_change` task is closed through the ordi
 
 | Agent | Role | Wakes on | May emit |
 |---|---|---|---|
-| Society_Governor | governor (MEDIUM) | `proposal.created`, `code_candidate.ready/rejected`, `promotion.merge_eligible/rejected`, `experiment.finished`, `society.heartbeat` | messages, memory, goals, `REVIEW_IMPROVEMENT`, `READ_CANDIDATE_STATE`, `REQUEST_PR_PROMOTION`, `REQUEST_STAGING_EVALUATION` |
-| Society_Scout | scout | `platform.metric.anomaly`, `task.failed/timeout`, `qa.failed`, `agent.inactive`, candidate outcomes | messages, memory, `CREATE_IMPROVEMENT` (with structured evidence), agent goals |
+| Society_Governor | governor (MEDIUM) | `proposal.created`, `code_candidate.ready/rejected`, `promotion.merge_eligible/rejected`, `experiment.finished`, `society.heartbeat`, `company.cycle`, `incident.opened`, `a2a.task.finished`, `a2a.agent.discovered` | messages, memory, goals, `REVIEW_IMPROVEMENT`, `READ_CANDIDATE_STATE`, `REQUEST_PR_PROMOTION`, `REQUEST_STAGING_EVALUATION`, `DISCOVER_A2A_AGENT`, `REQUEST_A2A_TASK` (**approval-gated**), `CHECK_A2A_TASK` |
+| Society_Scout | scout | `company.cycle`, `a2a.agent.refreshed`, `platform.metric.anomaly`, `task.failed/timeout`, `qa.failed`, `agent.inactive`, candidate outcomes | messages, memory, `CREATE_IMPROVEMENT` (with structured evidence), agent goals, `REFRESH_A2A_AGENT`, `CHECK_A2A_TASK` |
 | Society_Architect | architect (MEDIUM) | `proposal.approved`, `code_candidate.qa_failed/ready`, `repo.read.result`, `code_change.spec_rejected` | repo reads (`LIST_REPO_TREE`, `SEARCH_REPO`, `READ_REPO_FILE`, `READ_REPO_RANGE`), `REQUEST_CODE_CHANGE`, `CREATE_TASK` (≤50 credits), goal updates |
 | Society_Builder | builder (MEDIUM) | `code_change.requested`, `code_candidate.qa_failed/ready/rejected`, `repo.read.result`, `society.heartbeat` | repo reads, `SUBMIT_CODE_CANDIDATE`, `START/COMPLETE/FAIL_TASK` |
 | Society_QA | qa (MEDIUM) | `code_candidate.built` | `EVALUATE_CODE_CANDIDATE` (verdict computed by the runtime, not asserted) |
@@ -67,8 +67,8 @@ targets it (`payload.target_agent_id` / `subject_type=agent`), e.g. `agent.messa
 
 | Class | Intents | Handling |
 |---|---|---|
-| LOW | `SEND_MESSAGE`, `WRITE_MEMORY`, `CREATE_GOAL`, `UPDATE_GOAL`, `CREATE_IMPROVEMENT`, `REVIEW_IMPROVEMENT`, `SLEEP`, read-only repo intelligence (`LIST_REPO_TREE`, `SEARCH_REPO`, `READ_REPO_FILE`, `READ_REPO_RANGE`, `READ_DIFF`, `READ_CANDIDATE_STATE`), `RECORD_EVALUATION_RECOMMENDATION` | auto if in grant; repo reads are bounded (per run / per correlation / bytes), path-safe, persisted as `repo.read.result` and returned as untrusted data |
-| MEDIUM | `CREATE_OFFER`, `COUNTER_OFFER`, `ACCEPT_OFFER`, `CREATE_TASK`, `START/COMPLETE/FAIL_TASK`, `REQUEST_CODE_CHANGE`, `SUBMIT_CODE_CANDIDATE`, `REQUEST_QA`, `EVALUATE_CODE_CANDIDATE`, `SECURITY_REVIEW_CANDIDATE`, `REQUEST_PR_PROMOTION`, `REQUEST_MERGE_EVALUATION`, `REQUEST_STAGING_EVALUATION`, `REQUEST_STAGING_DEPLOY` | role-gated by grant ceiling; escrow ≤ min(grant cap, `SOCIETY_MAX_TASK_ESCROW_CREDITS`); code intents need `SOCIETY_AUTONOMOUS_CODE_ENABLED`; staging needs `SOCIETY_STAGING_DEPLOY_ENABLED`; promotion/evaluation intents only *request* — the non-LLM Promotion Controller and fitness engine decide (`docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md`) |
+| LOW | `SEND_MESSAGE`, `WRITE_MEMORY`, `CREATE_GOAL`, `UPDATE_GOAL`, `CREATE_IMPROVEMENT`, `REVIEW_IMPROVEMENT`, `SLEEP`, read-only repo intelligence (`LIST_REPO_TREE`, `SEARCH_REPO`, `READ_REPO_FILE`, `READ_REPO_RANGE`, `READ_DIFF`, `READ_CANDIDATE_STATE`), `RECORD_EVALUATION_RECOMMENDATION`, `REFRESH_A2A_AGENT`, `CHECK_A2A_TASK` | auto if in grant; repo reads are bounded (per run / per correlation / bytes), path-safe, persisted as `repo.read.result` and returned as untrusted data |
+| MEDIUM | `CREATE_OFFER`, `COUNTER_OFFER`, `ACCEPT_OFFER`, `CREATE_TASK`, `START/COMPLETE/FAIL_TASK`, `REQUEST_CODE_CHANGE`, `SUBMIT_CODE_CANDIDATE`, `REQUEST_QA`, `EVALUATE_CODE_CANDIDATE`, `SECURITY_REVIEW_CANDIDATE`, `REQUEST_PR_PROMOTION`, `REQUEST_MERGE_EVALUATION`, `REQUEST_STAGING_EVALUATION`, `REQUEST_STAGING_DEPLOY`, `DISCOVER_A2A_AGENT`, `REQUEST_A2A_TASK` | role-gated by grant ceiling; A2A intents need `A2A_SOCIETY_CLIENT_ENABLED` + `A2A_FEDERATION_ENABLED`, discovery only for `A2A_SOCIETY_DISCOVERY_ALLOWED_HOSTS`, tasks only to operator-verified agents under call budgets (`docs/A2A_FEDERATION.md` §6); escrow ≤ min(grant cap, `SOCIETY_MAX_TASK_ESCROW_CREDITS`); code intents need `SOCIETY_AUTONOMOUS_CODE_ENABLED`; staging needs `SOCIETY_STAGING_DEPLOY_ENABLED`; promotion/evaluation intents only *request* — the non-LLM Promotion Controller and fitness engine decide (`docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md`) |
 | HIGH | `REQUEST_PRODUCTION_DEPLOY`, `SHELL_EXEC`, `GRANT_CAPABILITY`, `MODIFY_BUDGET`, `TRANSFER_FUNDS`, `MODIFY_WALLET`, `MODIFY_SECRET`, `CHANGE_AUTH_POLICY`, `DELETE_DATA`, `OPEN_NETWORK_ACCESS`, `RUN_MIGRATION` | recognised, **always denied**, recorded as `intent.denied` events; no executor exists |
 
 Additional refusals in executors: no self-review, requester ≠ builder ≠ QA ≠ security reviewer, no
@@ -254,14 +254,9 @@ every caller, including the application). Trusted evaluation machinery may also 
 - Human approval is API-only (`/v1/society/approvals`, `approve|reject`); there is no UI. `modify` (edit-then-approve)
   is deliberately unsupported: intents are immutable once persisted.
 
-## A2A compliance gap (documented, not fixed here)
+## A2A (Phase 8)
 
-`app/a2a.py` emits a v0.3-shaped card (`url`, `preferredTransport`, JSON-RPC `message/send`, lowercase
-task states). A2A 1.0 (verified v1.0.1, 2026-05-28) expects `supportedInterfaces[]` with
-`protocolBinding`/`protocolVersion`, `capabilities.extendedAgentCard`, `TASK_STATE_*`, PascalCase operations
-(`SendMessage`, `GetTask`, `SubscribeToTask`), the `A2A-Version` request header and optional card
-signatures. The society runtime does not block that migration: `correlation_id` ↔ `contextId`,
-`code_candidates`/`task_sessions` ↔ `Task`, and external inputs are already treated as untrusted data.
+The 0.3-shaped `app/a2a.py` is retired. AgentNet is an A2A 1.0 server and client (`docs/A2A_ARCHITECTURE.md`, ADR-0009). The Society uses external agents only through the four typed A2A intents. The executors record requests; the federation pump (`society/federation_pump.py`) does the network work. Results come back as untrusted, causation-linked events. The daily **company cycle** and the incident freeze are described in `docs/AUTONOMOUS_COMPANY.md`.
 
 ## MCP integration point (deferred)
 

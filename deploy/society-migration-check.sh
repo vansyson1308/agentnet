@@ -46,7 +46,7 @@ done
 
 cd "$(dirname "$0")/.."
 INIT_DIR="services/registry/init-db"
-EXPECTED_HEAD="0012_memory_validation_history"
+EXPECTED_HEAD="0013_a2a_federation"
 PG_USER="${POSTGRES_USER:-agentnet}"
 PG_HOST="${POSTGRES_HOST:-127.0.0.1}"
 PG_PORT="${POSTGRES_PORT:-5432}"
@@ -94,7 +94,7 @@ apply_bundle() {  # apply_bundle DB skip_society(0|1) — 1 = pre-society snapsh
     local db="$1" skip="$2" f
     for f in "$INIT_DIR"/*.sql; do
         case "$(basename "$f")" in
-            16-society-runtime.sql|17-app-tables.sql) [[ "$skip" == "1" ]] && continue ;;
+            16-society-runtime.sql|17-app-tables.sql|18-a2a-federation.sql) [[ "$skip" == "1" ]] && continue ;;
         esac
         run_psql "$db" < "$f" >/dev/null
     done
@@ -111,7 +111,9 @@ check_schema() {  # check_schema DB
                 audit_log:action provisioning_providers:slug provisioning_services:provider_id \
                 agents:is_online agents:last_seen_at agents:current_capability \
                 code_candidates:risk_tier code_candidates:diff_hash agent_runs:model_tier memory_items:validation_state memory_items:superseded_by \
-                code_promotions:status code_promotions:external_pr_number change_experiments:decision change_experiments:criteria_snapshot deployment_requests:status; do
+                code_promotions:status code_promotions:external_pr_number change_experiments:decision change_experiments:criteria_snapshot deployment_requests:status \
+                a2a_tasks:idempotency_key a2a_tasks:task_session_id a2a_task_events:seq a2a_remote_agents:state a2a_connections:sealed_credential \
+                a2a_outbound_calls:status society_company_cycles:outcome society_incident_freezes:lifted_at; do
         t="${spec%%:*}"; c="${spec##*:}"
         n="$(scalar "$db" "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='$t' AND column_name='$c'")"
         if [[ "$n" == "1" ]]; then ok "$db: $t.$c"; else bad "$db: missing column $t.$c"; fi
@@ -169,7 +171,8 @@ for hop in \
   "0008_society_phase2 -> 0009_app_tables" \
   "0009_app_tables -> 0010_self_development" \
   "0010_self_development -> 0011_expire_rehearsal_memory" \
-  "0011_expire_rehearsal_memory -> $EXPECTED_HEAD"; do
+  "0011_expire_rehearsal_memory -> 0012_memory_validation_history" \
+  "0012_memory_validation_history -> $EXPECTED_HEAD"; do
   [[ "$out" == *"$hop"* ]] && ok "$UPGRADE_DB: ran $hop" || bad "$UPGRADE_DB: hop did not run ($hop): $out"
 done
 expect_head "$UPGRADE_DB"
@@ -186,6 +189,8 @@ if [[ "$WITH_DOWNGRADE" == "1" ]]; then
     [[ "$n" == "0" ]] && ok "$UPGRADE_DB: downgrade removed the 0009 app tables" || bad "$UPGRADE_DB: app tables survived downgrade"
     n="$(scalar "$UPGRADE_DB" "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('code_promotions','change_experiments','deployment_requests')")"
     [[ "$n" == "0" ]] && ok "$UPGRADE_DB: downgrade removed the 0010 self-development tables" || bad "$UPGRADE_DB: phase-3 tables survived downgrade"
+    n="$(scalar "$UPGRADE_DB" "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND (table_name LIKE 'a2a\\_%' OR table_name IN ('society_company_cycles','society_incident_freezes'))")"
+    [[ "$n" == "0" ]] && ok "$UPGRADE_DB: downgrade removed the 0013 A2A + company tables" || bad "$UPGRADE_DB: phase-8 tables survived downgrade"
     out="$(run_alembic "$UPGRADE_DB" upgrade head)" || { echo "$out"; die "$UPGRADE_DB: re-upgrade failed"; }
     expect_head "$UPGRADE_DB"
     check_schema "$UPGRADE_DB"

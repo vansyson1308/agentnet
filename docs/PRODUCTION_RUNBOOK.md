@@ -279,5 +279,63 @@ the release gate refuses migrations without explicit owner acknowledgement.
   UI) plus `dashboard.agentnet.io.vn` (compatibility host, redirected to the
   apex at the edge) → prod-dashboard:8080. There is no Railway-generated domain
   and no TCP proxy, and payment, worker, Postgres and Redis have no domain at all.
-* **A2A**: untouched.
+* **A2A** (Phase 8, ADR-0009): the gateway ships in the registry image and stays
+  404 until enabled; see "A2A enablement" below. `prod-registry` is the only
+  service involved. No new service, domain or port is created.
 * **Production Society**: OFF, and refused by `config.py` in production.
+
+## A2A enablement (Phase 8)
+
+The A2A code ships dark. Every flag defaults to `false`. Enable **one flag at a time**, validate, then continue. Each step is a variable change on `prod-registry` only, which redeploys only that service.
+
+`.railway/production.ts` declares these variables **dark** (`a2aDark`) until each is live; after enablement a follow-up change flips the declared values and adds `A2A_CREDENTIAL_KEY: ctx.shared.A2A_CREDENTIAL_KEY`, so the file never claims a state production lacks and an apply never deletes a live variable.
+
+1. **Server:** `A2A_PUBLIC_BASE_URL=https://api.agentnet.io.vn` is already declared; set `A2A_SERVER_ENABLED=true`. Validate:
+   - `GET /.well-known/agent-card.json`: a v1 card with two interfaces, `streaming: true`, `pushNotifications: false`;
+   - an unauthenticated `POST /a2a` gets `401`;
+   - a missing `A2A-Version` gets `-32009`;
+   - a canary network search succeeds;
+   - a canary free task runs through escrow, then gets `CancelTask`, and the wallet is unchanged.
+
+   Evidence goes in `docs/A2A_LIVE_PROOF.md`.
+2. **Federation:** create the production-scoped **shared** variable `A2A_CREDENTIAL_KEY` with Railway's generator, `${{secret(64, "abcdef0123456789")}}` (the same way `JWT_SECRET_KEY` was made: the value renders inside Railway's store, nobody sees or pastes it, and a Fernet key is derived from it). Reference it from `prod-registry` as `${{shared.A2A_CREDENTIAL_KEY}}`, then set `A2A_FEDERATION_ENABLED=true`. Validate:
+   - an operator discovery of the reference agent;
+   - SSRF refusals (metadata IP, private redirect);
+   - one operator outbound call.
+3. **Society client:** stays `false` in production. The production Society is OFF by configuration, so this flag has nothing to enable there.
+
+**Rollback:** set the flag back to `false`. The tables are additive and harmless when unused, and the DB is never downgraded automatically.
+
+Metrics are bounded and `/metrics` stays unserved in production. The audit trail is `a2a_audit_log`, which is append-only.
+
+## Owner hardening (post-launch; not a launch blocker)
+
+These are owner-only actions. The engineering agent has no authority for them and does not perform them.
+
+### O1. Production ruleset: remove the `rebase` merge method
+
+The `production` branch ruleset (id `23748786`) allows `merge`, `squash` and `rebase`. The release gate records and verifies the exact SHA it releases, so a rebase merge adds nothing and rewrites the reviewed commits.
+
+Steps:
+
+1. GitHub → repository **Settings → Rules → Rulesets → production**.
+2. Under "Require a pull request before merging", **Allowed merge methods**: uncheck **Rebase**.
+3. Keep Merge and Squash, and change nothing else.
+4. Save.
+
+To verify: `GET /repos/vansyson1308/agentnet/rulesets/23748786` shows `allowed_merge_methods: ["merge","squash"]`. Never weaken another rule while doing this.
+
+### O2. DNSSEC for `agentnet.io.vn` (Cloudflare → Nhân Hòa)
+
+Authoritative DNS is on Cloudflare; the registrar is Nhân Hòa (.vn). Enable DNSSEC only when there is time to watch it. A wrong DS record takes the whole zone offline for validating resolvers.
+
+1. **Cloudflare** → the `agentnet.io.vn` zone → **DNS → Settings → DNSSEC → Enable DNSSEC**. Cloudflare signs the zone and shows the **DS record**: key tag, algorithm 13 (ECDSA P-256 SHA-256), digest type 2 (SHA-256) and the digest. Copy them exactly.
+2. **Nhân Hòa** → the domain's management panel → DNSSEC / DS record: add one DS record with the same key tag, algorithm, digest type and digest. (.vn delegation is operated by VNNIC; Nhân Hòa submits the DS on the owner's behalf. If the panel has no DNSSEC form, open a support ticket with the four values.)
+3. Wait for the parent TTL, then verify:
+   - `dig +dnssec DS agentnet.io.vn @8.8.8.8` returns the DS;
+   - `dig +dnssec agentnet.io.vn` shows the `ad` flag through a validating resolver;
+   - https://dnsviz.net/d/agentnet.io.vn/dnssec/ is all green;
+   - Cloudflare shows "DNSSEC is active".
+4. **Rollback, in order:** remove the DS at Nhân Hòa first. Wait until the DS has expired from caches (the parent TTL, often up to 24–48 h). Only then disable DNSSEC in Cloudflare. Disabling Cloudflare signing while the DS is still published breaks resolution.
+
+Mail (Resend DKIM/SPF/DMARC) and the Railway custom domains are unaffected, because DNSSEC signs the same records.

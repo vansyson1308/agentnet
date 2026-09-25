@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware import Middleware
 
-from .a2a import build_registry_card
+from .a2a import routes as a2a_routes
 from .api import router as api_router
 from .database import Base, engine
 from .health import install_health_and_metrics
@@ -54,11 +54,15 @@ async def lifespan(app: FastAPI):
         _auto_scaler_task = await start_auto_scaler()
     else:
         logger.info("Auto-scaler disabled (AUTO_SCALER_ENABLED=false)")
+    # A2A gateway runtime (ADR-0009): Redis wake-ups + the reconcile sweep.
+    # A no-op unless A2A_SERVER_ENABLED=true and A2A_PUBLIC_BASE_URL is valid.
+    await a2a_routes.runtime.start()
     logger.info("Registry service started")
     try:
         yield
     finally:
         # Clean up resources
+        await a2a_routes.runtime.stop()
         if tracer_provider:
             tracer_provider.shutdown()
         # Stop auto-scaler gracefully
@@ -112,6 +116,10 @@ install_health_and_metrics(app, service_name="registry")
 # Configure tracing
 tracer_provider = configure_tracing(app, engine)
 
+# A2A 1.0 gateway + Agent Cards (ADR-0009). Registered before the API router;
+# every route answers 404 while A2A_SERVER_ENABLED is false.
+a2a_routes.install(app)
+
 # Include API router
 app.include_router(api_router)
 
@@ -131,28 +139,6 @@ async def root():
         "docs": "/docs",
         "a2a_card": "/.well-known/agent-card.json",
     }
-
-
-# A2A Agent Card — discovery endpoint per RFC 8615
-@app.get("/.well-known/agent-card.json")
-async def get_registry_agent_card(request: Request):
-    """
-    Serve the A2A Agent Card for the AgentNet Registry.
-
-    Behind a reverse proxy (Caddy), ``request.base_url`` resolves to
-    the internal hostname (``http://127.0.0.1:8000``), which is useless
-    to remote callers. Honour the X-Forwarded-* headers populated by
-    the proxy so the advertised URL matches what callers actually used.
-    Falls back to ``request.base_url`` when running standalone.
-    """
-    forwarded_proto = request.headers.get("x-forwarded-proto")
-    forwarded_host = request.headers.get("x-forwarded-host") or request.headers.get("host")
-    if forwarded_proto and forwarded_host:
-        base_url = f"{forwarded_proto}://{forwarded_host}"
-    else:
-        base_url = str(request.base_url).rstrip("/")
-    card = build_registry_card(base_url=base_url.rstrip("/"))
-    return card.model_dump(by_alias=True, exclude_none=True)
 
 
 # Exception handler

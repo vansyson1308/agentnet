@@ -48,6 +48,7 @@ from ..models import (
     CodeCandidate,
     CodeCandidateStatus,
     CodePromotion,
+    IncidentFreeze,
     ExperimentStatus,
     PromotionStatus,
     RiskTier,
@@ -693,6 +694,11 @@ def merge_freeze_reasons(db: Session, settings: SocietySettings, promotion: Code
         reasons.append("secret_scan_failed")
     if not promotion.previous_good_sha:
         reasons.append("no_recorded_rollback_point")
+    # Phase 8 (ADR-0009 D15): an open production/security incident freezes
+    # merge authority until an OPERATOR lifts it (society/company.py).
+    open_incidents = db.query(IncidentFreeze).filter(IncidentFreeze.lifted_at.is_(None)).count()
+    if open_incidents:
+        reasons.append(f"incident_freeze_open({open_incidents})")
     return reasons
 
 

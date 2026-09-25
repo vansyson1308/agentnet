@@ -6,7 +6,6 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
-import httpx
 import redis.asyncio as redis
 from prometheus_client import Counter, Gauge, start_http_server
 from sqlalchemy import and_, func
@@ -416,62 +415,6 @@ async def process_timed_out_simulations(db: Session, redis_client):
             logger.debug(f"Simulation timeout check skipped: {e}")
 
 
-async def crawl_agent_cards(db: Session):
-    """
-    Passive Discovery Crawler (Phase 3C).
-
-    Periodically fetches /.well-known/agent-card.json from all
-    registered agent endpoints to detect capability changes.
-
-    Invariant: Only updates capabilities. Never touches wallet/escrow.
-    """
-    with tracer.start_as_current_span("crawl_agent_cards"):
-        agents = db.query(Agent).filter(Agent.endpoint.isnot(None)).all()
-        updated = 0
-
-        for agent in agents:
-            try:
-                card_url = f"{agent.endpoint.rstrip('/')}/.well-known/agent-card.json"
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.get(card_url)
-
-                if resp.status_code != 200:
-                    continue
-
-                card = resp.json()
-                if not card.get("skills"):
-                    continue
-
-                # Convert A2A skills to capabilities format
-                new_capabilities = []
-                for skill in card.get("skills", []):
-                    new_capabilities.append(
-                        {
-                            "name": skill.get("id", skill.get("name", "unknown")),
-                            "version": card.get("version", "1.0"),
-                            "input_schema": {"type": "object"},
-                            "output_schema": {"type": "object"},
-                            "price": 0,
-                        }
-                    )
-
-                # Only update if capabilities changed
-                old_names = sorted(c.get("name") for c in (agent.capabilities or []))
-                new_names = sorted(c.get("name") for c in new_capabilities)
-
-                if old_names != new_names:
-                    agent.capabilities = new_capabilities
-                    updated += 1
-                    logger.info(f"Updated capabilities for agent {agent.name}: {new_names}")
-
-            except Exception as e:
-                logger.debug(f"Could not crawl agent {agent.name}: {e}")
-
-        if updated > 0:
-            db.commit()
-            logger.info(f"Crawler updated {updated} agent capabilities")
-
-
 async def process_offline_agents(db: Session):
     """Mark agents as offline if they haven't sent a heartbeat in 60s
     and have no active WebSocket connection.
@@ -568,7 +511,6 @@ async def main(stop_event: Optional[asyncio.Event] = None):
     # Last time reputation was computed (every 5 minutes)
     last_reputation_time = datetime.utcnow()
     # Last time agent cards were crawled (every hour)
-    last_crawl_time = datetime.utcnow()
     # Last time simulation timeouts were checked (every 60s)
     last_sim_timeout_time = datetime.utcnow()
     # NOTE (Phase 3.1): the legacy reflection loop (failed task -> proposal ->
@@ -613,10 +555,11 @@ async def main(stop_event: Optional[asyncio.Event] = None):
                 # Auto-offline: mark agents offline if no heartbeat > 60s (runs every loop ~30s)
                 await process_offline_agents(db)
 
-                # Crawl agent cards every hour
-                if (now - last_crawl_time).total_seconds() >= 3600:
-                    await crawl_agent_cards(db)
-                    last_crawl_time = now
+                # (The Phase 3C "passive discovery crawler" is retired, ADR-0009:
+                # it fetched user-controlled URLs with a bare HTTP client and let
+                # remote card content overwrite capabilities and prices. Remote
+                # agents now live in the registry's federation catalog, fetched
+                # only through the SSRF-safe fetcher.)
 
             finally:
                 # Close the database session

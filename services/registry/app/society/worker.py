@@ -61,6 +61,8 @@ from .executor import ExecContext, ExecutionError, execute
 from .intents import REPO_READ_INTENT_TYPES, DecisionValidationError, ValidatedIntent, payload_to_dict, validate_intents
 from .policy import check_run_budget, evaluate_intent, spend_today_usd
 from .roles import load_role_definitions, subscriptions_by_event
+from . import company as company_mod
+from . import federation_pump
 from .world import emit_heartbeat, ingest_task_outcomes
 from .runs import (
     claim_next_run,
@@ -238,6 +240,11 @@ class SocietyWorker:
                     if stats is not None:
                         stats.telemetry_events += n
                 dep_mod.observe_requests(db, self.deployment_provider)
+                # Autonomous company cadence (ADR-0009 D15): at most one scheduled
+                # cycle per UTC day, then outcome settlement. No-ops unless
+                # SOCIETY_COMPANY_CYCLE_ENABLED (and the runtime) are on.
+                company_mod.maybe_start_scheduled_cycle(db, self.settings)
+                company_mod.settle_cycles(db)
             except Exception:  # noqa: BLE001 — world ingestion must never block dispatch
                 db.rollback()
                 logger.exception("society world ingestion failed")
@@ -631,6 +638,7 @@ class SocietyWorker:
             total += n
             self.process_approved_intents(stats)
             advanced = self.process_controllers(stats)
+            await self.pump_federation()
             db = self.session_factory()
             try:
                 if pending_work_exists(db) or advanced:
@@ -660,6 +668,14 @@ class SocietyWorker:
         candidates = [d for d in (p, e) if d is not None]
         return min(candidates) if candidates else None
 
+    async def pump_federation(self) -> None:
+        """Network side of the Society's A2A intents (society/federation_pump.py).
+        Never raises into the loop: an outbound failure is recorded on its row."""
+        try:
+            await federation_pump.pump_once(self.session_factory)
+        except Exception:  # noqa: BLE001
+            logger.exception("society federation pump failed")
+
     def stop(self) -> None:
         self._stop = True
 
@@ -676,6 +692,7 @@ class SocietyWorker:
                 await self.process_claimable()
                 self.process_approved_intents()
                 self.process_controllers()
+                await self.pump_federation()
             except Exception:  # noqa: BLE001
                 logger.exception("society worker loop error")
                 await asyncio.sleep(settings.wake_poll_seconds)

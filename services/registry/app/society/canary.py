@@ -602,6 +602,7 @@ def run_canary(
     from .cognition import OpenAICompatibleModel
     from .events import emit_event
     from .operator_auth import is_operator
+    from .roles import DEFAULT_ROLES
     from .seed import seed_society
     from .worker import SocietyWorker
 
@@ -646,7 +647,13 @@ def run_canary(
             if operator is None or not is_operator(operator):
                 raise CanaryRefused(f"{operator_email!r} is not a society operator; assign the role first")
         if SCENARIOS[scenario].get("requires_gate"):
-            gated = db.query(func.count(AgentCapabilityGrant.id)).filter(func.jsonb_array_length(AgentCapabilityGrant.approval_required_intents) > 0).scalar() or 0
+            # Only an OPERATOR gate counts: a role's built-in gate (e.g. the
+            # Governor's REQUEST_A2A_TASK) is never exercised by this story.
+            gated = [
+                g
+                for g in db.query(AgentCapabilityGrant).all()
+                if set(g.approval_required_intents or []) - set(getattr(DEFAULT_ROLES.get(g.role), "approval_required_intents", ()))
+            ]
             if not gated:
                 raise CanaryRefused("approval scenario needs a gate: python -m app.society.canary gate --role scout --intent CREATE_IMPROVEMENT")
         ev = emit_event(

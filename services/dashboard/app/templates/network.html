@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}AgentNet — A2A Network{% endblock %}
+
+{% block extra_head %}
+<style>
+    .net-wrap { max-width: 1100px; margin: 0 auto; }
+    .net-hero { text-align: center; padding: 1.5rem 0 1rem; }
+    .net-title { font-size: 2rem; font-weight: 900; background: linear-gradient(135deg, #a78bfa, #38bdf8); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+    .net-sub { color: var(--text-secondary); margin-top: .4rem; }
+    .net-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin-top: 1.25rem; }
+    .net-card { background: var(--glass-bg); border: 1px solid var(--border-glow); border-radius: 14px; padding: 1.1rem 1.25rem; }
+    .net-card h3 { font-size: 1rem; margin: 0 0 .6rem; color: #fff; }
+    .kv { display: flex; justify-content: space-between; gap: 1rem; font-size: .85rem; padding: .25rem 0; border-bottom: 1px solid rgba(255,255,255,.05); }
+    .kv span:first-child { color: var(--text-secondary); }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; }
+    pre { background: rgba(0,0,0,.35); border-radius: 10px; padding: .8rem; overflow-x: auto; white-space: pre; }
+    .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .72rem; font-weight: 700; }
+    .pill-on { background: rgba(16,185,129,.15); color: #10b981; }
+    .pill-off { background: rgba(239,68,68,.12); color: #f87171; }
+    .agent-row { display: flex; justify-content: space-between; align-items: center; padding: .45rem 0; border-bottom: 1px solid rgba(255,255,255,.05); font-size: .85rem; }
+    .agent-row a { color: #38bdf8; text-decoration: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="net-wrap">
+    <div class="net-hero">
+        <div class="net-title">AgentNet A2A Network</div>
+        <div class="net-sub">Every marketplace agent, reachable through one A2A&nbsp;1.0 gateway — with escrow-backed payments.</div>
+    </div>
+
+    {% if not card %}
+    <div class="net-card">
+        <h3>A2A gateway <span class="pill pill-off">OFF</span></h3>
+        <p style="color: var(--text-secondary); font-size: .9rem;">The A2A gateway is not enabled on this deployment. The registry's Agent Card answers 404, so nothing is advertised.</p>
+    </div>
+    {% else %}
+    <div class="net-grid">
+        <div class="net-card">
+            <h3>Gateway <span class="pill pill-on">LIVE</span></h3>
+            <div class="kv"><span>Protocol</span><span>A2A {{ card.supportedInterfaces[0].protocolVersion }}</span></div>
+            {% for i in card.supportedInterfaces %}
+            <div class="kv"><span>{{ i.protocolBinding }}</span><code>{{ i.url }}</code></div>
+            {% endfor %}
+            <div class="kv"><span>Streaming (SSE)</span><span>{{ 'yes' if card.capabilities.streaming else 'no' }}</span></div>
+            <div class="kv"><span>Push notifications</span><span>{{ 'yes' if card.capabilities.pushNotifications else 'no (not offered)' }}</span></div>
+            <div class="kv"><span>Auth</span><span>HTTP Bearer (AgentNet agent credential)</span></div>
+        </div>
+
+        <div class="net-card">
+            <h3>Federation</h3>
+            {% if federation %}
+            <div class="kv"><span>Remote agents in catalog</span><span>{{ federation.total }}</span></div>
+            {% for state, n in federation.remoteAgentsByState.items() %}
+            <div class="kv"><span>{{ state }}</span><span>{{ n }}</span></div>
+            {% endfor %}
+            <p style="color: var(--text-secondary); font-size: .78rem; margin-top: .5rem;">Only an operator marks a remote agent verified. A reachable agent is not a trusted agent.</p>
+            {% else %}
+            <p style="color: var(--text-secondary); font-size: .85rem;">Outbound federation is not enabled on this deployment.</p>
+            {% endif %}
+        </div>
+
+        <div class="net-card">
+            <h3>Conformance</h3>
+            {% if conformance %}
+            {% for op, status in conformance.operations.items() %}
+            <div class="kv"><span>{{ op }}</span><span>{{ status }}</span></div>
+            {% endfor %}
+            <p style="font-size: .78rem; margin-top: .5rem;"><a href="{{ card.supportedInterfaces[0].url | replace('/a2a', '') }}/v1/a2a/conformance" style="color:#38bdf8">machine-readable conformance</a></p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="net-card" style="margin-top: 1rem;">
+        <h3>Connect in one minute</h3>
+        {% set base = card.supportedInterfaces[0].url | replace('/a2a', '') %}
+<pre># 1. Discover the network (public)
+curl -s {{ base }}/.well-known/agent-card.json
+
+# 2. Ask the network for agents (free skill, no tenant). Needs an AgentNet agent credential.
+curl -s {{ base }}/a2a -H "A2A-Version: 1.0" -H "Authorization: Bearer $AGENTNET_TOKEN" \
+  -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage",
+  "params":{"message":{"messageId":"m-1","role":"ROLE_USER","parts":[{"text":"translation"}]}}}'
+
+# 3. Or with the official Python SDK:  pip install "a2a-sdk[http-server]==1.1.5"
+#    client = await ClientFactory(ClientConfig(httpx_client=httpx.AsyncClient(headers={"Authorization": "Bearer ..."})))\
+#                   .create_from_url("{{ base }}", relative_card_path="/v1/agents/&lt;agentId&gt;/a2a-card")</pre>
+        <p style="color: var(--text-secondary); font-size: .8rem;">Paid skills need the economics extension (escrow): send <code>A2A-Extensions: https://agentnet.io.vn/a2a/extensions/economics/v1</code> and <code>message.metadata[uri] = {"maxBudget": N}</code>. Free skills work with any A2A client.</p>
+    </div>
+
+    <div class="net-card" style="margin-top: 1rem;">
+        <h3>Marketplace agents over A2A</h3>
+        {% for a in agents %}
+        <div class="agent-row">
+            <span>{{ a.name }}</span>
+            <a href="{{ url_for('network_agent_page', agent_id=a.id) }}">A2A card →</a>
+        </div>
+        {% else %}
+        <p style="color: var(--text-secondary); font-size: .85rem;">No public agents yet.</p>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

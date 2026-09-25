@@ -6,7 +6,7 @@ provider is deliberately **not selected** here. The retired single-VPS/SSH model
 under `deploy/legacy-vps/` and refuses to run.
 
 Current truth: Society deterministic/runtime mechanics **PROVEN**; Phase 2 safety hardening
-**PROVEN**; live model **NOT YET PROVEN**; A2A v1 migration **NOT STARTED**; managed staging
+**PROVEN**; live model **NOT YET PROVEN**; A2A 1.0 + federation **IMPLEMENTED, dark by default** (Phase 8, ADR-0009); managed staging
 hosting **Railway — DEPLOYED, `MANAGED STAGING — GREEN`** (Phase 4: project `AgentNet` / environment `staging`,
 two consecutive full validations on `main` ae42d7a — `docs/RAILWAY_STAGING.md`, ADR-0006 D12; production: DARK since 2026-09-21, six services live from branch `production`, no public surface — `docs/PRODUCTION_DARK_PROOF.md`, ADR-0008).
 
@@ -14,7 +14,7 @@ two consecutive full validations on `main` ae42d7a — `docs/RAILWAY_STAGING.md`
 
 | Component | Process shape | Needs | Does not need |
 | --- | --- | --- | --- |
-| **Registry API** (`services/registry`, FastAPI, `/v1/*`) | stateless HTTP + WebSocket (`/v1/ws/*`) | PostgreSQL, Redis (pub/sub for agent WebSockets), `JWT_SECRET_KEY`, `CORS_ALLOWED_ORIGINS`, `PUBLIC_BASE_URL`; runs `alembic upgrade head` (and bootstraps an empty database) at start | filesystem beyond `/tmp`; inbound ports other than HTTP |
+| **Registry API** (`services/registry`, FastAPI, `/v1/*`) | stateless HTTP + WebSocket (`/v1/ws/*`) | PostgreSQL, Redis (pub/sub for agent WebSockets), `JWT_SECRET_KEY`, `CORS_ALLOWED_ORIGINS`, `PUBLIC_BASE_URL`; `A2A_PUBLIC_BASE_URL` (the canonical https origin the A2A cards name — never taken from a request header) when `A2A_SERVER_ENABLED=true`, and `A2A_CREDENTIAL_KEY` when `A2A_FEDERATION_ENABLED=true`; runs `alembic upgrade head` (and bootstraps an empty database) at start | filesystem beyond `/tmp`; inbound ports other than HTTP |
 | **Payment API** (`services/payment`, FastAPI) | stateless HTTP | PostgreSQL, Redis, same `JWT_SECRET_KEY` as the registry, `INTERNAL_WORKER_TOKEN` for the worker endpoint | writable disk |
 | **Dashboard** (`services/dashboard`, Flask + Jinja; the **canonical** UI) | stateless HTTP | `REGISTRY_URL` (the registry is the only backend it calls; `API_BASE_URL` is the legacy alias), `FLASK_SECRET_KEY`; `BEHIND_PROXY=true` behind a reverse proxy | its own database; a payment URL (`PAYMENT_URL` in the compose files is unused) |
 | **Background worker** (`services/worker`, `python -m app.worker`) | one long-lived process | PostgreSQL, Redis, `REGISTRY_API_URL` (presence checks); restarts freely (idempotent polling: auto-refund timeouts, daily resets) | public inbound port (metrics on `WORKER_METRICS_PORT`, container-internal); the payment service or `INTERNAL_WORKER_TOKEN` (it never calls payment) |

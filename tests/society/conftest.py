@@ -54,6 +54,17 @@ TEST_DB = os.getenv("SOCIETY_TEST_DB", "agentnet_society_test")
 # handles the rest). Society tables first, then domain tables the runtime
 # writes through (chat, goals, memory, proposals, tasks, wallets, agents).
 TRUNCATE_TABLES = [
+    "a2a_outbound_calls",
+    "a2a_connections",
+    "a2a_remote_card_versions",
+    "a2a_remote_agents",
+    "a2a_audit_log",
+    "a2a_task_events",
+    "a2a_artifacts",
+    "a2a_messages",
+    "a2a_tasks",
+    "society_incident_freezes",
+    "society_company_cycles",
     "deployment_requests",
     "change_experiments",
     "code_promotions",

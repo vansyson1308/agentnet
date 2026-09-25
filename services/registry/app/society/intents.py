@@ -74,6 +74,13 @@ class IntentType(str, enum.Enum):
     REQUEST_MERGE_EVALUATION = "REQUEST_MERGE_EVALUATION"
     REQUEST_STAGING_EVALUATION = "REQUEST_STAGING_EVALUATION"
     RECORD_EVALUATION_RECOMMENDATION = "RECORD_EVALUATION_RECOMMENDATION"
+    # Phase 8 -- A2A federation as a CLIENT (ADR-0009 D14). They only REQUEST:
+    # the federation pump performs the network call after policy, and the
+    # model never sees a URL it did not come from, a credential or a raw card.
+    DISCOVER_A2A_AGENT = "DISCOVER_A2A_AGENT"
+    REFRESH_A2A_AGENT = "REFRESH_A2A_AGENT"
+    REQUEST_A2A_TASK = "REQUEST_A2A_TASK"
+    CHECK_A2A_TASK = "CHECK_A2A_TASK"
     # ── HIGH: recognised, never auto-executed ──
     REQUEST_PRODUCTION_DEPLOY = "REQUEST_PRODUCTION_DEPLOY"
     SHELL_EXEC = "SHELL_EXEC"
@@ -104,6 +111,14 @@ FORBIDDEN_INTENT_TYPES = frozenset(
     }
 )
 ALLOWED_INTENT_TYPES = frozenset(t for t in IntentType if t not in FORBIDDEN_INTENT_TYPES)
+A2A_INTENT_TYPES = frozenset(
+    {
+        IntentType.DISCOVER_A2A_AGENT,
+        IntentType.REFRESH_A2A_AGENT,
+        IntentType.REQUEST_A2A_TASK,
+        IntentType.CHECK_A2A_TASK,
+    }
+)
 REPO_READ_INTENT_TYPES = frozenset(
     {
         IntentType.LIST_REPO_TREE,
@@ -390,6 +405,36 @@ class EvaluationRecommendationPayload(_Strict):
     summary: str = Field(..., min_length=1, max_length=MAX_TEXT)
 
 
+class DiscoverA2AAgentPayload(_Strict):
+    card_url: str = Field(..., min_length=8, max_length=2048, description="https URL of an Agent Card (or its origin) on an operator-allowlisted host")
+    reason: str = Field(..., min_length=1, max_length=MAX_TITLE)
+
+    @field_validator("card_url")
+    @classmethod
+    def _https(cls, v: str) -> str:
+        if not v.lower().startswith("https://"):
+            raise ValueError("card_url must be https")
+        return v
+
+
+class RefreshA2AAgentPayload(_Strict):
+    remote_agent_id: uuid.UUID
+
+
+class RequestA2ATaskPayload(_Strict):
+    connection_id: uuid.UUID
+    skill_id: str = Field(..., min_length=1, max_length=128)
+    # bounded, JSON-only input; never a credential (the executor refuses keys
+    # that look like one) and never forwarded prompts or memory
+    input: Dict[str, Any] = Field(default_factory=dict)
+    budget_class: Literal["small", "standard"] = "small"
+    reason: str = Field(..., min_length=1, max_length=MAX_TITLE)
+
+
+class CheckA2ATaskPayload(_Strict):
+    outbound_call_id: uuid.UUID
+
+
 class OpaquePayload(_Strict):
     """Payload for recognised-but-forbidden intents: kept for the audit
     trail, never executed. Extra keys are allowed here on purpose so the
@@ -429,6 +474,10 @@ PAYLOAD_MODELS: Dict[IntentType, type] = {
     IntentType.REQUEST_MERGE_EVALUATION: PromotionRefPayload,
     IntentType.REQUEST_STAGING_EVALUATION: PromotionRefPayload,
     IntentType.RECORD_EVALUATION_RECOMMENDATION: EvaluationRecommendationPayload,
+    IntentType.DISCOVER_A2A_AGENT: DiscoverA2AAgentPayload,
+    IntentType.REFRESH_A2A_AGENT: RefreshA2AAgentPayload,
+    IntentType.REQUEST_A2A_TASK: RequestA2ATaskPayload,
+    IntentType.CHECK_A2A_TASK: CheckA2ATaskPayload,
 }
 for _t in FORBIDDEN_INTENT_TYPES:
     PAYLOAD_MODELS[_t] = OpaquePayload
@@ -575,6 +624,7 @@ __all__ = [
     "ALLOWED_INTENT_TYPES",
     "FORBIDDEN_INTENT_TYPES",
     "REPO_READ_INTENT_TYPES",
+    "A2A_INTENT_TYPES",
     "ProposalEvidence",
     "IntentSpec",
     "AgentDecision",

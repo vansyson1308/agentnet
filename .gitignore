@@ -21,3 +21,6 @@ fresh-install-reports/
 .service-envs/
 .sdk-envs/
 dump.rdb
+
+# A2A interop proof dependencies (scripts/a2a, installed with npm ci)
+node_modules/

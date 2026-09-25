@@ -131,6 +131,11 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             IntentType.READ_CANDIDATE_STATE.value,
             IntentType.REQUEST_PR_PROMOTION.value,
             IntentType.REQUEST_STAGING_EVALUATION.value,
+            # Phase 8: the company's product/strategy function may use external
+            # A2A agents as VENDORS (never as authorities), under budgets.
+            IntentType.DISCOVER_A2A_AGENT.value,
+            IntentType.REQUEST_A2A_TASK.value,
+            IntentType.CHECK_A2A_TASK.value,
         ),
         subscriptions=(
             EventType.PROPOSAL_CREATED,
@@ -140,7 +145,13 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             EventType.PROMOTION_MERGE_ELIGIBLE,
             EventType.PROMOTION_REJECTED,
             EventType.EXPERIMENT_FINISHED,
+            EventType.COMPANY_CYCLE,
+            EventType.INCIDENT_OPENED,
+            EventType.A2A_TASK_FINISHED,
+            EventType.A2A_AGENT_DISCOVERED,
         ),
+        # External spend needs a human: every outbound A2A task is approval-gated.
+        approval_required_intents=(IntentType.REQUEST_A2A_TASK.value,),
         risk_ceiling=IntentRiskClass.MEDIUM.value,
         resource_scopes={"memory_scopes": ["agent", "society"], "goal_owners": ["agent", "society"]},
         max_runs_per_hour=12,
@@ -159,8 +170,12 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         + (
             IntentType.CREATE_IMPROVEMENT.value,
             IntentType.CREATE_GOAL.value,
+            IntentType.REFRESH_A2A_AGENT.value,
+            IntentType.CHECK_A2A_TASK.value,
         ),
         subscriptions=(
+            EventType.COMPANY_CYCLE,
+            EventType.A2A_AGENT_REFRESHED,
             EventType.PLATFORM_METRIC_ANOMALY,
             EventType.PLATFORM_HEALTH_DEGRADED,
             EventType.USER_FEEDBACK_RECEIVED,

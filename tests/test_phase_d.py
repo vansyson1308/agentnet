@@ -7,7 +7,7 @@ refactor cannot silently re-introduce a bug we already paid for.
 D1 — WS UUID guard (in source — websocket_manager.py)
 D2 — alembic env.py uses pg_advisory_lock
 D3 — worker raises (not warns) on prom port collision
-D4 — Dockerfiles include --proxy-headers
+D4 — Dockerfiles include --proxy-headers; A2A cards use the configured origin
 D5 — rate limiter has _redis_init_lock
 D6 — task_service.create_task_with_escrow rejects mismatched payload reuse
 D7 — WS handler uses SessionLocal, not the dependency-injected db
@@ -85,10 +85,14 @@ def test_d4_dockerfile_uses_proxy_headers(dockerfile):
     assert '"--forwarded-allow-ips", "*"' not in text
 
 
-def test_d4_agent_card_uses_forwarded_headers():
-    text = _read("services/registry/app/main.py")
-    assert "x-forwarded-host" in text.lower()
-    assert "x-forwarded-proto" in text.lower()
+def test_d4_agent_cards_use_the_configured_public_origin_not_request_headers():
+    # Phase 8 (ADR-0009): the A2A cards are built from A2A_PUBLIC_BASE_URL.
+    # Deriving URLs from Host / X-Forwarded-* would let any client poison a
+    # cached, publicly served card with an attacker's endpoint.
+    text = _read("services/registry/app/a2a/routes.py") + _read("services/registry/app/a2a/cards.py")
+    assert "public_base_url()" in text
+    for header in ("x-forwarded-host", "x-forwarded-proto", "headers.get(\"host\")"):
+        assert header not in text.lower()
 
 
 # ─── D5 ─────────────────────────────────────────────────────

@@ -1,0 +1,4 @@
+# The official A2A reference peer (tests + disposable staging proof service).
+# Same pins as services/registry so the peer and AgentNet speak one SDK version.
+a2a-sdk[http-server]==1.1.5
+uvicorn==0.52.4

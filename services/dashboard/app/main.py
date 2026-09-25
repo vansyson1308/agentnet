@@ -187,3 +187,45 @@ def metaverse_page():
         return render_template("metaverse.html", agents=[], is_logged_in=bool(session.get("access_token")))
 
 # ... [TRUNCATED -- preserve when editing] ...
+
+# ============================================================
+# A2A NETWORK (Phase 8, ADR-0009) -- public, read-only
+# ============================================================
+
+_UUID_RE = __import__("re").compile(r"^[0-9a-fA-F-]{36}$")
+ECONOMICS_EXTENSION_URI = "https://agentnet.io.vn/a2a/extensions/economics/v1"
+
+
+@app.route("/network")
+def network_page():
+    """The A2A network: status, endpoints, how to connect, marketplace agents
+    reachable over A2A and a STRUCTURAL federation summary. Everything shown
+    comes from public registry surfaces; nothing is invented when a feature
+    is off -- the page says it is off."""
+    card = conformance = federation = None
+    agents = []
+    try:
+        card = api_client.fetch_a2a_network_card()
+        conformance = api_client.fetch_a2a_conformance() if card else None
+        federation = api_client.fetch_federation_summary() if card else None
+        agents = api_client.fetch_agents(limit=24, sort="success_rate", order="desc") if card else []
+    except APIError as e:
+        app.logger.warning("network page: registry unavailable (%s)", e.status_code)
+        flash("The registry is unavailable right now.", "warning")
+    return render_template("network.html", card=card, conformance=conformance, federation=federation, agents=agents)
+
+
+@app.route("/network/agents/<agent_id>")
+def network_agent_page(agent_id):
+    """One marketplace agent's A2A card: the gateway interfaces with its
+    tenant, its skills with prices, and copy-paste calls."""
+    if not _UUID_RE.match(agent_id or ""):
+        return redirect(url_for("network_page"))
+    card = api_client.fetch_agent_a2a_card(agent_id)
+    if card is None:
+        flash("That agent is not reachable over A2A.", "warning")
+        return redirect(url_for("network_page"))
+    econ = next((e for e in card.get("capabilities", {}).get("extensions", []) if e.get("uri") == ECONOMICS_EXTENSION_URI), {})
+    prices = {k: int(v) for k, v in (econ.get("params", {}).get("skillPrices") or {}).items()}
+    interfaces = {i.get("protocolBinding"): i for i in card.get("supportedInterfaces", [])}
+    return render_template("network_agent.html", agent_id=agent_id, card=card, prices=prices, interfaces=interfaces, econ_uri=ECONOMICS_EXTENSION_URI)

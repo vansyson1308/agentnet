@@ -9,7 +9,6 @@ from jsonschema import validate
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ...a2a import agent_to_a2a_card
 from ...authz import owns_agent, require_owned_agent
 from ...auth import get_current_agent, get_current_user, get_current_user_or_agent
 from ...database import get_db
@@ -365,24 +364,6 @@ async def get_agent_reputation(agent_id: uuid.UUID, db: Session = Depends(get_db
     )
 
 
-@router.get("/{agent_id}/a2a-card")
-async def get_agent_card(agent_id: uuid.UUID, db: Session = Depends(get_db)):
-    """
-    Get the A2A Agent Card for a specific agent.
-
-    Returns a standard A2A-compatible Agent Card (JSON) that describes
-    the agent's capabilities, endpoint, and authentication requirements.
-    Any A2A-compatible system can use this to discover and interact with the agent.
-    """
-    db_agent = db.query(Agent).filter(Agent.id == agent_id).first()
-
-    if db_agent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-
-    card = agent_to_a2a_card(db_agent)
-    return card.model_dump(by_alias=True, exclude_none=True)
-
-
 @router.put("/{agent_id}", response_model=AgentSchema)
 async def update_agent(
     agent_id: uuid.UUID,
@@ -611,133 +592,23 @@ class ImportAgentRequest(BaseModel):
     name_override: Optional[str] = None
 
 
-@router.post("/import", response_model=AgentSchema, status_code=status.HTTP_201_CREATED)
+@router.post("/import", status_code=status.HTTP_410_GONE)
 async def import_agent(
     request: ImportAgentRequest,
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Import an external agent by fetching its A2A Agent Card.
+    """Retired (ADR-0009 D11/D12).
 
-    Paste a URL, and AgentNet will:
-    1. Fetch /.well-known/agent-card.json from the URL (via sandbox)
-    2. Parse the A2A Agent Card
-    3. Create an agent record in the registry
-
-    Requires sandbox (SSRF protection) to be active.
-    """
-    base_url = request.url.rstrip("/")
-    card_url = f"{base_url}/.well-known/agent-card.json"
-
-    # Fetch the A2A card via sandbox
-    try:
-        response = await sandboxed_call(
-            url=card_url,
-            method="GET",
-        )
-    except SSRFError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Security violation: {str(e)}",
-        )
-    except SandboxError as e:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to fetch agent card: {str(e)}",
-        )
-
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Agent card endpoint returned {response.status_code}",
-        )
-
-    try:
-        card = response.json()
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Agent card is not valid JSON",
-        )
-
-    # Validate minimum required fields
-    if not card.get("name") or not card.get("skills"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Agent card missing required fields: 'name' and 'skills'",
-        )
-
-    # Convert A2A skills to AgentNet capabilities
-    capabilities = []
-    for skill in card.get("skills", []):
-        capabilities.append(
-            {
-                "name": skill.get("id", skill.get("name", "unknown")),
-                "version": card.get("version", "1.0"),
-                "input_schema": {"type": "object"},
-                "output_schema": {"type": "object"},
-                "price": 0,  # External agents set their own pricing
-            }
-        )
-
-    agent_name = request.name_override or card["name"]
-
-    # Check for duplicate
-    existing = (
-        db.query(Agent)
-        .filter(
-            Agent.user_id == current_user.id,
-            Agent.name == agent_name,
-        )
-        .first()
+    It turned a remote card into a NATIVE agent with a wallet and dispatched
+    AgentNet's own task format to a remote A2A server that cannot understand
+    it. Remote A2A agents now live in the federation catalog
+    (``/v1/a2a/federation/agents``, operator-verified, SSRF-safe fetch) and
+    are called through the official A2A client; they never receive an
+    AgentNet wallet or trust automatically."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Agent import was retired: remote A2A agents are added to the federation catalog by an operator (/v1/a2a/federation/agents).",
     )
-
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Agent '{agent_name}' already exists. Use name_override.",
-        )
-
-    # Determine endpoint from card
-    endpoint = base_url
-    for iface in card.get("supportedInterfaces", []):
-        if iface.get("url"):
-            endpoint = iface["url"]
-            break
-
-    # Create agent
-    db_agent = Agent(
-        id=uuid.uuid4(),
-        user_id=current_user.id,
-        name=agent_name,
-        description=card.get("description", ""),
-        capabilities=capabilities,
-        endpoint=endpoint,
-        public_key="imported-via-a2a-card",
-        status=AgentStatus.UNVERIFIED,
-    )
-
-    db.add(db_agent)
-    db.commit()
-    db.refresh(db_agent)
-
-    # Create wallet
-    db_wallet = Wallet(
-        id=uuid.uuid4(),
-        owner_type=WalletOwnerType.AGENT,
-        owner_id=db_agent.id,
-        balance_credits=0,
-        balance_usdc=0,
-        reserved_credits=0,
-        reserved_usdc=0,
-        spending_cap=1000,
-        daily_spent=0,
-    )
-    db.add(db_wallet)
-    db.commit()
-
-    return db_agent
 
 
 # ─────────────────────────────────────────────────────────
