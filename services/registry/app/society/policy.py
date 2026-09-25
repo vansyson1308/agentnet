@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Agent, AgentCapabilityGrant, AgentRun, AgentRunStatus, IntentRiskClass, PolicyDecision
 from .config import SocietySettings
-from .intents import FORBIDDEN_INTENT_TYPES, REPO_READ_INTENT_TYPES, IntentType, ValidatedIntent
+from .intents import A2A_INTENT_TYPES, FORBIDDEN_INTENT_TYPES, REPO_READ_INTENT_TYPES, IntentType, ValidatedIntent
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,11 @@ RISK_BY_TYPE = {
     IntentType.REQUEST_MERGE_EVALUATION: IntentRiskClass.MEDIUM,
     IntentType.REQUEST_STAGING_EVALUATION: IntentRiskClass.MEDIUM,
     IntentType.RECORD_EVALUATION_RECOMMENDATION: IntentRiskClass.LOW,
+    # Phase 8 -- A2A client intents (ADR-0009 D14)
+    IntentType.DISCOVER_A2A_AGENT: IntentRiskClass.MEDIUM,
+    IntentType.REFRESH_A2A_AGENT: IntentRiskClass.LOW,
+    IntentType.REQUEST_A2A_TASK: IntentRiskClass.MEDIUM,
+    IntentType.CHECK_A2A_TASK: IntentRiskClass.LOW,
 }
 for _t in FORBIDDEN_INTENT_TYPES:
     RISK_BY_TYPE[_t] = IntentRiskClass.HIGH
@@ -168,6 +173,11 @@ def evaluate_intent(
     if itype in (IntentType.REQUEST_STAGING_DEPLOY, IntentType.REQUEST_STAGING_EVALUATION) and not settings.staging_deploy_enabled:
         return PolicyVerdict(PolicyDecision.DENY, risk, "SOCIETY_STAGING_DEPLOY_ENABLED is off")
 
+    if itype in A2A_INTENT_TYPES:
+        refusal = _a2a_refusal(itype, intent.payload, settings)
+        if refusal:
+            return PolicyVerdict(PolicyDecision.DENY, risk, refusal)
+
     # Payload-level scope checks (typed payload, never free text).
     payload = intent.payload
     scopes = grant.resource_scopes or {}
@@ -206,6 +216,46 @@ def evaluate_intent(
         return PolicyVerdict(PolicyDecision.APPROVAL_REQUIRED, risk, f"{itype.value} requires human approval for this agent")
 
     return PolicyVerdict(PolicyDecision.ALLOW, risk, "allowed by grant")
+
+
+_CREDENTIAL_KEY_HINTS = ("token", "secret", "password", "authorization", "api_key", "apikey", "bearer", "cookie", "credential", "private_key")
+
+
+def _looks_like_credential_key(obj, depth: int = 0) -> bool:
+    if depth > 6:
+        return True
+    if isinstance(obj, dict):
+        return any(any(h in str(k).lower() for h in _CREDENTIAL_KEY_HINTS) or _looks_like_credential_key(v, depth + 1) for k, v in obj.items())
+    if isinstance(obj, list):
+        return any(_looks_like_credential_key(v, depth + 1) for v in obj)
+    return False
+
+
+def _a2a_refusal(itype: IntentType, payload, settings: SocietySettings) -> Optional[str]:
+    """Static A2A rules (flags, allowlist, input shape). Budgets and breakers
+    that need the database are enforced by the executor, fail closed."""
+    from ..a2a import config as a2a_config
+
+    if not a2a_config.society_client_enabled():
+        return "A2A_SOCIETY_CLIENT_ENABLED is off"
+    if itype == IntentType.CHECK_A2A_TASK:
+        return None  # a read of AgentNet's own record; no network
+    if not a2a_config.federation_enabled():
+        return "A2A_FEDERATION_ENABLED is off"
+    if itype == IntentType.DISCOVER_A2A_AGENT:
+        from urllib.parse import urlsplit
+
+        host = (urlsplit(payload.card_url).hostname or "").lower().rstrip(".")
+        if not host or host not in set(settings.a2a_discovery_allowed_hosts):
+            return f"host {host!r} is not on A2A_SOCIETY_DISCOVERY_ALLOWED_HOSTS"
+    if itype == IntentType.REQUEST_A2A_TASK:
+        import json as _json
+
+        if len(_json.dumps(payload.input, default=str)) > 4000:
+            return "A2A task input exceeds 4000 bytes"
+        if _looks_like_credential_key(payload.input):
+            return "A2A task input may not carry credential-like fields"
+    return None
 
 
 # ── pre-run budget gate ───────────────────────────────────────────────

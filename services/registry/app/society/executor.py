@@ -369,6 +369,19 @@ def _create_improvement(ctx: ExecContext) -> ExecOutcome:
     )
     if existing is not None:
         return ExecOutcome(result={"proposal_id": str(existing.id), "duplicate": True, "status": _ev(existing.status)})
+    if ctx.settings.company_cycle_enabled:
+        # Company-mode portfolio cap (ADR-0009 D15): a few hypotheses pursued
+        # to a conclusion beat many started. Close or reject one first.
+        open_count = (
+            ctx.db.query(ImprovementProposal)
+            .filter(ImprovementProposal.proposed_by_agent_id.isnot(None), ImprovementProposal.status.in_(_OPEN_PROPOSAL_STATUSES))
+            .count()
+        )
+        if open_count >= ctx.settings.company_max_active_hypotheses:
+            raise ExecutionError(
+                f"portfolio full: {open_count} active hypotheses (SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES="
+                f"{ctx.settings.company_max_active_hypotheses}); conclude one before opening another"
+            )
     source = ProposalSource.QA_FAILURE if ctx.grant.role == "qa" else ProposalSource.AUDIT
     proposal = ImprovementProposal(
         id=uuid.uuid4(),
@@ -642,6 +655,20 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
             raise ExecutionError(f"spec allows a never-writable path: {f}")
     if len(spec["files_allowed"]) > ctx.settings.max_files_per_candidate:
         raise ExecutionError(f"spec allows {len(spec['files_allowed'])} files; change budget is {ctx.settings.max_files_per_candidate} per candidate")
+    if ctx.settings.company_cycle_enabled:
+        open_red = (
+            ctx.db.query(CodeCandidate)
+            .filter(
+                CodeCandidate.risk_tier == RiskTier.RED.value,
+                CodeCandidate.status.notin_([CodeCandidateStatus.READY, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED]),
+            )
+            .count()
+        )
+        if open_red >= ctx.settings.company_max_high_risk_investigations:
+            raise ExecutionError(
+                f"portfolio full: {open_red} open high-risk investigation(s) (SOCIETY_COMPANY_MAX_HIGH_RISK_INVESTIGATIONS="
+                f"{ctx.settings.company_max_high_risk_investigations}); finish it first"
+            )
     # Anti-busywork: every autonomous engineering effort links signal -> proposal
     # -> expected effect -> acceptance criteria. Docs candidates need the
     # proposal link; code candidates additionally need an expected effect.
@@ -1237,6 +1264,133 @@ def _read_candidate_state(ctx: ExecContext) -> ExecOutcome:
     return ExecOutcome(result=out)
 
 
+# ── Phase 8: A2A federation as a client (ADR-0009 D14) ─────────────────
+# These handlers only RECORD a request (a pending ``a2a_outbound_calls`` row
+# in this transaction). The federation pump (society/federation_pump.py)
+# performs the network call and emits the result as an event whose payload is
+# untrusted external data. The model never handles a URL it was not allowed,
+# a credential, a raw card or a remote prompt.
+
+
+def _a2a_request_event(ctx: ExecContext, call, event_type: str, payload: Dict[str, Any]) -> SocietyEvent:
+    ev = _emit(ctx, event_type, payload, subject_type="a2a_outbound_call", subject_id=call.id)
+    call.causation_id = ev.id
+    call.correlation_id = ctx.run.correlation_id
+    return ev
+
+
+def _discover_a2a_agent(ctx: ExecContext) -> ExecOutcome:
+    from ..a2a.orm import A2AOutboundCall
+
+    p = ctx.validated.payload
+    key = f"society:{ctx.intent_row.idempotency_key}"[:255]
+    call = ctx.db.query(A2AOutboundCall).filter(A2AOutboundCall.idempotency_key == key).first()
+    if call is None:
+        call = A2AOutboundCall(
+            id=uuid.uuid4(), initiator_class="society", initiator_id=ctx.agent.id, intent_id=ctx.intent_row.id,
+            depth=1, operation="DiscoverAgent", idempotency_key=key, status="pending",
+            result_summary={"request": {"cardUrl": p.card_url}},
+        )
+        ctx.db.add(call)
+        ctx.db.flush()
+    ev = _a2a_request_event(ctx, call, "a2a.discovery.requested", {"outbound_call_id": str(call.id), "reason": p.reason[:255]})
+    return ExecOutcome(result={"outbound_call_id": str(call.id), "status": call.status}, events=[str(ev.id)])
+
+
+def _refresh_a2a_agent(ctx: ExecContext) -> ExecOutcome:
+    from ..a2a.orm import A2AOutboundCall, A2ARemoteAgent
+
+    p = ctx.validated.payload
+    if ctx.db.query(A2ARemoteAgent.id).filter(A2ARemoteAgent.id == p.remote_agent_id).first() is None:
+        raise ExecutionError("unknown remote agent")
+    key = f"society:{ctx.intent_row.idempotency_key}"[:255]
+    call = ctx.db.query(A2AOutboundCall).filter(A2AOutboundCall.idempotency_key == key).first()
+    if call is None:
+        call = A2AOutboundCall(
+            id=uuid.uuid4(), remote_agent_id=p.remote_agent_id, initiator_class="society", initiator_id=ctx.agent.id,
+            intent_id=ctx.intent_row.id, depth=1, operation="RefreshAgent", idempotency_key=key, status="pending",
+        )
+        ctx.db.add(call)
+        ctx.db.flush()
+    ev = _a2a_request_event(ctx, call, "a2a.refresh.requested", {"outbound_call_id": str(call.id)})
+    return ExecOutcome(result={"outbound_call_id": str(call.id), "status": call.status}, events=[str(ev.id)])
+
+
+def _request_a2a_task(ctx: ExecContext) -> ExecOutcome:
+    from sqlalchemy import func as _func
+
+    from ..a2a.federation import client as a2a_client
+    from ..a2a.orm import A2AOutboundCall
+
+    p = ctx.validated.payload
+    key = f"society:{ctx.intent_row.idempotency_key}"[:255]
+    existing = ctx.db.query(A2AOutboundCall).filter(A2AOutboundCall.idempotency_key == key).first()
+    if existing is None:
+        day_ago = ctx.now - timedelta(days=1)
+        society_calls = (
+            ctx.db.query(_func.count(A2AOutboundCall.id))
+            .filter(A2AOutboundCall.initiator_class == "society", A2AOutboundCall.operation == "SendMessage", A2AOutboundCall.created_at >= day_ago)
+            .scalar() or 0
+        )
+        if society_calls >= ctx.settings.a2a_max_calls_per_day:
+            raise ExecutionError(f"external spend budget: {society_calls} society A2A calls in 24h (A2A_SOCIETY_MAX_CALLS_PER_DAY)")
+        in_correlation = (
+            ctx.db.query(_func.count(A2AOutboundCall.id))
+            .filter(A2AOutboundCall.correlation_id == ctx.run.correlation_id, A2AOutboundCall.operation == "SendMessage")
+            .scalar() or 0
+        )
+        if in_correlation >= ctx.settings.a2a_max_calls_per_correlation:
+            raise ExecutionError(f"agent-chain breaker: {in_correlation} A2A calls already in this correlation")
+        from ..a2a.orm import A2AConnection
+
+        conn = ctx.db.query(A2AConnection).filter(A2AConnection.id == p.connection_id).first()
+        if conn is not None:
+            failures = (
+                ctx.db.query(_func.count(A2AOutboundCall.id))
+                .filter(
+                    A2AOutboundCall.remote_agent_id == conn.remote_agent_id,
+                    A2AOutboundCall.status.in_(["failed", "timeout"]),
+                    A2AOutboundCall.created_at >= ctx.now - timedelta(hours=1),
+                )
+                .scalar() or 0
+            )
+            if failures >= ctx.settings.a2a_breaker_failures:
+                raise ExecutionError(f"circuit breaker open: {failures} failed calls to this remote agent in the last hour")
+    req = a2a_client.OutboundRequest(
+        connection_id=p.connection_id,
+        skill_id=p.skill_id,
+        input=p.input,
+        idempotency_key=key,
+        initiator_class="society",
+        initiator_id=ctx.agent.id,
+        correlation_id=ctx.run.correlation_id,
+        intent_id=ctx.intent_row.id,
+        depth=1,
+    )
+    try:
+        call = a2a_client.prepare(ctx.db, req)
+    except a2a_client.OutboundRefusedByPolicy as exc:
+        raise ExecutionError(f"A2A request refused: {exc.reason}")
+    ev = _a2a_request_event(
+        ctx, call, "a2a.task.requested",
+        {"outbound_call_id": str(call.id), "skill_id": p.skill_id, "budget_class": p.budget_class, "reason": p.reason[:255]},
+    )
+    return ExecOutcome(result={"outbound_call_id": str(call.id), "status": call.status}, events=[str(ev.id)])
+
+
+def _check_a2a_task(ctx: ExecContext) -> ExecOutcome:
+    from ..a2a.federation import client as a2a_client
+    from ..a2a.orm import A2AOutboundCall
+
+    p = ctx.validated.payload
+    call = ctx.db.query(A2AOutboundCall).filter(A2AOutboundCall.id == p.outbound_call_id, A2AOutboundCall.initiator_class == "society").first()
+    if call is None:
+        raise ExecutionError("unknown outbound call")
+    view = a2a_client.call_view(call)
+    view.pop("connectionId", None)
+    return ExecOutcome(result={"call": json_bounded(view, 4000)})
+
+
 HANDLERS: Dict[IntentType, Callable[[ExecContext], ExecOutcome]] = {
     IntentType.SEND_MESSAGE: _send_message,
     IntentType.WRITE_MEMORY: _write_memory,
@@ -1268,6 +1422,10 @@ HANDLERS: Dict[IntentType, Callable[[ExecContext], ExecOutcome]] = {
     IntentType.REQUEST_MERGE_EVALUATION: _request_merge_evaluation,
     IntentType.REQUEST_STAGING_EVALUATION: _request_staging_evaluation,
     IntentType.RECORD_EVALUATION_RECOMMENDATION: _record_evaluation_recommendation,
+    IntentType.DISCOVER_A2A_AGENT: _discover_a2a_agent,
+    IntentType.REFRESH_A2A_AGENT: _refresh_a2a_agent,
+    IntentType.REQUEST_A2A_TASK: _request_a2a_task,
+    IntentType.CHECK_A2A_TASK: _check_a2a_task,
 }
 
 

@@ -491,6 +491,10 @@ def fail_task_with_refund(
     """
     if new_status not in (TaskStatus.FAILED, TaskStatus.TIMEOUT):
         raise EscrowError(f"fail_task_with_refund only handles failed/timeout, got {new_status}")
+    if error_message == CANCELED_BY_CALLER:
+        # Reserved for cancel_task_with_refund: a callee must not be able to
+        # present its own failure as the caller's cancellation.
+        raise EscrowError("error_message is reserved")
 
     task = (
         db.query(TaskSession)
@@ -505,6 +509,64 @@ def fail_task_with_refund(
     # Idempotency: terminal state -> noop.
     if task.status in (TaskStatus.FAILED, TaskStatus.TIMEOUT, TaskStatus.REFUNDED):
         return task
+    return _refund_locked(db=db, task=task, new_status=new_status, error_message=error_message)
+
+
+#: ``error_message`` of a caller cancellation; the A2A layer maps it to
+#: TASK_STATE_CANCELED (app/a2a/mapping.py).
+CANCELED_BY_CALLER = "canceled_by_caller"
+
+
+class TaskNotCancelable(EscrowError):
+    """The task exists and the caller may see it, but it can no longer be
+    canceled (the callee started, or it already ended some other way)."""
+
+
+def cancel_task_with_refund(
+    *,
+    db: Session,
+    task_id: uuid.UUID,
+    caller_agent_id: uuid.UUID,
+) -> TaskSession:
+    """The ONLY cancellation path (ADR-0009 D9).
+
+    * Row lock on the task first, so a concurrent start / confirm / fail /
+      timeout either commits before (and cancellation is refused) or waits
+      for this transaction (and sees a terminal task): exactly one outcome.
+    * Caller party only.
+    * Allowed only from INITIATED: once the callee started, refunding would
+      let a caller extract work for free.
+    * Refund through the same ``_refund_locked`` code as fail/timeout: the
+      reservation is released exactly once and the transaction is CANCELLED.
+    * Idempotent: a repeated cancellation returns the canceled task.
+    """
+    task = (
+        db.query(TaskSession)
+        .filter(TaskSession.id == task_id)
+        .with_for_update()
+        .first()
+    )
+    if task is None:
+        raise EscrowError("Task session not found")
+    if task.caller_agent_id != caller_agent_id:
+        raise EscrowError("Only the caller agent can cancel the task")
+    if task.status == TaskStatus.FAILED and task.error_message == CANCELED_BY_CALLER:
+        return task  # idempotent
+    if task.status != TaskStatus.INITIATED:
+        raise TaskNotCancelable(f"Task is {task.status.value}; only an initiated task can be canceled")
+    return _refund_locked(db=db, task=task, new_status=TaskStatus.FAILED, error_message=CANCELED_BY_CALLER)
+
+
+def _refund_locked(
+    *,
+    db: Session,
+    task: TaskSession,
+    new_status: TaskStatus,
+    error_message: str,
+) -> TaskSession:
+    """Refund the escrow of ``task`` (already row-locked by the caller) and
+    move it to ``new_status``. Shared by fail, timeout and cancel so there is
+    one refund implementation."""
     is_valid, err = validate_state_transition(
         ContractStatus(task.status.value),
         ContractStatus(new_status.value),
@@ -576,6 +638,6 @@ def fail_task_with_refund(
     db.refresh(task)
     escrow_refunded_total.labels(
         currency=task.currency.value if hasattr(task.currency, "value") else str(task.currency),
-        reason=new_status.value,
+        reason="canceled" if error_message == CANCELED_BY_CALLER else new_status.value,
     ).inc()
     return task

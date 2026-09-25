@@ -262,6 +262,23 @@ class SocietySettings:
     # the provider on every worker cycle.
     promotion_poll_interval_seconds: int = field(default_factory=lambda: _int("SOCIETY_PROMOTION_POLL_INTERVAL_SECONDS", 60, minimum=0))
 
+    # ── A2A federation as a client (Phase 8, ADR-0009 D14) ──
+    # The model can never make the platform fetch an arbitrary URL: discovery is
+    # limited to hosts an operator listed here (empty = no Society discovery).
+    a2a_discovery_allowed_hosts: tuple = field(
+        default_factory=lambda: tuple(sorted({h.strip().lower() for h in os.getenv("A2A_SOCIETY_DISCOVERY_ALLOWED_HOSTS", "").split(",") if h.strip()}))
+    )
+    a2a_max_calls_per_day: int = field(default_factory=lambda: _int("A2A_SOCIETY_MAX_CALLS_PER_DAY", 20, minimum=0))
+    # agent-chain breaker: outbound A2A calls one correlation may cause
+    a2a_max_calls_per_correlation: int = field(default_factory=lambda: _int("A2A_SOCIETY_MAX_CALLS_PER_CORRELATION", 3, minimum=0))
+    # circuit breaker: failed calls to one remote agent in the last hour
+    a2a_breaker_failures: int = field(default_factory=lambda: _int("A2A_SOCIETY_BREAKER_FAILURES", 3, minimum=1))
+    # ── autonomous company mode (Phase 8, ADR-0009 D15) ──
+    company_cycle_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_COMPANY_CYCLE_ENABLED", False))
+    company_cycle_hour_utc: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_CYCLE_HOUR_UTC", 1, minimum=0))
+    company_max_active_hypotheses: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES", 3, minimum=0))
+    company_max_high_risk_investigations: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_MAX_HIGH_RISK_INVESTIGATIONS", 1, minimum=0))
+
     # ── identity ───────────────────────────────────────────────────────
     worker_id: str = field(
         default_factory=lambda: os.getenv("SOCIETY_WORKER_ID") or f"{socket.gethostname()}-{os.getpid()}"
@@ -346,6 +363,8 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
             problems.append("SOCIETY_STAGING_DEPLOY_ENABLED=true is meaningless in production and refused")
     if s.daily_model_budget_usd < 0:
         problems.append("SOCIETY_DAILY_MODEL_BUDGET must be >= 0")
+    if s.company_cycle_hour_utc > 23:
+        problems.append("SOCIETY_COMPANY_CYCLE_HOUR_UTC must be 0..23")
     if s.model_usd_per_1k_input < 0 or s.model_usd_per_1k_output < 0:
         problems.append("SOCIETY_MODEL_USD_PER_1K_* must be >= 0")
     if s.run_lease_seconds <= s.model_timeout_seconds // 2 and s.run_lease_seconds < 30:

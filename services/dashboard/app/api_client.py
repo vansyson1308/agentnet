@@ -88,6 +88,29 @@ class ApiClient:
         data = self._request("GET", f"/v1/agents/{agent_id}")
         return data.get("agent", data)
 
+    # ── A2A (Phase 8, ADR-0009): public registry surfaces only ──────────
+    def _public_or_none(self, path: str):
+        """GET a public A2A surface; ``None`` when the registry answers 404
+        (the feature flag is off), so the page can say so truthfully."""
+        try:
+            return self._request("GET", path, timeout=5)
+        except APIError as e:
+            if e.status_code == 404:
+                return None
+            raise
+
+    def fetch_a2a_network_card(self):
+        return self._public_or_none("/.well-known/agent-card.json")
+
+    def fetch_a2a_conformance(self):
+        return self._public_or_none("/v1/a2a/conformance")
+
+    def fetch_agent_a2a_card(self, agent_id: str):
+        return self._public_or_none(f"/v1/agents/{agent_id}/a2a-card")
+
+    def fetch_federation_summary(self):
+        return self._public_or_none("/v1/a2a/federation/summary")
+
     # ... [other methods remain unchanged] ...
 
 api_client = ApiClient()

@@ -81,6 +81,16 @@ class EventType:
     STAGING_CANARY_SIGNAL = "staging.canary.signal"
     RUN_DEAD = "run.dead"
     LOOP_BREAKER_TRIPPED = "loop_breaker.tripped"
+    # Phase 8 — A2A federation + autonomous company mode (ADR-0009)
+    COMPANY_CYCLE = "company.cycle"
+    INCIDENT_OPENED = "incident.opened"
+    INCIDENT_LIFTED = "incident.lifted"
+    A2A_TASK_REQUESTED = "a2a.task.requested"
+    A2A_TASK_FINISHED = "a2a.task.finished"
+    A2A_DISCOVERY_REQUESTED = "a2a.discovery.requested"
+    A2A_REFRESH_REQUESTED = "a2a.refresh.requested"
+    A2A_AGENT_DISCOVERED = "a2a.agent.discovered"
+    A2A_AGENT_REFRESHED = "a2a.agent.refreshed"
     # Phase 3 — self-development
     REPO_READ_RESULT = "repo.read.result"            # targeted wake: the reading agent's next engineering turn
     ENGINEERING_TURNS_EXHAUSTED = "engineering.turns_exhausted"
