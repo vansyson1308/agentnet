@@ -207,6 +207,14 @@ export default defineRailway((ctx) => {
       SOCIETY_MODEL_THINKING_MODE: "auto",
       SOCIETY_MODEL_REASONING_EFFORT: "auto",
       SOCIETY_HEARTBEAT_INTERVAL_SECONDS: "3600",
+      // The Society's eyes on the PUBLIC product (docs/PUBLIC_SURFACE_CONTRACT.md):
+      // deterministic anonymous HTTP, effective only while SOCIETY_RUNTIME_ENABLED
+      // is on. It needs no credential. The public origins it reads are the code
+      // defaults (PUBLIC_PRODUCT_UI_ORIGIN / PUBLIC_PRODUCT_API_ORIGIN); this file
+      // names no production host.
+      SOCIETY_PUBLIC_SURFACE_MONITOR_ENABLED: "true",
+      SOCIETY_PUBLIC_SURFACE_MONITOR_INTERVAL_SECONDS: "600",
+      SOCIETY_PUBLIC_SURFACE_FAILURE_THRESHOLD: "2",
       ...societyOff,
       ...a2a,
     },

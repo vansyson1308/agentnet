@@ -342,6 +342,7 @@ def _update_goal(ctx: ExecContext) -> ExecOutcome:
 WORLD_SIGNAL_EVENTS = frozenset(
     {
         EventType.PLATFORM_METRIC_ANOMALY,
+        EventType.PUBLIC_SURFACE_ANOMALY,
         EventType.PLATFORM_HEALTH_DEGRADED,
         EventType.USER_FEEDBACK_RECEIVED,
         EventType.STAGING_CANARY_SIGNAL,

@@ -316,7 +316,22 @@ class RequestCodeChangePayload(_Strict):
     requires_security_review: bool = False
 
 
+class TextReplacement(_Strict):
+    """One exact-text edit inside an EXISTING file: ``old`` must occur exactly
+    once in the file as it stands after the earlier replacements."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    old: str = Field(..., min_length=1, max_length=20_000)
+    new: str = Field(..., max_length=20_000)
+
+
 class FileEdit(_Strict):
+    """Either the whole new file (``content``) or exact-text ``replacements``
+    in an existing file -- never both. Replacements let a real change to a
+    large file fit the model's output budget: only the changed text is sent,
+    and the trusted workspace applies it all-or-nothing."""
+
     # File content is byte-exact: the shared ``str_strip_whitespace`` would
     # silently drop the trailing newline of every submitted file (a
     # whitespace-only diff on an otherwise identical file — busywork the
@@ -324,7 +339,14 @@ class FileEdit(_Strict):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
     path: str = Field(..., min_length=1, max_length=255)
-    content: str = Field(..., max_length=200_000)
+    content: Optional[str] = Field(None, max_length=200_000)
+    replacements: Optional[List[TextReplacement]] = Field(None, min_length=1, max_length=40)
+
+    @model_validator(mode="after")
+    def _one_mode(self) -> "FileEdit":
+        if (self.content is None) == (self.replacements is None):
+            raise ValueError("a file edit carries exactly one of 'content' (whole file) or 'replacements' (exact-text edits)")
+        return self
 
     @field_validator("path")
     @classmethod

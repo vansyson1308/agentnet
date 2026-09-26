@@ -278,6 +278,19 @@ class SocietySettings:
     company_cycle_hour_utc: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_CYCLE_HOUR_UTC", 1, minimum=0))
     company_max_active_hypotheses: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES", 3, minimum=0))
     company_max_high_risk_investigations: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_MAX_HIGH_RISK_INVESTIGATIONS", 1, minimum=0))
+    # ── public-surface synthetic monitor (surface_monitor.py) ──
+    # Deterministic anonymous HTTP against the PUBLIC product; the model is
+    # used only after a durable anomaly. OFF unless enabled (staging worker).
+    public_surface_monitor_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_PUBLIC_SURFACE_MONITOR_ENABLED", False))
+    public_surface_monitor_interval_seconds: int = field(default_factory=lambda: _int("SOCIETY_PUBLIC_SURFACE_MONITOR_INTERVAL_SECONDS", 600, minimum=60))
+    # >= 2: one timeout is noise, never a reason to write code.
+    public_surface_failure_threshold: int = field(default_factory=lambda: _int("SOCIETY_PUBLIC_SURFACE_FAILURE_THRESHOLD", 2, minimum=2))
+    public_surface_cooldown_seconds: int = field(default_factory=lambda: _int("SOCIETY_PUBLIC_SURFACE_COOLDOWN_SECONDS", 21600, minimum=600))
+    public_surface_max_events_per_day: int = field(default_factory=lambda: _int("SOCIETY_PUBLIC_SURFACE_MAX_EVENTS_PER_DAY", 6, minimum=1))
+    public_surface_timeout_seconds: int = field(default_factory=lambda: _int("SOCIETY_PUBLIC_SURFACE_TIMEOUT_SECONDS", 10, minimum=1))
+    public_surface_target_label: str = field(default_factory=lambda: (os.getenv("SOCIETY_PUBLIC_SURFACE_TARGET_LABEL") or "production").strip()[:32])
+    public_product_ui_origin: str = field(default_factory=lambda: (os.getenv("PUBLIC_PRODUCT_UI_ORIGIN") or "https://agentnet.io.vn").strip().rstrip("/"))
+    public_product_api_origin: str = field(default_factory=lambda: (os.getenv("PUBLIC_PRODUCT_API_ORIGIN") or "https://api.agentnet.io.vn").strip().rstrip("/"))
 
     # ── identity ───────────────────────────────────────────────────────
     worker_id: str = field(
@@ -365,6 +378,14 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
         problems.append("SOCIETY_DAILY_MODEL_BUDGET must be >= 0")
     if s.company_cycle_hour_utc > 23:
         problems.append("SOCIETY_COMPANY_CYCLE_HOUR_UTC must be 0..23")
+    if s.public_surface_monitor_enabled:
+        for name, origin in (("PUBLIC_PRODUCT_UI_ORIGIN", s.public_product_ui_origin), ("PUBLIC_PRODUCT_API_ORIGIN", s.public_product_api_origin)):
+            if not origin.startswith("https://") and env != "development":
+                problems.append(f"{name} must be an https:// origin outside development (the monitor reads the PUBLIC product)")
+            if any(c in origin for c in "@?#") or origin.count("/") > 2:
+                problems.append(f"{name} must be a bare origin (scheme://host), without credentials, path, query or fragment")
+        if env == "production":
+            problems.append("SOCIETY_PUBLIC_SURFACE_MONITOR_ENABLED=true is refused in production (it is part of the Society, which production does not run)")
     if s.model_usd_per_1k_input < 0 or s.model_usd_per_1k_output < 0:
         problems.append("SOCIETY_MODEL_USD_PER_1K_* must be >= 0")
     if s.run_lease_seconds <= s.model_timeout_seconds // 2 and s.run_lease_seconds < 30:

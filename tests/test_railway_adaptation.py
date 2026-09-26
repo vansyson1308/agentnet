@@ -275,11 +275,16 @@ def test_dashboard_readiness_never_echoes_the_registry_probe_error():
     assert "private-registry-host" not in body and "127.0.0.1" not in body and "error" not in body
 
 
-def test_dashboard_pages_render_with_stale_links_and_an_unreachable_registry():
-    """Every dashboard template links to pages that no longer exist; before
-    Phase 4 any render (even the error page) died with a URL BuildError, so
-    the public pages returned 500 on staging. Stale links now render as inert
-    anchors, and the API client uses the registry's /v1 routes."""
+def test_dashboard_pages_render_with_an_unreachable_registry():
+    """With the registry down the public pages still render (no 500) and the
+    API client uses the registry's /v1 routes.
+
+    This test used to also REQUIRE inert ``href="#"`` anchors: Phase 4 papered
+    over templates linking to removed pages with a BuildError fallback. That
+    masking is the defect the public-surface contract now detects
+    (docs/PUBLIC_SURFACE_CONTRACT.md); pinning it here would reject a correct
+    repair. Whether links resolve is judged by
+    services/dashboard/tests/test_public_surface.py, not by this test."""
     text = (REPO / "services/dashboard/app/api_client.py").read_text(encoding="utf-8")
     assert '"/v1/agents/public/"' in text and 'f"/v1/agents/{agent_id}"' in text
     clean = {k: v for k, v in os.environ.items() if k not in {"REGISTRY_URL", "API_BASE_URL", "ENVIRONMENT"}}
@@ -287,7 +292,7 @@ def test_dashboard_pages_render_with_stale_links_and_an_unreachable_registry():
         "from app.main import app; c = app.test_client(); "
         "r1 = c.get('/landing'); r2 = c.get('/'); r3 = c.get('/metaverse'); "
         "print(r1.status_code, r2.status_code, r2.headers.get('Location', ''), r3.status_code, "
-        "'Internal Server Error' in r3.get_data(as_text=True), r3.get_data(as_text=True).count('href=\"#\"') > 0)"
+        "'Internal Server Error' in r3.get_data(as_text=True))"
     )
     proc = subprocess.run(
         [sys.executable, "-c", code], cwd=REPO / "services/dashboard",
@@ -295,9 +300,9 @@ def test_dashboard_pages_render_with_stale_links_and_an_unreachable_registry():
         capture_output=True, text=True, timeout=90,
     )
     assert proc.returncode == 0, proc.stderr
-    landing, index, location, metaverse, has_500_text, has_stale_anchor = proc.stdout.split()
+    landing, index, location, metaverse, has_500_text = proc.stdout.split()
     assert landing == "200" and index == "302" and "/metaverse" in location
-    assert metaverse == "200" and has_500_text == "False" and has_stale_anchor == "True"
+    assert metaverse == "200" and has_500_text == "False"
 
 
 def test_dashboard_metaverse_renders_the_registry_public_listing():

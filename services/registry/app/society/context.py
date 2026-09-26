@@ -619,6 +619,7 @@ def engineering_conventions(settings: SocietySettings) -> Dict[str, Any]:
     return {
         "files_allowed": "hard allow-list of repository-relative paths; the Builder may only create/modify those",
         "acceptance_tests": "existing pytest paths (file or file::test) that QA runs inside the worktree; the Builder must not modify them and cannot invent them",
+        "edits": "each FileEdit is EITHER {path, content} (the whole new file) OR {path, replacements:[{old, new}]} (exact-text edits of an existing file; each 'old' must occur exactly once, so copy it verbatim from READ_REPO_FILE with enough lines to be unique). Output is limited: for an existing file larger than a few KB send replacements, never the whole file",
         "docs_candidate": _docs_conventions_line(),
         "code_candidate": "kind=code: small change to existing source with existing tests covering the touched module as acceptance_tests; a new regression test file may be added when listed in files_allowed",
         "never": "auth, payment, wallets, migrations, secrets, deploy, workflows, dependencies, Dockerfiles, the society runtime",

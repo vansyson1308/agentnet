@@ -51,6 +51,7 @@ from . import deployment as dep_mod
 from . import fitness as fitness_mod
 from . import promotion as promo_mod
 from . import router as router_mod
+from . import surface_monitor as surface_monitor_mod
 from . import telemetry as telemetry_mod
 from .approvals import claim_next_approved_intent, execute_approved_intent
 from .cognition import CognitiveModel, ModelProviderError, ModelTimeout, get_model
@@ -225,6 +226,10 @@ class SocietyWorker:
         self.promotion_provider = promo_mod.get_promotion_provider(self.settings, override=promotion_provider)
         self.deployment_provider = dep_mod.get_deployment_provider(self.settings, override=deployment_provider)
         self.telemetry_enabled = telemetry_enabled
+        # The public-surface monitor (the Society's eyes on the public product):
+        # probes run in a thread so public HTTP never stalls Society work.
+        self.surface_monitor = surface_monitor_mod.SurfaceMonitor()
+        self._surface_task: Optional[asyncio.Future] = None
 
     # ── dispatch ───────────────────────────────────────────────────────
 
@@ -702,6 +707,36 @@ class SocietyWorker:
         except Exception:  # noqa: BLE001
             logger.exception("society federation pump failed")
 
+    async def watch_public_surface(self):
+        """Start a public-surface probe when one is due, and fold a finished
+        probe into the Society (debounce, typed events). Deterministic HTTP
+        only; never raises into the loop, never blocks it on the network."""
+        task = self._surface_task
+        if task is not None:
+            if not task.done():
+                return None
+            self._surface_task = None
+            try:
+                report = task.result()
+            except Exception as exc:  # noqa: BLE001 -- a monitor failure is bounded and observable
+                surface_monitor_mod._inc(surface_monitor_mod.M_ERRORS)
+                logger.warning("public surface probe failed (%s); the next probe runs after the interval", type(exc).__name__)
+                return None
+            db = self.session_factory()
+            try:
+                return self.surface_monitor.observe(db, self.settings, report)
+            except Exception:  # noqa: BLE001
+                db.rollback()
+                surface_monitor_mod._inc(surface_monitor_mod.M_ERRORS)
+                logger.exception("public surface observation failed")
+                return None
+            finally:
+                db.close()
+        if self.surface_monitor.due(self.settings):
+            self.surface_monitor.last_run_at = utcnow()
+            self._surface_task = asyncio.ensure_future(asyncio.to_thread(self.surface_monitor.probe, self.settings))
+        return None
+
     def stop(self) -> None:
         self._stop = True
 
@@ -715,6 +750,7 @@ class SocietyWorker:
                 continue
             try:
                 self.dispatch()
+                await self.watch_public_surface()
                 await self.process_claimable()
                 self.process_approved_intents()
                 self.process_controllers()
