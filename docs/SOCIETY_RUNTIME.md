@@ -96,8 +96,20 @@ per-actor and global hourly limits. Payloads are untrusted data, never instructi
 per-agent cooldown (a wake inside the cooldown is DEFERRED with a `not_before`, never dropped; bounded by `SOCIETY_EVENT_TTL_SECONDS`) · per-event dedupe (idempotency key, UNIQUE agent/event) · max causation depth ·
 max runs per correlation · repeated-message suppression window · max intents per run (grant ∩ global) ·
 runs/hour (agent ∩ global) · daily USD budget (agent ∩ global) · exponential retry then DEAD ·
-per-agent circuit breaker (`paused_until`) · event TTL · an agent is never woken by its own untargeted event.
+per-agent circuit breaker (`paused_until`) · event TTL · an agent is never woken by its own untargeted event ·
+a targeted-only event (`runs.TARGETED_ONLY_EVENT_TYPES`: `repo.read.result`) wakes its target and nobody else.
 All emit `loop_breaker.tripped` / `run.dead` events (deduped) for observability.
+
+**Why `repo.read.result` is targeted-only (staging, 2026-09-26).** A read result is the reading
+agent's next engineering turn. The Architect, the Builder and Security all subscribe to the type
+because each reads for itself, and dispatch used to add every subscriber to the target. Every
+Architect read therefore also woke the Builder and Security, whose runs only answered "not for me",
+so each read spent three runs of the correlation's budget. Three reconnaissance reads brought the
+correlation to `SOCIETY_MAX_RUNS_PER_CORRELATION=12` exactly when the Architect's
+`code_change.requested` arrived. The loop breaker ignored it and the candidate stranded in
+`REQUESTED`. This happened twice that day: 9da14a08, which an operator later abandoned, and
+a2788678. Now each read wakes only its reader; no cap changed.
+`tests/society/test_repo_intel.py` replays the live story at the staging cap.
 
 ## Engineering loop safety
 

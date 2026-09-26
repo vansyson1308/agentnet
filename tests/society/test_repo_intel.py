@@ -9,7 +9,16 @@ import uuid
 
 import pytest
 
-from services.registry.app.models import AgentIntent, AgentRun, CodeCandidate, SocietyEvent
+from services.registry.app.models import (
+    Agent,
+    AgentIntent,
+    AgentRun,
+    CodeCandidate,
+    ImprovementProposal,
+    ProposalSource,
+    ProposalStatus,
+    SocietyEvent,
+)
 from services.registry.app.society import repo_intel as ri
 from services.registry.app.society.cognition import FakeModel
 from services.registry.app.society.events import EventType, emit_event
@@ -229,3 +238,77 @@ def test_read_range_past_eof_is_empty_and_reports_the_real_length(code_repo):
     out = ri.read_range(code_repo, rel, 12000, 12200)
     assert out.data["content"] == ""
     assert out.data["total_lines"] == 92, "the reader must be able to tell it overshot"
+
+
+# ── a read result wakes the reader only (staging 2026-09-26) ────────────
+
+
+def _woken_by(db, event_id):
+    return sorted(n for (n,) in db.query(Agent.name).join(AgentRun, AgentRun.agent_id == Agent.id).filter(AgentRun.event_id == event_id).all())
+
+
+def test_a_read_result_wakes_only_the_reading_agent(db, SessionLocal, code_settings, grants_with_no_cooldown):
+    """repo.read.result is the reading agent's next engineering turn. The
+    default routing subscribes the Architect, the Builder and Security to the
+    type (each reads for itself); another agent's read must wake none of
+    them -- they would spend runs saying "not for me" on an untrusted preview."""
+    _seed(db, grants_with_no_cooldown)
+    model = FakeModel({"architect": [
+        {"decision_summary": "look", "intents": [{"type": "SEARCH_REPO", "payload": {"pattern": "parse_bool", "glob": "*.py"}}], "sleep_for_seconds": 1},
+        {"decision_summary": "done", "intents": [], "sleep_for_seconds": 1},
+    ]})
+    worker = SocietyWorker(SessionLocal, settings=code_settings, model=model, worker_id="w-read", telemetry_enabled=False)
+    assert {"architect", "builder", "security"} <= set(worker.routing[EventType.REPO_READ_RESULT])
+    worker.routing = {**worker.routing, "t.read": ["architect"]}
+    emit_event(db, event_type="t.read", payload={"x": 1}, idempotency_key=f"t-read-{uuid.uuid4()}")
+    db.commit()
+    asyncio.run(worker.run_until_idle(max_cycles=8))
+    wake = db.query(SocietyEvent).filter(SocietyEvent.event_type == EventType.REPO_READ_RESULT).one()
+    assert _woken_by(db, wake.id) == ["Society_Architect"]
+    assert {c.agent["name"] for c in model.calls} == {"Society_Architect"}
+
+
+def test_the_live_story_reaches_the_builder_within_the_staging_run_budget(db, SessionLocal, code_settings, grants_with_no_cooldown, monkeypatch):
+    """Staging 2026-09-26 11:06-11:08Z (correlation b8db5936): Scout, Governor,
+    then the Architect grounding its design in three reads before
+    REQUEST_CODE_CHANGE. Each read also woke the Builder and Security, so the
+    correlation reached SOCIETY_MAX_RUNS_PER_CORRELATION=12 exactly when
+    code_change.requested arrived: it was ignored by the loop breaker and the
+    candidate stranded in REQUESTED (the same as 9da14a08 earlier that day).
+    Same story, same cap: the request reaches the Builder."""
+    from services.registry.app.society.config import SocietySettings, reset_settings_cache
+    from services.registry.app.society.runs import runs_in_correlation
+
+    monkeypatch.setenv("SOCIETY_MAX_RUNS_PER_CORRELATION", "12")
+    reset_settings_cache()
+    settings = SocietySettings()
+    report = _seed(db, grants_with_no_cooldown)
+    prop = ImprovementProposal(id=uuid.uuid4(), proposed_by_agent_id=report.agents["scout"], source=ProposalSource.AUDIT, title="parse_bool rejects yes/on", problem="p", proposed_change="c", status=ProposalStatus.APPROVED, target_scope="platform", importance=70)
+    db.add(prop)
+    db.commit()
+    request = {"type": "REQUEST_CODE_CHANGE", "payload": {"title": "fix parse_bool", "proposal_id": str(prop.id), "spec": {
+        "kind": "code", "description": "accept yes/on", "files_allowed": ["app/textutil.py"],
+        "acceptance_tests": ["tests/acceptance/test_parse_bool_regression.py"], "expected_effect": "parse_bool('yes') is True",
+    }}}
+    model = FakeModel({"architect": [
+        {"decision_summary": "search", "intents": [{"type": "SEARCH_REPO", "payload": {"pattern": "parse_bool", "glob": "*.py"}}], "sleep_for_seconds": 1},
+        {"decision_summary": "read", "intents": [{"type": "READ_REPO_FILE", "payload": {"path": "app/textutil.py"}}], "sleep_for_seconds": 1},
+        {"decision_summary": "range", "intents": [{"type": "READ_REPO_RANGE", "payload": {"path": "app/textutil.py", "start": 1, "end": 5}}], "sleep_for_seconds": 1},
+        {"decision_summary": "design", "intents": [request], "sleep_for_seconds": 1},
+    ]})
+    worker = SocietyWorker(SessionLocal, settings=settings, model=model, worker_id="w-story", telemetry_enabled=False)
+    worker.routing = {**worker.routing, "t.story": ["scout", "governor", "architect"]}  # the live story's first three runs
+    root = emit_event(db, event_type="t.story", payload={"x": 1}, idempotency_key=f"t-story-{uuid.uuid4()}")
+    db.commit()
+    corr = root.correlation_id
+    asyncio.run(worker.run_until_idle(max_cycles=30))
+
+    reads = db.query(AgentIntent).filter(AgentIntent.intent_type.in_(["SEARCH_REPO", "READ_REPO_FILE", "READ_REPO_RANGE"])).all()
+    assert len(reads) == 3 and all(_ev(r.execution_status) == "executed" for r in reads)
+    requested = db.query(SocietyEvent).filter(SocietyEvent.event_type == EventType.CODE_CHANGE_REQUESTED, SocietyEvent.correlation_id == corr).one()
+    assert _ev(requested.status) != "ignored", requested.dispatch_note
+    assert _woken_by(db, requested.id) == ["Society_Builder"]
+    assert db.query(SocietyEvent).filter(SocietyEvent.event_type == EventType.LOOP_BREAKER_TRIPPED, SocietyEvent.correlation_id == corr).count() == 0
+    # root: 3 runs; each read: 1 run for its reader; the request: 1 Builder run
+    assert runs_in_correlation(db, corr) == 3 + 3 + 1
+    assert db.query(CodeCandidate).filter(CodeCandidate.proposal_id == prop.id).count() == 1
