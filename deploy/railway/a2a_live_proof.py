@@ -22,7 +22,8 @@ Modes (A2A_PROOF_MODES, comma separated; default "server"):
     federation  operator catalog: SSRF refusals, discover -> verify ->
                 connection -> outbound call -> check (A2A_REFERENCE_CARD_URL)
     company     operator company status + an immediate company cycle (or
-                A2A_PROOF_CYCLE_ID, a running one), wait for the Society to
+                A2A_PROOF_CYCLE_ID: a running one, or "scheduled" for today's
+                scheduled cycle), wait for the Society to
                 settle it (A2A_PROOF_CYCLE_TIMEOUT, default 45 min: cycles
                 settle after 30 min), then show the role runs, their models
                 and the intents the cycle produced
@@ -415,7 +416,8 @@ def company_proof(rep: vs.Report, api: str, op_token: str, timeout_s: int, exist
     ``company.SETTLE_AFTER`` (30 min) old and every run of its correlation is
     terminal, so the timeout must exceed that. ``existing`` (a full id or an
     id prefix) follows a cycle that is already running instead of opening a
-    new one, so a re-run never adds cycles."""
+    new one, so a re-run never adds cycles; "scheduled" follows today's
+    scheduled cycle."""
     st, body = vs.http("GET", f"{api}/v1/society/company", token=op_token)
     status = _json(body) or {}
     mode = status.get("mode") or {}
@@ -425,9 +427,11 @@ def company_proof(rep: vs.Report, api: str, op_token: str, timeout_s: int, exist
     today = datetime.now(timezone.utc).date().isoformat()
     scheduled = [c for c in cycles if c.get("trigger") == "scheduled" and c.get("date") == today]
     rep.record("C05", bool(scheduled) or not mode.get("company_cycle_enabled"),
-               f"scheduled cadence: {len(scheduled)} scheduled cycle(s) for {today} (at most one per UTC date)")
+               f"scheduled cadence: {len(scheduled)} scheduled cycle(s) for {today} (at most one per UTC date): "
+               + ", ".join(f"{str(c.get('id'))[:8]}={c.get('outcome') or 'open'}" for c in scheduled))
     if existing:
-        match = [c for c in cycles if str(c.get("id", "")).startswith(existing)]
+        # "scheduled" follows today's scheduled cycle: the Society's own cadence
+        match = scheduled if existing == "scheduled" else [c for c in cycles if str(c.get("id", "")).startswith(existing)]
         cid = match[0]["id"] if len(match) == 1 else None
         rep.record("C02", bool(cid), f"follow existing company cycle {existing[:8]} -> {'found' if cid else 'not found (or ambiguous)'}")
     else:
