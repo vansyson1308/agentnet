@@ -296,6 +296,43 @@ def test_a_read_too_long_for_context_shows_whole_lines_and_where_to_continue(cod
     assert all(h in found.data["hits"] for h in sview["hits"])
 
 
+def test_a_cut_read_counts_lines_like_read_range_and_never_becomes_a_whole_file_edit(code_repo):
+    from types import SimpleNamespace
+
+    from services.registry.app.society import cognition as cg
+    from services.registry.app.society import context as ctx_mod
+
+    # line breaks other than "\n": shown_lines, total_lines and next_line all count
+    # the way READ_REPO_RANGE does, so the model is never told it read past the end
+    rel = "services/app/breaks.py"
+    target = code_repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    breaks = ("\u2028", "\r", "\r")  # never "\n"
+    target.write_text("".join(f"row {i} padding padding padding" + breaks[i % 3] for i in range(1, 401)), encoding="utf-8", newline="")
+    view, cut = ctx_mod._read_view("read_file", ri.read_file(code_repo, rel).data)
+    first, last = view["context_cut"]["shown_lines"]
+    assert cut and last < view["context_cut"]["total_lines"] == 400 and view["next_line"] == last + 1
+    assert ri.read_range(code_repo, rel, view["next_line"], view["next_line"]).data["content"].startswith(f"row {last + 1} ")
+
+    # malformed stored rows and a line longer than the whole budget still say where to continue
+    assert ctx_mod._read_view("read_range", {"start": "x", "content": "a\n" * 5000})[0]["context_cut"]["shown_lines"][0] == 1
+    minified, mcut = ctx_mod._read_view("read_file", {"content": "x" * 9000 + "\nshort\n"})
+    assert mcut and minified["_truncated"] and minified["next_line"] == 1
+
+    # the scripted Builder rewrites a WHOLE file from a read: it must refuse a partial one
+    src = '_TRUE = {"true", "1"}\n' + "".join(f"x{i} = {i}\n" for i in range(10))
+    cand = {"id": "c1", "spec": {"files_allowed": ["app/textutil.py", "tests/test_x.py"]}}
+
+    def decide(**extra):
+        read = {"op": "read_file", "path": "app/textutil.py", "truncated": False, "data": {"content": src}}
+        read.update(extra)
+        return cg._builder_code_fix(SimpleNamespace(repo_reads=[{"_untrusted": True, "data": read}]), cand, None)
+
+    assert [i["type"] for i in decide()["intents"]] == ["SUBMIT_CODE_CANDIDATE"]
+    assert decide(truncated=True)["intents"] == []
+    assert decide(data={"content": src, "context_cut": {"shown_lines": [1, 5], "total_lines": 11}})["intents"] == []
+
+
 def test_the_reader_is_told_when_its_context_cut_a_read(db, SessionLocal, code_settings, grants_with_no_cooldown):
     _seed(db, grants_with_no_cooldown)
     rel = "app/long_module.py"

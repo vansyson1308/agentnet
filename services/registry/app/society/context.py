@@ -730,8 +730,13 @@ def _read_view(op: Optional[str], data: Any, budget: int = TXT_READ) -> Tuple[An
     key = next((k for k in ("content", "diff") if isinstance(data.get(k), str)), None)
     if key is not None:
         lines = data[key].splitlines(keepends=True)
-        first = int(data.get("start") or 1) if op == "read_range" else 1
-        total = data.get("total_lines") or data.get("lines") or (first - 1 + len(lines))
+        try:
+            first = max(1, int(data.get("start") or 1)) if op == "read_range" else 1
+        except (TypeError, ValueError):
+            first = 1
+        # the repo's whole-file count when it has one; otherwise counted like
+        # shown_lines and READ_REPO_RANGE (splitlines), never from "lines"
+        total = data.get("total_lines") or (first - 1 + len(lines))
         view = {k: v for k, v in data.items() if k not in (key, "next_line")}
         cut: Dict[str, Any] = {"shown_lines": [first, first - 1 + len(lines)], "total_lines": total}
         extra = {"next_line": first + len(lines)} if key == "content" else {}
@@ -765,7 +770,12 @@ def _read_view(op: Optional[str], data: Any, budget: int = TXT_READ) -> Tuple[An
         view["context_cut"]["hits_shown"] = len(kept)
         if _json_len(view) <= budget:
             return view, True
-    return _bounded_json(data, budget), True
+    fallback = _bounded_json(data, budget)
+    if key == "content" and isinstance(fallback, dict):
+        # not even one whole line fits (a minified file): READ_REPO_RANGE caps
+        # each line, so it can show the line this view could not
+        fallback["next_line"] = first
+    return fallback, True
 
 
 def _repo_reads(db: Session, agent: Agent, run: Optional[AgentRun], event: SocietyEvent, now: Optional[datetime] = None) -> List[Dict[str, Any]]:

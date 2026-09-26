@@ -166,6 +166,9 @@ and a2788678 (correlation b8db5936). Now each read wakes only its reader, and no
 
   Search hits are kept whole, with `hits_shown` out of `hits_total`.
 
+  A partial read never becomes a whole-file edit. The prompt says to use `replacements` instead, and the
+  scripted Builder refuses to rewrite a file it has only partly in view.
+
   Staging, 2026-09-26 18:00Z: `repo_intel` returned `main.py` whole (8.6 KB), then the context cut each read's
   JSON mid-content. The Builder saw about 177 of 231 lines of `main.py` and 146 of 273 lines of the failing
   acceptance test, and was told nothing was truncated. It re-read the same files for its six turns.
