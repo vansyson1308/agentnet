@@ -367,7 +367,34 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
         },
         "incidents": [incident_view(i) for i in incidents],
         "function_roles": FUNCTION_ROLE_MAP,
+        "public_surface": _public_surface_view(db, settings),
     }
+
+
+def _public_surface_view(db: Session, settings: SocietySettings) -> Dict[str, Any]:
+    """Public-surface health as the Society sees it: the monitor's settings,
+    the open anomaly (structural), recent anomaly/recovery events and the
+    Society's workstream on the newest anomaly. No page content, no secrets."""
+    from .surface_monitor import self_healing_workstream, surface_status
+
+    view = surface_status(db)
+    latest = (view.get("open_anomaly") or {}).get("correlation_id")
+    if latest is None:
+        recent = [e for e in view.get("recent_events", []) if e.get("type") == "public.surface.anomaly"]
+        if recent:
+            ev = db.query(SocietyEvent).filter(SocietyEvent.id == uuid.UUID(recent[0]["event_id"])).first()
+            latest = str(ev.correlation_id) if ev is not None and ev.correlation_id else None
+    view["monitor"] = {
+        "enabled": settings.public_surface_monitor_enabled,
+        "interval_seconds": settings.public_surface_monitor_interval_seconds,
+        "failure_threshold": settings.public_surface_failure_threshold,
+        "cooldown_seconds": settings.public_surface_cooldown_seconds,
+        "target": settings.public_surface_target_label,
+        "ui_origin": settings.public_product_ui_origin,
+        "api_origin": settings.public_product_api_origin,
+    }
+    view["workstream"] = self_healing_workstream(db, uuid.UUID(latest)) if latest else {}
+    return view
 
 
 def main() -> None:  # pragma: no cover - CLI

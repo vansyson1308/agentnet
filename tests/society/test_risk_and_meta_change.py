@@ -38,6 +38,12 @@ from services.registry.app.society.intents import FileEdit
         ("services/registry/Dockerfile", "red"),
         ("requirements-dev.txt", "red"),
         ("pytest.ini", "red"),
+        # public-surface evaluation criteria (graduation §42/§48)
+        ("services/registry/app/society/public_surface_contract.json", "red"),
+        ("services/registry/app/society/surface.py", "red"),
+        ("services/dashboard/tests/test_public_surface.py", "red"),
+        ("services/dashboard/app/main.py", "amber"),
+        ("services/dashboard/tests/test_main.py", "amber"),
         ("scripts/ci/check_skips.py", "red"),
         (".env", "never"),
         (".env.example", "never"),

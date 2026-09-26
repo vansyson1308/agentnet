@@ -50,7 +50,10 @@ def test_schema_doc_documents_nested_payload_models():
     assert spec["kind"] == "docs|test_fixture|code" and spec["must_compile"] == "boolean"
     edits = doc["SUBMIT_CODE_CANDIDATE"]["edits"]
     assert isinstance(edits, list) and len(edits) == 1 and isinstance(edits[0], dict), "FileEdit must be inlined inside the array"
-    assert set(edits[0]) == {"path", "content"} and all(v.startswith("string") for v in edits[0].values())
+    # a FileEdit is EITHER the whole file (content) OR exact-text replacements
+    assert set(edits[0]) == {"path", "content", "replacements"}
+    assert edits[0]["path"].startswith("string") and edits[0]["content"].startswith("string")
+    assert edits[0]["replacements"] == [{"old": "string(1..20000 chars)", "new": "string(<=20000 chars)"}]
     evidence = doc["CREATE_IMPROVEMENT"]["evidence"]
     assert set(evidence) >= {"signal", "baseline", "observed", "window", "sample_size", "actionable_reason"}
     assert doc["SEND_MESSAGE"]["to_agent"] == "string(<=255 chars)|null", "Optional[str] says it may be null, and its bound"
@@ -304,13 +307,17 @@ def test_every_mandatory_field_is_named_in_the_prompt():
 
 
 def test_the_field_whose_absence_denied_a_live_submission_is_named():
+    # content is no longer mandatory on its own: an edit carries content OR
+    # replacements (exactly one, enforced by FileEdit and stated in the
+    # engineering conventions the Builder reads).
     assert _required_line("SUBMIT_CODE_CANDIDATE") == [
         "candidate_id",
         "edits",
         "summary",
         "edits[].path",
-        "edits[].content",
     ]
+    conv = ctx_mod.engineering_conventions(SocietySettings())
+    assert "EITHER {path, content}" in conv["edits"] and "replacements" in conv["edits"]
 
 
 def test_optional_and_defaulted_fields_are_not_claimed_to_be_required():

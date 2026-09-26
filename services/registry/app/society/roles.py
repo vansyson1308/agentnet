@@ -177,6 +177,8 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             EventType.COMPANY_CYCLE,
             EventType.A2A_AGENT_REFRESHED,
             EventType.PLATFORM_METRIC_ANOMALY,
+            EventType.PUBLIC_SURFACE_ANOMALY,
+            EventType.PUBLIC_SURFACE_RECOVERED,
             EventType.PLATFORM_HEALTH_DEGRADED,
             EventType.USER_FEEDBACK_RECEIVED,
             EventType.STAGING_CANARY_SIGNAL,
