@@ -143,16 +143,21 @@ and a2788678 (correlation b8db5936). Now each read wakes only its reader, and no
   criteria is a FAIL. Two failed attempts → `rejected`.
 - **Work on a candidate outlives a story.** Engineering turns are bounded per correlation
   (`SOCIETY_MAX_ENGINEERING_TURNS`), and the Builder resumes an open candidate on the hourly heartbeat,
-  which starts a new correlation each time. An agent's context (`repo_reads`) therefore holds two kinds of
-  reads:
-  - its reads from the current story;
-  - its reads made for a **still-open** candidate in an earlier story within 24 h. These are marked
-    `earlier_story` and carry their time `at`, because the worktree may have changed since.
+  which starts a new correlation each time. An agent's context (`repo_reads`, at most 6 entries) holds:
+  - first, its reads in the current story;
+  - then, in whatever slots remain, its reads made for a **still-open** candidate in another story within
+    the last 24 h, marked `earlier_story` with their time `at`.
 
   Staging, 2026-09-26: after candidate a2788678 failed QA, the Builder re-read the same test, templates and
-  `main.py` at 15:00Z and again at 16:00Z. It ran out of turns each time and could not resubmit. Reads for
-  a closed candidate, reads without a candidate, and other agents' reads are not carried over. No budget
-  or cap changes.
+  `main.py` at 15:00Z and again at 16:00Z. It ran out of turns each time and could not resubmit.
+
+  Carried reads never displace the current story's reads. The following are not carried:
+  - reads made before the agent's own last `SUBMIT_CODE_CANDIDATE` for that candidate, since the worktree
+    has changed since then;
+  - repeats of the same request (only the newest is kept);
+  - reads for a closed candidate, reads without a candidate, and other agents' reads.
+
+  No budget or cap changes.
 - Security review is required when the spec flags it, when any file matches the risky-path pattern, when
   `kind == "code"`, or when the static scan produced findings; final verdict = reviewer verdict AND no
   static findings.

@@ -322,8 +322,9 @@ def test_reads_for_an_open_candidate_carry_into_the_next_story(db, SessionLocal,
     per-correlation engineering turns and never resubmitted: its reads lived
     only in the story that made them. Reads for a still-open candidate now
     follow the agent into its next story (marked earlier_story, with their
-    time); reads for a closed candidate, reads without a candidate and other
-    agents' reads do not."""
+    time); reads for a closed candidate, reads without a candidate, other
+    agents' reads, repeats and reads older than the agent's own last
+    submission do not, and they never displace the current story's reads."""
     from services.registry.app.models import Agent
     from services.registry.app.society import context as ctx_mod
 
@@ -332,12 +333,18 @@ def test_reads_for_an_open_candidate_carry_into_the_next_story(db, SessionLocal,
     for cid, status in ((open_id, "qa_failed"), (closed_id, "requested")):
         db.add(CodeCandidate(id=cid, correlation_id=uuid.uuid4(), title="t", spec={"files_allowed": ["app/textutil.py"], "acceptance_tests": ["tests/test_textutil.py"], "kind": "code"}, status=status, requested_by_agent_id=report.agents["architect"]))
     db.commit()
-    read = lambda path, cid=None: {"type": "READ_REPO_RANGE", "payload": {"path": path, "start": 1, "end": 3, **({"candidate_id": str(cid)} if cid else {})}}  # noqa: E731
+
+    def read(path, cid=None, start=1):
+        return {"type": "READ_REPO_RANGE", "payload": {"path": path, "start": start, "end": start + 2, **({"candidate_id": str(cid)} if cid else {})}}
+
     story1 = {"builder": [
         {"decision_summary": "read", "intents": [read("app/textutil.py", open_id), read("tests/test_textutil.py", closed_id), read("README.md")], "sleep_for_seconds": 1},
+        {"decision_summary": "read again", "intents": [read("app/textutil.py", open_id)], "sleep_for_seconds": 1},  # identical repeat
         {"decision_summary": "out of time", "intents": [], "sleep_for_seconds": 1},
     ], "architect": [{"decision_summary": "read", "intents": [read("app/__init__.py", open_id)], "sleep_for_seconds": 1}, {"decision_summary": "x", "intents": [], "sleep_for_seconds": 1}]}
     _run(db, SessionLocal, code_settings, FakeModel(story1), {"x": 1}, roles=("builder", "architect"))
+    executed = db.query(AgentIntent).filter(AgentIntent.intent_type == "READ_REPO_RANGE", AgentIntent.execution_status == "executed").count()
+    assert executed == 5, "every story-1 read executed, so the exclusions below are real"
     db.query(CodeCandidate).filter(CodeCandidate.id == closed_id).update({CodeCandidate.status: "rejected"}, synchronize_session=False)
     db.commit()
 
@@ -345,8 +352,25 @@ def test_reads_for_an_open_candidate_carry_into_the_next_story(db, SessionLocal,
     story2 = emit_event(db, event_type="t.read", payload={"x": 2}, idempotency_key=f"t-read-{uuid.uuid4()}")
     db.commit()
     reads = ctx_mod._repo_reads(db, builder, None, story2)
-    assert [(r["data"]["path"], r["data"]["earlier_story"]) for r in reads] == [("app/textutil.py", True)]
-    assert reads[0]["data"]["at"], "an earlier read says when it was made"
-    # a read is not remembered forever
-    later = ctx_mod._repo_reads(db, builder, None, story2, now=datetime.now(timezone.utc) + timedelta(hours=ctx_mod.CANDIDATE_READS_WINDOW_HOURS + 1))
-    assert later == []
+    assert [(r["data"]["path"], r["data"]["earlier_story"]) for r in reads] == [("app/textutil.py", True)], "one carried read: open candidate, own, repeat collapsed"
+    assert reads[0]["data"]["at"]
+
+    # the current story's reads come first and are never displaced; carried reads fill the rest
+    now_reads = {"builder": [
+        {"decision_summary": "own story", "intents": [read("app/textutil.py", open_id, start=4 + i) for i in range(3)], "sleep_for_seconds": 1},
+        {"decision_summary": "more", "intents": [read("app/textutil.py", open_id, start=10 + i) for i in range(3)], "sleep_for_seconds": 1},
+        {"decision_summary": "x", "intents": [], "sleep_for_seconds": 1},
+    ]}
+    story3, _ = _run(db, SessionLocal, code_settings, FakeModel(now_reads), {"x": 3}, roles=("builder",))
+    reads = ctx_mod._repo_reads(db, builder, None, story3)
+    assert len(reads) == ctx_mod.LIMIT_REPO_READS and not any(r["data"]["earlier_story"] for r in reads)
+
+    # a read made before the agent's own last submission for the candidate is stale: not carried
+    db.add(AgentIntent(run_id=db.query(AgentRun.id).filter(AgentRun.agent_id == builder.id).first()[0], agent_id=builder.id, seq=99, intent_type="SUBMIT_CODE_CANDIDATE", payload={"candidate_id": str(open_id)}, idempotency_key=f"submit-{uuid.uuid4()}", execution_status="executed", executed_at=datetime.now(timezone.utc)))
+    db.commit()
+    story4 = emit_event(db, event_type="t.read", payload={"x": 4}, idempotency_key=f"t-read-{uuid.uuid4()}")
+    db.commit()
+    assert ctx_mod._repo_reads(db, builder, None, story4) == []
+    # and nothing is remembered past the window
+    later = datetime.now(timezone.utc) + timedelta(hours=ctx_mod.CANDIDATE_READS_WINDOW_HOURS + 1)
+    assert ctx_mod._repo_reads(db, builder, None, story2, now=later) == []

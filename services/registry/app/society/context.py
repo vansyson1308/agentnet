@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import String, and_, cast, or_
+from sqlalchemy import String, cast, func, or_
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -61,7 +61,7 @@ from .engineering.docs_contract import (
     DOCS_REQUIRED_SECTIONS,
     conventions_line as _docs_conventions_line,
 )
-from .intents import ALLOWED_INTENT_TYPES, REPO_READ_INTENT_TYPES
+from .intents import ALLOWED_INTENT_TYPES, REPO_READ_INTENT_TYPES, IntentType
 from .policy import risk_of, runs_last_hour, spend_today_usd
 
 TXT_SHORT = 240
@@ -141,7 +141,8 @@ class AgentContext:
     society_agents: List[Dict[str, Any]] = field(default_factory=list)
     run_id: Optional[str] = None
     # Phase 3: bounded repository-read results from THIS agent's earlier turns
-    # in the correlation (untrusted data), engineering bounds, promotions.
+    # in the correlation, then its reads for a still-open candidate from other
+    # stories (untrusted data; see _repo_reads), engineering bounds, promotions.
     repo_reads: List[Dict[str, Any]] = field(default_factory=list)
     engineering: Dict[str, Any] = field(default_factory=dict)
     promotions: List[Dict[str, Any]] = field(default_factory=list)
@@ -705,9 +706,10 @@ CANDIDATE_READS_WINDOW_HOURS = 24
 
 
 def _repo_reads(db: Session, agent: Agent, run: Optional[AgentRun], event: SocietyEvent, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
-    """This agent's executed repository reads (newest last, bounded): those
-    of this correlation, plus those it made for a still-OPEN candidate in an
-    earlier story within CANDIDATE_READS_WINDOW_HOURS.
+    """This agent's executed repository reads (newest last, at most
+    LIMIT_REPO_READS): first those of THIS correlation, then -- in the slots
+    left -- those it made for a still-OPEN candidate in another story within
+    CANDIDATE_READS_WINDOW_HOURS.
 
     Why the second part (staging, 2026-09-26): work on a candidate outlives
     any one story. The Builder resumes an open candidate on the hourly
@@ -716,35 +718,66 @@ def _repo_reads(db: Session, agent: Agent, run: Optional[AgentRun], event: Socie
     per-correlation reads only, each heartbeat started from an empty context:
     after candidate a2788678 failed QA, the Builder re-read the same failing
     test, templates and main.py at 15:00Z and again at 16:00Z, ran out of
-    turns each time, and could never resubmit. Earlier-story reads are marked
-    ``earlier_story`` and carry ``at``: the worktree may have changed since.
-    Same agent, same open candidate, same bounds; no budget or cap changes."""
+    turns each time and could never resubmit.
+
+    Carried reads never displace this story's reads. They are marked
+    ``earlier_story`` (another correlation) with their time ``at``. A read
+    made before the agent's own last SUBMIT_CODE_CANDIDATE for that
+    candidate is not carried, because the worktree changed after it. Repeats
+    of the same request keep only the newest. Same agent, same bounds; no
+    budget or cap changes."""
     now = now or datetime.now(timezone.utc)
-    open_ids = [str(i) for (i,) in db.query(CodeCandidate.id).filter(CodeCandidate.status.in_(list(OPEN_CANDIDATE_STATUSES))).all()]
-    scope = AgentRun.correlation_id == event.correlation_id
-    if open_ids:
-        scope = or_(
-            scope,
-            and_(
-                AgentIntent.payload["candidate_id"].astext.in_(open_ids),
-                AgentIntent.executed_at >= now - timedelta(hours=CANDIDATE_READS_WINDOW_HOURS),
-            ),
-        )
-    rows = (
+    read_types = [t.value for t in REPO_READ_INTENT_TYPES]
+    base = (
         db.query(AgentIntent, AgentRun.correlation_id)
         .join(AgentRun, AgentRun.id == AgentIntent.run_id)
         .filter(
             AgentIntent.agent_id == agent.id,
-            AgentIntent.intent_type.in_([t.value for t in REPO_READ_INTENT_TYPES]),
+            AgentIntent.intent_type.in_(read_types),
             AgentIntent.execution_status == IntentExecutionStatus.EXECUTED,
-            scope,
         )
-        .order_by(AgentIntent.executed_at.desc())
-        .limit(LIMIT_REPO_READS)
-        .all()
     )
+    rows = base.filter(AgentRun.correlation_id == event.correlation_id).order_by(AgentIntent.executed_at.desc()).limit(LIMIT_REPO_READS).all()
+    free = LIMIT_REPO_READS - len(rows)
+    if free > 0:
+        open_ids = db.query(cast(CodeCandidate.id, String)).filter(CodeCandidate.status.in_(list(OPEN_CANDIDATE_STATUSES))).subquery()
+        cand_key = AgentIntent.payload["candidate_id"].astext
+        pool = (
+            base.filter(
+                AgentRun.correlation_id != event.correlation_id,
+                cand_key.in_(db.query(open_ids)),
+                AgentIntent.executed_at >= now - timedelta(hours=CANDIDATE_READS_WINDOW_HOURS),
+            )
+            .order_by(AgentIntent.executed_at.desc())
+            .limit(LIMIT_REPO_READS * 4)
+            .all()
+        )
+        # the agent's own last submission per candidate: reads before it are stale
+        submitted: Dict[str, datetime] = {
+            str(cid): at
+            for cid, at in db.query(AgentIntent.payload["candidate_id"].astext, func.max(AgentIntent.executed_at))
+            .filter(
+                AgentIntent.agent_id == agent.id,
+                AgentIntent.intent_type == IntentType.SUBMIT_CODE_CANDIDATE.value,
+                AgentIntent.execution_status == IntentExecutionStatus.EXECUTED,
+            )
+            .group_by(AgentIntent.payload["candidate_id"].astext)
+            .all()
+        }
+        seen = set()
+        for r, corr in pool:
+            if len(rows) >= LIMIT_REPO_READS:
+                break
+            cid = str((r.payload or {}).get("candidate_id"))
+            if submitted.get(cid) and r.executed_at and r.executed_at < submitted[cid]:
+                continue
+            key = (r.intent_type, json.dumps(r.payload or {}, sort_keys=True, default=str))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append((r, corr))
     out = []
-    for r, corr in reversed(rows):
+    for r, corr in sorted(rows, key=lambda rc: rc[0].executed_at or now):
         res = (r.result or {}).get("result") or {}
         data = res.get("data") if isinstance(res, dict) else None
         out.append(
