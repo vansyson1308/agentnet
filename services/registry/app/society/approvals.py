@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
 
+from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -54,7 +55,7 @@ from ..models import (
 from .config import SocietySettings
 from .events import EventType, emit_event, utcnow
 from .executor import ExecContext, ExecutionError, execute
-from .intents import FORBIDDEN_INTENT_TYPES, PAYLOAD_MODELS, IntentType, ValidatedIntent
+from .intents import FORBIDDEN_INTENT_TYPES, PAYLOAD_MODELS, IntentType, ValidatedIntent, safe_error_summary
 from .policy import evaluate_intent
 
 logger = logging.getLogger(__name__)
@@ -204,10 +205,15 @@ def claim_next_approved_intent(db: Session, *, worker_id: str, lease_seconds: in
 def _revalidate(intent: AgentIntent) -> ValidatedIntent:
     try:
         itype = IntentType(intent.intent_type)
-        payload = PAYLOAD_MODELS[itype].model_validate(intent.payload or {})
+        model = PAYLOAD_MODELS[itype]
+        payload = model.model_validate(intent.payload or {})
         return ValidatedIntent(seq=intent.seq, type_name=intent.intent_type, intent_type=itype, valid=True, payload=payload, raw_payload=intent.payload or {}, idempotency_key=intent.idempotency_key)
+    except ValidationError as exc:
+        # structural only: str(exc) would repeat the model's payload in a trusted reason
+        error = f"payload schema violation: {safe_error_summary(exc, model)}"
     except Exception as exc:  # noqa: BLE001
-        return ValidatedIntent(seq=intent.seq, type_name=intent.intent_type, intent_type=None, valid=False, error=str(exc)[:500], raw_payload=intent.payload or {}, idempotency_key=intent.idempotency_key)
+        error = f"payload revalidation failed: {type(exc).__name__}"
+    return ValidatedIntent(seq=intent.seq, type_name=intent.intent_type, intent_type=None, valid=False, error=error[:500], raw_payload=intent.payload or {}, idempotency_key=intent.idempotency_key)
 
 
 def _finish(db: Session, intent: AgentIntent, approval: Optional[IntentApproval], *, status: IntentExecutionStatus, error: Optional[str] = None) -> None:
