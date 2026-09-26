@@ -210,19 +210,21 @@ export default defineRailway((ctx) => {
   };
 
   /**
-   * A2A 1.0 (ADR-0009). Declared DARK: the reviewed code ships with every flag
-   * off and production is enabled one flag at a time by the trusted operator
-   * (docs/PRODUCTION_RUNBOOK.md "A2A enablement"); a follow-up change flips
-   * these lines only after the live value exists, so this file never claims a
-   * state production lacks. The cards name the canonical API, never a request
-   * Host header. The Society A2A client stays off in production: there is no
-   * production Society. A2A_CREDENTIAL_KEY (the federation credential vault) is
-   * added -- as a production-scoped shared variable -- together with federation.
+   * A2A 1.0 (ADR-0009), LIVE since 2026-09-26 (docs/A2A_LIVE_PROOF.md). The
+   * release shipped dark and the trusted operator enabled one flag at a time,
+   * each proven by the production canary (docs/PRODUCTION_RUNBOOK.md "A2A
+   * enablement"); this block was flipped only after the live values existed, so
+   * the file never claims a state production lacks. The cards name the
+   * canonical API, never a request Host header. A2A_CREDENTIAL_KEY is the
+   * federation vault key: a production-scoped SHARED variable generated inside
+   * Railway, never a literal and never copied from staging. The Society A2A
+   * client and the company cycle stay OFF: there is no production Society.
    */
-  const a2aDark = {
+  const a2a = {
     A2A_PUBLIC_BASE_URL: PUBLIC_API_ORIGIN,
-    A2A_SERVER_ENABLED: "false",
-    A2A_FEDERATION_ENABLED: "false",
+    A2A_SERVER_ENABLED: "true",
+    A2A_FEDERATION_ENABLED: "true",
+    A2A_CREDENTIAL_KEY: ctx.shared.A2A_CREDENTIAL_KEY,
     A2A_SOCIETY_CLIENT_ENABLED: "false",
     SOCIETY_COMPANY_CYCLE_ENABLED: "false",
   };
@@ -277,7 +279,7 @@ export default defineRailway((ctx) => {
       SOCIETY_OPERATOR_BOOTSTRAP_EMAILS: "",
       ...smtp,
       ...societyOff,
-      ...a2aDark,
+      ...a2a,
     },
   });
 
