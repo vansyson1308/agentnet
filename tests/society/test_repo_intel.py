@@ -19,6 +19,7 @@ from services.registry.app.models import (
     ProposalSource,
     ProposalStatus,
     SocietyEvent,
+    SocietyEventStatus,
 )
 from services.registry.app.society import repo_intel as ri
 from services.registry.app.society.cognition import FakeModel
@@ -354,6 +355,8 @@ def test_reads_for_an_open_candidate_carry_into_the_next_story(db, SessionLocal,
     reads = ctx_mod._repo_reads(db, builder, None, story2)
     assert [(r["data"]["path"], r["data"]["earlier_story"]) for r in reads] == [("app/textutil.py", True)], "one carried read: open candidate, own, repeat collapsed"
     assert reads[0]["data"]["at"]
+    story2.status = SocietyEventStatus.PROCESSED  # a context probe only: no worker may pick it up
+    db.commit()
 
     # the current story's reads come first and are never displaced; carried reads fill the rest
     now_reads = {"builder": [
