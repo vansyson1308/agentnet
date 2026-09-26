@@ -244,9 +244,20 @@ forming (`society/memory_grounding.py`):
   so the rule fails closed.
 - **What still works.** Observation and hypothesis memories are unaffected in a decision with no
   side effect, or when every side effect executed.
+- **Approval path.** The approval resume queue orders a decision's memories after its other intents.
+  A memory approved before its side effect is refused while that side effect still awaits approval.
+- **Known edges.**
+  - `EXECUTED` means the executor completed the intent. For an idempotent duplicate (a proposal title
+    that is already open, or a suppressed duplicate message) that completion is a no-op, which is
+    still consistent with the row that exists.
+  - An honest observation memory written in an approval-gated decision is also refused.
 - **`recent_refusals` fix.** For an intent that policy *allowed* but execution *failed*, the reason
   shown is now the execution error. Before, it was the policy reason, *"allowed by grant"*, which hid
   *"portfolio full"* from the live Scout.
+- **`recent_activity[].outcomes`.** The model's own `decision_summary` (for example *"raised
+  proposal X"*) is written before its intents run. It now travels with the run's trusted outcome
+  (`executed` count, `not_executed: ["CREATE_IMPROVEMENT:failed", ...]`), so the same false claim cannot
+  come back through the activity feed instead of memory.
 - **Tests.** `tests/society/test_memory_grounding.py` pins the status matrix, the exact live failure,
   and a later run that is not falsely suppressed.
 

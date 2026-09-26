@@ -34,9 +34,17 @@ matching and no payload field a model could set to opt out:
   including an unknown or invalid one the model emitted -- is, so the rule
   fails closed.
 
-Trusted outcome facts need no model: ``AgentIntent`` rows (and the
-``recent_refusals`` context block derived from them) already record what
-executed and what did not.
+Trusted outcome facts need no model: ``AgentIntent`` rows -- and the
+``recent_refusals`` and ``recent_activity[].outcomes`` context blocks derived
+from them -- record what executed and what did not, next to the model's own
+``decision_summary``.
+
+Known edges (documented, deliberate): ``EXECUTED`` means the executor
+completed the intent, which for an idempotent duplicate (a proposal whose
+title is already open, a suppressed duplicate message) is a no-op -- a memory
+claiming it is then consistent with an existing row. A memory in a decision
+whose side effect awaits approval is refused even if that side effect is
+approved later: the memory was written before any outcome existed.
 """
 
 from __future__ import annotations
@@ -84,8 +92,8 @@ def decide(memory_seq: int, siblings: Iterable[Tuple[int, str, str]]) -> Groundi
         return Grounding(
             admitted=False,
             reason=(
-                "memory not grounded: a memory written in the same decision as a side effect is admitted only "
-                f"after every side effect executed ({detail})"
+                f"memory not grounded: {detail} (a memory written in the same decision as a side effect "
+                "is admitted only after every side effect executed)"
             ),
             siblings=side,
         )

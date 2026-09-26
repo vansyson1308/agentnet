@@ -497,6 +497,23 @@ def _recent_activity(db: Session, agent: Agent, exclude_run_id: Optional[uuid.UU
     if exclude_run_id is not None:
         q = q.filter(AgentRun.id != exclude_run_id)
     rows = q.order_by(AgentRun.created_at.desc()).limit(LIMIT_RECENT_RUNS).all()
+    # ``decision`` is the model's own summary, written BEFORE its intents ran
+    # ("raised proposal X"). ``outcomes`` is what trusted execution recorded for
+    # that run, so a summary claiming work that was refused is contradicted
+    # where it is read (execution-grounded evidence; memory_grounding.py).
+    outcomes: Dict[str, Dict[str, Any]] = {str(r.id): {"executed": 0, "not_executed": []} for r, _ in rows}
+    if rows:
+        for run_id, itype, status in (
+            db.query(AgentIntent.run_id, AgentIntent.intent_type, AgentIntent.execution_status)
+            .filter(AgentIntent.run_id.in_([r.id for r, _ in rows]))
+            .order_by(AgentIntent.run_id, AgentIntent.seq)
+            .all()
+        ):
+            o = outcomes[str(run_id)]
+            if _ev(status) == IntentExecutionStatus.EXECUTED.value:
+                o["executed"] += 1
+            elif len(o["not_executed"]) < 6:
+                o["not_executed"].append(f"{itype}:{_ev(status)}")
     return [
         {
             "run_id": str(r.id),
@@ -504,6 +521,7 @@ def _recent_activity(db: Session, agent: Agent, exclude_run_id: Optional[uuid.UU
             "status": _ev(r.status),
             "decision": _t(r.decision_summary, TXT_SHORT),
             "intents": r.intents_count,
+            "outcomes": outcomes[str(r.id)],
             "at": _iso(r.completed_at or r.started_at or r.created_at),
         }
         for r, et in rows

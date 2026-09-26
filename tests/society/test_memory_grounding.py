@@ -165,6 +165,58 @@ def test_a_side_effect_awaiting_approval_blocks_its_memory_and_rejection_never_r
     assert db.query(ImprovementProposal).count() == 0
 
 
+def test_approval_resume_runs_the_side_effect_before_its_memory(db, SessionLocal, grants_with_no_cooldown, monkeypatch, make_user):
+    """One decision's intents share created_at; the resume queue orders
+    memories after their siblings, so approving both admits the memory only
+    after the proposal executed -- whichever was approved first."""
+    settings = _settings(monkeypatch, SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES="3")
+    report = seed_society(db)
+    grants_with_no_cooldown()
+    g = db.query(AgentCapabilityGrant).filter(AgentCapabilityGrant.agent_id == report.agents["scout"]).first()
+    g.approval_required_intents = ["CREATE_IMPROVEMENT", "WRITE_MEMORY"]
+    db.commit()
+    model = FakeModel({"Society_Scout": [{"decision_summary": "gated", "intents": [CLAIM, PROPOSAL]}]})
+    worker = SocietyWorker(SessionLocal, settings=settings, model=model, worker_id="w", telemetry_enabled=False)
+    emit_event(db, event_type="public.surface.anomaly", payload={"failing_count": 6})
+    db.commit()
+    asyncio.run(worker.run_until_idle(max_cycles=10))
+    db.expire_all()
+    memory, = _intents(db, "WRITE_MEMORY")
+    proposal, = _intents(db, "CREATE_IMPROVEMENT")
+    assert {_ev(memory.execution_status), _ev(proposal.execution_status)} == {"awaiting_approval"}
+    op = make_user("op@test")
+    ap.decide(db, intent_id=memory.id, user=op, decision="approved", reason="ok")   # memory approved FIRST
+    ap.decide(db, intent_id=proposal.id, user=op, decision="approved", reason="ok")
+    asyncio.run(worker.run_until_idle(max_cycles=10))
+    db.expire_all()
+    memory, proposal = db.get(AgentIntent, memory.id), db.get(AgentIntent, proposal.id)
+    assert _ev(proposal.execution_status) == "executed" and _ev(memory.execution_status) == "executed"
+    assert memory.executed_at >= proposal.executed_at
+    assert db.query(MemoryItem).filter(MemoryItem.title == CLAIM["payload"]["title"]).count() == 1
+
+
+def test_a_memory_resumed_before_its_side_effect_is_refused(db, SessionLocal, grants_with_no_cooldown, monkeypatch, make_user):
+    settings = _settings(monkeypatch, SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES="3")
+    report = seed_society(db)
+    grants_with_no_cooldown()
+    g = db.query(AgentCapabilityGrant).filter(AgentCapabilityGrant.agent_id == report.agents["scout"]).first()
+    g.approval_required_intents = ["CREATE_IMPROVEMENT", "WRITE_MEMORY"]
+    db.commit()
+    model = FakeModel({"Society_Scout": [{"decision_summary": "gated", "intents": [CLAIM, PROPOSAL]}]})
+    worker = SocietyWorker(SessionLocal, settings=settings, model=model, worker_id="w", telemetry_enabled=False)
+    emit_event(db, event_type="public.surface.anomaly", payload={"failing_count": 6})
+    db.commit()
+    asyncio.run(worker.run_until_idle(max_cycles=10))
+    db.expire_all()
+    memory, = _intents(db, "WRITE_MEMORY")
+    ap.decide(db, intent_id=memory.id, user=make_user("op@test"), decision="approved", reason="ok")
+    asyncio.run(worker.run_until_idle(max_cycles=10))  # the proposal still awaits approval
+    db.expire_all()
+    memory = db.get(AgentIntent, memory.id)
+    assert _ev(memory.execution_status) == "failed" and "CREATE_IMPROVEMENT is awaiting_approval" in memory.error
+    assert db.query(MemoryItem).filter(MemoryItem.title == CLAIM["payload"]["title"]).count() == 0
+
+
 def test_observation_memories_remain_supported(db, SessionLocal, grants_with_no_cooldown, monkeypatch):
     settings = _settings(monkeypatch)
     seed_society(db)
@@ -195,6 +247,13 @@ def test_a_failed_side_effect_cannot_create_false_duplicate_suppression_later(db
     # trusted execution evidence, with the EXECUTION reason (not "allowed by grant")
     assert refused["CREATE_IMPROVEMENT"]["outcome"] == "failed" and "portfolio full" in refused["CREATE_IMPROVEMENT"]["reason"]
     assert refused["WRITE_MEMORY"]["outcome"] == "failed" and "memory not grounded" in refused["WRITE_MEMORY"]["reason"]
+    # the model-written summary of run 1 now travels with its trusted outcome
+    run1 = next(a for a in ctx.recent_activity if a["decision"] == "raise it")
+    assert run1["outcomes"]["executed"] == 0
+    assert set(run1["outcomes"]["not_executed"]) == {"CREATE_IMPROVEMENT:failed", "WRITE_MEMORY:failed"}
+    # FakeModel ignores its context, so this count alone cannot detect suppression;
+    # the regression guard is the absence of the claim memory above (it failed on the
+    # old code). This asserts the second decision's proposal was not blocked by state.
     assert db.query(ImprovementProposal).count() == 1, "the second proposal was not suppressed"
     assert [_ev(r.execution_status) for r in _intents(db, "WRITE_MEMORY")] == ["failed", "executed"]
 

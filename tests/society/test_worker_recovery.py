@@ -126,7 +126,9 @@ def test_intent_execution_failure_is_recorded_not_retried(db, SessionLocal, soci
                 "decision_summary": "message a ghost",
                 "intents": [
                     {"type": "SEND_MESSAGE", "payload": {"to_agent": "Nobody_Here", "title": "hi", "content": "x"}},
-                    {"type": "WRITE_MEMORY", "payload": {"title": "still works", "content": "second intent executes", "scope": "agent"}},
+                    # not a memory: a memory next to a failed side effect is refused by design
+                    # (execution-grounded memory, tests/society/test_memory_grounding.py)
+                    {"type": "SLEEP", "payload": {"seconds": 1}},
                 ],
                 "sleep_for_seconds": 1,
             }
@@ -307,21 +309,31 @@ def test_model_supplied_references_are_validated_never_trusted(db, SessionLocal,
                 "decision_summary": "remember with a made-up task reference",
                 "intents": [
                     {"type": "WRITE_MEMORY", "payload": {"title": "ghost ref", "content": "x", "scope": "agent", "source_task_id": ghost}},
-                    {"type": "CREATE_IMPROVEMENT", "payload": {"title": "ghost proposal", "problem": "p", "proposed_change": "c", "source_task_id": ghost}},
                     {"type": "WRITE_MEMORY", "payload": {"title": "clean", "content": "no reference", "scope": "agent"}},
                 ],
+                "sleep_for_seconds": 0,
+            },
+            # the proposal in its own decision: a memory beside a refused side effect
+            # would be refused for THAT reason (execution-grounded memory)
+            {
+                "decision_summary": "propose with a made-up task reference",
+                "intents": [{"type": "CREATE_IMPROVEMENT", "payload": {"title": "ghost proposal", "problem": "p", "proposed_change": "c", "source_task_id": ghost}}],
                 "sleep_for_seconds": 1,
-            }
+            },
         ]
     )
     ev, worker, stats = _emit_and_run(db, SessionLocal, society_settings, model)
+    ev2, _, _ = _emit_and_run(db, SessionLocal, society_settings, model)
     run = db.query(AgentRun).filter(AgentRun.event_id == ev.id).first()
-    assert _ev(run.status) == "completed"
+    run2 = db.query(AgentRun).filter(AgentRun.event_id == ev2.id).first()
+    assert _ev(run.status) == "completed" and _ev(run2.status) == "completed"
     intents = db.query(AgentIntent).filter(AgentIntent.run_id == run.id).order_by(AgentIntent.seq).all()
-    assert [_ev(i.execution_status) for i in intents] == ["failed", "failed", "executed"]
-    for i in intents[:2]:
+    assert [_ev(i.execution_status) for i in intents] == ["failed", "executed"]
+    proposal = db.query(AgentIntent).filter(AgentIntent.run_id == run2.id).one()
+    assert _ev(proposal.execution_status) == "failed"
+    for i in (intents[0], proposal):
         assert "source_task_id does not reference an existing task" in i.error and "IntegrityError" not in i.error
-    assert len(model.calls) == 1
+    assert len(model.calls) == 2
 
 
 def test_max_intents_per_run_enforced(db, SessionLocal, society_settings, grants_with_no_cooldown):
