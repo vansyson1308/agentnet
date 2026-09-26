@@ -158,30 +158,30 @@ class TestPlatformFeeSQLMigration:
 
 
 class TestA2AAgentCard:
-    """Test A2A Agent Card generation (Phase 1A)."""
+    """A2A 1.0 cards (ADR-0009 D4): built from the official SDK types, one
+    gateway for every agent, and nothing private in a per-agent card."""
 
     def test_registry_card_structure(self):
-        """Registry A2A card has required fields."""
-        from services.registry.app.a2a import build_registry_card
+        from google.protobuf.json_format import MessageToDict
 
-        card = build_registry_card(base_url="http://localhost:8000")
-        card_dict = card.model_dump(by_alias=True, exclude_none=True)
+        from services.registry.app.a2a.cards import network_card
 
-        assert card_dict["name"] == "AgentNet Registry"
-        assert "description" in card_dict
-        assert "version" in card_dict
-        assert "capabilities" in card_dict
-        assert "skills" in card_dict
-        assert "supportedInterfaces" in card_dict
-        assert "securitySchemes" in card_dict
-        assert len(card_dict["skills"]) >= 3
+        card = MessageToDict(network_card("https://api.agentnet.io.vn"))
+        assert card["name"] == "AgentNet"
+        assert {i["protocolBinding"] for i in card["supportedInterfaces"]} == {"JSONRPC", "HTTP+JSON"}
+        assert all(i["protocolVersion"] == "1.0" for i in card["supportedInterfaces"])
+        assert card["capabilities"]["streaming"] is True
+        assert card["capabilities"].get("pushNotifications", False) is False
+        assert "bearer" in card["securitySchemes"] and card["securityRequirements"]
+        assert len(card["skills"]) == 2
 
     def test_agent_card_from_db_model(self):
-        """Convert an Agent DB model to A2A card."""
-        from services.registry.app.a2a import agent_to_a2a_card
+        from google.protobuf.json_format import MessageToDict
 
-        # Mock an Agent DB model
+        from services.registry.app.a2a.cards import agent_card
+
         mock_agent = MagicMock()
+        mock_agent.id = "0b7d6c1e-0000-4000-8000-000000000001"
         mock_agent.name = "TestAgent"
         mock_agent.description = "A test agent"
         mock_agent.capabilities = [
@@ -191,29 +191,26 @@ class TestA2AAgentCard:
         mock_agent.endpoint = "http://localhost:9000"
         mock_agent.public_key = "test-public-key"
 
-        card = agent_to_a2a_card(mock_agent)
-        card_dict = card.model_dump(by_alias=True, exclude_none=True)
+        card = MessageToDict(agent_card(mock_agent, "https://api.agentnet.io.vn"))
+        assert card["name"] == "TestAgent"
+        assert [s["id"] for s in card["skills"]] == ["translate", "summarize"]
+        # the SAME gateway interfaces, routed by tenant -- never the agent's own endpoint
+        assert {i["url"] for i in card["supportedInterfaces"]} == {"https://api.agentnet.io.vn/a2a", "https://api.agentnet.io.vn/a2a/http"}
+        assert {i["tenant"] for i in card["supportedInterfaces"]} == {mock_agent.id}
+        text = str(card)
+        assert "localhost:9000" not in text and "test-public-key" not in text
 
-        assert card_dict["name"] == "TestAgent"
-        assert len(card_dict["skills"]) == 2
-        assert card_dict["skills"][0]["id"] == "translate"
-        assert card_dict["skills"][1]["id"] == "summarize"
-        assert len(card_dict["supportedInterfaces"]) == 1
-        assert card_dict["supportedInterfaces"][0]["url"] == "http://localhost:9000"
-        assert "bearer" in card_dict["securitySchemes"]
+    def test_agent_card_security_is_the_gateway_credential(self):
+        from google.protobuf.json_format import MessageToDict
 
-    def test_agent_card_no_public_key(self):
-        """Agent without public key gets 'none' auth scheme."""
-        from services.registry.app.a2a import agent_to_a2a_card
+        from services.registry.app.a2a.cards import agent_card
 
         mock_agent = MagicMock()
+        mock_agent.id = "0b7d6c1e-0000-4000-8000-000000000002"
         mock_agent.name = "PublicAgent"
-        mock_agent.description = "No auth needed"
+        mock_agent.description = "No key"
         mock_agent.capabilities = []
-        mock_agent.endpoint = "http://localhost:9001"
         mock_agent.public_key = None
 
-        card = agent_to_a2a_card(mock_agent)
-        card_dict = card.model_dump(by_alias=True, exclude_none=True)
-
-        assert "none" in card_dict["securitySchemes"]
+        card = MessageToDict(agent_card(mock_agent, "https://api.agentnet.io.vn"))
+        assert list(card["securitySchemes"]) == ["bearer"]  # no 'none' scheme, ever

@@ -28,3 +28,11 @@ cd .railway && npm install && cd .. && railway config plan && railway config app
 ```
 
 Status: `MANAGED STAGING — GREEN` (2026-09-18, `main` ae42d7a) — `docs/RAILWAY_STAGING.md` has the live inventory, the evidence per section and the §20 validation table; `validate_staging.py` is what the `staging-validator` service runs (`VALIDATOR_EXPECT_RUNTIME` selects the runtime flag it asserts); `phase5_live.py` is the Phase 5 live-society driver the same service runs when `VALIDATOR_SCRIPT=phase5_live.py` (docs/SOCIETY_LIVE_MODEL_RUNBOOK.md §3.1).
+
+`a2a_live_proof.py` is the Phase 8 A2A live proof the same service runs when `VALIDATOR_SCRIPT=a2a_live_proof.py`:
+
+- It uses the official `a2a-sdk` client against the public registry.
+- It covers cards, auth, version negotiation, both bindings, SSE, resubscribe, cancel, ListTasks, BOLA and the paid-path refusals.
+- Test identities only: the proof agents' Ed25519 keys are derived from the validator secret, so re-runs reuse them.
+- With `A2A_PROOF_MODES` it also runs federation, company and incident. Federation includes SSRF refusals, then discover → verify → connection → outbound call → check.
+- Federation needs `A2A_REFERENCE_CARD_URL`, pointing at a disposable service built from `scripts/a2a/reference/` (the official helloworld peer). That service is deleted after the proof.

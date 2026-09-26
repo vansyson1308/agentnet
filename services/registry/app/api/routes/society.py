@@ -11,6 +11,8 @@ OPERATOR (``users.society_role = operator``, user JWT only — see
   GET  /society/config, /events, /runs, /runs/{id}, /intents, /candidates/{id},
        /story/{correlation}/detail, /budget, /approvals, /operators, /ask
   POST /society/intents/{id}/approve | /reject, /operators
+  GET  /society/company, /society/incidents                    (Phase 8, company mode)
+  POST /society/company/cycles, /society/incidents, /society/incidents/{id}/lift
 
 WORLD-EVENT INGRESS (``operator`` or ``event_producer``):
   POST /society/events — allow-listed event types only, bounded payload,
@@ -608,6 +610,68 @@ def abandon_candidate(
         "already_abandoned": res.already_abandoned,
         "task_refunded": res.task_refunded,
     }
+
+
+# ── autonomous company mode (operator; ADR-0009 D15) ──────────────────
+
+
+class IncidentBody(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=255)
+    source: str = Field("operator", min_length=1, max_length=64)
+
+
+class LiftBody(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=255)
+
+
+@router.get("/company")
+def company_status(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """The operator status report: mode flags, cycles, portfolio, evidence,
+    fitness, candidates, promotions, budgets, open incidents. No secrets."""
+    from ...society import company as company_mod
+
+    return company_mod.status_report(db, get_settings())
+
+
+@router.post("/company/cycles", status_code=status.HTTP_201_CREATED)
+def company_cycle_now(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """Immediate operator-invoked cycle (no waiting for the daily schedule).
+    The kill switch still wins: with the runtime off, nothing starts."""
+    from ...society import company as company_mod
+
+    settings = get_settings()
+    if not settings.runtime_enabled:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="SOCIETY_RUNTIME_ENABLED is off (kill switch engaged)")
+    cycle = company_mod.start_cycle(db, settings, trigger="operator", operator_id=operator.id)
+    return company_mod.cycle_view(cycle)
+
+
+@router.get("/incidents")
+def list_incidents(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    from ...models import IncidentFreeze
+    from ...society import company as company_mod
+
+    rows = db.query(IncidentFreeze).order_by(IncidentFreeze.opened_at.desc()).limit(100).all()
+    return {"incidents": [company_mod.incident_view(r) for r in rows]}
+
+
+@router.post("/incidents", status_code=status.HTTP_201_CREATED)
+def open_incident(body: IncidentBody, db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """Open an incident freeze: autonomous merge authority stops until lifted."""
+    from ...society import company as company_mod
+
+    return company_mod.incident_view(company_mod.open_incident(db, reason=body.reason, source=body.source, operator_id=operator.id))
+
+
+@router.post("/incidents/{incident_id}/lift")
+def lift_incident(incident_id: uuid.UUID, body: LiftBody, db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """Only an operator lifts a freeze; no intent or external agent can."""
+    from ...society import company as company_mod
+
+    try:
+        return company_mod.incident_view(company_mod.lift_incident(db, incident_id, operator=operator, reason=body.reason))
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="incident not found")
 
 
 # ── operator management (operator) ────────────────────────────────────

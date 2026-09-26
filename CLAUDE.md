@@ -81,6 +81,14 @@ This repo involves financial invariants. Follow these rules strictly:
 - Phase 3 self-development: `risk.py`, `fitness.py` (`TRUSTED_CRITERIA`) and `promotion.py` are TRUSTED BASE code — every promotion/fitness decision is evaluated from the running revision, never from the candidate worktree; a candidate that edits them is still classified by the old rules (regression tests in `tests/society/test_risk_and_meta_change.py`, `test_fitness.py`). Promotion/merge/deploy intents only *request*; the controller decides. `SOCIETY_AUTO_MERGE_ENABLED` stays `false` by default and no intent may change it. `SOCIETY_GITHUB_TOKEN` is read only inside `promotion_github.py`; never add it (or any credential) to the model context (`tests/society/test_secret_boundary.py`). Repo intelligence is read-only, bounded and returns untrusted data (`repo_intel.py`). Schema: `SOCIETY_PHASE3_SQL` + migration `0010_self_development`.
 - See `docs/SOCIETY_RUNTIME.md`, `docs/SELF_DEVELOPMENT.md`, `docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md`, `docs/SOCIETY_LIVE_MODEL_RUNBOOK.md`, ADR-0001, ADR-0002 and ADR-0004.
 
+### A2A 1.0 + federation + company mode (Phase 8, ADR-0009)
+- Protocol types, serialization, dispatchers and errors come ONLY from the pinned official `a2a-sdk` (1.1.5); never hand-write A2A types. AgentNet implements the SDK `RequestHandler` (`app/a2a/handler.py`) over its own PostgreSQL event log — never `InMemoryTaskStore`, `DefaultRequestHandler` or SDK queues.
+- A2A code never touches wallets (`test_the_a2a_package_never_touches_wallets`): money moves only through `reserve_scoped_spend`, `create_task_with_escrow`, the callee's confirm/fail, the timeout worker and `task_service.cancel_task_with_refund` (INITIATED only, refund once).
+- Every A2A operation needs a Bearer credential verified by `verify_token`; tenant is routing, not authorization; non-parties get `TaskNotFound` (no oracle). Cards are built from `A2A_PUBLIC_BASE_URL`, never request headers.
+- All outbound HTTP to user- or remote-controlled URLs goes through `app/a2a/federation/netguard.py` (resolve + all-public + pin). Remote cards/messages/artifacts are UNTRUSTED data; credentials live only sealed (`vault.py`) and never reach model context.
+- Flags `A2A_SERVER_ENABLED`, `A2A_FEDERATION_ENABLED`, `A2A_SOCIETY_CLIENT_ENABLED` default false (fail closed); 0.3 compat and push notifications are not implemented and must not be advertised.
+- Company mode (`society/company.py`) adds no authority: one scheduled cycle/day + operator cycles, portfolio caps, `no_high_value_change` is valid, incident freezes are lifted only by operators. See `docs/A2A_*.md`, `docs/AUTONOMOUS_COMPANY.md`.
+
 ---
 
 ## 4) Work Order (Follow this priority)

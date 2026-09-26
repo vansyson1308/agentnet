@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta
@@ -33,6 +32,7 @@ from ...task_service import (
     fail_task_with_refund,
     start_task as start_task_session,
 )
+from ...task_dispatch import build_execute_message, dispatch_execute
 from ...tracing import get_tracer
 from ...websocket_manager import manager
 
@@ -211,46 +211,24 @@ async def create_task_session(
 
     # Dispatch to callee — out-of-band, non-fatal if it fails. The callee
     # can also poll GET /tasks/{id} so the task is recoverable either way.
+    # Shared with the A2A gateway (app/task_dispatch.py).
     callee_agent = db.query(Agent).filter(Agent.id == task_session.callee_agent_id).first()
-    message = {
-        "jsonrpc": "2.0",
-        "id": str(uuid.uuid4()),
-        "trace_id": str(task_session.trace_id),
-        "method": "execute",
-        "from": str(current_agent.id),
-        "params": {
-            "capability": task.capability,
-            "input": task.input,
-            "payment": {
-                "max_budget": task.max_budget,
-                "currency": task.currency,
-                "escrow_session_id": str(task_session.id),
-            },
-            "timeout_seconds": task.timeout_seconds,
-        },
-    }
-    sent = await manager.send_to_agent(message, str(task_session.callee_agent_id))
-    task_session.fulfillment_channel = "websocket" if sent else None
-
-    if not sent and callee_agent and callee_agent.endpoint:
-        task_session.fulfillment_channel = "webhook"
-        try:
-            from ...sandbox import sandboxed_call
-
-            asyncio.create_task(
-                sandboxed_call(
-                    url=callee_agent.endpoint,
-                    method="POST",
-                    json_body=message,
-                )
-            )
-            audit_logger.info(
-                f"Task {task_session.id} dispatched via Webhook to {callee_agent.endpoint}"
-            )
-        except Exception as e:
-            audit_logger.error(
-                f"Webhook dispatch failed for task {task_session.id}: {e}"
-            )
+    message = build_execute_message(
+        task_session_id=task_session.id,
+        trace_id=task_session.trace_id,
+        caller_agent_id=current_agent.id,
+        capability=task.capability,
+        input_data=task.input,
+        max_budget=task.max_budget,
+        currency=task.currency,
+        timeout_seconds=task.timeout_seconds,
+    )
+    task_session.fulfillment_channel = await dispatch_execute(
+        message=message,
+        task_session_id=task_session.id,
+        callee_agent_id=task_session.callee_agent_id,
+        callee_endpoint=callee_agent.endpoint if callee_agent else None,
+    )
 
     db.commit()
 

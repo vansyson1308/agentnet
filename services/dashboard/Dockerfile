@@ -7,10 +7,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-ENV FLASK_APP=app.main
-ENV FLASK_RUN_HOST=0.0.0.0
-ENV FLASK_RUN_PORT=8080
-
+# Production WSGI server (gunicorn.conf.py): binds 0.0.0.0:$PORT (default 8080),
+# bounded gthread workers, graceful shutdown on SIGTERM. Exec form so gunicorn
+# is PID 1 and receives the platform's stop signal directly.
 EXPOSE 8080
 
-CMD ["flask", "run"]
+CMD ["gunicorn", "--config", "gunicorn.conf.py", "app.main:app"]

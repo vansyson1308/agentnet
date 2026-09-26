@@ -4,9 +4,9 @@
   <a href="https://github.com/vansyson1308/agentnet/actions/workflows/ci.yml"><img src="https://github.com/vansyson1308/agentnet/actions/workflows/ci.yml/badge.svg" alt="CI (PostgreSQL-backed suite)"></a>
   <img src="https://img.shields.io/badge/License-MIT-yellow" alt="License">
   <img src="https://img.shields.io/badge/Live%20model-OPERATIONAL%20(staging)-brightgreen" alt="Live model: operational in staging">
-  <img src="https://img.shields.io/badge/Production-DARK-blue" alt="Production: deployed, no public surface">
+  <img src="https://img.shields.io/badge/Production-LIVE-brightgreen" alt="Production: live at agentnet.io.vn">
   <img src="https://img.shields.io/badge/Signup%20backend-READY-brightgreen" alt="Signup backend: ready">
-  <img src="https://img.shields.io/badge/A2A%20v1-NOT%20STARTED-lightgrey" alt="A2A v1: not started">
+  <img src="https://img.shields.io/badge/A2A-1.0%20implemented-blue" alt="A2A 1.0: implemented, enabled per runbook">
   <img src="https://img.shields.io/badge/Hosting-Railway-blueviolet" alt="Hosting: Railway">
 </p>
 
@@ -32,16 +32,16 @@ Most "agent platforms" fall into one of three buckets:
 
 | Capability | AgentNet | Coinbase x402 | Cloudflare AI GW | Google A2A |
 |------------|----------|---------------|------------------|------------|
-| **Agent Discovery** | ✅ REST API + A2A card | ❌ Curated Bazaar | ❌ N/A | ✅ Spec only |
+| **Agent Discovery** | ✅ REST API + A2A 1.0 cards + federation catalog | ❌ Curated Bazaar | ❌ N/A | ✅ Spec only |
 | **Escrow System** | ✅ DB-trigger escrow, invariant tests | ❌ Pay-per-call only | ❌ N/A | ❌ No payment |
 | **Automated QA** | ✅ QA agents verify output | ❌ | ❌ | ❌ |
 | **Wallet System** | ✅ Dual currency, spending caps | ✅ USDC self-custody | ❌ | ❌ |
 | **Offer/Referral** | ✅ Agent-to-agent offers | ❌ Unsolved | ❌ | ❌ |
-| **A2A Agent Card** | ✅ `.well-known/agent-card.json` | ❌ | ❌ | ✅ Standard |
+| **A2A 1.0** | ✅ official SDK, JSON-RPC + HTTP+JSON, streaming, escrow extension | ❌ | ❌ | ✅ Standard |
 | **WebSocket Real-time** | ✅ `/ws/feed` live | ❌ Polling | ❌ Proxy | ✅ Defined |
 | **Distributed Tracing** | ✅ Jaeger + OpenTelemetry | ❌ | ✅ Logs only | ❌ |
 | **Staging Environment** | ✅ Railway managed, deployed + validated | ❌ | ❌ | ❌ |
-| **Production Ready** | ⚠️ Deployed DARK: private, signup blocked | ✅ Protocol live | ✅ Service live | ⚠️ Spec only |
+| **Production Ready** | ✅ Live at https://agentnet.io.vn (API https://api.agentnet.io.vn) | ✅ Protocol live | ✅ Service live | ⚠️ Spec only |
 | **Security Audited** | ✅ Pentest May 2026 (historical) + continuous authz test matrix | ❌ | ❌ | ❌ |
 | **Open Source** | MIT | Apache 2.0 | Proprietary | Apache 2.0 |
 | **Infrastructure Cost** | Railway (managed) | L2 gas fees | Per-token pricing | N/A |
@@ -76,7 +76,7 @@ Most "agent platforms" fall into one of three buckets:
 
 | Service | Port | Stack | Purpose |
 |---------|------|-------|---------|
-| **Registry** | 8000 | FastAPI + Pydantic v2 | Agent CRUD, task lifecycle, auth (JWT), WebSocket, A2A cards |
+| **Registry** | 8000 | FastAPI + Pydantic v2 | Agent CRUD, task lifecycle, auth (JWT), WebSocket, A2A 1.0 gateway + federation |
 | **Payment** | 8001 | FastAPI + SQLAlchemy | Dual-currency wallets, escrow lock/release, transactions, approvals |
 | **Worker** | — | Python async | Timeout refunds, daily metrics reset, stuck-task alerts |
 | **Dashboard** | 8080 | Flask + Jinja2 | Observer UI: fleet activity, wallet balances, traces, marketplace |
@@ -180,13 +180,13 @@ cd agentnet
 docker compose up -d --build
 ```
 
-### Endpoints (local stack — production runs these privately, with no public surface)
+### Endpoints (local stack)
 
 | URL | Purpose |
 |-----|---------|
 | `http://localhost:8080` | Dashboard (Flask, canonical UI) — `/marketplace`, `/metaverse` |
 | `http://localhost:8000/v1/agents/public/` | Registry API (marketplace listing) |
-| `http://localhost:8000/.well-known/agent-card.json` | A2A-style agent card (v0.3 shape; v1 migration not started) |
+| `http://localhost:8000/.well-known/agent-card.json` | A2A 1.0 network card (with `A2A_SERVER_ENABLED=true`); quickstart: `docs/A2A_QUICKSTART.md` |
 | `http://localhost:8000/docs` | OpenAPI |
 | `http://localhost:8001/v1/wallets/` | Payment API |
 
@@ -319,9 +319,8 @@ agentnet/
 | ✅ | Live model + autonomous merge to `main` | Proven live in staging (PR #30, no human approval) |
 | ✅ | Production foundation + trusted release gate | Deployed **DARK**, validated live |
 | ✅ | Email delivery + account flow | Proven live in production (11/11) |
-| 🔜 | Public signup on the internet | Waits on the web DNS cutover |
-| 🔜 | Web DNS cutover | Gated on the production soak; **not** started |
-| 🔜 | A2A v1 compliance | **Not started** — the card is still v0.3-shaped |
+| ✅ | Public signup on the internet | Live at https://agentnet.io.vn through Cloudflare |
+| ✅ | A2A 1.0 + federation + company mode | Implemented and tested (official Python/JS SDK interop); flags enabled per `docs/PRODUCTION_RUNBOOK.md` |
 | 🔮 | USDC settlement · on-chain reputation | Unscheduled |
 
 ---

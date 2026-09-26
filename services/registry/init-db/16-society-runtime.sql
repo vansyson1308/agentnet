@@ -374,3 +374,42 @@ DROP TRIGGER IF EXISTS trg_memory_validation_events_append_only ON memory_valida
 CREATE TRIGGER trg_memory_validation_events_append_only
     BEFORE UPDATE OR DELETE ON memory_validation_events
     FOR EACH ROW EXECUTE FUNCTION memory_validation_events_append_only();
+
+-- ============================================================
+-- Autonomous Society Runtime — Phase 8: company cadence + incident freeze
+-- (ADR-0009 D15)
+-- ============================================================
+
+-- One row per company cycle. A scheduled cycle is unique per UTC date (the
+-- partial index below), so a restarted worker can never run the same day
+-- twice; an operator may invoke extra cycles immediately (trigger='operator').
+-- evidence is an AGGREGATE bundle (counts/rates only, no private content).
+CREATE TABLE IF NOT EXISTS society_company_cycles (
+    id              UUID PRIMARY KEY,
+    cycle_date      DATE NOT NULL,
+    trigger         VARCHAR(16) NOT NULL DEFAULT 'scheduled',
+    event_id        UUID,
+    evidence        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    outcome         VARCHAR(32),
+    outcome_detail  JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT society_company_cycles_trigger_valid CHECK (trigger IN ('scheduled', 'operator'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_society_company_cycles_scheduled_day
+    ON society_company_cycles (cycle_date) WHERE trigger = 'scheduled';
+
+-- An incident freezes autonomous MERGE authority (promotion.merge_freeze_reasons)
+-- until an operator lifts it. Rows are never deleted: lifting sets lifted_at.
+CREATE TABLE IF NOT EXISTS society_incident_freezes (
+    id                  UUID PRIMARY KEY,
+    reason              VARCHAR(255) NOT NULL,
+    source              VARCHAR(64) NOT NULL,
+    evidence            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    opened_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    opened_by_user_id   UUID REFERENCES users(id) ON DELETE SET NULL,
+    lifted_at           TIMESTAMPTZ,
+    lifted_by_user_id   UUID REFERENCES users(id) ON DELETE SET NULL,
+    lift_reason         VARCHAR(255)
+);
+CREATE INDEX IF NOT EXISTS idx_society_incident_freezes_open ON society_incident_freezes (opened_at DESC) WHERE lifted_at IS NULL;

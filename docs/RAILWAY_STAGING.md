@@ -51,7 +51,7 @@ Live inventory (Railway-generated domains only; `agentnet.io.vn` untouched):
 | `registry` | `services/registry` (Dockerfile) | image `CMD` (uvicorn, `--proxy-headers`); **pre-deploy** `sh -c 'SKIP_DB_BOOTSTRAP=false /app/entrypoint.sh true && python -m app.society.seed'` (schema + idempotent fleet seed) | **public** (generated domain) | 8000 | `/readyz` | — |
 | `payment` | `services/payment` | image `CMD` | private | 8001 | `/readyz` | — |
 | `worker` | `services/worker` | image `CMD` | private | 9100 | `/metrics` | — |
-| `dashboard` | `services/dashboard` | image `CMD` (`flask run`) | **public** (generated domain) | 8080 | `/healthz` | — |
+| `dashboard` | `services/dashboard` | image `CMD` (gunicorn, `gunicorn.conf.py`) | **public** (generated domain) | 8080 | `/healthz` | — |
 | `society-worker` | `services/registry` | `sh /app/start-society-railway.sh` | private | 9101 | `/metrics` | `society-workspace` → `/workspace` |
 
 No `simulation` service and no Jaeger (`JAEGER_ENABLED=false`; spans still persist in PostgreSQL). Postgres and

@@ -153,6 +153,9 @@ MUST_COVER = [
     "provisioning_providers", "provisioning_services", "offers", "negotiation_rounds", "referrals",
     "notifications", "stories", "email_verification_tokens", "agent_interactions", "sim_sessions",
     "sim_agent_profiles", "sim_results", "sim_reports", "sim_chat_messages",
+    "a2a_tasks", "a2a_messages", "a2a_artifacts", "a2a_task_events", "a2a_audit_log",
+    "a2a_remote_agents", "a2a_remote_card_versions", "a2a_connections", "a2a_outbound_calls",
+    "society_company_cycles", "society_incident_freezes",
 ]
 
 ORM_MODULES = {
@@ -224,7 +227,7 @@ def test_entrypoint_and_image_bootstrap_empty_databases():
     assert "alembic stamp 0003_spending_cap_fix" in entry
     assert "alembic upgrade head" in entry
     assert "COPY init-db /app/init-db" in docker
-    assert "17-app-tables.sql" in entry, "entrypoint comment must name the current end of the bundle"
+    assert "18-a2a-federation.sql" in entry, "entrypoint comment must name the current end of the bundle"
     assert "through 14-spending-cap-fix" not in entry, "stale comment: the bundle no longer stops at 14"
 
 
@@ -588,7 +591,14 @@ PHASE3_TABLES = {"code_promotions", "change_experiments", "deployment_requests"}
 # Added by 0012 and removed by its downgrade: the append-only audit trail for
 # memory validation state changes.
 PHASE6_TABLES = {"memory_validation_events"}
-POST_0008_TABLES = APP_TABLES | PHASE3_TABLES | PHASE6_TABLES
+# Added by 0013 (ADR-0009): A2A integration + federation tables and the
+# Society's company-cycle / incident-freeze tables.
+PHASE8_TABLES = {
+    "a2a_tasks", "a2a_messages", "a2a_artifacts", "a2a_task_events", "a2a_audit_log",
+    "a2a_remote_agents", "a2a_remote_card_versions", "a2a_connections", "a2a_outbound_calls",
+    "society_company_cycles", "society_incident_freezes",
+}
+POST_0008_TABLES = APP_TABLES | PHASE3_TABLES | PHASE6_TABLES | PHASE8_TABLES
 
 
 def test_downgrade_0008_then_upgrade_head_round_trips(upgrade_db):

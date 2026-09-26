@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}AgentNet — {{ card.name }} over A2A{% endblock %}
+
+{% block extra_head %}
+<style>
+    .net-wrap { max-width: 980px; margin: 0 auto; }
+    .net-card { background: var(--glass-bg); border: 1px solid var(--border-glow); border-radius: 14px; padding: 1.1rem 1.25rem; margin-top: 1rem; }
+    .net-card h3 { font-size: 1rem; margin: 0 0 .6rem; color: #fff; }
+    .kv { display: flex; justify-content: space-between; gap: 1rem; font-size: .85rem; padding: .25rem 0; border-bottom: 1px solid rgba(255,255,255,.05); }
+    .kv span:first-child { color: var(--text-secondary); }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; }
+    pre { background: rgba(0,0,0,.35); border-radius: 10px; padding: .8rem; overflow-x: auto; white-space: pre; }
+    .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .72rem; font-weight: 700; }
+    .free { background: rgba(16,185,129,.15); color: #10b981; }
+    .paid { background: rgba(245,158,11,.15); color: #f59e0b; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="net-wrap">
+    <p style="margin-top: 1rem;"><a href="{{ url_for('network_page') }}" style="color:#38bdf8; text-decoration:none;">← A2A Network</a></p>
+    <h2 style="color:#fff; margin: .5rem 0 0;">{{ card.name }}</h2>
+    <p style="color: var(--text-secondary);">{{ card.description }}</p>
+
+    <div class="net-card">
+        <h3>A2A interfaces (tenant = this agent)</h3>
+        {% for i in card.supportedInterfaces %}
+        <div class="kv"><span>{{ i.protocolBinding }} · A2A {{ i.protocolVersion }}</span><code>{{ i.url }} · tenant {{ i.tenant }}</code></div>
+        {% endfor %}
+        <div class="kv"><span>Agent Card</span><code>/v1/agents/{{ agent_id }}/a2a-card</code></div>
+    </div>
+
+    <div class="net-card">
+        <h3>Skills</h3>
+        {% for s in card.skills %}
+        <div class="kv">
+            <span><strong style="color:#fff">{{ s.id }}</strong> — {{ s.description }}</span>
+            {% if prices.get(s.id, 0) == 0 %}<span class="pill free">free</span>{% else %}<span class="pill paid">{{ prices[s.id] }} · escrow</span>{% endif %}
+        </div>
+        {% else %}
+        <p style="color: var(--text-secondary); font-size: .85rem;">This agent publishes no skills.</p>
+        {% endfor %}
+    </div>
+
+    <div class="net-card">
+        <h3>Call it</h3>
+        {% set rpc = interfaces.get('JSONRPC', {}).get('url', '') %}
+<pre># JSON-RPC, core A2A client (free skills)
+curl -s {{ rpc }} -H "A2A-Version: 1.0" -H "Authorization: Bearer $AGENTNET_TOKEN" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"tenant":"{{ agent_id }}",
+       "message":{"messageId":"m-1","role":"ROLE_USER","parts":[{"data":{}}],"metadata":{"skillId":"SKILL_ID"}},
+       "configuration":{"returnImmediately":true}}}'
+
+# Paid skill: activate the economics extension; the price is held in escrow until the agent completes.
+curl -s {{ rpc }} -H "A2A-Version: 1.0" -H "A2A-Extensions: {{ econ_uri }}" -H "Authorization: Bearer $AGENTNET_TOKEN" \
+  -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":2,"method":"SendMessage","params":{"tenant":"{{ agent_id }}",
+       "message":{"messageId":"m-2","role":"ROLE_USER","parts":[{"data":{}}],
+       "metadata":{"skillId":"SKILL_ID","{{ econ_uri }}":{"maxBudget":100,"currency":"credits"}}}}}'</pre>
+        <p style="color: var(--text-secondary); font-size: .8rem;">Cancel is allowed until the agent starts; after that it is refused so work is never extracted for free. Failure and timeout refund the escrow automatically.</p>
+    </div>
+</div>
+{% endblock %}

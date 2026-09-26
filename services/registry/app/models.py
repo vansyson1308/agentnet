@@ -1289,3 +1289,44 @@ class DeploymentRequest(Base):
 
     candidate = relationship("CodeCandidate", foreign_keys=[candidate_id])
     promotion = relationship("CodePromotion", foreign_keys=[promotion_id])
+
+
+class CompanyCycle(Base):
+    """One autonomous-company cycle (ADR-0009 D15). Scheduled cycles are unique
+    per UTC date; operator cycles are extra, immediate invocations. ``evidence``
+    is an aggregate bundle (no private content); ``outcome`` is recorded by the
+    control plane, including the valid outcome ``no_high_value_change``."""
+
+    __tablename__ = "society_company_cycles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cycle_date = Column(Date, nullable=False)
+    trigger = Column(String(16), nullable=False, server_default=text("'scheduled'"))
+    event_id = Column(UUID(as_uuid=True))
+    evidence = Column(PG_JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    outcome = Column(String(32))
+    outcome_detail = Column(PG_JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    created_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+    updated_at = Column(TzTimestamp, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class IncidentFreeze(Base):
+    """An incident that freezes autonomous merge authority until an OPERATOR
+    lifts it (ADR-0009 D15). Never deleted: lifting sets ``lifted_at``."""
+
+    __tablename__ = "society_incident_freezes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    reason = Column(String(255), nullable=False)
+    source = Column(String(64), nullable=False)
+    evidence = Column(PG_JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    opened_at = Column(TzTimestamp, nullable=False, server_default=func.now())
+    opened_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    lifted_at = Column(TzTimestamp)
+    lifted_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    lift_reason = Column(String(255))
+
+
+# A2A integration tables live in their own module (app/a2a/orm.py) but must be
+# part of this metadata: the parity tests and every Base consumer see them.
+from .a2a import orm as _a2a_orm  # noqa: E402,F401

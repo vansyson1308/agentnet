@@ -1,0 +1,14 @@
+{
+  "name": "agentnet-a2a-interop",
+  "private": true,
+  "description": "Interoperability proof: the OFFICIAL A2A JavaScript SDK client against AgentNet (docs/A2A_LIVE_PROOF.md).",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@a2a-js/sdk": "1.2.1",
+    "@bufbuild/protobuf": "2.10.2"
+  },
+  "scripts": {
+    "interop": "node js_interop.mjs"
+  }
+}

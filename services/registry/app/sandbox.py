@@ -231,11 +231,24 @@ async def sandboxed_call(
     # NOTE: Redirects are DISABLED to prevent SSRF bypass via 302 redirect
     # to internal services. If an agent endpoint redirects, we treat it
     # as an error rather than following to a potentially malicious target.
+    # Outside development the connection goes through the A2A network guard
+    # (ADR-0009 D12): the host is resolved, EVERY address must be public, and
+    # the socket is pinned to the checked address (no DNS rebinding), with no
+    # proxy environment and a capped body.
+    if config.block_private_networks:
+        from .a2a.federation.netguard import OutboundRefused, SafeTransport
+
+        transport = SafeTransport(max_response_bytes=config.max_response_size)
+        client_kwargs: Dict[str, Any] = {"transport": transport, "trust_env": False}
+    else:
+        OutboundRefused = None  # type: ignore[assignment]
+        client_kwargs = {}
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(config.request_timeout),
             max_redirects=0,
             follow_redirects=False,
+            **client_kwargs,
         ) as client:
             response = await client.request(
                 method=method,
@@ -247,6 +260,10 @@ async def sandboxed_call(
         raise SandboxTimeoutError(f"Agent endpoint timed out after {config.request_timeout}s: {e}")
     except httpx.RequestError as e:
         raise SandboxError(f"Failed to reach agent endpoint: {e}")
+    except Exception as e:
+        if OutboundRefused is not None and isinstance(e, OutboundRefused):
+            raise SSRFError(f"Blocked: {e.reason}") from e
+        raise
 
     # Step 4: Validate response
     _validate_response(response, config)

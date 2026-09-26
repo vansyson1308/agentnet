@@ -4,8 +4,8 @@
 # Schema lifecycle (docs/DATABASE_SCHEMA_CONTRACT.md):
 # 1. Fresh Postgres *volumes* are bootstrapped by Postgres' own
 #    /docker-entrypoint-initdb.d, which runs services/registry/init-db/*.sql
-#    (mounted via compose). The bundle currently ends at 17-app-tables.sql
-#    and installs the COMPLETE schema.
+#    (mounted via compose). The bundle currently ends at
+#    18-a2a-federation.sql and installs the COMPLETE schema.
 # 2. An EMPTY database that never ran the bundle (managed Postgres, a
 #    freshly created DB, CI) gets the same bundle applied here by
 #    `python -m app.db_bootstrap --init-dir "$INIT_DB_DIR"`. INIT_DB_DIR

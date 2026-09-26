@@ -67,6 +67,21 @@ export default defineRailway((ctx) => {
     SOCIETY_MODEL_PROVIDER: "scripted",
   };
 
+  // A2A 1.0 (ADR-0009): the inbound server and the operator federation catalog
+  // are product features and run on staging. The Society's use of them (the
+  // A2A client intents and the company cycle) is a Society faculty and, like
+  // SOCIETY_RUNTIME_ENABLED, is switched on at the service for a proof window.
+  // A2A_CREDENTIAL_KEY is a shared variable (the registry seals, the
+  // society-worker's federation pump unseals) created once by the operator.
+  const a2a = {
+    A2A_SERVER_ENABLED: "true",
+    A2A_PUBLIC_BASE_URL: "https://${{registry.RAILWAY_PUBLIC_DOMAIN}}",
+    A2A_FEDERATION_ENABLED: "true",
+    A2A_CREDENTIAL_KEY: ctx.shared.A2A_CREDENTIAL_KEY,
+    A2A_SOCIETY_CLIENT_ENABLED: "false",
+    SOCIETY_COMPANY_CYCLE_ENABLED: "false",
+  };
+
   // ── registry: public API; owns the schema through its pre-deploy step ──
   const registry = service("registry", {
     source: github(REPO, { branch: BRANCH, rootDirectory: "services/registry" }),
@@ -102,6 +117,7 @@ export default defineRailway((ctx) => {
       AUTO_SCALER_ENABLED: "false",
       SOCIETY_OPERATOR_BOOTSTRAP_EMAILS: "",
       ...societyOff,
+      ...a2a,
     },
   });
 
@@ -192,6 +208,7 @@ export default defineRailway((ctx) => {
       SOCIETY_MODEL_REASONING_EFFORT: "auto",
       SOCIETY_HEARTBEAT_INTERVAL_SECONDS: "3600",
       ...societyOff,
+      ...a2a,
     },
   });
 
