@@ -91,13 +91,32 @@ dead-lettered (`fail_run`). No intent from it was executed, and the cycle
 still settled from the Governor's run. This is the designed failure path
 (strict structured output, bounded attempts), and it is recorded, not hidden.
 
-Two follow-ups are tracked outside this release:
-* the worker records `model_provider` only on a successful decision, so a
-  failed run reads `None/None` in the operator API even though it called the
-  model;
-* why the company-cycle context produces invalid JSON for the Scout.
-
 The operator cycle's Scout, on the same model, completed.
+
+**What the investigation found and fixed (on `main`, not in the pinned release):**
+
+* **Failed attempts were invisible and unbilled.** The worker recorded the
+  provider, model, tokens and cost only for a decision that parsed. So a
+  dead run read `None/None` with cost 0, and three real model calls never
+  reached `spend_today_usd`. Now `ModelOutputInvalid` carries the call's
+  accounting, and the worker adds it to the run: provider, model, format,
+  tokens, cost and requests. Costs accumulate across attempts.
+* **The parse error said where, but not what broke.** It now names the
+  position and the *shape* of the text around it. Letters and digits are
+  masked, so `"aaaaaaa aaa "<<HERE>>` shows an unescaped quote without the
+  words, and the error also names the format and finish reason. Parsing
+  stays strict: nothing is repaired.
+* **A latent context defect.** An event payload is shown to the model only
+  while it fits 2,000 characters. Past that, it becomes a truncated string
+  that drops `instructions`, `portfolio` and `trigger`. A worst-case
+  `company.cycle` payload measured 2,057 characters. The payload no longer
+  repeats the static role map, and it drops the derived `fitness` block
+  (saying so) rather than overflowing.
+
+**Not proven:** why the live model's JSON broke in this one run. The
+payload at staging's real counts is about 1,650 characters, under the
+limit. The next occurrence will carry its own position, shape, format and
+finish reason.
 
 ## 4. The first attempt, and why it failed
 
