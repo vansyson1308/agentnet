@@ -8,6 +8,8 @@ practice) and prints:
   settings, open anomaly, recent anomaly/recovery events, the Society's
   workstream on the newest anomaly);
 * the newest ``public.surface.*`` events (operator ``/events``);
+* the company portfolio, the open improvement proposals that fill it and
+  every unfinished candidate;
 * for the anomaly's correlation: the operator story (events, runs, their
   decision summaries and intents);
 * each candidate's operator detail (spec, files, QA and Security reports,
@@ -31,6 +33,8 @@ from phase5_live import scrub  # noqa: E402
 
 LIMIT = 24_000
 SURFACE_EVENTS = ("public.surface.anomaly", "public.surface.recovered")
+OPEN_PROPOSAL_STATUSES = ("PROPOSED", "UNDER_REVIEW", "APPROVED", "CONVERTED_TO_TASK")
+OPEN_CANDIDATE_STATUSES = ("requested", "building", "built", "qa_running", "security_review")
 
 
 def emit(label: str, status: int, body: str) -> None:
@@ -50,12 +54,24 @@ def main() -> int:
     if not token:
         return vs.finish(rep)
     st, body = vs.http("GET", f"{api}/v1/society/company", token=token)
-    view = json.loads(body).get("public_surface") if st == 200 else None
+    company = json.loads(body) if st == 200 else {}
+    view = company.get("public_surface")
     rep.record("W20", st == 200 and view is not None, f"operator company status: HTTP {st}")
     emit("public_surface", st, json.dumps(view, sort_keys=True, default=str))
+    emit("portfolio", st, json.dumps(company.get("portfolio"), sort_keys=True, default=str))
     for event_type in SURFACE_EVENTS:
         st, body = vs.http("GET", f"{api}/v1/society/events?event_type={event_type}&limit=5", token=token)
         emit(f"events {event_type}", st, body)
+    for status in OPEN_PROPOSAL_STATUSES:
+        st, body = vs.http("GET", f"{api}/v1/improvements/?status={status}&limit=50", token=token)
+        rows = json.loads(body) if st == 200 else []
+        brief = [{k: r.get(k) for k in ("id", "status", "source", "importance", "created_at", "updated_at", "title")} for r in rows if isinstance(r, dict)]
+        emit(f"proposals {status}", st, json.dumps(brief, default=str))
+    st, body = vs.http("GET", f"{api}/v1/society/candidates?limit=20", token=token)
+    open_ids = [c["id"] for c in (json.loads(body) if st == 200 else []) if c.get("status") in OPEN_CANDIDATE_STATUSES]
+    for cid in open_ids:
+        st, body = vs.http("GET", f"{api}/v1/society/candidates/{cid}", token=token)
+        emit(f"open_candidate {cid}", st, body[:4000])
     work = (view or {}).get("workstream") or {}
     corr = work.get("correlation_id")
     if corr:
