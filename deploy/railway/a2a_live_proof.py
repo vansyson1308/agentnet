@@ -21,8 +21,11 @@ Modes (A2A_PROOF_MODES, comma separated; default "server"):
                 bindings, streaming, cancel, list, BOLA, paid-path refusals
     federation  operator catalog: SSRF refusals, discover -> verify ->
                 connection -> outbound call -> check (A2A_REFERENCE_CARD_URL)
-    company     operator company status + an immediate company cycle, then
-                wait for the Society to settle it (A2A_PROOF_CYCLE_TIMEOUT)
+    company     operator company status + an immediate company cycle (or
+                A2A_PROOF_CYCLE_ID, a running one), wait for the Society to
+                settle it (A2A_PROOF_CYCLE_TIMEOUT, default 45 min: cycles
+                settle after 30 min), then show the role runs, their models
+                and the intents the cycle produced
     incident    open an incident freeze, see it in the status, lift it
 
 Environment: REGISTRY_PUBLIC_URL, STAGING_VALIDATOR_SECRET (or
@@ -394,16 +397,43 @@ def federation_proof(rep: vs.Report, api: str, op_token: str, ref_card: str) -> 
     rep.record("F17", st == 200 and "verified" in body and "cardUrl" not in body, f"public federation summary is counts only -> HTTP {st}")
 
 
-def company_proof(rep: vs.Report, api: str, op_token: str, timeout_s: int) -> None:
+#: Role runs a live-model cycle must not be attributed to (NO FAKE AUTONOMY).
+_NON_LIVE_MODELS = ("scripted", "fake", "stub", "mock", "offline")
+
+
+def _cycle_correlation(api: str, op_token: str, cycle_id: str) -> Optional[str]:
+    """The correlation id of the cycle's ``company.cycle`` event (operator API)."""
+    st, body = vs.http("GET", f"{api}/v1/society/events?event_type=company.cycle&limit=100", token=op_token)
+    for e in _json(body) or []:
+        if e.get("subject_id") == cycle_id or (e.get("payload") or {}).get("cycle_id") == cycle_id:
+            return e.get("correlation_id")
+    return None
+
+
+def company_proof(rep: vs.Report, api: str, op_token: str, timeout_s: int, existing: str = "") -> None:
+    """Company cadence on the live Society. A cycle settles only once it is
+    ``company.SETTLE_AFTER`` (30 min) old and every run of its correlation is
+    terminal, so the timeout must exceed that. ``existing`` (a full id or an
+    id prefix) follows a cycle that is already running instead of opening a
+    new one, so a re-run never adds cycles."""
     st, body = vs.http("GET", f"{api}/v1/society/company", token=op_token)
     status = _json(body) or {}
     mode = status.get("mode") or {}
     rep.record("C01", st == 200 and mode.get("production_deploy_enabled") is False,
                f"operator company status -> HTTP {st} mode={json.dumps(mode, sort_keys=True)[:260]}")
-    st, body = vs.http("POST", f"{api}/v1/society/company/cycles", token=op_token, body={})
-    cycle = _json(body) or {}
-    cid = cycle.get("id")
-    rep.record("C02", st in (200, 201) and bool(cid), f"immediate company cycle -> HTTP {st} id={str(cid)[:8]}")
+    cycles = status.get("cycles") or []
+    today = datetime.now(timezone.utc).date().isoformat()
+    scheduled = [c for c in cycles if c.get("trigger") == "scheduled" and c.get("date") == today]
+    rep.record("C05", bool(scheduled) or not mode.get("company_cycle_enabled"),
+               f"scheduled cadence: {len(scheduled)} scheduled cycle(s) for {today} (at most one per UTC date)")
+    if existing:
+        match = [c for c in cycles if str(c.get("id", "")).startswith(existing)]
+        cid = match[0]["id"] if len(match) == 1 else None
+        rep.record("C02", bool(cid), f"follow existing company cycle {existing[:8]} -> {'found' if cid else 'not found (or ambiguous)'}")
+    else:
+        st, body = vs.http("POST", f"{api}/v1/society/company/cycles", token=op_token, body={})
+        cid = (_json(body) or {}).get("id")
+        rep.record("C02", st in (200, 201) and bool(cid), f"immediate company cycle -> HTTP {st} id={str(cid)[:8]}")
     if not cid:
         return
     deadline = time.time() + timeout_s
@@ -416,7 +446,32 @@ def company_proof(rep: vs.Report, api: str, op_token: str, timeout_s: int) -> No
         if outcome:
             break
         time.sleep(15)
-    rep.record("C03", bool(outcome), f"the Society settled the cycle: {json.dumps(outcome)[:220] if outcome else 'not within the timeout'}")
+    detail = {k: outcome.get(k) for k in ("outcome", "outcomeDetail", "createdAt")} if outcome else None
+    rep.record("C03", bool(outcome), f"the Society settled the cycle: {json.dumps(detail, sort_keys=True)[:300] if outcome else 'not within the timeout'}")
+    corr = _cycle_correlation(api, op_token, cid)
+    if not corr:
+        rep.record("C04", False, "the cycle's company.cycle event is not visible to the operator")
+        return
+    st, body = vs.http("GET", f"{api}/v1/society/runs?correlation_id={corr}&limit=200", token=op_token)
+    runs = _json(body) or []
+    models = sorted({f"{r.get('model_provider')}/{r.get('model_name')}" for r in runs})
+    # A run that never reached cognition (e.g. suppressed) has no provider;
+    # every run that DID think must have used the live provider.
+    thought = [r for r in runs if r.get("model_provider")]
+    live = bool(thought) and all(
+        r.get("model_provider") == "openai_compatible"
+        and not any(m in f"{r.get('model_provider')}/{r.get('model_name')}".lower() for m in _NON_LIVE_MODELS)
+        for r in thought
+    )
+    roles = sorted({f"{r.get('agent_name')}:{r.get('event_type')}:{r.get('status')}" for r in runs})
+    rep.record("C04", live, f"cycle correlation {corr[:8]}: {len(runs)} role run(s) on live model(s) {models}: {roles[:12]}")
+    st, body = vs.http("GET", f"{api}/v1/society/story/{corr}", token=op_token)
+    story = _json(body) or {}
+    intents = sorted(
+        f"{i.get('intent_type')}:{i.get('policy_decision')}:{i.get('execution_status')}"
+        for r in story.get("runs") or [] for i in r.get("intents") or []
+    )
+    rep.record("C06", st == 200, f"cycle story -> HTTP {st}: {len(story.get('events') or [])} event(s), intents {intents[:20]}")
 
 
 def incident_proof(rep: vs.Report, api: str, op_token: str) -> None:
@@ -477,7 +532,7 @@ def main() -> int:
         if "incident" in modes:
             incident_proof(rep, api, op_token)
         if "company" in modes:
-            company_proof(rep, api, op_token, int(env("A2A_PROOF_CYCLE_TIMEOUT", "900")))
+            company_proof(rep, api, op_token, int(env("A2A_PROOF_CYCLE_TIMEOUT", "2700")), env("A2A_PROOF_CYCLE_ID"))
     return finish(rep)
 
 
