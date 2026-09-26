@@ -141,6 +141,23 @@ and a2788678 (correlation b8db5936). Now each read wakes only its reader, and no
   `.py` compile in memory, no secret patterns in the diff, then `python -m pytest <acceptance targets>` in
   the worktree with a scrubbed environment (no `*_PASSWORD/_KEY/_SECRET/*TOKEN*`). Zero acceptance
   criteria is a FAIL. Two failed attempts → `rejected`.
+- **Work on a candidate outlives a story.** Engineering turns are bounded per correlation
+  (`SOCIETY_MAX_ENGINEERING_TURNS`), and the Builder resumes an open candidate on the hourly heartbeat,
+  which starts a new correlation each time. An agent's context (`repo_reads`, at most 6 entries) holds:
+  - first, its reads in the current story;
+  - then, in whatever slots remain, its reads made for a **still-open** candidate in another story within
+    the last 24 h, marked `earlier_story` with their time `at`.
+
+  Staging, 2026-09-26: after candidate a2788678 failed QA, the Builder re-read the same test, templates and
+  `main.py` at 15:00Z and again at 16:00Z. It ran out of turns each time and could not resubmit.
+
+  Carried reads never displace the current story's reads. The following are not carried:
+  - reads made before the agent's own last `SUBMIT_CODE_CANDIDATE` for that candidate, since the worktree
+    has changed since then;
+  - repeats of the same request (only the newest is kept);
+  - reads for a closed candidate, reads without a candidate, and other agents' reads.
+
+  No budget or cap changes.
 - Security review is required when the spec flags it, when any file matches the risky-path pattern, when
   `kind == "code"`, or when the static scan produced findings; final verdict = reviewer verdict AND no
   static findings.
