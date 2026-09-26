@@ -28,6 +28,9 @@ Modes (A2A_PROOF_MODES, comma separated; default "server"):
                 settle after 30 min), then show the role runs, their models
                 and the intents the cycle produced
     incident    open an incident freeze, see it in the status, lift it
+    federation_cleanup
+                block the disposable proof peer's catalog entries and revoke
+                their open connections (before the peer service is deleted)
 
 Identities (A2A_PROOF_IDENTITY):
     staging     (default) register or reuse, then mark the validator's own
@@ -511,6 +514,28 @@ def federation_proof(rep: vs.Report, api: str, op_token: str, ref_card: str) -> 
     rep.record("F17", st == 200 and "verified" in body and "cardUrl" not in body, f"public federation summary is counts only -> HTTP {st}")
 
 
+def federation_cleanup(rep: vs.Report, api: str, op_token: str, ref_card: str) -> None:
+    """Retire the disposable proof peer from the catalog before it is deleted:
+    BLOCK every catalog entry for its card URL and revoke its open
+    connections, so no environment keeps a verified pointer to a host that
+    will stop existing. Operator API only; nothing else is touched."""
+    base = f"{api}/v1/a2a/federation"
+    st, body = vs.http("GET", f"{base}/agents", token=op_token)
+    host = ref_card.split("/")[2] if ref_card else ""
+    peers = [a for a in (_json(body) or {}).get("agents") or [] if host and host in str(a.get("cardUrl", ""))]
+    blocked = 0
+    for a in peers:
+        s2, b2 = vs.http("POST", f"{base}/agents/{a['id']}/state", token=op_token,
+                         body={"state": "blocked", "reason": "Phase 8 live proof finished: disposable reference peer retired"})
+        blocked += int(s2 == 200 and (_json(b2) or {}).get("state") == "blocked")
+    rep.record("X01", st == 200 and bool(peers) and blocked == len(peers), f"proof peer catalog entries blocked: {blocked}/{len(peers)}")
+    ids = {a["id"] for a in peers}
+    st, body = vs.http("GET", f"{base}/connections", token=op_token)
+    open_conns = [c for c in (_json(body) or {}).get("connections") or [] if c.get("remoteAgentId") in ids and not c.get("revokedAt")]
+    revoked = sum(1 for c in open_conns if vs.http("DELETE", f"{base}/connections/{c['id']}", token=op_token)[0] in (200, 204))
+    rep.record("X02", st == 200 and revoked == len(open_conns), f"open connections to the proof peer revoked: {revoked}/{len(open_conns)}")
+
+
 #: Role runs a live-model cycle must not be attributed to (NO FAKE AUTONOMY).
 _NON_LIVE_MODELS = ("scripted", "fake", "stub", "mock", "offline")
 
@@ -669,12 +694,14 @@ def main() -> int:
         rep.record("S60", len(callee.completed) >= 3, f"callee fulfilled {len(callee.completed)} task(s) over the ordinary REST API")
         if env("A2A_PROOF_JS") == "1":
             js_interop(rep, api, caller_token, callee_id)
-    if modes & {"federation", "company", "incident"}:
+    if modes & {"federation", "federation_cleanup", "company", "incident"}:
         op_token = canary_token if identity == "public" else vs.ensure_user(rep, "P10", api, op_email, password)
         if not op_token:
             return finish(rep)
         if "federation" in modes:
             federation_proof(rep, api, op_token, env("A2A_REFERENCE_CARD_URL"))
+        if "federation_cleanup" in modes:
+            federation_cleanup(rep, api, op_token, env("A2A_REFERENCE_CARD_URL"))
         if "incident" in modes:
             incident_proof(rep, api, op_token)
         if "company" in modes:
