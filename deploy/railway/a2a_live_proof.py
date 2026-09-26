@@ -582,6 +582,9 @@ def company_proof(rep: vs.Report, api: str, op_token: str, timeout_s: int, exist
     )
     roles = sorted({f"{r.get('agent_name')}:{r.get('event_type')}:{r.get('status')}" for r in runs})
     rep.record("C04", live, f"cycle correlation {corr[:8]}: {len(runs)} role run(s) on live model(s) {models}: {roles[:12]}")
+    for r in runs:
+        if r.get("status") != "completed":  # say WHY a run did not complete (the operator API's own error field)
+            sys.stdout.write(f"C04 detail: {r.get('agent_name')} {r.get('status')} attempt={r.get('attempt')} error={str(r.get('error') or '')[:240]!r}\n")
     st, body = vs.http("GET", f"{api}/v1/society/story/{corr}", token=op_token)
     story = _json(body) or {}
     intents = sorted(
