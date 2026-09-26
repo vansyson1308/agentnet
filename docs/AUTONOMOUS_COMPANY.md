@@ -40,7 +40,13 @@ Operators can also start a cycle immediately: `POST /v1/society/company/cycles` 
 
 These apply while `SOCIETY_COMPANY_CYCLE_ENABLED=true`:
 
-- `SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES` (default 3) limits open Society improvement proposals. A new one is refused until one concludes.
+- `SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES` (default 3) limits the Society hypotheses **still being pursued**. A new one is refused until one concludes.
+  `company.portfolio_accounting` decides what holds a slot. It reads durable rows and never rewrites a proposal's status:
+  - **concluded**: CONVERTED_TO_TASK whose every linked candidate ended (rejected / failed / abandoned, or READY with a merged / rejected / superseded promotion), or whose converted task reached a terminal state. No slot.
+  - **shelved**: APPROVED and untouched for `SOCIETY_COMPANY_HYPOTHESIS_SHELF_HOURS` (default 72, minimum 24). No slot, but it stays APPROVED and visible; converting it later makes it active again.
+  - **active**: everything else (PROPOSED, UNDER_REVIEW, a fresh APPROVED, work in flight, a conversion with no linked work found).
+
+  Why: until 2026-09-26 the cap counted every row in an open *status*. A proposal stays CONVERTED_TO_TASK after its candidate merges, and nothing ever moves an unstarted APPROVED one. On staging the portfolio read "6 active (cap 3)" with 2 concluded and 3 untouched for 6–7 days, so the Scout's proposal for a critical public-surface regression was refused and no role could "conclude one". The cap was not raised.
 - `SOCIETY_COMPANY_MAX_HIGH_RISK_INVESTIGATIONS` (default 1) limits open RED candidates. New code changes are refused until one finishes.
 - The existing change budgets, evidence rules for signal-driven proposals and duplicate suppression still apply.
 - There is **no quota** of commits, PRs or features. The cycle's instructions say so, and `no_high_value_change` is recorded as a successful outcome.

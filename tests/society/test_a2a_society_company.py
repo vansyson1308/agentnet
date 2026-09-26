@@ -276,6 +276,119 @@ def test_portfolio_cap_limits_active_hypotheses(db, SessionLocal, grants_with_no
     assert db.query(ImprovementProposal).count() == 1
 
 
+def _proposal(db, agent_id, status, *, title, updated_at=None, user_id=None):
+    from services.registry.app.models import ProposalScope, ProposalSource, ProposalStatus
+
+    extra = {"created_at": updated_at, "updated_at": updated_at} if updated_at is not None else {}
+    row = ImprovementProposal(
+        id=uuid.uuid4(), proposed_by_agent_id=agent_id, proposed_by_user_id=user_id, source=ProposalSource.AUDIT,
+        title=title, status=ProposalStatus(status), target_scope=ProposalScope.PLATFORM, importance=50, **extra,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _candidate(db, proposal, status, *, promotion=None):
+    from services.registry.app.models import CodeCandidate, CodePromotion
+
+    cand = CodeCandidate(id=uuid.uuid4(), correlation_id=uuid.uuid4(), title=f"c-{proposal.title}", spec={}, status=status, proposal_id=proposal.id)
+    db.add(cand)
+    db.flush()
+    start = utcnow() - timedelta(hours=1)
+    for i, promo in enumerate([promotion] if isinstance(promotion, str) else (promotion or [])):
+        db.add(CodePromotion(id=uuid.uuid4(), candidate_id=cand.id, correlation_id=cand.correlation_id, risk_tier="green",
+                             provider="fake", status=promo, created_at=start + timedelta(minutes=i)))
+        db.flush()
+    return cand
+
+
+def test_portfolio_counts_only_hypotheses_still_being_pursued(db, monkeypatch):
+    """Regression (staging 2026-09-26): the cap counted CONVERTED_TO_TASK rows
+    whose candidate had merged or been rejected, and APPROVED rows nobody
+    touched for a week, so the portfolio was permanently full and the Scout
+    could not open a hypothesis for a critical production regression. The cap
+    is unchanged; only work still being pursued holds a slot."""
+    from services.registry.app.models import Agent
+
+    settings = _settings(monkeypatch, SOCIETY_COMPANY_CYCLE_ENABLED="true", SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES="3")
+    seed_society(db)
+    scout = db.query(Agent).filter(Agent.name == "Society_Scout").one().id
+    old = utcnow() - timedelta(days=7)
+    rows = {
+        "proposed": _proposal(db, scout, "PROPOSED", title="p"),
+        "under_review": _proposal(db, scout, "UNDER_REVIEW", title="u"),
+        "approved_fresh": _proposal(db, scout, "APPROVED", title="af"),
+        "approved_stale": _proposal(db, scout, "APPROVED", title="as", updated_at=old),
+        "merged": _proposal(db, scout, "CONVERTED_TO_TASK", title="m"),
+        "rejected": _proposal(db, scout, "CONVERTED_TO_TASK", title="r"),
+        "ready_unpromoted": _proposal(db, scout, "CONVERTED_TO_TASK", title="ru"),
+        "one_still_building": _proposal(db, scout, "CONVERTED_TO_TASK", title="b"),
+        "no_linked_work": _proposal(db, scout, "CONVERTED_TO_TASK", title="n", updated_at=old),
+        "promotion_retried": _proposal(db, scout, "CONVERTED_TO_TASK", title="pr"),
+        "concluded_status": _proposal(db, scout, "IMPLEMENTED", title="i"),
+    }
+    _proposal(db, None, "PROPOSED", title="human")  # not a Society hypothesis
+    _candidate(db, rows["merged"], "ready", promotion="merged")
+    _candidate(db, rows["rejected"], "rejected")
+    _candidate(db, rows["ready_unpromoted"], "ready")
+    _candidate(db, rows["one_still_building"], "rejected")
+    _candidate(db, rows["one_still_building"], "building")
+    _candidate(db, rows["promotion_retried"], "ready", promotion=["rejected", "pr_open"])  # latest decides
+    db.commit()
+
+    acc = company.portfolio_accounting(db, settings)
+    name = {str(r.id): k for k, r in rows.items()}
+    assert sorted(name[i] for i in acc["concluded"]) == ["merged", "rejected"]
+    assert sorted(name[i] for i in acc["shelved"]) == ["approved_stale"]
+    assert sorted(name[i] for i in acc["active"]) == sorted(
+        ["proposed", "under_review", "approved_fresh", "ready_unpromoted", "one_still_building", "no_linked_work", "promotion_retried"]
+    )
+    view = company._portfolio(db, settings)
+    assert view["active_hypotheses"] == 7 and view["full"] is True
+    assert view["concluded_open_rows"] == 2 and view["shelved_hypotheses"] == 1
+    # the company.cycle worst case (test_company_cycle_context) is measured with exactly these keys
+    from .test_company_cycle_context import _payload
+
+    assert set(view) == set(_payload()["portfolio"])
+    # every status is left exactly as it was: accounting reads, it never rewrites
+    db.expire_all()
+    assert _ev(db.get(ImprovementProposal, rows["merged"].id).status) == "CONVERTED_TO_TASK"
+    assert _ev(db.get(ImprovementProposal, rows["approved_stale"].id).status) == "APPROVED"
+
+
+def test_concluded_and_shelved_work_no_longer_blocks_a_new_hypothesis(db, SessionLocal, grants_with_no_cooldown, monkeypatch):
+    """The live deadlock, end to end: 2 concluded + 3 week-old approvals + 1 in
+    flight used to be "6 active hypotheses (cap 3)". Now it is 1, and the
+    Scout's proposal executes; the cap still refuses a 4th live hypothesis."""
+    from services.registry.app.models import Agent
+
+    settings = _settings(monkeypatch, SOCIETY_RUNTIME_ENABLED="true", SOCIETY_COMPANY_CYCLE_ENABLED="true", SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES="3", SOCIETY_MODEL_PROVIDER="scripted")
+    seed_society(db)
+    grants_with_no_cooldown()
+    gov = db.query(Agent).filter(Agent.name == "Society_Governor").one().id
+    old = utcnow() - timedelta(days=6)
+    for i in range(3):
+        _proposal(db, gov, "APPROVED", title=f"stale-{i}", updated_at=old)
+    _candidate(db, _proposal(db, gov, "CONVERTED_TO_TASK", title="merged"), "ready", promotion="merged")
+    _candidate(db, _proposal(db, gov, "CONVERTED_TO_TASK", title="rejected"), "rejected")
+    _candidate(db, _proposal(db, gov, "CONVERTED_TO_TASK", title="in-flight"), "requested")
+    db.commit()
+    assert company._portfolio(db, settings)["active_hypotheses"] == 1
+
+    props = [{"type": "CREATE_IMPROVEMENT", "payload": {"title": f"H{i}", "problem": "p", "proposed_change": "c", "importance": 60}} for i in range(3)]
+    model = FakeModel({"Society_Scout": [{"decision_summary": "three ideas", "intents": props}]})
+    emit_event(db, event_type="t.cap2")
+    db.commit()
+    worker = SocietyWorker(SessionLocal, settings=settings, model=model, worker_id="w", telemetry_enabled=False)
+    worker.routing = {**worker.routing, "t.cap2": ["scout"]}
+    asyncio.run(worker.run_until_idle(max_cycles=10))
+    db.expire_all()
+    rows = db.query(AgentIntent).filter(AgentIntent.intent_type == "CREATE_IMPROVEMENT").order_by(AgentIntent.seq).all()
+    assert [_ev(r.execution_status) for r in rows] == ["executed", "executed", "failed"]
+    assert "portfolio full: 3 active hypotheses" in rows[2].error
+
+
 def test_incident_freeze_blocks_merges_and_only_an_operator_lifts_it(db, api_client, user_token, monkeypatch):
     from services.registry.app.society import promotion as promo
     from services.registry.app.models import CodeCandidate, CodePromotion

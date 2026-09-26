@@ -117,7 +117,7 @@ probe. Production has no Society, and `config.py` refuses
 | `SOCIETY_PUBLIC_SURFACE_MONITOR_ENABLED` | `false` | staging IaC declares `true`; it runs only while `SOCIETY_RUNTIME_ENABLED` is on |
 | `SOCIETY_PUBLIC_SURFACE_MONITOR_INTERVAL_SECONDS` | 600 | ≥ 60 |
 | `SOCIETY_PUBLIC_SURFACE_FAILURE_THRESHOLD` | 2 | ≥ 2: one timeout is noise |
-| `SOCIETY_PUBLIC_SURFACE_COOLDOWN_SECONDS` | 21600 | one anomaly per distinct failure set per window |
+| `SOCIETY_PUBLIC_SURFACE_COOLDOWN_SECONDS` | 21600 | one anomaly per distinct failure set per window (≥ 600); staging IaC uses 3600 so a persisting regression is re-raised hourly |
 | `SOCIETY_PUBLIC_SURFACE_MAX_EVENTS_PER_DAY` | 6 | hard cap |
 | `SOCIETY_PUBLIC_SURFACE_TIMEOUT_SECONDS` | 10 | per request |
 | `PUBLIC_PRODUCT_UI_ORIGIN` / `PUBLIC_PRODUCT_API_ORIGIN` | the public production origins | bare `https://` origins |
@@ -157,7 +157,11 @@ tests/society/test_public_surface_monitor.py).
 **Operator view.** `GET /v1/society/company` (operator) now includes
 `public_surface`:
 
-* the monitor settings;
+* where the monitor runs. The registry serves this view, but the monitor
+  runs only in the society-worker, whose own `SOCIETY_PUBLIC_SURFACE_*`
+  settings decide. So the view names the worker and its liveness signal
+  (`society_public_surface_checks_total` on the worker's `/metrics`) and
+  does not claim the worker's settings;
 * the open anomaly and recent anomaly/recovery events;
 * the Society's **workstream** on the newest anomaly: runs by role, and
   candidates with risk tier, QA and Security verdicts and promotions

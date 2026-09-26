@@ -278,6 +278,10 @@ class SocietySettings:
     company_cycle_hour_utc: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_CYCLE_HOUR_UTC", 1, minimum=0))
     company_max_active_hypotheses: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES", 3, minimum=0))
     company_max_high_risk_investigations: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_MAX_HIGH_RISK_INVESTIGATIONS", 1, minimum=0))
+    # An APPROVED hypothesis nobody started within this window is SHELVED: it
+    # stays APPROVED and visible, but no longer holds a portfolio slot
+    # (company.portfolio_accounting). The cap itself is unchanged.
+    company_hypothesis_shelf_hours: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_HYPOTHESIS_SHELF_HOURS", 72, minimum=24))
     # ── public-surface synthetic monitor (surface_monitor.py) ──
     # Deterministic anonymous HTTP against the PUBLIC product; the model is
     # used only after a durable anomaly. OFF unless enabled (staging worker).

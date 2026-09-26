@@ -49,9 +49,12 @@ from ..models import (
     ImprovementProposal,
     IncidentFreeze,
     IntentExecutionStatus,
+    PromotionStatus,
+    ProposalStatus,
     RiskTier,
     SocietyEvent,
     TaskSession,
+    TaskStatus,
     User,
 )
 from .config import SocietySettings
@@ -140,15 +143,112 @@ def a2a_fitness(evidence: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _portfolio(db: Session, settings: SocietySettings) -> Dict[str, Any]:
+#: A candidate in one of these states ended its hypothesis' attempt.
+_CANDIDATE_ENDED = (CodeCandidateStatus.REJECTED.value, CodeCandidateStatus.FAILED.value, CodeCandidateStatus.ABANDONED.value)
+#: A READY candidate whose promotion reached one of these put the attempt somewhere final.
+_PROMOTION_ENDED = (PromotionStatus.MERGED.value, PromotionStatus.REJECTED.value, PromotionStatus.SUPERSEDED.value)
+_TASK_ENDED = (TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.TIMEOUT.value, TaskStatus.REFUNDED.value)
+#: Bound on the proposals one accounting pass reads, NEWEST first: shelved rows
+#: accumulate at the old end, live work is at the new end (the cap is single digits).
+_PORTFOLIO_SCAN = 500
+
+
+def portfolio_accounting(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> Dict[str, list]:
+    """Which open Society hypotheses actually hold a portfolio slot.
+
+    ``_OPEN_PROPOSAL_STATUSES`` is a lifecycle, not a workload: a proposal
+    stays CONVERTED_TO_TASK after its candidate merged or was rejected, and
+    stays APPROVED forever when nobody converts it. Counting those rows made
+    the cap permanently full (staging, 2026-09-26: 6 "active", 2 concluded
+    and 3 untouched for 6-7 days), so the company could never open a new
+    hypothesis -- not even for a critical production regression -- and no
+    role had a way to "conclude one" as the refusal asks. The cap is not
+    raised; what counts against it becomes true:
+
+    * **concluded** -- CONVERTED_TO_TASK whose every linked candidate ended
+      (rejected / failed / abandoned, or READY with a merged / rejected /
+      superseded promotion), or whose converted task reached a terminal state;
+    * **shelved** -- APPROVED and untouched for
+      ``SOCIETY_COMPANY_HYPOTHESIS_SHELF_HOURS``; converting it later makes it
+      active again;
+    * **active** -- everything else (PROPOSED, UNDER_REVIEW, fresh APPROVED,
+      work in flight, a conversion with no linked work found).
+
+    Durable rows only; the status of every proposal is left untouched."""
     from .executor import _OPEN_PROPOSAL_STATUSES
 
-    active = db.query(func.count(ImprovementProposal.id)).filter(ImprovementProposal.proposed_by_agent_id.isnot(None), ImprovementProposal.status.in_(_OPEN_PROPOSAL_STATUSES)).scalar() or 0
+    now = now or utcnow()
+    shelf_before = now - timedelta(hours=settings.company_hypothesis_shelf_hours)
+    rows = (
+        db.query(ImprovementProposal.id, ImprovementProposal.status, ImprovementProposal.updated_at, ImprovementProposal.converted_task_id)
+        .filter(ImprovementProposal.proposed_by_agent_id.isnot(None), ImprovementProposal.status.in_(_OPEN_PROPOSAL_STATUSES))
+        .order_by(ImprovementProposal.created_at.desc())
+        .limit(_PORTFOLIO_SCAN)
+        .all()
+    )
+    converted = [r.id for r in rows if _status_value(r.status) == ProposalStatus.CONVERTED_TO_TASK.value]
+    cands: Dict[uuid.UUID, list] = {}
+    latest_promo: Dict[uuid.UUID, str] = {}
+    tasks: Dict[uuid.UUID, str] = {}
+    if converted:
+        for cid, pid, st in db.query(CodeCandidate.id, CodeCandidate.proposal_id, CodeCandidate.status).filter(CodeCandidate.proposal_id.in_(converted)).all():
+            cands.setdefault(pid, []).append((cid, _status_value(st)))
+        cand_ids = [c for lst in cands.values() for c, _ in lst]
+        if cand_ids:
+            # the LATEST promotion decides: a rejected attempt followed by a retry is still in flight
+            for cid, st in (
+                db.query(CodePromotion.candidate_id, CodePromotion.status)
+                .filter(CodePromotion.candidate_id.in_(cand_ids))
+                .order_by(CodePromotion.created_at, CodePromotion.id)
+                .all()
+            ):
+                latest_promo[cid] = _status_value(st)
+        task_ids = [r.converted_task_id for r in rows if r.converted_task_id is not None]
+        if task_ids:
+            tasks = {tid: _status_value(st) for tid, st in db.query(TaskSession.id, TaskSession.status).filter(TaskSession.id.in_(task_ids)).all()}
+
+    def ended(cid: uuid.UUID, status: str) -> bool:
+        if status in _CANDIDATE_ENDED:
+            return True
+        return status == CodeCandidateStatus.READY.value and latest_promo.get(cid) in _PROMOTION_ENDED
+
+    out: Dict[str, list] = {"active": [], "concluded": [], "shelved": []}
+    for r in rows:
+        status = _status_value(r.status)
+        if status == ProposalStatus.CONVERTED_TO_TASK.value:
+            linked = cands.get(r.id, [])
+            if linked:
+                bucket = "concluded" if all(ended(c, s) for c, s in linked) else "active"
+            elif r.converted_task_id is not None and tasks.get(r.converted_task_id) in _TASK_ENDED:
+                bucket = "concluded"
+            else:
+                bucket = "active"
+        elif status == ProposalStatus.APPROVED.value and r.updated_at is not None and r.updated_at < shelf_before:
+            bucket = "shelved"
+        else:
+            bucket = "active"
+        out[bucket].append(str(r.id))
+    return out
+
+
+def _status_value(status: Any) -> str:
+    return str(getattr(status, "value", status))
+
+
+def active_hypothesis_count(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> int:
+    return len(portfolio_accounting(db, settings, now)["active"])
+
+
+def _portfolio(db: Session, settings: SocietySettings) -> Dict[str, Any]:
+    accounting = portfolio_accounting(db, settings)
+    active = len(accounting["active"])
     closed = [CodeCandidateStatus.READY, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED]
     red = db.query(func.count(CodeCandidate.id)).filter(CodeCandidate.risk_tier == RiskTier.RED.value, CodeCandidate.status.notin_(closed)).scalar() or 0
     return {
-        "active_hypotheses": int(active),
+        "active_hypotheses": active,
         "max_active_hypotheses": settings.company_max_active_hypotheses,
+        "concluded_open_rows": len(accounting["concluded"]),
+        "shelved_hypotheses": len(accounting["shelved"]),
         "high_risk_investigations": int(red),
         "max_high_risk_investigations": settings.company_max_high_risk_investigations,
         "full": active >= settings.company_max_active_hypotheses,
@@ -384,11 +484,14 @@ def _public_surface_view(db: Session, settings: SocietySettings) -> Dict[str, An
         if recent:
             ev = db.query(SocietyEvent).filter(SocietyEvent.id == uuid.UUID(recent[0]["event_id"])).first()
             latest = str(ev.correlation_id) if ev is not None and ev.correlation_id else None
+    # This view is served by the REGISTRY; the monitor runs only in the
+    # society-worker, whose own SOCIETY_PUBLIC_SURFACE_* settings decide. The
+    # registry cannot see them (staging 2026-09-26: the view said
+    # "enabled": false while the worker was probing), so it does not claim to.
     view["monitor"] = {
-        "enabled": settings.public_surface_monitor_enabled,
-        "interval_seconds": settings.public_surface_monitor_interval_seconds,
-        "failure_threshold": settings.public_surface_failure_threshold,
-        "cooldown_seconds": settings.public_surface_cooldown_seconds,
+        "runs_in": "society-worker",
+        "liveness": "the worker's society_public_surface_checks_total metric and the durable events below",
+        "enabled_in_this_process": settings.public_surface_monitor_enabled,
         "target": settings.public_surface_target_label,
         "ui_origin": settings.public_product_ui_origin,
         "api_origin": settings.public_product_api_origin,
