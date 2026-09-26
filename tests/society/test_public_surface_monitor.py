@@ -238,7 +238,9 @@ def test_operator_status_shows_surface_health_and_the_workstream(db, mon_setting
     m.observe(db, mon_settings, BROKEN())
     m.observe(db, mon_settings, BROKEN())
     view = status_report(db, mon_settings)["public_surface"]
-    assert view["monitor"]["enabled"] is True and view["monitor"]["failure_threshold"] == 2
+    # the registry serves this view and must not claim the worker's settings
+    assert view["monitor"]["runs_in"] == "society-worker" and "enabled" not in view["monitor"]
+    assert "failure_threshold" not in view["monitor"] and view["last_check"] is None
     assert {f["name"] for f in view["open_anomaly"]["failing"]} == {"login", "marketplace"}
     assert view["workstream"]["correlation_id"] == view["open_anomaly"]["correlation_id"]
     assert "IGNORE" not in json.dumps(view)

@@ -51,8 +51,8 @@ def _worst_case_evidence():
 
 
 def _payload():
-    portfolio = {"active_hypotheses": BIG, "max_active_hypotheses": BIG, "high_risk_investigations": BIG,
-                 "max_high_risk_investigations": BIG, "full": True}
+    portfolio = {"active_hypotheses": BIG, "max_active_hypotheses": BIG, "concluded_open_rows": BIG, "shelved_hypotheses": BIG,
+                 "high_risk_investigations": BIG, "max_high_risk_investigations": BIG, "full": True}
     return cycle_event_payload(uuid.uuid4(), "scheduled", _worst_case_evidence(), portfolio)
 
 

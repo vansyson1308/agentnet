@@ -215,6 +215,10 @@ export default defineRailway((ctx) => {
       SOCIETY_PUBLIC_SURFACE_MONITOR_ENABLED: "true",
       SOCIETY_PUBLIC_SURFACE_MONITOR_INTERVAL_SECONDS: "600",
       SOCIETY_PUBLIC_SURFACE_FAILURE_THRESHOLD: "2",
+      // A regression that persists is re-raised at most hourly (the daily cap
+      // of SOCIETY_PUBLIC_SURFACE_MAX_EVENTS_PER_DAY still bounds it), so a
+      // Society that could not act on the first event gets the evidence again.
+      SOCIETY_PUBLIC_SURFACE_COOLDOWN_SECONDS: "3600",
       ...societyOff,
       ...a2a,
     },

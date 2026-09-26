@@ -373,11 +373,11 @@ def _create_improvement(ctx: ExecContext) -> ExecOutcome:
     if ctx.settings.company_cycle_enabled:
         # Company-mode portfolio cap (ADR-0009 D15): a few hypotheses pursued
         # to a conclusion beat many started. Close or reject one first.
-        open_count = (
-            ctx.db.query(ImprovementProposal)
-            .filter(ImprovementProposal.proposed_by_agent_id.isnot(None), ImprovementProposal.status.in_(_OPEN_PROPOSAL_STATUSES))
-            .count()
-        )
+        # Only hypotheses still being pursued count (company.portfolio_accounting):
+        # concluded work and long-untouched approvals do not hold a slot.
+        from .company import active_hypothesis_count  # noqa: PLC0415
+
+        open_count = active_hypothesis_count(ctx.db, ctx.settings)
         if open_count >= ctx.settings.company_max_active_hypotheses:
             raise ExecutionError(
                 f"portfolio full: {open_count} active hypotheses (SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES="

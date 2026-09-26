@@ -10,6 +10,8 @@ practice) and prints:
 * the newest ``public.surface.*`` events (operator ``/events``);
 * the company portfolio, the open improvement proposals that fill it and
   every unfinished candidate;
+* the society-worker's own ``society_public_surface_*`` metrics (the monitor
+  runs there, not in the registry that serves the operator view);
 * for the anomaly's correlation: the operator story (events, runs, their
   decision summaries and intents);
 * each candidate's operator detail (spec, files, QA and Security reports,
@@ -67,6 +69,12 @@ def main() -> int:
         rows = json.loads(body) if st == 200 else []
         brief = [{k: r.get(k) for k in ("id", "status", "source", "importance", "created_at", "updated_at", "title")} for r in rows if isinstance(r, dict)]
         emit(f"proposals {status}", st, json.dumps(brief, default=str))
+    metrics_url = vs.env("SOCIETY_METRICS_URL")
+    if metrics_url:
+        # the monitor runs in the society-worker; its own counters prove it probes
+        st, body = vs.http("GET", metrics_url)
+        lines = [ln for ln in body.splitlines() if ln.startswith("society_public_surface_")]
+        emit("worker_metrics", st, "\n".join(lines))
     st, body = vs.http("GET", f"{api}/v1/society/candidates?limit=20", token=token)
     open_ids = [c["id"] for c in (json.loads(body) if st == 200 else []) if c.get("status") in OPEN_CANDIDATE_STATUSES]
     for cid in open_ids:
