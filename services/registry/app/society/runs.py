@@ -208,7 +208,7 @@ def dispatch_pending_events(
         event.dispatched_at = now
         if created == 0 and not selected:
             event.status = SocietyEventStatus.IGNORED
-            event.dispatch_note = "no subscriber"
+            event.dispatch_note = "targeted-only: target unresolved" if event.event_type in TARGETED_ONLY_EVENT_TYPES else "no subscriber"
             event.processed_at = now
             stats.events_ignored += 1
         else:

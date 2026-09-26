@@ -269,12 +269,12 @@ def test_a_read_result_wakes_only_the_reading_agent(db, SessionLocal, code_setti
 
 
 def test_the_live_story_reaches_the_builder_within_the_staging_run_budget(db, SessionLocal, code_settings, grants_with_no_cooldown, monkeypatch):
-    """Staging 2026-09-26 11:06-11:08Z (correlation b8db5936): Scout, Governor,
+    """Staging 2026-09-26 11:06-11:08Z (correlation b8db5936, candidate a2788678): Scout, Governor,
     then the Architect grounding its design in three reads before
     REQUEST_CODE_CHANGE. Each read also woke the Builder and Security, so the
     correlation reached SOCIETY_MAX_RUNS_PER_CORRELATION=12 exactly when
     code_change.requested arrived: it was ignored by the loop breaker and the
-    candidate stranded in REQUESTED (the same as 9da14a08 earlier that day).
+    candidate stranded in REQUESTED (as candidate 9da14a08 had earlier that day).
     Same story, same cap: the request reaches the Builder."""
     from services.registry.app.society.config import SocietySettings, reset_settings_cache
     from services.registry.app.society.runs import runs_in_correlation

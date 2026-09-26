@@ -53,10 +53,10 @@ preserved), and any in-flight `implement_change` task is closed through the ordi
 |---|---|---|---|
 | Society_Governor | governor (MEDIUM) | `proposal.created`, `code_candidate.ready/rejected`, `promotion.merge_eligible/rejected`, `experiment.finished`, `society.heartbeat`, `company.cycle`, `incident.opened`, `a2a.task.finished`, `a2a.agent.discovered` | messages, memory, goals, `REVIEW_IMPROVEMENT`, `READ_CANDIDATE_STATE`, `REQUEST_PR_PROMOTION`, `REQUEST_STAGING_EVALUATION`, `DISCOVER_A2A_AGENT`, `REQUEST_A2A_TASK` (**approval-gated**), `CHECK_A2A_TASK` |
 | Society_Scout | scout | `company.cycle`, `a2a.agent.refreshed`, `platform.metric.anomaly`, `task.failed/timeout`, `qa.failed`, `agent.inactive`, candidate outcomes | messages, memory, `CREATE_IMPROVEMENT` (with structured evidence), agent goals, `REFRESH_A2A_AGENT`, `CHECK_A2A_TASK` |
-| Society_Architect | architect (MEDIUM) | `proposal.approved`, `code_candidate.qa_failed/ready`, `repo.read.result`, `code_change.spec_rejected` | repo reads (`LIST_REPO_TREE`, `SEARCH_REPO`, `READ_REPO_FILE`, `READ_REPO_RANGE`), `REQUEST_CODE_CHANGE`, `CREATE_TASK` (≤50 credits), goal updates |
-| Society_Builder | builder (MEDIUM) | `code_change.requested`, `code_candidate.qa_failed/ready/rejected`, `repo.read.result`, `society.heartbeat` | repo reads, `SUBMIT_CODE_CANDIDATE`, `START/COMPLETE/FAIL_TASK` |
+| Society_Architect | architect (MEDIUM) | `proposal.approved`, `code_candidate.qa_failed/ready`, `repo.read.result` (own reads only), `code_change.spec_rejected` | repo reads (`LIST_REPO_TREE`, `SEARCH_REPO`, `READ_REPO_FILE`, `READ_REPO_RANGE`), `REQUEST_CODE_CHANGE`, `CREATE_TASK` (≤50 credits), goal updates |
+| Society_Builder | builder (MEDIUM) | `code_change.requested`, `code_candidate.qa_failed/ready/rejected`, `repo.read.result` (own reads only), `society.heartbeat` | repo reads, `SUBMIT_CODE_CANDIDATE`, `START/COMPLETE/FAIL_TASK` |
 | Society_QA | qa (MEDIUM) | `code_candidate.built` | `EVALUATE_CODE_CANDIDATE` (verdict computed by the runtime, not asserted) |
-| Society_Security | security (MEDIUM) | `code_candidate.security_review` | `READ_DIFF`, `READ_REPO_FILE`, `READ_CANDIDATE_STATE`, `SECURITY_REVIEW_CANDIDATE` (combined with static scan; fails closed) |
+| Society_Security | security (MEDIUM) | `code_candidate.security_review`, `repo.read.result` (own reads only) | `READ_DIFF`, `READ_REPO_FILE`, `READ_CANDIDATE_STATE`, `SECURITY_REVIEW_CANDIDATE` (combined with static scan; fails closed) |
 | Society_Evaluator (Phase 3) | evaluator | `promotion.ci_passed`, `experiment.finished` | `READ_CANDIDATE_STATE`, `REQUEST_MERGE_EVALUATION`, `RECORD_EVALUATION_RECOMMENDATION` (advisory only), memory, messages — it cannot change thresholds, approve, merge, deploy or alter evidence |
 
 Roles are configuration (`roles.py`), overridable/extendable with `SOCIETY_ROLES_FILE` (JSON). Agents are
@@ -101,15 +101,21 @@ a targeted-only event (`runs.TARGETED_ONLY_EVENT_TYPES`: `repo.read.result`) wak
 All emit `loop_breaker.tripped` / `run.dead` events (deduped) for observability.
 
 **Why `repo.read.result` is targeted-only (staging, 2026-09-26).** A read result is the reading
-agent's next engineering turn. The Architect, the Builder and Security all subscribe to the type
-because each reads for itself, and dispatch used to add every subscriber to the target. Every
+agent's next engineering turn. The Architect, the Builder and Security list the type among their
+subscriptions, and dispatch used to add every subscriber to the target. Every
 Architect read therefore also woke the Builder and Security, whose runs only answered "not for me",
 so each read spent three runs of the correlation's budget. Three reconnaissance reads brought the
 correlation to `SOCIETY_MAX_RUNS_PER_CORRELATION=12` exactly when the Architect's
 `code_change.requested` arrived. The loop breaker ignored it and the candidate stranded in
-`REQUESTED`. This happened twice that day: 9da14a08, which an operator later abandoned, and
-a2788678. Now each read wakes only its reader; no cap changed.
-`tests/society/test_repo_intel.py` replays the live story at the staging cap.
+`REQUESTED`. It happened twice that day, to candidates 9da14a08 (later abandoned by an operator)
+and a2788678 (correlation b8db5936). Now each read wakes only its reader, and no cap changed.
+- A subscription to a targeted-only type wakes nobody extra; this includes one added through
+  `SOCIETY_ROLES_FILE`.
+- If the target cannot be resolved, the event is ignored with the dispatch note
+  "targeted-only: target unresolved".
+- `tests/society/test_repo_intel.py` replays the live story at the staging cap.
+- `tests/society/test_events_and_dispatch.py` fails if an event type emitted as a targeted wake is
+  subscribed by a role without being targeted-only.
 
 ## Engineering loop safety
 
