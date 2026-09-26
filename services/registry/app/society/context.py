@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import or_
+from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -148,6 +148,10 @@ class AgentContext:
     # Phase 8: the federation catalog as IDS + untrusted descriptive data. No
     # URL beyond the host, no credential, no sealed token, no raw card.
     federation: Dict[str, Any] = field(default_factory=dict)
+    # Graduation hardening: the TRUSTED answer to "is this world signal already
+    # being worked on?" -- derived from durable intent/proposal rows, never
+    # from what an agent remembers (_signal_coverage).
+    signal_coverage: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -528,6 +532,30 @@ def _recent_activity(db: Session, agent: Agent, exclude_run_id: Optional[uuid.UU
     ]
 
 
+def _refusal_reason(r: AgentIntent) -> Optional[str]:
+    """Why an intent did not execute, as an AGENT may see it. Execution errors
+    and policy text come from trusted code (validation errors never echo the
+    rejected value: intents.py uses include_input=False). An operator's
+    decision is reduced to its outcome: approvals.py records the operator's
+    email and free text on the row, and neither belongs in model context."""
+    status = _ev(r.execution_status)
+    if status == IntentExecutionStatus.EXECUTED.value:
+        return None
+    fixed = {
+        IntentExecutionStatus.REJECTED.value: "rejected by an operator",
+        IntentExecutionStatus.APPROVED.value: "approved by an operator; not executed yet",
+        IntentExecutionStatus.AWAITING_APPROVAL.value: "awaiting operator approval",
+    }.get(status)
+    if fixed:
+        return fixed
+    if status == IntentExecutionStatus.FAILED.value:
+        # never fall back to policy_reason here: after an approval it holds the
+        # operator's email and text, and the executor always records the error
+        return _t(r.error, TXT_SHORT) if r.error else "failed while executing"
+    text = r.policy_reason or r.error
+    return _t(text, TXT_SHORT) if text else None
+
+
 def _recent_refusals(db: Session, agent: Agent, now: datetime) -> List[Dict[str, Any]]:
     """This agent's OWN intents that the platform refused, newest first.
 
@@ -570,11 +598,90 @@ def _recent_refusals(db: Session, agent: Agent, now: datetime) -> List[Dict[str,
             # A FAILED intent was ALLOWED by policy ("allowed by grant") and then
             # refused while executing; the execution error is the reason. Showing
             # the policy reason hid e.g. "portfolio full" from the live Scout.
-            "reason": _t((r.error if _ev(r.execution_status) == IntentExecutionStatus.FAILED.value else None) or r.policy_reason or r.error, TXT_SHORT),
+            "reason": _refusal_reason(r),
             "at": _iso(r.created_at),
         }
         for r in rows
     ]
+
+
+#: How far back signal coverage looks for CREATE_IMPROVEMENT attempts, and how many it lists.
+SIGNAL_COVERAGE_DAYS = 7
+LIMIT_SIGNAL_ATTEMPTS = 5
+LIMIT_SIGNAL_PROPOSALS = 10
+
+
+def _signal_coverage(db: Session, agent: Agent, event: SocietyEvent, settings: SocietySettings, now: datetime) -> Dict[str, Any]:
+    """Whether an open proposal covers this world signal, from durable rows.
+
+    Observed live on staging (2026-09-26): a Scout's CREATE_IMPROVEMENT for a
+    critical public-surface anomaly was refused, and every later Scout run
+    declined the re-raised signal as a "duplicate of the 06:02 proposal" --
+    a proposal that never existed -- each run writing another triage memory
+    that said so. Operator refutation did not stop it, because the belief
+    lived in the model's own chain of notes and the context had no trusted
+    answer to the one question the Scout was deciding. This is that answer:
+
+    * ``open_proposals`` -- every open proposal (no time window) created by an
+      EXECUTED CREATE_IMPROVEMENT whose evidence named this signal TYPE, with
+      its portfolio state (active / concluded / shelved; company.py). Empty
+      means no such proposal exists, whatever a memory item says.
+    * ``attempts`` -- the most recent CREATE_IMPROVEMENT intents for the signal
+      (any agent, bounded), with their execution outcome. The reason is shown
+      only for this agent's own attempts, so no text crosses between agents.
+    * ``portfolio`` -- whether company mode has room for a new hypothesis.
+
+    Coverage is per signal type: whether an open proposal addresses THIS
+    event (e.g. which task failed) remains the agent's judgement. Trusted
+    facts only; no title or payload text is repeated here."""
+    from .company import portfolio_accounting  # noqa: PLC0415 - company imports this module
+    from .executor import _OPEN_PROPOSAL_STATUSES, WORLD_SIGNAL_EVENTS  # noqa: PLC0415 - executor pulls in the whole runtime
+
+    if event.event_type not in WORLD_SIGNAL_EVENTS:
+        return {}
+    signal = event.event_type
+    for_signal = (
+        AgentIntent.intent_type == "CREATE_IMPROVEMENT",
+        AgentIntent.payload["evidence"]["signal"].astext == signal,
+    )
+    rows = (
+        db.query(AgentIntent)
+        .filter(*for_signal, AgentIntent.created_at >= now - timedelta(days=SIGNAL_COVERAGE_DAYS))
+        .order_by(AgentIntent.created_at.desc())
+        .limit(LIMIT_SIGNAL_ATTEMPTS)
+        .all()
+    )
+    attempts = []
+    for r in rows:
+        status = _ev(r.execution_status)
+        res = ((r.result or {}).get("result") or {}) if status == IntentExecutionStatus.EXECUTED.value else {}
+        attempts.append({
+            "at": _iso(r.created_at),
+            "outcome": status,
+            "by_you": r.agent_id == agent.id,
+            "reason": _refusal_reason(r) if r.agent_id == agent.id else None,
+            "proposal_id": res.get("proposal_id"),
+            "duplicate": bool(res.get("duplicate")),
+        })
+    # every open proposal an executed attempt created for this signal, however old
+    proposals = (
+        db.query(ImprovementProposal.id, ImprovementProposal.status)
+        .join(AgentIntent, AgentIntent.result["result"]["proposal_id"].astext == cast(ImprovementProposal.id, String))
+        .filter(*for_signal, AgentIntent.execution_status == IntentExecutionStatus.EXECUTED, ImprovementProposal.status.in_(list(_OPEN_PROPOSAL_STATUSES)))
+        .distinct()
+        .order_by(ImprovementProposal.id)
+        .limit(LIMIT_SIGNAL_PROPOSALS)
+        .all()
+    )
+    accounting = portfolio_accounting(db, settings, now)
+    state = {pid: bucket for bucket, ids in accounting.items() for pid in ids}
+    open_rows = [{"id": str(pid), "status": _ev(st), "portfolio_state": state.get(str(pid), "active")} for pid, st in proposals]
+    out: Dict[str, Any] = {"signal": signal, "open_proposals": open_rows, "attempts": attempts}
+    if settings.company_cycle_enabled:
+        active = len(accounting["active"])
+        cap = settings.company_max_active_hypotheses
+        out["portfolio"] = {"active": active, "max": cap, "full": active >= cap}
+    return out
 
 
 def _society_agents(db: Session, agent: Agent) -> List[Dict[str, Any]]:
@@ -812,5 +919,6 @@ def build_context(
         engineering=_engineering(db, agent, event, settings, role),
         promotions=_promotions(db, event),
         federation=_federation(db, grant),
+        signal_coverage=_signal_coverage(db, agent, event, settings, now),
     )
     return ctx

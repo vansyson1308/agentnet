@@ -584,6 +584,47 @@ def parse_decision(raw: Any, *, max_intents: int) -> AgentDecision:
     return decision
 
 
+#: Schema-derived context an error summary may repeat (never the rejected value).
+_SAFE_ERROR_CTX = ("min_length", "max_length", "ge", "gt", "le", "lt", "expected")
+
+
+def _declared_fields(model: Any, seen: Optional[set] = None) -> set:
+    """Every field name declared by ``model`` and the models nested in it."""
+    seen = set() if seen is None else seen
+    if not (isinstance(model, type) and issubclass(model, BaseModel)) or model in seen:
+        return set()
+    seen.add(model)
+    names = set(model.model_fields)
+    for f in model.model_fields.values():
+        stack = [f.annotation]
+        while stack:
+            ann = stack.pop()
+            stack.extend(get_args(ann))
+            names |= _declared_fields(ann, seen)
+    return names
+
+
+def safe_error_summary(exc: ValidationError, model: Any, limit: int = 3) -> List[Dict[str, Any]]:
+    """A structural account of why a payload failed validation.
+
+    The summary is recorded as the intent's error and shown back to the agent
+    as a trusted refusal (context.py), so it carries no model text: pydantic's
+    ``input``, its messages (a custom validator may quote the value) and any
+    key the model invented (an ``extra_forbidden`` or dict key in ``loc``)
+    are dropped. What remains is the error type, the location built from
+    declared field names and list indices, and schema-derived limits."""
+    known = _declared_fields(model)
+    out: List[Dict[str, Any]] = []
+    for err in exc.errors(include_input=False, include_url=False, include_context=True)[:limit]:
+        loc = [p if isinstance(p, int) or p in known else "<key>" for p in err.get("loc", ())]
+        item: Dict[str, Any] = {"type": err.get("type"), "loc": loc}
+        ctx = {k: v for k, v in (err.get("ctx") or {}).items() if k in _SAFE_ERROR_CTX and isinstance(v, (int, float, str))}
+        if ctx:
+            item["ctx"] = ctx
+        out.append(item)
+    return out
+
+
 def validate_intents(decision: AgentDecision, run_id: uuid.UUID) -> List[ValidatedIntent]:
     out: List[ValidatedIntent] = []
     for seq, spec in enumerate(decision.intents):
@@ -597,7 +638,8 @@ def validate_intents(decision: AgentDecision, run_id: uuid.UUID) -> List[Validat
                     type_name=spec.type[:64],
                     intent_type=None,
                     valid=False,
-                    error=f"unknown intent type {spec.type!r}",
+                    # the type the model wrote stays in type_name (audit), not in the trusted reason
+                    error="unknown intent type (not in the intent vocabulary)",
                     raw_payload=spec.payload,
                     idempotency_key=key,
                 )
@@ -613,7 +655,8 @@ def validate_intents(decision: AgentDecision, run_id: uuid.UUID) -> List[Validat
                     type_name=itype.value,
                     intent_type=itype,
                     valid=False,
-                    error=f"payload schema violation: {exc.errors()[:3]}",
+                    # structural only: this reason is shown back as a trusted refusal
+                    error=f"payload schema violation: {safe_error_summary(exc, model)}",
                     raw_payload=spec.payload,
                     idempotency_key=key,
                 )

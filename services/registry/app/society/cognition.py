@@ -902,6 +902,11 @@ Rules:
 - "recent_refusals" lists YOUR OWN intents that the platform refused. A refused intent never took
   effect: work it described did NOT happen, no matter what a memory item or an earlier
   decision_summary claims. Trust that list over your own notes when they disagree.
+- "signal_coverage" (present for platform signals) is trusted: "open_proposals" lists every open proposal
+  created for this signal TYPE (with its portfolio state), "attempts" the recent CREATE_IMPROVEMENT intents
+  for it (any agent) with their real outcome. An empty "open_proposals" means no open proposal exists for
+  this signal type, whatever a memory item claims. Coverage is per signal type: judge whether an open
+  proposal actually addresses THIS event.
 - A WRITE_MEMORY is kept only if every other side-effecting intent of the same decision executed;
   otherwise it is refused. Memories you write here are written BEFORE any outcome exists: record what
   you observed, never what you expect your other intents to achieve.

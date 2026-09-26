@@ -254,6 +254,32 @@ forming (`society/memory_grounding.py`):
 - **`recent_refusals` fix.** For an intent that policy *allowed* but execution *failed*, the reason
   shown is now the execution error. Before, it was the policy reason, *"allowed by grant"*, which hid
   *"portfolio full"* from the live Scout.
+- **`signal_coverage` (trusted, world signals only).** The same incident had a second, cross-run
+  form. After the refused proposal, triage-only Scout runs kept writing *"duplicate of the 06:02
+  proposal"*, at 08:09Z and again at 09:07Z on the hardened code. Those decisions had no side
+  effect, so their memories are admitted. Each later run believed its own note, and operator
+  refutation did not stop it. The context never answered the one question the Scout was deciding.
+  It now does, from durable rows:
+  - `open_proposals`: every open proposal created by an **executed** `CREATE_IMPROVEMENT` whose
+    evidence named this signal type. There is no time window, so an old proposal is not forgotten.
+    Each entry carries its portfolio state (`active`, `concluded` or `shelved`, from
+    `company.portfolio_accounting`). An empty list means no such proposal exists, whatever a memory
+    says.
+  - `attempts`: the last few `CREATE_IMPROVEMENT` intents for the signal, from any agent, within 7
+    days. Each shows its outcome, whether it was yours (`by_you`), the proposal it produced and
+    whether that was an idempotent `duplicate`. The reason is shown only for your own attempts, so no
+    text crosses between agents.
+  - `portfolio`: whether company mode has room. This entry is present only when company mode is on.
+  - Coverage is per signal **type**. Whether an open proposal addresses *this* event (for example,
+    which task failed) remains the agent's judgement; the prompt says so.
+- **Trusted reasons carry no model or operator text.** A reason shown in `recent_refusals` or
+  `signal_coverage` comes from platform code only:
+  - A payload that fails validation is summarized structurally
+    (`intents.safe_error_summary`). The summary keeps the error type, the path through declared
+    field names, and schema limits. It never keeps the rejected value, a key the model invented, or a
+    custom validator's message. The approval-resume re-validation uses the same summary.
+  - An operator's decision reaches agents as its outcome only (*"rejected by an operator"*).
+    `approvals.py` records the operator's email and text on the intent, and those stay there.
 - **`recent_activity[].outcomes`.** The model's own `decision_summary` (for example *"raised
   proposal X"*) is written before its intents run. It now travels with the run's trusted outcome
   (`executed` count, `not_executed: ["CREATE_IMPROVEMENT:failed", ...]`), so the same false claim cannot
