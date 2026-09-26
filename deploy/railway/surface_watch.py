@@ -15,7 +15,10 @@ practice) and prints:
 * for the anomaly's correlation: the operator story (events, runs, their
   decision summaries and intents);
 * each candidate's operator detail (spec, files, QA and Security reports,
-  risk tier, promotion).
+  risk tier, promotion);
+* the most recent runs across ALL correlations (a candidate is often moved
+  in another story, e.g. the Builder's heartbeat wake) and the recent
+  loop-breaker trips -- the two things that show why a candidate stalls.
 
 It changes nothing, never prints a token and scrubs every printed body the
 same way ``phase5_live`` does (model-authored text is untrusted data). Run it
@@ -37,6 +40,8 @@ LIMIT = 24_000
 SURFACE_EVENTS = ("public.surface.anomaly", "public.surface.recovered")
 OPEN_PROPOSAL_STATUSES = ("PROPOSED", "UNDER_REVIEW", "APPROVED", "CONVERTED_TO_TASK")
 OPEN_CANDIDATE_STATUSES = ("requested", "building", "built", "qa_running", "security_review")
+RECENT_RUNS = 30
+RUN_KEYS = ("completed_at", "agent_name", "event_type", "status", "intents_count", "correlation_id", "decision_summary", "error")
 
 
 def emit(label: str, status: int, body: str) -> None:
@@ -80,6 +85,12 @@ def main() -> int:
     for cid in open_ids:
         st, body = vs.http("GET", f"{api}/v1/society/candidates/{cid}", token=token)
         emit(f"open_candidate {cid}", st, body[:4000])
+    st, body = vs.http("GET", f"{api}/v1/society/runs?limit={RECENT_RUNS}", token=token)
+    runs = json.loads(body) if st == 200 else []
+    brief = [{k: r.get(k) for k in RUN_KEYS} for r in runs if isinstance(r, dict)]
+    emit("recent_runs", st, json.dumps(brief, default=str))
+    st, body = vs.http("GET", f"{api}/v1/society/events?event_type=loop_breaker.tripped&limit=5", token=token)
+    emit("loop_breaker", st, body)
     work = (view or {}).get("workstream") or {}
     corr = work.get("correlation_id")
     if corr:
