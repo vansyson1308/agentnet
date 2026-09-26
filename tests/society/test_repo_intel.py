@@ -242,6 +242,78 @@ def test_read_range_past_eof_is_empty_and_reports_the_real_length(code_repo):
     assert out.data["total_lines"] == 92, "the reader must be able to tell it overshot"
 
 
+# ── the context's own cut of a read (staging 2026-09-26 18:00Z) ─────────
+#
+# repo_intel returned main.py whole (8.6 KB, truncated=false); the context then
+# cut each read's JSON at TXT_READ mid-content. The Builder saw ~177 of 231
+# lines of main.py and ~146 of 273 of the failing test, was told nothing was
+# truncated, and re-read the same files for six turns.
+
+
+def test_a_read_too_long_for_context_shows_whole_lines_and_where_to_continue(code_repo):
+    from services.registry.app.society import context as ctx_mod
+
+    rel = "services/app/long.py"
+    target = code_repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    text = "".join(f"def f{i}():  # \"quoted\" \\ padding padding padding padding\n" for i in range(1, 301))
+    target.write_text(text, encoding="utf-8")
+    budget = ctx_mod.TXT_READ
+
+    whole = ri.read_file(code_repo, rel)
+    assert whole.truncated is False, "the repo layer returned the whole file"
+    view, cut = ctx_mod._read_view(whole.op, whole.data)
+    assert cut is True and ctx_mod._json_len(view) <= budget
+    assert "_truncated" not in view, "never a JSON preview cut mid-content"
+    first, last = view["context_cut"]["shown_lines"]
+    assert first == 1 and view["context_cut"]["total_lines"] == 300 and last < 300
+    assert view["content"] == "".join(text.splitlines(keepends=True)[:last]), "whole lines, exactly the ones it says"
+    assert view["next_line"] == last + 1
+
+    # following next_line with READ_REPO_RANGE walks the file without a gap or overlap
+    seen, nxt = view["content"], view["next_line"]
+    while nxt <= 300:
+        part = ri.read_range(code_repo, rel, nxt, nxt + 399)  # to EOF
+        pview, pcut = ctx_mod._read_view(part.op, part.data)
+        assert ctx_mod._json_len(pview) <= budget
+        if pcut:
+            assert pview["context_cut"]["shown_lines"][0] == nxt, "a range's view counts lines from its own start"
+        seen += pview["content"]
+        nxt = pview["next_line"] if pcut else 301
+    assert seen == text.rstrip("\n"), "read_range omits the final newline; nothing else may differ"
+
+    # a read that fits is shown as it is -- including the repo layer's own continuation
+    head = ri.read_file(code_repo, rel, max_bytes=500)
+    hview, hcut = ctx_mod._read_view(head.op, head.data)
+    assert hcut is False and hview == head.data and hview["next_line"] == head.data["next_line"]
+
+    # search hits are kept whole, and the view says how many were left out
+    (code_repo / "services/app/hits.py").write_text("".join(f"needle {'x' * 380} {i}\n" for i in range(40)), encoding="utf-8")
+    found = ri.search(code_repo, "needle", glob="*.py", max_results=40)
+    sview, scut = ctx_mod._read_view(found.op, found.data)
+    assert scut is True and ctx_mod._json_len(sview) <= budget
+    assert 0 < sview["context_cut"]["hits_shown"] == len(sview["hits"]) < sview["context_cut"]["hits_total"] == 40
+    assert all(h in found.data["hits"] for h in sview["hits"])
+
+
+def test_the_reader_is_told_when_its_context_cut_a_read(db, SessionLocal, code_settings, grants_with_no_cooldown):
+    _seed(db, grants_with_no_cooldown)
+    rel = "app/long_module.py"
+    (pathlib.Path(code_settings.repo_root) / rel).write_text("".join(f"x_{i} = {i}  # padding padding padding padding\n" for i in range(1, 401)), encoding="utf-8")
+    script = {
+        "architect": [
+            {"decision_summary": "read", "intents": [{"type": "READ_REPO_FILE", "payload": {"path": rel}}], "sleep_for_seconds": 1},
+            {"decision_summary": "done", "intents": [], "sleep_for_seconds": 1},
+        ]
+    }
+    model = FakeModel(script)
+    _run(db, SessionLocal, code_settings, model, {"x": 1})
+    entry = model.calls[1].repo_reads[0]["data"]
+    assert entry["truncated"] is True, "a read the context cut is a truncated read"
+    assert entry["data"]["context_cut"]["total_lines"] == 400
+    assert entry["data"]["next_line"] == entry["data"]["context_cut"]["shown_lines"][1] + 1
+
+
 # ── a read result wakes the reader only (staging 2026-09-26) ────────────
 
 
