@@ -25,7 +25,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import String, cast, func, or_
 from sqlalchemy.orm import Session
@@ -705,6 +705,79 @@ def _society_agents(db: Session, agent: Agent) -> List[Dict[str, Any]]:
 CANDIDATE_READS_WINDOW_HOURS = 24
 
 
+def _json_len(obj: Any) -> int:
+    return len(json.dumps(obj, sort_keys=True, default=str, ensure_ascii=False))
+
+
+def _read_view(op: Optional[str], data: Any, budget: int = TXT_READ) -> Tuple[Any, bool]:
+    """What the model sees of one read's ``data`` within ``budget`` chars, and
+    whether that view is only part of it.
+
+    Staging 2026-09-26 18:00Z: the Builder re-read ``main.py`` and the failing
+    acceptance test six turns in a row. Each read's JSON was cut at TXT_READ
+    mid-content -- the model saw ~177 of main.py's 231 lines and ~146 of the
+    test's 273 -- while the entry said ``truncated: false`` and gave no line to
+    resume from, so the only move left was to read the same file again.
+    repo_intel already says how to continue its OWN byte cut (``next_line``);
+    this cut is the context's, and it must say the same. A file's text is
+    therefore cut at whole LINES, the view states which lines it shows and the
+    line to continue from with READ_REPO_RANGE; search hits are kept whole.
+    """
+    if not isinstance(data, dict):
+        return _bounded_json(data if data is not None else {}, budget), False
+    if _json_len(data) <= budget:
+        return json.loads(json.dumps(data, sort_keys=True, default=str, ensure_ascii=False)), False
+    key = next((k for k in ("content", "diff") if isinstance(data.get(k), str)), None)
+    if key is not None:
+        lines = data[key].splitlines(keepends=True)
+        try:
+            first = max(1, int(data.get("start") or 1)) if op == "read_range" else 1
+        except (TypeError, ValueError):
+            first = 1
+        # the repo's whole-file count when it has one; otherwise counted like
+        # shown_lines and READ_REPO_RANGE (splitlines), never from "lines"
+        total = data.get("total_lines") or (first - 1 + len(lines))
+        view = {k: v for k, v in data.items() if k not in (key, "next_line")}
+        cut: Dict[str, Any] = {"shown_lines": [first, first - 1 + len(lines)], "total_lines": total}
+        extra = {"next_line": first + len(lines)} if key == "content" else {}
+        room = budget - _json_len({**view, key: "", "context_cut": cut, **extra})
+        shown, used = [], 0
+        for ln in lines:
+            cost = _json_len(ln) - 2  # the quotes are already counted
+            if used + cost > room:
+                break
+            shown.append(ln)
+            used += cost
+        cut["shown_lines"] = [first, first - 1 + len(shown)]
+        view[key] = "".join(shown)
+        view["context_cut"] = cut
+        if key == "content":
+            view["next_line"] = first + len(shown)
+        # a single line longer than the whole budget cannot be shown whole; a
+        # view of zero lines would point back at itself, so it falls through
+        if shown and _json_len(view) <= budget:
+            return view, True
+    hits = data.get("hits")
+    if isinstance(hits, list):
+        view = {k: v for k, v in data.items() if k != "hits"}
+        view["context_cut"] = {"hits_shown": len(hits), "hits_total": len(hits)}
+        kept: List[Any] = []
+        for h in hits:
+            if _json_len({**view, "hits": kept + [h]}) > budget:
+                break
+            kept.append(h)
+        view["hits"] = kept
+        view["context_cut"]["hits_shown"] = len(kept)
+        if _json_len(view) <= budget:
+            return view, True
+    fallback = _bounded_json(data, budget)
+    if key == "content" and isinstance(fallback, dict):
+        # not even one whole line fits (a minified file): READ_REPO_RANGE caps
+        # each line, so it can show the line this view could not
+        fallback["next_line"] = first
+    return fallback, True
+
+
 def _repo_reads(db: Session, agent: Agent, run: Optional[AgentRun], event: SocietyEvent, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """This agent's executed repository reads (newest last, at most
     LIMIT_REPO_READS): first those of THIS correlation, then -- in the slots
@@ -780,16 +853,18 @@ def _repo_reads(db: Session, agent: Agent, run: Optional[AgentRun], event: Socie
     for r, corr in sorted(rows, key=lambda rc: rc[0].executed_at or now):
         res = (r.result or {}).get("result") or {}
         data = res.get("data") if isinstance(res, dict) else None
+        op = res.get("op") if isinstance(res, dict) else r.intent_type
+        view, cut = _read_view(op, data or {})
         out.append(
             untrusted(
                 {
                     "intent_id": str(r.id),
-                    "op": res.get("op") if isinstance(res, dict) else r.intent_type,
+                    "op": op,
                     "path": res.get("path") if isinstance(res, dict) else None,
-                    "truncated": bool(res.get("truncated")) if isinstance(res, dict) else False,
+                    "truncated": cut or (bool(res.get("truncated")) if isinstance(res, dict) else False),
                     "duplicate": bool(res.get("duplicate")) if isinstance(res, dict) else False,
                     "request": _bounded_json(r.payload or {}, TXT_SHORT),
-                    "data": _bounded_json(data or {}, TXT_READ),
+                    "data": view,
                     "at": _iso(r.executed_at),
                     "earlier_story": corr != event.correlation_id,
                 },

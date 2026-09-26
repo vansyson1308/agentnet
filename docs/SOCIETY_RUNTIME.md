@@ -158,6 +158,20 @@ and a2788678 (correlation b8db5936). Now each read wakes only its reader, and no
   - reads for a closed candidate, reads without a candidate, and other agents' reads.
 
   No budget or cap changes.
+- **A read the context cannot show whole says so.** Each `repo_reads` entry holds at most `TXT_READ`
+  (6000) characters of the read's data. A file's text beyond that is cut at whole **lines**:
+  - the entry is marked `truncated`;
+  - its data carries `context_cut` (`shown_lines`, `total_lines`) and the `next_line` to continue from with
+    `READ_REPO_RANGE`.
+
+  Search hits are kept whole, with `hits_shown` out of `hits_total`.
+
+  A partial read never becomes a whole-file edit. The prompt says to use `replacements` instead, and the
+  scripted Builder refuses to rewrite a file it has only partly in view.
+
+  Staging, 2026-09-26 18:00Z: `repo_intel` returned `main.py` whole (8.6 KB), then the context cut each read's
+  JSON mid-content. The Builder saw about 177 of 231 lines of `main.py` and 146 of 273 lines of the failing
+  acceptance test, and was told nothing was truncated. It re-read the same files for its six turns.
 - Security review is required when the spec flags it, when any file matches the risky-path pattern, when
   `kind == "code"`, or when the static scan produced findings; final verdict = reviewer verdict AND no
   static findings.
