@@ -216,7 +216,53 @@ run's `WRITE_MEMORY` recorded *"improvement raised"*. That memory came from a re
 never expired, and three later runs declined the same signal citing it — each writing another note
 corroborating the first.
 
-Correcting such a belief is **refutation**, not deletion:
+### Execution-grounded memory (graduation hardening, 2026-09-26)
+
+The same failure recurred live during graduation. At 06:02Z a Scout's `CREATE_IMPROVEMENT` for a
+critical public-surface regression was refused (*"portfolio full"*). The same decision's
+`WRITE_MEMORY` recorded *"new proposal raised"*. At 07:19Z the Scout declined the next anomaly as a
+*"duplicate of 06:02 proposal"*, although that proposal never existed. An operator had to refute both
+memories. Refutation repairs a belief after the fact. The invariant below keeps the belief from
+forming (`society/memory_grounding.py`):
+
+> **A model-authored memory is admitted only if every side-effecting intent of the same decision
+> reached `EXECUTED`.**
+
+- **Why decisions, not wording.** The model authors a decision's intents together, before any of
+  them executes. A memory in that decision can therefore only state an *expected* outcome. The rule
+  is execution-semantic. There is no phrase matching, and there is no payload field a model could set
+  to opt out.
+- **What blocks a memory.** A side-effecting sibling that is `failed`, `denied`,
+  `awaiting_approval`, `approved`-but-not-resumed, `rejected`, `skipped` or still `pending`. The
+  memory intent then **fails** with the trusted reason (`memory not grounded: … seq 0
+  CREATE_IMPROVEMENT is failed`). No `memory_items` row is written. The refusal itself reaches the
+  agent through `recent_refusals`.
+- **Ordering.** Memory intents run after every other intent of their run, so the outcome is known.
+  The check lives in the executor, so a memory resumed through the approval path is held to it too.
+- **What counts as a side effect.** Read-only repository intelligence, `SLEEP` and other memories
+  are not side effects. Every other type is, including an unknown or invalid type the model emitted,
+  so the rule fails closed.
+- **What still works.** Observation and hypothesis memories are unaffected in a decision with no
+  side effect, or when every side effect executed.
+- **Approval path.** The approval resume queue orders a decision's memories after its other intents.
+  A memory approved before its side effect is refused while that side effect still awaits approval.
+- **Known edges.**
+  - `EXECUTED` means the executor completed the intent. For an idempotent duplicate (a proposal title
+    that is already open, or a suppressed duplicate message) that completion is a no-op, which is
+    still consistent with the row that exists.
+  - An honest observation memory written in an approval-gated decision is also refused.
+- **`recent_refusals` fix.** For an intent that policy *allowed* but execution *failed*, the reason
+  shown is now the execution error. Before, it was the policy reason, *"allowed by grant"*, which hid
+  *"portfolio full"* from the live Scout.
+- **`recent_activity[].outcomes`.** The model's own `decision_summary` (for example *"raised
+  proposal X"*) is written before its intents run. It now travels with the run's trusted outcome
+  (`executed` count, `not_executed: ["CREATE_IMPROVEMENT:failed", ...]`), so the same false claim cannot
+  come back through the activity feed instead of memory.
+- **Tests.** `tests/society/test_memory_grounding.py` pins the status matrix, the exact live failure,
+  and a later run that is not falsely suppressed.
+
+Correcting a belief that predates this rule, or one that is wrong for other reasons, is
+**refutation**, not deletion:
 
 ```
 POST /v1/society/memory/{memory_id}/refute   {"reason": "..."}

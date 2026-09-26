@@ -171,7 +171,9 @@ _CLAIM_SQL = text(
         SELECT id FROM agent_intents
         WHERE execution_status = 'approved'
           AND (resume_lease_expires_at IS NULL OR resume_lease_expires_at < :now)
-        ORDER BY created_at
+        -- one decision's intents share created_at; memories resume after their
+        -- siblings (execution-grounded memory, memory_grounding.py), then model order
+        ORDER BY created_at, (intent_type = 'WRITE_MEMORY'), seq
         LIMIT 1
         FOR UPDATE SKIP LOCKED
     )
