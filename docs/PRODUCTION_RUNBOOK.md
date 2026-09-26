@@ -311,12 +311,14 @@ The A2A code ships dark. Every flag defaults to `false`. Enable **one flag at a 
 
 `deploy/railway/a2a_live_proof.py` runs from `prod-validator` with an **owner-verified public identity**. It never reads the database:
 
-* `A2A_PROOF_IDENTITY=public` and `A2A_PROOF_CANARY_EMAIL` (an inbox the owner reads). The password is derived in the validator from its `VALIDATOR_SECRET`, a Railway-generated secret nobody has seen.
-* First run: `A2A_PROOF_SIGNUP_ONLY=true`. It signs up through the public API, AgentNet sends the normal verification email, and the proof stops at `A2A PROOF AWAITING OWNER VERIFICATION`. The owner clicks the link. Later runs reuse the account.
+* `A2A_PROOF_IDENTITY=public` and `A2A_PROOF_CANARY_EMAIL` (an inbox the owner reads). The password is derived in the validator from `VALIDATOR_SECRET`, generated in Railway with `${{secret(64, "abcdef0123456789")}}` so nobody sees it.
+* First run: `A2A_PROOF_SIGNUP_ONLY=true`. It signs up through the public API, AgentNet sends the normal verification email, and the proof stops at `A2A PROOF AWAITING OWNER VERIFICATION`. The owner clicks the link. Later runs in the same window reuse the account.
 * `A2A_PROOF_MODES`: `server` (read-mostly, free skills only), `federation`, or `federation_cleanup`. The federation modes need operator authority. Name the canary in `SOCIETY_OPERATOR_BOOTSTRAP_EMAILS` on `prod-registry` for the window only, then empty it again. The role is evaluated per request and never persisted.
 * The start command installs the pinned SDK, clones `$VALIDATOR_REF` and runs the script:
   `sh -c 'pip install -q "a2a-sdk[http-server]==1.1.5" && rm -rf /tmp/repo && git clone -q --depth 1 --branch "$VALIDATOR_REF" https://github.com/vansyson1308/agentnet.git /tmp/repo && python /tmp/repo/deploy/railway/a2a_live_proof.py; echo "validator finished with exit $?"; exec tail -f /dev/null'`.
   The JS interop step downloads Node 22 from nodejs.org and checks it against `SHASUMS256.txt`. Afterwards, restore the idle start command.
+
+After the 2026-09-26 proof, every proof variable on `prod-validator` (including `VALIDATOR_SECRET`, the canary address and a stale `SMTP_PASSWORD` reference) was blanked, and the idle start command was deployed. The validator holds no credential beyond the Postgres/Redis references, and the canary's password can no longer be derived. A later proof uses a **new** canary address and a newly generated secret.
 
 The canary account and its three proof agents (`A2A_Proof_Callee`, `A2A_Proof_Caller`, `A2A_Proof_Other`) remain in production. Their skills are free and they hold no funds.
 

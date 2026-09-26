@@ -229,9 +229,16 @@ the official-SDK reference peer on its public staging URL (§3):
   `federation_cleanup`): production `d56bd8c5` GREEN 4 and staging
   `d2c4ba2f` GREEN 5. `X01`: its catalog entry is `blocked` (1/1). `X02`:
   its open connections are revoked (1/1). The staging Society's discovery
-  allowlist is empty. Deleting the peer service itself timed out on the
-  Railway API three times, so it is still online in staging, blocked and
-  reachable by nobody's catalog. It is an owner action in the dashboard.
+  allowlist is empty. Deleting the peer service, or even just its
+  `*.up.railway.app` domain, timed out on the Railway API every time (five
+  attempts). So it is still online in staging, blocked in both catalogs, and
+  holds no AgentNet credential. Deleting it is an owner action in the
+  dashboard (staging → `a2a-reference-peer` → Settings → Delete service).
+* **Validators back to idle.** Every proof variable was blanked on both
+  validators, and their idle start commands were deployed. On
+  `prod-validator` that includes `VALIDATOR_SECRET`, the canary address and a
+  stale `SMTP_PASSWORD` reference (from 2026-09-21, read by no validator), so
+  the canary's password can no longer be derived.
 * **Final core validation** (`validate.py`, deployment `27b13a1c`):
   `PROD RESULT OK (18 checks)`, with A2A server and federation on.
 * **Secret audit:** the validator's and `prod-registry`'s logs for the
