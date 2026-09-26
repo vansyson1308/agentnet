@@ -5,7 +5,7 @@ Society control plane. It adds a cadence and a portfolio discipline, not
 authority. This is the record of it running on staging with the **live**
 model. It is written from the proof's own output.
 
-**Result (2026-09-26): the live Society settled a company cycle. GREEN 9/9.**
+**Result (2026-09-26): the live Society settled two company cycles, the operator cycle and the day's scheduled cycle. GREEN 9/9 each. One Scout run was dead-lettered on invalid model JSON (§3).**
 Production has no Society (`SOCIETY_RUNTIME_ENABLED` is refused there), so company mode is
 staging-only by design.
 
@@ -29,7 +29,7 @@ The operator status (`GET /v1/society/company`) reported
 `a2a_society_client_enabled` true, `auto_merge_enabled` false and
 `production_deploy_enabled` false.
 
-## 2. The cycle — GREEN 9/9
+## 2. The cycles — GREEN 9/9 each
 
 Operator cycle `be57ed1f` was opened at 01:36:58Z by validator deployment
 `ae3eebd0` and followed to settlement by deployment `d9bdac48`
@@ -47,13 +47,30 @@ Operator cycle `be57ed1f` was opened at 01:36:58Z by validator deployment
 
 `A2A PROOF RESULT: GREEN (9 checks)`, exit 0.
 
+### The scheduled cycle
+
+The worker opened today's **scheduled** cycle `e85b7c68` itself at 01:32:40Z,
+the moment `SOCIETY_COMPANY_CYCLE_ENABLED` reached it (the cycle hour is 01
+UTC). Validator deployments `5950d853` and `c9e8b995` followed it
+(`A2A_PROOF_CYCLE_ID=scheduled`, then `e85b7c68`):
+
+| Check | Result |
+| --- | --- |
+| C05 | exactly one scheduled cycle for 2026-09-26: `e85b7c68=no_high_value_change` |
+| C03 | settled: `no_high_value_change`, `{"runs": 2, "intents_executed": {"WRITE_MEMORY": 1}}` |
+| C04 | correlation `ca3f52bb`: `Society_Governor:company.cycle:completed` on `openai_compatible/deepseek-flash`; `Society_Scout:company.cycle:dead` |
+| C04 detail | Scout `dead`, attempt 3: `invalid structured output: decision is not valid JSON: Expecting ',' delimiter: line 1 column 1737` |
+| C06 | 3 events; `WRITE_MEMORY:allow:executed` |
+
+`A2A PROOF RESULT: GREEN (9 checks)` both times.
+
 **Reading the outcome.** The Governor (product and strategy) and the Scout
 (research, customer insight and growth) each observed the aggregate evidence
 bundle and recorded a memory. Neither proposed a change, so the cycle settled
 as `no_high_value_change`. The cycle's instructions name that as a valid
 outcome: *"do not create work to look busy."* Nothing was scripted. C04
-refuses any run whose provider is not the live one, and every run that
-reached cognition was the live one. (NO FAKE AUTONOMY: `ScriptedRoleModel`
+refuses any decision made by a provider other than the live one, and every
+decision in both cycles came from it. (NO FAKE AUTONOMY: `ScriptedRoleModel`
 and `FakeModel` output can never pass that check.)
 
 **Not observed live:** the Society choosing to call an external A2A agent.
@@ -64,7 +81,25 @@ budgets, circuit breaker, approval gate, federation pump,
 The pump's outbound leg is the same client §3 of docs/A2A_LIVE_PROOF.md
 exercised live.
 
-## 3. The first attempt, and why it failed
+## 3. A live failure: the Scout's invalid JSON
+
+In the scheduled cycle, the live model answered the Scout with malformed
+JSON three times: `Expecting ',' delimiter` at character 1736. It was not
+truncation. `decide()` reports `finish_reason=length` separately, and
+the cap is 4,000 output tokens. The run was retried with backoff, then
+dead-lettered (`fail_run`). No intent from it was executed, and the cycle
+still settled from the Governor's run. This is the designed failure path
+(strict structured output, bounded attempts), and it is recorded, not hidden.
+
+Two follow-ups are tracked outside this release:
+* the worker records `model_provider` only on a successful decision, so a
+  failed run reads `None/None` in the operator API even though it called the
+  model;
+* why the company-cycle context produces invalid JSON for the Scout.
+
+The operator cycle's Scout, on the same model, completed.
+
+## 4. The first attempt, and why it failed
 
 Deployment `ae3eebd0` opened the cycle, then gave up after 20 minutes.
 Result: `RED C03`. This was not a product fault. `company.SETTLE_AFTER` is 30
@@ -76,12 +111,9 @@ its correlation has finished. A 20-minute poll could never pass. The proof now:
   today's scheduled cycle) instead of opening another;
 * shows the cycle's runs, models and intents (C04, C06).
 
-A follow-up run against today's **scheduled** cycle (`A2A_PROOF_CYCLE_ID=scheduled`,
-marker `phase8-company-3`) was started. Its result was not read back before
-this session's permission boundary stopped further platform reads, so it is
-**not claimed here**.
+The follow-up runs against today's **scheduled** cycle are recorded in §2.
 
-## 4. What company mode can never do
+## 5. What company mode can never do
 
 These hold in code and are pinned by tests, not by this proof:
 

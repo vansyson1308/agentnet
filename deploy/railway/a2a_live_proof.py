@@ -572,8 +572,10 @@ def company_proof(rep: vs.Report, api: str, op_token: str, timeout_s: int, exist
     st, body = vs.http("GET", f"{api}/v1/society/runs?correlation_id={corr}&limit=200", token=op_token)
     runs = _json(body) or []
     models = sorted({f"{r.get('model_provider')}/{r.get('model_name')}" for r in runs})
-    # A run that never reached cognition (e.g. suppressed) has no provider;
-    # every run that DID think must have used the live provider.
+    # The worker records model_provider only when a decision parses, so a run
+    # that failed (e.g. invalid model JSON, dead-lettered) shows no provider;
+    # its error is printed below. Every run that produced a decision must have
+    # used the live provider.
     thought = [r for r in runs if r.get("model_provider")]
     live = bool(thought) and all(
         r.get("model_provider") == "openai_compatible"
