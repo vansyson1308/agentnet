@@ -10,15 +10,16 @@ so rather than rounding up.
 | Environment | Inbound A2A | Outbound federation | Evidence |
 | --- | --- | --- | --- |
 | staging | **LIVE — 39/39** | **LIVE — 18/18** (with the incident drill) | §2, §3 |
-| production | **NOT RELEASED** | **NOT RELEASED** | §5 |
+| production | **LIVE — 37/37** (official Python and JS SDKs) | **LIVE — 14/14** | §5 |
 
-The code is `main` `39e7c6b` (PR #47). Production still runs `9583033`
-(`main` `57dab99`), which contains none of Phase 8.
+The code is `main` `39e7c6b` (PR #47). Production runs it as the release
+merge `322e76b` (PR #49; same tree), deployed 2026-09-26.
 
 ## 1. How the proof runs
 
 `deploy/railway/a2a_live_proof.py` runs **inside** the staging environment as
-the `staging-validator` service (`VALIDATOR_SCRIPT=a2a_live_proof.py`). It
+the `staging-validator` service (`VALIDATOR_SCRIPT=a2a_live_proof.py`), and in
+production as `prod-validator` with an owner-verified public identity (§5.2). It
 talks to the **public** registry through Railway's edge with the **official**
 `a2a-sdk` 1.1.5 client, exactly as an outside agent would. There is no
 in-process shortcut.
@@ -115,21 +116,23 @@ start and confirm between two observations, and the event log skipped
 test (`test_a_start_and_confirm_between_observations_still_records_working`),
 before merge.
 
-## 5. Production — not released (blocked)
+## 5. Production — LIVE (inbound 37/37, federation 14/14)
 
-Production is unchanged. It runs `9583033` with no Phase 8 code, no migration
-`0013`, and no A2A flag.
+The owner approved the release of exactly `39e7c6b` over `9583033`, sensitive
+categories allowed only for the reviewed Phase-8 scope, and an authenticated
+canary made through the public signup flow (no database reads).
 
-What was done toward the release:
+### 5.1 Release
 
-* **Release gate preflight (read-only), target `39e7c6b`:**
+* **Release gate** (`deploy/production/release.py --allow-sensitive
+  --execute`, target `39e7c6b`):
   * target shape, existence, on `main`, and main CI green: PASS;
   * no merge freeze: PASS;
-  * staging evidence PASS for:
-    * registry, worker and dashboard (staging deployed the target itself);
-    * payment (subtree unchanged since `ac1b57e`).
+  * staging evidence PASS for registry, worker and dashboard (staging deployed
+    the target itself) and payment (subtree unchanged since `ac1b57e`).
 * **Sensitive diff reviewed file by file** against the owner's Phase-8
-  authorization. Every hit is inside it:
+  authorization. Every hit is inside it, and no unexpected sensitive diff
+  appeared:
 
   | Category | Files | Why in scope |
   | --- | --- | --- |
@@ -141,13 +144,115 @@ What was done toward the release:
   | `release_machinery` | `.railway/production.ts`, `.railway/railway.ts` | production declares A2A dark; staging enables it |
   | `deployment_foundation` | `services/dashboard/Dockerfile` | gunicorn, the separately reviewed #46 |
 
-  No unexpected sensitive diff.
+* The release PR #49 into `production` passed the required CI and was merged
+  with a merge commit: `322e76b`, whose tree equals `39e7c6b`'s.
+* Railway waited for CI, then deployed. The pre-deploy step migrated
+  `0012_memory_validation_history → 0013_a2a_federation` (additive).
+* **Dark core validation** (`validate.py`, prod-validator deployment
+  `1c634612`, 03:04:18Z): `PROD RESULT OK (18 checks)`: health, exposure,
+  Society absence, name audit, smoke, security and Redis auth.
 
-What stopped it: creating the release branch (`release.py --execute`) was
-refused by this session's permission boundary. So was the production canary's
-identity step: reading an account's verification token from the production
-database, as `validate_email_flow.py` does, to make a verified test identity.
-Both are decisions for the owner. Nothing was attempted around them.
+### 5.2 The canary identity
 
-Until the owner decides, production A2A is **not live**, and none of the
-production lines of the Phase 8 verdict are claimed.
+A fresh account was created through the **public** production signup
+(`/v1/auth/user/register`) and sent AgentNet's normal verification email.
+The owner clicked the link in the inbox. Then the canary logged in (HTTP
+200). The proof never read the database, and it prints only a hash prefix of
+the address (`0b14567d`). The password is derived from `VALIDATOR_SECRET` (a
+Railway-generated secret) inside the validator; neither it nor any JWT or
+token was printed or stored.
+
+### 5.3 Inbound A2A — GREEN 37/37
+
+`A2A_SERVER_ENABLED=true` on `prod-registry` (deployment `f02a2657`).
+Federation, the Society client and the company cycle were still `false`.
+prod-validator deployment `b455f9d5`, 2026-09-26 03:08:43–03:08:59Z, against
+`https://api.agentnet.io.vn` through Cloudflare, exactly as an outside agent
+reaches it:
+
+| Check | Result |
+| --- | --- |
+| P01a–b | the owner-verified canary exists; login HTTP 200 |
+| P03–P06 | 3 proof agents created; Ed25519 agent logins issue agent JWTs |
+| S01 | network card: `JSONRPC 1.0` and `HTTP+JSON 1.0` |
+| S02 | agent card: tenant = agent id; endpoint and key not exposed |
+| S03 | conformance answered |
+| S04–S07 | unauthenticated → 401; no `A2A-Version` → `-32009`; wrong content type → 415; push config → `-32003` |
+| S20a–h | **JSON-RPC** (official Python SDK): search answered with a Message (1 match); task `SUBMITTED`; REST fulfilment → `COMPLETED` with an artifact; ListTasks; cancel, and an idempotent repeat; paid skill without the extension → `ExtensionSupportRequired`, no task; `maxBudget` below the price → `REJECTED`, no escrow; unfunded wallet → `REJECTED`, no reservation |
+| S30a–h | **HTTP+JSON** (official Python SDK): the same eight |
+| S40 | SSE `task, status, artifact, status` → `COMPLETED` |
+| S41 | SubscribeToTask on a finished task → `UnsupportedOperation` |
+| S42 | SubscribeToTask on a live task → `SUBMITTED`, then `CANCELED` |
+| S50–S51 | another agent: GetTask → `TaskNotFound` (no oracle); ListTasks excludes the task |
+| S60 | the callee fulfilled 3 tasks over the ordinary REST API |
+| J01 | **official JS SDK** `@a2a-js/sdk` 1.2.1 over JSON-RPC: getTask `SUBMITTED`, listTasks, cancel → `CANCELED` |
+| J02 | the JS SDK over HTTP+JSON: the same |
+
+`A2A PROOF RESULT: GREEN (37 checks)`, exit 0. (J00, the JS run's own
+token-leak check, would fail the run if the token appeared in its output.)
+
+### 5.4 Outbound federation — GREEN 14/14
+
+A production-scoped **shared** `A2A_CREDENTIAL_KEY` was created with Railway's
+generator (`${{secret(64, "abcdef0123456789")}}`; nobody saw the value) and
+referenced from `prod-registry`. Then `A2A_FEDERATION_ENABLED=true`
+(deployment `70aee42b`).
+
+For the proof only, `SOCIETY_OPERATOR_BOOTSTRAP_EMAILS` named the canary, so
+it could act as the federation operator. The role is evaluated per request
+and never persisted (`operator_auth.user_society_role`). The allowlist was
+emptied straight after (deployment `25958258`), which removed the role.
+
+prod-validator deployment `e66f1fff`, mode `federation`. The remote agent is
+the official-SDK reference peer on its public staging URL (§3):
+
+| Check | Result |
+| --- | --- |
+| F01 | discover `169.254.169.254` → 422 `destination refused: scheme` |
+| F02 | discover `prod-validator.railway.internal` → 422 `ssrf_refused` |
+| F03 | discover `127.0.0.1.nip.io` → 422 `ssrf_refused` |
+| F04 | discover a URL carrying userinfo → 422 `destination refused: credentials` |
+| F10 | discover the reference agent → 201, `discovered`, skills `['echo_bot']` |
+| F11 | the operator verifies it → 200 |
+| F12 | connection without a credential → 201 |
+| F13 | bearer connection sealed and write-only → 201, `leaked=False` |
+| F14 | revoke destroys the sealed credential → 200 |
+| F15 | outbound call through the official SDK client → 201, `status=sent`, remote `TASK_STATE_SUBMITTED` |
+| F16 | GetTask on the remote task → `succeeded` / `TASK_STATE_COMPLETED`, result labelled untrusted |
+| F17 | the public federation summary is counts only → 200 |
+
+`A2A PROOF RESULT: GREEN (14 checks)`, exit 0.
+
+### 5.5 Cleanup and the final check
+
+* **The disposable peer retired from both catalogs** (mode
+  `federation_cleanup`): production `d56bd8c5` GREEN 4 and staging
+  `d2c4ba2f` GREEN 5. `X01`: its catalog entry is `blocked` (1/1). `X02`:
+  its open connections are revoked (1/1). The staging Society's discovery
+  allowlist is empty. Deleting the peer service itself timed out on the
+  Railway API three times, so it is still online in staging, blocked and
+  reachable by nobody's catalog. It is an owner action in the dashboard.
+* **Final core validation** (`validate.py`, deployment `27b13a1c`):
+  `PROD RESULT OK (18 checks)`, with A2A server and federation on.
+* **Secret audit:** the validator's and `prod-registry`'s logs for the
+  window hold no JWT, password, bearer value, email address or key.
+  `nextPageToken` values in them are timestamp cursors.
+* `.railway/production.ts` now declares the live state: server and
+  federation `true`, `A2A_CREDENTIAL_KEY` from the shared variable, the
+  Society client and the company cycle `false`, and the operator allowlist
+  empty. `test_production_iac_declares_live_a2a_without_a_society_client`
+  pins it.
+
+### 5.6 Not proven live in production
+
+* **A funded, settled paid task.** The canary wallet has no legitimate
+  funding path (no real money, no direct DB writes), so the economics
+  extension was proven live by its three refusals: no extension, a budget
+  below the price, and an unfunded wallet. Reserve → settle → fee is proven
+  by `test_a2a_server` against PostgreSQL.
+* **The Society calling an external agent.** The production Society is OFF
+  by design. On staging, the live Society ran company cycles but did not
+  choose to call one (docs/AUTONOMOUS_COMPANY_LIVE_PROOF.md §2).
+
+Rollback stays one variable: set the flag back to `false`. The tables are
+additive, and the database is never downgraded automatically.
