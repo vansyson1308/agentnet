@@ -49,6 +49,7 @@ from ..models import (
 )
 from . import deployment as dep_mod
 from . import fitness as fitness_mod
+from . import memory_grounding
 from . import promotion as promo_mod
 from . import router as router_mod
 from . import surface_monitor as surface_monitor_mod
@@ -412,6 +413,9 @@ class SocietyWorker:
             .order_by(AgentIntent.seq)
             .all()
         )
+        # Memories last: a memory is admitted only once every side effect of its
+        # decision has an outcome (memory_grounding.py).
+        pending.sort(key=lambda r: memory_grounding.execution_order_key(r.intent_type, r.seq))
         for row in pending:
             validated = self._revalidate(row, run)
             verdict = evaluate_intent(validated, grant=grant, settings=self.settings, agent=agent)

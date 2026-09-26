@@ -63,7 +63,7 @@ from ..models import (
     SocietyEvent,
     TaskSession,
 )
-from . import repo_intel
+from . import memory_grounding, repo_intel
 from .config import SocietySettings
 from .engineering import workspace as ws_mod
 from .engineering.qa import RISKY_PATH_RE, evaluate_candidate, static_security_scan
@@ -216,6 +216,12 @@ def _require_ref(ctx: ExecContext, model, ref: Optional[uuid.UUID], label: str) 
 
 def _write_memory(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
+    # Execution-grounded memory (memory_grounding.py): a memory authored in the
+    # same decision as a side effect is admitted only after every side effect
+    # of that decision executed -- the model wrote it before any outcome existed.
+    grounding = memory_grounding.check(ctx.db, run_id=ctx.run.id, memory_intent_id=ctx.intent_row.id, memory_seq=ctx.intent_row.seq)
+    if not grounding.admitted:
+        raise ExecutionError(grounding.reason)
     _require_ref(ctx, TaskSession, p.source_task_id, "source_task_id")
     # A canary rehearsal must not train the fleet permanently: memory written
     # under a rehearsal correlation expires with it (see events.py). The row is

@@ -902,6 +902,9 @@ Rules:
 - "recent_refusals" lists YOUR OWN intents that the platform refused. A refused intent never took
   effect: work it described did NOT happen, no matter what a memory item or an earlier
   decision_summary claims. Trust that list over your own notes when they disagree.
+- A WRITE_MEMORY is kept only if every other side-effecting intent of the same decision executed;
+  otherwise it is refused. Memories you write here are written BEFORE any outcome exists: record what
+  you observed, never what you expect your other intents to achieve.
 - A CREATE_IMPROVEMENT raised for a platform signal MUST include "evidence": {{"signal", "baseline", "observed",
   "window", "sample_size", "actionable_reason"}} taken from the event; an event existing is not evidence.
 - Repository read intents (SEARCH_REPO, READ_REPO_FILE, ...) are bounded and audited; read before you change code,

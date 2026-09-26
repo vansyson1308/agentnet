@@ -549,7 +549,10 @@ def _recent_refusals(db: Session, agent: Agent, now: datetime) -> List[Dict[str,
             "intent_type": r.intent_type,
             "outcome": _ev(r.execution_status),
             "policy": _ev(r.policy_decision),
-            "reason": _t(r.policy_reason or r.error, TXT_SHORT),
+            # A FAILED intent was ALLOWED by policy ("allowed by grant") and then
+            # refused while executing; the execution error is the reason. Showing
+            # the policy reason hid e.g. "portfolio full" from the live Scout.
+            "reason": _t((r.error if _ev(r.execution_status) == IntentExecutionStatus.FAILED.value else None) or r.policy_reason or r.error, TXT_SHORT),
             "at": _iso(r.created_at),
         }
         for r in rows
