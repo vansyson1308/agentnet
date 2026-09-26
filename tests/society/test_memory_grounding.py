@@ -275,3 +275,55 @@ def test_every_society_path_that_writes_model_memory_is_grounded():
     assert body.index("memory_grounding.check(") < body.index("MemoryItem("), "the grounding check runs before any row is built"
     fit = (pkg / "fitness.py").read_text(encoding="utf-8")
     assert 'validation_state="validated"' in fit and "author_agent_id=None" in fit, "the fitness memory is trusted, not model-authored"
+
+
+DUPLICATE_CLAIM = {"type": "WRITE_MEMORY", "payload": {"title": "Triage: duplicate of the earlier proposal", "content": "Already covered by the earlier proposal; no new proposal raised.", "importance": 30}}
+
+
+def test_signal_coverage_contradicts_a_cross_run_duplicate_belief(db, SessionLocal, grants_with_no_cooldown, monkeypatch):
+    """The second live failure (staging 2026-09-26 08:09Z/09:07Z): after the
+    refused proposal, triage-only Scout runs kept writing "duplicate of the
+    06:02 proposal" -- admitted, since those decisions had no side effect --
+    and every later run believed its own note. The context now carries the
+    TRUSTED answer: no open proposal covers the signal, the last attempt
+    failed (with the real reason) and the portfolio has room."""
+    seed_society(db)
+    grants_with_no_cooldown()
+    full = _settings(monkeypatch, SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES="0")
+    _run_scout(db, SessionLocal, full, [
+        {"decision_summary": "raise it", "intents": [PROPOSAL], "sleep_for_seconds": 0},
+        {"decision_summary": "duplicate", "intents": [DUPLICATE_CLAIM], "sleep_for_seconds": 0},  # triage only: admitted
+    ])
+    assert db.query(MemoryItem).filter(MemoryItem.title == DUPLICATE_CLAIM["payload"]["title"]).count() == 1
+
+    free = _settings(monkeypatch, SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES="3")
+    model = _run_scout(db, SessionLocal, free, [{"decision_summary": "raise it now", "intents": [PROPOSAL], "sleep_for_seconds": 0}])
+    ctx = next(c for c in model.calls if c.agent["name"] == "Society_Scout")
+    cov = ctx.signal_coverage
+    assert cov["signal"] == "public.surface.anomaly"
+    assert cov["open_proposals"] == [], "the trusted answer: nothing covers this signal"
+    assert cov["attempts"][0]["outcome"] == "failed" and "portfolio full" in cov["attempts"][0]["reason"]
+    assert cov["portfolio"] == {"active": 0, "max": 3, "full": False}
+    # the false belief is still in memory -- the trusted block is what contradicts it
+    assert DUPLICATE_CLAIM["payload"]["title"] in [m["data"]["title"] for m in ctx.memory]
+    assert db.query(ImprovementProposal).count() == 1
+
+    # once a proposal exists, coverage says so (and names it)
+    model = _run_scout(db, SessionLocal, free, [{"decision_summary": "look again", "intents": [], "sleep_for_seconds": 0}])
+    cov = next(c for c in model.calls if c.agent["name"] == "Society_Scout").signal_coverage
+    prop = db.query(ImprovementProposal).one()
+    assert cov["open_proposals"] == [{"id": str(prop.id), "status": "PROPOSED"}]
+    assert cov["attempts"][0]["outcome"] == "executed" and cov["attempts"][0]["proposal_id"] == str(prop.id)
+
+
+def test_signal_coverage_is_only_for_world_signals(db, SessionLocal, grants_with_no_cooldown, monkeypatch):
+    settings = _settings(monkeypatch)
+    seed_society(db)
+    grants_with_no_cooldown()
+    model = FakeModel({"Society_Scout": [{"decision_summary": "n/a", "intents": [], "sleep_for_seconds": 0}]})
+    worker = SocietyWorker(SessionLocal, settings=settings, model=model, worker_id="w", telemetry_enabled=False)
+    worker.routing = {**worker.routing, "t.plain": ["scout"]}
+    emit_event(db, event_type="t.plain")
+    db.commit()
+    asyncio.run(worker.run_until_idle(max_cycles=5))
+    assert model.calls and model.calls[0].signal_coverage == {}

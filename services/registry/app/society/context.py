@@ -148,6 +148,10 @@ class AgentContext:
     # Phase 8: the federation catalog as IDS + untrusted descriptive data. No
     # URL beyond the host, no credential, no sealed token, no raw card.
     federation: Dict[str, Any] = field(default_factory=dict)
+    # Graduation hardening: the TRUSTED answer to "is this world signal already
+    # being worked on?" -- derived from durable intent/proposal rows, never
+    # from what an agent remembers (_signal_coverage).
+    signal_coverage: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -577,6 +581,78 @@ def _recent_refusals(db: Session, agent: Agent, now: datetime) -> List[Dict[str,
     ]
 
 
+#: How far back signal coverage looks for CREATE_IMPROVEMENT attempts, and how many it lists.
+SIGNAL_COVERAGE_DAYS = 7
+LIMIT_SIGNAL_ATTEMPTS = 5
+
+
+def _signal_coverage(db: Session, event: SocietyEvent, settings: SocietySettings, now: datetime) -> Dict[str, Any]:
+    """Whether an open proposal covers this world signal, from durable rows.
+
+    Observed live on staging (2026-09-26): a Scout's CREATE_IMPROVEMENT for a
+    critical public-surface anomaly was refused, and every later Scout run
+    declined the re-raised signal as a "duplicate of the 06:02 proposal" --
+    a proposal that never existed -- each run writing another triage memory
+    that said so. Operator refutation did not stop it, because the belief
+    lived in the model's own chain of notes and the context had no trusted
+    answer to the one question the Scout was deciding. This is that answer:
+
+    * ``open_proposals`` -- open proposals created by an EXECUTED
+      CREATE_IMPROVEMENT whose evidence named this signal (empty means no
+      open proposal covers it, whatever a memory item says);
+    * ``attempts`` -- the recent CREATE_IMPROVEMENT intents for this signal
+      with their execution outcome and the trusted reason;
+    * ``portfolio`` -- whether company mode has room for a new hypothesis.
+
+    Trusted facts only; titles and payload text are not repeated here."""
+    from .executor import _OPEN_PROPOSAL_STATUSES, WORLD_SIGNAL_EVENTS  # noqa: PLC0415 - executor imports context lazily
+
+    if event.event_type not in WORLD_SIGNAL_EVENTS:
+        return {}
+    signal = event.event_type
+    rows = (
+        db.query(AgentIntent)
+        .filter(
+            AgentIntent.intent_type == "CREATE_IMPROVEMENT",
+            AgentIntent.created_at >= now - timedelta(days=SIGNAL_COVERAGE_DAYS),
+            AgentIntent.payload["evidence"]["signal"].astext == signal,
+        )
+        .order_by(AgentIntent.created_at.desc())
+        .limit(LIMIT_SIGNAL_ATTEMPTS)
+        .all()
+    )
+    attempts, proposal_ids = [], []
+    for r in rows:
+        status = _ev(r.execution_status)
+        pid = ((r.result or {}).get("result") or {}).get("proposal_id") if status == IntentExecutionStatus.EXECUTED.value else None
+        if pid:
+            proposal_ids.append(pid)
+        reason = r.error if status == IntentExecutionStatus.FAILED.value else (None if status == IntentExecutionStatus.EXECUTED.value else r.policy_reason)
+        attempts.append({"at": _iso(r.created_at), "outcome": status, "reason": _t(reason, TXT_SHORT) if reason else None, "proposal_id": pid})
+    open_rows = []
+    ids = []
+    for pid in proposal_ids:
+        try:
+            ids.append(uuid.UUID(str(pid)))
+        except ValueError:
+            continue
+    if ids:
+        open_statuses = list(_OPEN_PROPOSAL_STATUSES)
+        open_rows = [
+            {"id": str(pid), "status": _ev(st)}
+            for pid, st in db.query(ImprovementProposal.id, ImprovementProposal.status)
+            .filter(ImprovementProposal.id.in_(ids), ImprovementProposal.status.in_(open_statuses))
+            .all()
+        ]
+    out: Dict[str, Any] = {"signal": signal, "open_proposals": open_rows, "attempts": attempts}
+    if settings.company_cycle_enabled:
+        from .company import _portfolio  # noqa: PLC0415
+
+        p = _portfolio(db, settings)
+        out["portfolio"] = {"active": p["active_hypotheses"], "max": p["max_active_hypotheses"], "full": p["full"]}
+    return out
+
+
 def _society_agents(db: Session, agent: Agent) -> List[Dict[str, Any]]:
     rows = (
         db.query(Agent.name, AgentCapabilityGrant.role)
@@ -812,5 +888,6 @@ def build_context(
         engineering=_engineering(db, agent, event, settings, role),
         promotions=_promotions(db, event),
         federation=_federation(db, grant),
+        signal_coverage=_signal_coverage(db, event, settings, now),
     )
     return ctx

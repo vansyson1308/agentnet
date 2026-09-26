@@ -254,6 +254,16 @@ forming (`society/memory_grounding.py`):
 - **`recent_refusals` fix.** For an intent that policy *allowed* but execution *failed*, the reason
   shown is now the execution error. Before, it was the policy reason, *"allowed by grant"*, which hid
   *"portfolio full"* from the live Scout.
+- **`signal_coverage` (trusted, world signals only).** The same incident had a second, cross-run
+  form. After the refused proposal, triage-only Scout runs kept writing *"duplicate of the 06:02
+  proposal"*, at 08:09Z and again at 09:07Z on the hardened code. Those decisions had no side
+  effect, so their memories are admitted. Each later run believed its own note, and operator
+  refutation did not stop it. The context never answered the one question the Scout was deciding.
+  It now does, from durable rows:
+  - `open_proposals`: proposals created by an **executed** `CREATE_IMPROVEMENT` whose evidence named
+    this signal. An empty list means nothing covers it, whatever a memory says.
+  - `attempts`: recent `CREATE_IMPROVEMENT` intents for the signal, with outcome and trusted reason.
+  - `portfolio`: whether company mode has room.
 - **`recent_activity[].outcomes`.** The model's own `decision_summary` (for example *"raised
   proposal X"*) is written before its intents run. It now travels with the run's trusted outcome
   (`executed` count, `not_executed: ["CREATE_IMPROVEMENT:failed", ...]`), so the same false claim cannot
