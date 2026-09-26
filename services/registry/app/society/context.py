@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import String, cast, or_
+from sqlalchemy import String, and_, cast, or_
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -350,18 +350,21 @@ def _proposals(db: Session, agent: Agent, event: SocietyEvent) -> List[Dict[str,
     return out
 
 
+#: A candidate still being engineered (it can take more turns of work).
+OPEN_CANDIDATE_STATUSES = (
+    CodeCandidateStatus.REQUESTED,
+    CodeCandidateStatus.BUILDING,
+    CodeCandidateStatus.BUILT,
+    CodeCandidateStatus.QA_RUNNING,
+    CodeCandidateStatus.QA_FAILED,
+    CodeCandidateStatus.SECURITY_REVIEW,
+)
+
+
 def _candidates(db: Session, event: SocietyEvent) -> List[Dict[str, Any]]:
-    open_statuses = [
-        CodeCandidateStatus.REQUESTED,
-        CodeCandidateStatus.BUILDING,
-        CodeCandidateStatus.BUILT,
-        CodeCandidateStatus.QA_RUNNING,
-        CodeCandidateStatus.QA_FAILED,
-        CodeCandidateStatus.SECURITY_REVIEW,
-    ]
     rows = (
         db.query(CodeCandidate)
-        .filter(CodeCandidate.status.in_(open_statuses))
+        .filter(CodeCandidate.status.in_(list(OPEN_CANDIDATE_STATUSES)))
         .order_by(CodeCandidate.created_at.desc())
         .limit(LIMIT_CANDIDATES)
         .all()
@@ -696,23 +699,52 @@ def _society_agents(db: Session, agent: Agent) -> List[Dict[str, Any]]:
     return [{"name": n, "role": r} for n, r in rows]
 
 
-def _repo_reads(db: Session, agent: Agent, run: Optional[AgentRun], event: SocietyEvent) -> List[Dict[str, Any]]:
-    """This agent's executed repository reads in the correlation (newest last)."""
+#: How long an agent's reads for a still-open candidate stay in its context
+#: across stories.
+CANDIDATE_READS_WINDOW_HOURS = 24
+
+
+def _repo_reads(db: Session, agent: Agent, run: Optional[AgentRun], event: SocietyEvent, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """This agent's executed repository reads (newest last, bounded): those
+    of this correlation, plus those it made for a still-OPEN candidate in an
+    earlier story within CANDIDATE_READS_WINDOW_HOURS.
+
+    Why the second part (staging, 2026-09-26): work on a candidate outlives
+    any one story. The Builder resumes an open candidate on the hourly
+    heartbeat, and every heartbeat is a new correlation, while engineering
+    turns are bounded per correlation (SOCIETY_MAX_ENGINEERING_TURNS). With
+    per-correlation reads only, each heartbeat started from an empty context:
+    after candidate a2788678 failed QA, the Builder re-read the same failing
+    test, templates and main.py at 15:00Z and again at 16:00Z, ran out of
+    turns each time, and could never resubmit. Earlier-story reads are marked
+    ``earlier_story`` and carry ``at``: the worktree may have changed since.
+    Same agent, same open candidate, same bounds; no budget or cap changes."""
+    now = now or datetime.now(timezone.utc)
+    open_ids = [str(i) for (i,) in db.query(CodeCandidate.id).filter(CodeCandidate.status.in_(list(OPEN_CANDIDATE_STATUSES))).all()]
+    scope = AgentRun.correlation_id == event.correlation_id
+    if open_ids:
+        scope = or_(
+            scope,
+            and_(
+                AgentIntent.payload["candidate_id"].astext.in_(open_ids),
+                AgentIntent.executed_at >= now - timedelta(hours=CANDIDATE_READS_WINDOW_HOURS),
+            ),
+        )
     rows = (
-        db.query(AgentIntent)
+        db.query(AgentIntent, AgentRun.correlation_id)
         .join(AgentRun, AgentRun.id == AgentIntent.run_id)
         .filter(
             AgentIntent.agent_id == agent.id,
-            AgentRun.correlation_id == event.correlation_id,
             AgentIntent.intent_type.in_([t.value for t in REPO_READ_INTENT_TYPES]),
             AgentIntent.execution_status == IntentExecutionStatus.EXECUTED,
+            scope,
         )
         .order_by(AgentIntent.executed_at.desc())
         .limit(LIMIT_REPO_READS)
         .all()
     )
     out = []
-    for r in reversed(rows):
+    for r, corr in reversed(rows):
         res = (r.result or {}).get("result") or {}
         data = res.get("data") if isinstance(res, dict) else None
         out.append(
@@ -725,6 +757,8 @@ def _repo_reads(db: Session, agent: Agent, run: Optional[AgentRun], event: Socie
                     "duplicate": bool(res.get("duplicate")) if isinstance(res, dict) else False,
                     "request": _bounded_json(r.payload or {}, TXT_SHORT),
                     "data": _bounded_json(data or {}, TXT_READ),
+                    "at": _iso(r.executed_at),
+                    "earlier_story": corr != event.correlation_id,
                 },
                 source=f"repo:{res.get('op') if isinstance(res, dict) else 'read'}",
             )
@@ -915,7 +949,7 @@ def build_context(
         recent_refusals=_recent_refusals(db, agent, now),
         society_agents=_society_agents(db, agent),
         run_id=str(run.id) if run else None,
-        repo_reads=_repo_reads(db, agent, run, event),
+        repo_reads=_repo_reads(db, agent, run, event, now),
         engineering=_engineering(db, agent, event, settings, role),
         promotions=_promotions(db, event),
         federation=_federation(db, grant),
