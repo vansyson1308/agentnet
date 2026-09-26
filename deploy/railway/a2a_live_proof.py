@@ -21,14 +21,41 @@ Modes (A2A_PROOF_MODES, comma separated; default "server"):
                 bindings, streaming, cancel, list, BOLA, paid-path refusals
     federation  operator catalog: SSRF refusals, discover -> verify ->
                 connection -> outbound call -> check (A2A_REFERENCE_CARD_URL)
-    company     operator company status + an immediate company cycle, then
-                wait for the Society to settle it (A2A_PROOF_CYCLE_TIMEOUT)
+    company     operator company status + an immediate company cycle (or
+                A2A_PROOF_CYCLE_ID: a running one, or "scheduled" for today's
+                scheduled cycle), wait for the Society to
+                settle it (A2A_PROOF_CYCLE_TIMEOUT, default 45 min: cycles
+                settle after 30 min), then show the role runs, their models
+                and the intents the cycle produced
     incident    open an incident freeze, see it in the status, lift it
+    federation_cleanup
+                block the disposable proof peer's catalog entries and revoke
+                their open connections (before the peer service is deleted)
+
+Identities (A2A_PROOF_IDENTITY):
+    staging     (default) register or reuse, then mark the validator's own
+                users verified on the staging database, as validate_staging.py
+                does (SMTP is not wired on staging)
+    public      PRODUCTION, owner-verified. ONE canary account
+                (A2A_PROOF_CANARY_EMAIL, an inbox the owner reads) signs up
+                through the normal public API, which sends the verification
+                email; the OWNER clicks the link. The validator never reads or
+                writes the database and never sees the verification token.
+                A2A_PROOF_SIGNUP_ONLY=true stops after the signup. The password
+                is derived from the validator secret (a Railway-generated
+                variable) and is never printed or stored. The same account owns
+                the three proof agents and, for the federation window only, is
+                the operator (SOCIETY_OPERATOR_BOOTSTRAP_EMAILS on the registry).
+
+A2A_PROOF_JS=1 also drives the tenant with the OFFICIAL @a2a-js/sdk client
+(scripts/a2a/js_interop.mjs); Node is fetched from nodejs.org and checked
+against its published SHA-256 when it is not already installed.
 
 Environment: REGISTRY_PUBLIC_URL, STAGING_VALIDATOR_SECRET (or
 VALIDATOR_SECRET), VALIDATOR_USER_EMAIL, VALIDATOR_OPERATOR_EMAIL,
-POSTGRES_* (staging only: marks the validator's own users verified, as
-validate_staging.py does), A2A_REFERENCE_CARD_URL.
+POSTGRES_* (staging identity only), A2A_REFERENCE_CARD_URL,
+A2A_PROOF_IDENTITY, A2A_PROOF_CANARY_EMAIL, A2A_PROOF_SIGNUP_ONLY,
+A2A_PROOF_JS.
 """
 
 from __future__ import annotations
@@ -36,15 +63,18 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import io
 import json
 import os
 import pathlib
+import shutil
+import subprocess
 import sys
 import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -76,6 +106,37 @@ def _json(body: str) -> Any:
         return json.loads(body)
     except Exception:
         return None
+
+
+def _fp(value: str) -> str:
+    """Publishable identity of an address: a short hash, never the address."""
+    return hashlib.sha256(value.strip().lower().encode()).hexdigest()[:8]
+
+
+def ensure_user_public(rep: vs.Report, code: str, api: str, email: str, password: str, *, signup_only: bool = False) -> Optional[str]:
+    """PRODUCTION identity: the normal public signup, verified by the OWNER.
+
+    Register (201: the registry accepted the verification email for delivery;
+    400 "already registered": a re-run), then log in. Until the owner clicks
+    the link in the inbox, login answers 403 and the proof stops there. No
+    database access and no verification token ever pass through this code."""
+    who = f"canary {_fp(email)}"
+    st, body = vs.http("POST", f"{api}/v1/auth/user/register", body={"email": email, "password": password}, timeout=90)
+    created = st in (200, 201)
+    exists = st == 400 and "already registered" in body.lower()
+    if not (created or exists):
+        rep.record(f"{code}a", False, f"public signup {who}: HTTP {st} {body[:120]!r}")
+        return None
+    rep.record(f"{code}a", True, f"public signup {who}: {'created; verification email sent through the normal flow' if created else 'account exists'}")
+    if signup_only:
+        return None
+    st, body = vs.http("POST", f"{api}/v1/auth/user/login", body={"email": email, "password": password})
+    if st == 403:
+        rep.record(f"{code}b", False, f"{who} is not verified yet: the owner has not clicked the verification link")
+        return None
+    token = (_json(body) or {}).get("access_token") if st == 200 else None
+    rep.record(f"{code}b", bool(token), f"{who} login after the owner verified the email: HTTP {st}")
+    return token
 
 
 def ensure_agent(rep: vs.Report, code: str, api: str, user_token: str, secret: str, name: str) -> Optional[str]:
@@ -130,6 +191,65 @@ class Callee(threading.Thread):
                 if s1 == 200 and s2 == 200:
                     self.completed.append(tid)
             self.stop.wait(1.0)
+
+
+# ── the official JS SDK client (optional) ─────────────────────────────
+
+REPO_ROOT = HERE.parent.parent
+
+
+def _node_bin() -> str:
+    """`node` from PATH, else the latest Node 22 from nodejs.org, verified
+    against the SHA-256 published next to it."""
+    found = shutil.which("node")
+    if found:
+        return found
+    import tarfile
+    import urllib.request
+
+    base = "https://nodejs.org/dist/latest-v22.x/"
+    with urllib.request.urlopen(base + "SHASUMS256.txt", timeout=30) as r:
+        sums = r.read().decode()
+    digest, name = next(line.split() for line in sums.splitlines() if line.endswith("-linux-x64.tar.xz"))
+    with urllib.request.urlopen(base + name, timeout=180) as r:
+        blob = r.read()
+    if hashlib.sha256(blob).hexdigest() != digest:
+        raise RuntimeError("node tarball checksum mismatch")
+    dest = pathlib.Path("/tmp/a2a-node")
+    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:xz") as tf:
+        try:
+            tf.extractall(dest, filter="data")
+        except TypeError:  # Python without extraction filters; the archive is checksum-verified
+            tf.extractall(dest)
+    return str(dest / name[: -len(".tar.xz")] / "bin" / "node")
+
+
+def js_interop(rep: vs.Report, api: str, caller_token: str, callee_id: str) -> None:
+    """Both bindings through @a2a-js/sdk 1.2.1: network search, a tenant task
+    on the free HOLD skill, GetTask, ListTasks, CancelTask. The agent JWT is
+    passed in the child's environment only and must not appear in its output."""
+    workdir = REPO_ROOT / "scripts" / "a2a"
+    try:
+        node = _node_bin()
+        env_ = {**os.environ, "PATH": f"{pathlib.Path(node).parent}{os.pathsep}{os.environ.get('PATH', '')}"}
+        npm = subprocess.run(["npm", "ci", "--no-audit", "--no-fund", "--silent"], cwd=workdir, env=env_, capture_output=True, text=True, timeout=300)
+        if npm.returncode != 0:
+            rep.record("J00", False, f"npm ci failed ({npm.returncode})")
+            return
+        env_.update({"AGENTNET_BASE_URL": api, "AGENTNET_A2A_TOKEN": caller_token, "AGENTNET_TENANT": callee_id, "AGENTNET_SKILL": "a2a-proof-hold"})
+        out = subprocess.run([node, "js_interop.mjs"], cwd=workdir, env=env_, capture_output=True, text=True, timeout=180)
+    except Exception as exc:  # noqa: BLE001 - report, never raise
+        rep.record("J00", False, f"JS interop could not run: {type(exc).__name__}")
+        return
+    text = out.stdout + out.stderr
+    if caller_token in text:
+        rep.record("J00", False, "the JS client output contained the credential (not printed)")
+        return
+    summary = _json(out.stdout) or {}
+    for code, binding in (("J01", "JSONRPC"), ("J02", "HTTP+JSON")):
+        b: Dict[str, Any] = (summary.get("bindings") or {}).get(binding) or {}
+        ok = bool(b.get("ok")) and (b.get("cancelTask") or {}).get("state") == "TASK_STATE_CANCELED"
+        rep.record(code, ok, f"@a2a-js/sdk {binding}: " + json.dumps({k: b.get(k) for k in ("networkSearch", "task", "getTask", "listTasks", "cancelTask", "error") if b.get(k) is not None}, sort_keys=True)[:260])
 
 
 # ── the official SDK client ───────────────────────────────────────────
@@ -343,7 +463,7 @@ def federation_proof(rep: vs.Report, api: str, op_token: str, ref_card: str) -> 
     base = f"{api}/v1/a2a/federation"
     for code, url in (
         ("F01", "http://169.254.169.254/.well-known/agent-card.json"),
-        ("F02", "https://registry.railway.internal/.well-known/agent-card.json"),
+        ("F02", f"https://{env('RAILWAY_PRIVATE_DOMAIN') or 'registry.railway.internal'}/.well-known/agent-card.json"),
         ("F03", "https://127.0.0.1.nip.io/.well-known/agent-card.json"),
         ("F04", "https://user:pw@example.com/.well-known/agent-card.json"),
     ):
@@ -394,16 +514,68 @@ def federation_proof(rep: vs.Report, api: str, op_token: str, ref_card: str) -> 
     rep.record("F17", st == 200 and "verified" in body and "cardUrl" not in body, f"public federation summary is counts only -> HTTP {st}")
 
 
-def company_proof(rep: vs.Report, api: str, op_token: str, timeout_s: int) -> None:
+def federation_cleanup(rep: vs.Report, api: str, op_token: str, ref_card: str) -> None:
+    """Retire the disposable proof peer from the catalog before it is deleted:
+    BLOCK every catalog entry for its card URL and revoke its open
+    connections, so no environment keeps a verified pointer to a host that
+    will stop existing. Operator API only; nothing else is touched."""
+    base = f"{api}/v1/a2a/federation"
+    st, body = vs.http("GET", f"{base}/agents", token=op_token)
+    host = ref_card.split("/")[2] if ref_card else ""
+    peers = [a for a in (_json(body) or {}).get("agents") or [] if host and host in str(a.get("cardUrl", ""))]
+    blocked = 0
+    for a in peers:
+        s2, b2 = vs.http("POST", f"{base}/agents/{a['id']}/state", token=op_token,
+                         body={"state": "blocked", "reason": "Phase 8 live proof finished: disposable reference peer retired"})
+        blocked += int(s2 == 200 and (_json(b2) or {}).get("state") == "blocked")
+    rep.record("X01", st == 200 and bool(peers) and blocked == len(peers), f"proof peer catalog entries blocked: {blocked}/{len(peers)}")
+    ids = {a["id"] for a in peers}
+    st, body = vs.http("GET", f"{base}/connections", token=op_token)
+    open_conns = [c for c in (_json(body) or {}).get("connections") or [] if c.get("remoteAgentId") in ids and not c.get("revokedAt")]
+    revoked = sum(1 for c in open_conns if vs.http("DELETE", f"{base}/connections/{c['id']}", token=op_token)[0] in (200, 204))
+    rep.record("X02", st == 200 and revoked == len(open_conns), f"open connections to the proof peer revoked: {revoked}/{len(open_conns)}")
+
+
+#: Role runs a live-model cycle must not be attributed to (NO FAKE AUTONOMY).
+_NON_LIVE_MODELS = ("scripted", "fake", "stub", "mock", "offline")
+
+
+def _cycle_correlation(api: str, op_token: str, cycle_id: str) -> Optional[str]:
+    """The correlation id of the cycle's ``company.cycle`` event (operator API)."""
+    st, body = vs.http("GET", f"{api}/v1/society/events?event_type=company.cycle&limit=100", token=op_token)
+    for e in _json(body) or []:
+        if e.get("subject_id") == cycle_id or (e.get("payload") or {}).get("cycle_id") == cycle_id:
+            return e.get("correlation_id")
+    return None
+
+
+def company_proof(rep: vs.Report, api: str, op_token: str, timeout_s: int, existing: str = "") -> None:
+    """Company cadence on the live Society. A cycle settles only once it is
+    ``company.SETTLE_AFTER`` (30 min) old and every run of its correlation is
+    terminal, so the timeout must exceed that. ``existing`` (a full id or an
+    id prefix) follows a cycle that is already running instead of opening a
+    new one, so a re-run never adds cycles; "scheduled" follows today's
+    scheduled cycle."""
     st, body = vs.http("GET", f"{api}/v1/society/company", token=op_token)
     status = _json(body) or {}
     mode = status.get("mode") or {}
     rep.record("C01", st == 200 and mode.get("production_deploy_enabled") is False,
                f"operator company status -> HTTP {st} mode={json.dumps(mode, sort_keys=True)[:260]}")
-    st, body = vs.http("POST", f"{api}/v1/society/company/cycles", token=op_token, body={})
-    cycle = _json(body) or {}
-    cid = cycle.get("id")
-    rep.record("C02", st in (200, 201) and bool(cid), f"immediate company cycle -> HTTP {st} id={str(cid)[:8]}")
+    cycles = status.get("cycles") or []
+    today = datetime.now(timezone.utc).date().isoformat()
+    scheduled = [c for c in cycles if c.get("trigger") == "scheduled" and c.get("date") == today]
+    rep.record("C05", bool(scheduled) or not mode.get("company_cycle_enabled"),
+               f"scheduled cadence: {len(scheduled)} scheduled cycle(s) for {today} (at most one per UTC date): "
+               + ", ".join(f"{str(c.get('id'))[:8]}={c.get('outcome') or 'open'}" for c in scheduled))
+    if existing:
+        # "scheduled" follows today's scheduled cycle: the Society's own cadence
+        match = scheduled if existing == "scheduled" else [c for c in cycles if str(c.get("id", "")).startswith(existing)]
+        cid = match[0]["id"] if len(match) == 1 else None
+        rep.record("C02", bool(cid), f"follow existing company cycle {existing[:8]} -> {'found' if cid else 'not found (or ambiguous)'}")
+    else:
+        st, body = vs.http("POST", f"{api}/v1/society/company/cycles", token=op_token, body={})
+        cid = (_json(body) or {}).get("id")
+        rep.record("C02", st in (200, 201) and bool(cid), f"immediate company cycle -> HTTP {st} id={str(cid)[:8]}")
     if not cid:
         return
     deadline = time.time() + timeout_s
@@ -416,7 +588,37 @@ def company_proof(rep: vs.Report, api: str, op_token: str, timeout_s: int) -> No
         if outcome:
             break
         time.sleep(15)
-    rep.record("C03", bool(outcome), f"the Society settled the cycle: {json.dumps(outcome)[:220] if outcome else 'not within the timeout'}")
+    detail = {k: outcome.get(k) for k in ("outcome", "outcomeDetail", "createdAt")} if outcome else None
+    rep.record("C03", bool(outcome), f"the Society settled the cycle: {json.dumps(detail, sort_keys=True)[:300] if outcome else 'not within the timeout'}")
+    corr = _cycle_correlation(api, op_token, cid)
+    if not corr:
+        rep.record("C04", False, "the cycle's company.cycle event is not visible to the operator")
+        return
+    st, body = vs.http("GET", f"{api}/v1/society/runs?correlation_id={corr}&limit=200", token=op_token)
+    runs = _json(body) or []
+    models = sorted({f"{r.get('model_provider')}/{r.get('model_name')}" for r in runs})
+    # The worker records model_provider only when a decision parses, so a run
+    # that failed (e.g. invalid model JSON, dead-lettered) shows no provider;
+    # its error is printed below. Every run that produced a decision must have
+    # used the live provider.
+    thought = [r for r in runs if r.get("model_provider")]
+    live = bool(thought) and all(
+        r.get("model_provider") == "openai_compatible"
+        and not any(m in f"{r.get('model_provider')}/{r.get('model_name')}".lower() for m in _NON_LIVE_MODELS)
+        for r in thought
+    )
+    roles = sorted({f"{r.get('agent_name')}:{r.get('event_type')}:{r.get('status')}" for r in runs})
+    rep.record("C04", live, f"cycle correlation {corr[:8]}: {len(runs)} role run(s) on live model(s) {models}: {roles[:12]}")
+    for r in runs:
+        if r.get("status") != "completed":  # say WHY a run did not complete (the operator API's own error field)
+            sys.stdout.write(f"C04 detail: {r.get('agent_name')} {r.get('status')} attempt={r.get('attempt')} error={str(r.get('error') or '')[:240]!r}\n")
+    st, body = vs.http("GET", f"{api}/v1/society/story/{corr}", token=op_token)
+    story = _json(body) or {}
+    intents = sorted(
+        f"{i.get('intent_type')}:{i.get('policy_decision')}:{i.get('execution_status')}"
+        for r in story.get("runs") or [] for i in r.get("intents") or []
+    )
+    rep.record("C06", st == 200, f"cycle story -> HTTP {st}: {len(story.get('events') or [])} event(s), intents {intents[:20]}")
 
 
 def incident_proof(rep: vs.Report, api: str, op_token: str) -> None:
@@ -436,17 +638,39 @@ def main() -> int:
     api = env("REGISTRY_PUBLIC_URL").rstrip("/")
     secret = env("VALIDATOR_SECRET") or env("STAGING_VALIDATOR_SECRET")
     modes = {m.strip() for m in env("A2A_PROOF_MODES", "server").split(",") if m.strip()}
+    identity = env("A2A_PROOF_IDENTITY", "staging")
     user_email = env("VALIDATOR_USER_EMAIL", "staging-user@staging.agentnet.io.vn")
     other_email = env("A2A_PROOF_OTHER_EMAIL", "a2a-proof-other@staging.agentnet.io.vn")
     op_email = env("VALIDATOR_OPERATOR_EMAIL", "staging-operator@staging.agentnet.io.vn")
-    sys.stdout.write(f"A2A PROOF start commit={env('RAILWAY_GIT_COMMIT_SHA', '?')[:12]} api={api} modes={sorted(modes)}\n")
+    sys.stdout.write(f"A2A PROOF start commit={env('RAILWAY_GIT_COMMIT_SHA', '?')[:12]} api={api} modes={sorted(modes)} identity={identity}\n")
+    if identity not in ("staging", "public"):
+        rep.record("P00", False, f"unknown A2A_PROOF_IDENTITY {identity!r}")
+        return finish(rep)
     if not api or len(secret) < 32:
         rep.record("P00", False, "REGISTRY_PUBLIC_URL and a validator secret (>= 32 chars) are required")
         return finish(rep)
     password = vs.derive_password(secret)
+    canary_token: Optional[str] = None
+    if identity == "public":
+        canary = env("A2A_PROOF_CANARY_EMAIL")
+        if not canary:
+            rep.record("P00", False, "A2A_PROOF_CANARY_EMAIL is required for the public identity")
+            return finish(rep)
+        if env("A2A_PROOF_SIGNUP_ONLY") == "true":
+            ensure_user_public(rep, "P01", api, canary, password, signup_only=True)
+            sys.stdout.write("A2A PROOF AWAITING OWNER VERIFICATION: the verification email was sent through the normal flow\n")
+            return finish(rep)
+        canary_token = ensure_user_public(rep, "P01", api, canary, password)
+        if not canary_token:
+            return finish(rep)
     if modes & {"server"}:
-        user_token = vs.ensure_user(rep, "P01", api, user_email, password)
-        other_token_user = vs.ensure_user(rep, "P02", api, other_email, password)
+        if identity == "public":
+            # one owner-verified account owns all three agents; the BOLA checks
+            # use AGENT credentials, whose party is only the agent itself
+            user_token = other_token_user = canary_token
+        else:
+            user_token = vs.ensure_user(rep, "P01", api, user_email, password)
+            other_token_user = vs.ensure_user(rep, "P02", api, other_email, password)
         if not (user_token and other_token_user):
             return finish(rep)
         callee_id = ensure_agent(rep, "P03", api, user_token, secret, CALLEE_NAME)
@@ -468,16 +692,20 @@ def main() -> int:
         finally:
             callee.stop.set()
         rep.record("S60", len(callee.completed) >= 3, f"callee fulfilled {len(callee.completed)} task(s) over the ordinary REST API")
-    if modes & {"federation", "company", "incident"}:
-        op_token = vs.ensure_user(rep, "P10", api, op_email, password)
+        if env("A2A_PROOF_JS") == "1":
+            js_interop(rep, api, caller_token, callee_id)
+    if modes & {"federation", "federation_cleanup", "company", "incident"}:
+        op_token = canary_token if identity == "public" else vs.ensure_user(rep, "P10", api, op_email, password)
         if not op_token:
             return finish(rep)
         if "federation" in modes:
             federation_proof(rep, api, op_token, env("A2A_REFERENCE_CARD_URL"))
+        if "federation_cleanup" in modes:
+            federation_cleanup(rep, api, op_token, env("A2A_REFERENCE_CARD_URL"))
         if "incident" in modes:
             incident_proof(rep, api, op_token)
         if "company" in modes:
-            company_proof(rep, api, op_token, int(env("A2A_PROOF_CYCLE_TIMEOUT", "900")))
+            company_proof(rep, api, op_token, int(env("A2A_PROOF_CYCLE_TIMEOUT", "2700")), env("A2A_PROOF_CYCLE_ID"))
     return finish(rep)
 
 

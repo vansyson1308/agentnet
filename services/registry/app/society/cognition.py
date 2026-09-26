@@ -94,6 +94,70 @@ class EmptyContentError(DecisionValidationError):
 
 
 @dataclass(frozen=True)
+class ModelAttempt:
+    """How one model call was made and what it cost, for a call whose output
+    could not be used. Structural only: it never holds the content."""
+
+    provider: str
+    model_name: str
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_usd: Decimal = Decimal("0")
+    requests: int = 1
+    retries: int = 0
+    timeouts: int = 0
+    output_format: str = ""
+    format_fallbacks: int = 0
+    finish_reason: str = ""
+
+
+class ModelOutputInvalid(DecisionValidationError):
+    """The provider answered, but its content is not a valid decision.
+
+    ``attempt`` carries the call's accounting so the worker records which
+    model answered, in which format, and what it cost -- a call that yields
+    nothing usable still happened and still spent budget. Parsing stays
+    strict: nothing here repairs or partially accepts the output."""
+
+    def __init__(self, message: str, *, attempt: ModelAttempt):
+        super().__init__(message)
+        self.attempt = attempt
+
+
+_SHAPE_KEPT = frozenset('{}[]:,"\\')
+
+
+def output_shape(text: str) -> str:
+    """Structure-only view of model output: letters become ``a``, digits
+    ``9``, whitespace a space, JSON punctuation is kept and anything else is
+    ``.``. It shows WHERE the JSON broke (an unescaped quote, a missing
+    comma) without revealing what the text says."""
+    out = []
+    for ch in text:
+        if ch in _SHAPE_KEPT:
+            out.append(ch)
+        elif ch.isalpha():
+            out.append("a")
+        elif ch.isdigit():
+            out.append("9")
+        elif ch.isspace():
+            out.append(" ")
+        else:
+            out.append(".")
+    return "".join(out)
+
+
+def json_error_detail(content: str, cause: Optional[BaseException], window: int = 40) -> str:
+    """Parse position plus the shape of the text around it (bounded)."""
+    n = len(content)
+    if not isinstance(cause, json.JSONDecodeError):
+        return f"{n} chars"
+    pos = max(0, min(int(cause.pos), n))
+    lo, hi = max(0, pos - window), min(n, pos + window // 2)
+    return f"char {pos} of {n}; shape {output_shape(content[lo:pos])}<<HERE>>{output_shape(content[pos:hi])}"
+
+
+@dataclass(frozen=True)
 class RequestPolicy:
     """Provider request-capability layer (ADR-0007).
 
@@ -245,7 +309,13 @@ class FakeModel:
             raise item
         if isinstance(item, type) and issubclass(item, BaseException):
             raise item()
-        decision = parse_decision(item, max_intents=50)
+        try:
+            decision = parse_decision(item, max_intents=50)
+        except DecisionValidationError as exc:
+            text = item if isinstance(item, str) else json.dumps(item, default=str)
+            attempt = ModelAttempt(provider=self.provider, model_name=self.model_name, tokens_in=self.tokens_in,
+                                   tokens_out=self.tokens_out, cost_usd=self.cost_usd, output_format="fake")
+            raise ModelOutputInvalid(f"{exc} [{json_error_detail(text, exc.__cause__)}]", attempt=attempt) from exc
         return ModelResponse(
             decision=decision,
             provider=self.provider,
@@ -1248,13 +1318,31 @@ class OpenAICompatibleModel:
         try:
             decision = parse_decision(content, max_intents=int(context.permissions.get("max_intents_per_run") or 5))
         except DecisionValidationError as exc:
+            attempt = ModelAttempt(
+                provider=self.provider,
+                model_name=chosen_model,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                cost_usd=cost.quantize(Decimal("0.000001")),
+                requests=stats["requests"],
+                retries=stats["retries"],
+                timeouts=stats["timeouts"],
+                output_format=used_format,
+                format_fallbacks=stats["format_fallbacks"],
+                finish_reason=outcome.finish_reason,
+            )
             if outcome.finish_reason == "length":
-                raise DecisionValidationError(
+                raise ModelOutputInvalid(
                     f"provider output truncated at max_tokens={self.settings.model_max_output_tokens} (finish_reason=length)"
                     + (" while reasoning was present; set SOCIETY_MODEL_THINKING_MODE=disabled for structured output" if outcome.reasoning_present else "")
-                    + f": {exc}"
+                    + f": {exc}",
+                    attempt=attempt,
                 ) from exc
-            raise
+            raise ModelOutputInvalid(
+                f"{exc} [{json_error_detail(content, exc.__cause__)}; format={used_format}; "
+                f"finish_reason={outcome.finish_reason or 'unknown'}]",
+                attempt=attempt,
+            ) from exc
         return ModelResponse(
             decision=decision,
             provider=self.provider,
@@ -1300,6 +1388,10 @@ __all__ = [
     "ModelTimeout",
     "ModelProviderError",
     "EmptyContentError",
+    "ModelAttempt",
+    "ModelOutputInvalid",
+    "output_shape",
+    "json_error_detail",
     "RequestPolicy",
     "ChatOutcome",
     "FakeModel",

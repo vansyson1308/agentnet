@@ -66,6 +66,47 @@ def test_invalid_structured_output_is_recorded_and_retried(db, SessionLocal, soc
     assert "invalid structured output" in (run.error or "")  # last error kept for the audit trail
 
 
+def test_invalid_output_attempts_are_recorded_and_billed_until_dead(db, SessionLocal, society_settings, monkeypatch, grants_with_no_cooldown):
+    """The live Scout failure: every attempt answered, none parsed. The run
+    must still show WHICH model answered and what the attempts cost, and the
+    cost must reach the daily budget (spend_today_usd sums cost_usd)."""
+    from decimal import Decimal
+
+    from services.registry.app.society.policy import spend_today_usd
+
+    settings = _settings(monkeypatch, SOCIETY_RUN_MAX_ATTEMPTS=2, SOCIETY_RETRY_BACKOFF_BASE_SECONDS=0, SOCIETY_CIRCUIT_BREAKER_FAILURES=5)
+    seed_society(db)
+    grants_with_no_cooldown()
+    before = spend_today_usd(db)
+    bad = '{"decision_summary": "Outcome "quoted" text", "intents": []}'
+    model = FakeModel([bad, bad], tokens_in=10, tokens_out=5, cost_usd="0.0001")
+    ev, worker, stats = _emit_and_run(db, SessionLocal, settings, model)
+    run = db.query(AgentRun).filter(AgentRun.event_id == ev.id).first()
+    db.refresh(run)
+    assert _ev(run.status) == "dead" and run.attempt == 2 and len(model.calls) == 2
+    assert run.model_provider == "fake" and run.model_name == "fake-1" and run.output_format == "fake"
+    assert run.tokens_in == 20 and run.tokens_out == 10 and run.model_requests == 2
+    assert Decimal(str(run.cost_usd)) == Decimal("0.0002")
+    assert spend_today_usd(db) - before == Decimal("0.0002")
+    # diagnosable without the text: position and shape, never the words
+    assert "invalid structured output" in run.error and "<<HERE>>" in run.error
+    assert "Outcome" not in run.error and "quoted" not in run.error
+
+
+def test_invalid_then_valid_output_accumulates_the_cost_of_both_attempts(db, SessionLocal, society_settings, monkeypatch, grants_with_no_cooldown):
+    from decimal import Decimal
+
+    settings = _settings(monkeypatch, SOCIETY_RUN_MAX_ATTEMPTS=2, SOCIETY_RETRY_BACKOFF_BASE_SECONDS=0)
+    seed_society(db)
+    grants_with_no_cooldown()
+    model = FakeModel(["this is not json", {"decision_summary": "ok now", "intents": [], "sleep_for_seconds": 5}], cost_usd="0.0001")
+    ev, worker, stats = _emit_and_run(db, SessionLocal, settings, model)
+    run = db.query(AgentRun).filter(AgentRun.event_id == ev.id).first()
+    db.refresh(run)
+    assert _ev(run.status) == "completed" and run.attempt == 2
+    assert Decimal(str(run.cost_usd)) == Decimal("0.0002") and run.tokens_in == 20 and run.model_requests == 2
+
+
 def test_provider_exception_does_not_crash_worker(db, SessionLocal, society_settings, monkeypatch, grants_with_no_cooldown):
     settings = _settings(monkeypatch, SOCIETY_RUN_MAX_ATTEMPTS=1, SOCIETY_RETRY_BACKOFF_BASE_SECONDS=0)
     seed_society(db)

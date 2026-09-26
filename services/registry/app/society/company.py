@@ -55,6 +55,7 @@ from ..models import (
     User,
 )
 from .config import SocietySettings
+from .context import TXT_LONG
 from .events import emit_event, utcnow
 
 COMPANY_CYCLE_EVENT = "company.cycle"
@@ -154,6 +155,46 @@ def _portfolio(db: Session, settings: SocietySettings) -> Dict[str, Any]:
     }
 
 
+#: What the Governor and Scout are told a cycle is for.
+CYCLE_INSTRUCTIONS = (
+    "Observe the evidence, diagnose, and prioritize at most one high-value change. "
+    "'No high-value change' is a valid outcome: do not create work to look busy."
+)
+
+
+def cycle_event_payload(cycle_id: uuid.UUID, trigger: str, evidence: Dict[str, Any], portfolio: Dict[str, Any]) -> Dict[str, Any]:
+    """The ``company.cycle`` event payload: the Observe step, as ONE object.
+
+    The context builder shows an event payload to the model only while its
+    canonical JSON fits ``context.TXT_LONG``; past that it becomes a string
+    preview that is cut mid-structure and drops the keys that sort last
+    (``instructions``, ``portfolio``, ``trigger``). Everything here is
+    therefore bounded: counts over closed status sets, two timestamps and
+    fixed text. The static function->role map is NOT repeated per cycle (the
+    roles already know their missions; the operator status still shows it).
+    If the counts ever grow past the limit, ``fitness`` goes first: it is
+    derived from ``evidence`` (the Evaluator recomputes it), and the payload
+    says it was omitted. ``tests/society/test_company_cycle_context.py`` pins
+    the worst case."""
+    payload: Dict[str, Any] = {
+        "cycle_id": str(cycle_id),
+        "trigger": trigger,
+        "evidence": evidence,
+        "fitness": a2a_fitness(evidence),
+        "portfolio": portfolio,
+        "instructions": CYCLE_INSTRUCTIONS,
+    }
+    if _canonical_size(payload) > TXT_LONG:
+        del payload["fitness"]
+        payload["omitted"] = ["fitness"]
+    return payload
+
+
+def _canonical_size(obj: Any) -> int:
+    """Length of the canonical JSON the context builder measures."""
+    return len(json.dumps(obj, sort_keys=True, default=str, ensure_ascii=False))
+
+
 def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Optional[datetime] = None, operator_id: Optional[uuid.UUID] = None) -> Optional[CompanyCycle]:
     """Create a cycle + its ``company.cycle`` event. A scheduled cycle is
     idempotent per UTC date (returns None when today's already exists)."""
@@ -172,18 +213,7 @@ def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Op
     event = emit_event(
         db,
         event_type=COMPANY_CYCLE_EVENT,
-        payload={
-            "cycle_id": str(cycle.id),
-            "trigger": trigger,
-            "evidence": evidence,
-            "fitness": a2a_fitness(evidence),
-            "portfolio": _portfolio(db, settings),
-            "function_roles": FUNCTION_ROLE_MAP,
-            "instructions": (
-                "Observe the evidence, diagnose, and prioritize at most one high-value change. "
-                "'No high-value change' is a valid outcome: do not create work to look busy."
-            ),
-        },
+        payload=cycle_event_payload(cycle.id, trigger, evidence, _portfolio(db, settings)),
         actor_type="operator" if trigger == "operator" else "system",
         actor_id=operator_id,
         subject_type="company_cycle",
@@ -370,6 +400,7 @@ __all__ = [
     "FUNCTION_ROLE_MAP",
     "evidence_bundle",
     "a2a_fitness",
+    "cycle_event_payload",
     "start_cycle",
     "maybe_start_scheduled_cycle",
     "settle_cycles",

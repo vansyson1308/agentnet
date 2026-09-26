@@ -291,6 +291,29 @@ class SocietyWorker:
             return await asyncio.wait_for(self.model.decide(context, model_name=route.model_name), timeout=total)
         return await asyncio.wait_for(self.model.decide(context), timeout=total)
 
+    def _record_failed_decision(self, run: AgentRun, exc: Exception, route: Optional[router_mod.Route]) -> None:
+        """A model call that produced no usable decision still happened and
+        still cost money. Record which model answered, in which format and at
+        what cost, so the operator API shows it and the daily budget counts it
+        (``spend_today_usd`` sums ``cost_usd``). The caller commits via fail_run."""
+        attempt = getattr(exc, "attempt", None)
+        if attempt is None:  # e.g. empty content: the call happened, its accounting is unknown
+            run.model_provider = getattr(self.model, "provider", None)
+            routed = route.model_name if route is not None and getattr(self.model, "supports_routing", False) else None
+            run.model_name = routed or getattr(self.model, "model_name", None)
+            run.model_requests = int(run.model_requests or 0) + 1
+            return
+        run.model_provider = attempt.provider
+        run.model_name = attempt.model_name
+        run.output_format = attempt.output_format or run.output_format
+        run.tokens_in = int(run.tokens_in or 0) + int(attempt.tokens_in or 0)
+        run.tokens_out = int(run.tokens_out or 0) + int(attempt.tokens_out or 0)
+        run.cost_usd = Decimal(str(run.cost_usd or 0)) + Decimal(str(attempt.cost_usd or 0))
+        run.model_requests = int(run.model_requests or 0) + int(attempt.requests or 0)
+        run.model_retries = int(run.model_retries or 0) + int(attempt.retries or 0)
+        run.model_timeouts = int(run.model_timeouts or 0) + int(attempt.timeouts or 0)
+        run.format_fallbacks = int(run.format_fallbacks or 0) + int(attempt.format_fallbacks or 0)
+
     def _persist_decision(self, db: Session, run: AgentRun, agent: Agent, grant: AgentCapabilityGrant, context, response) -> List[AgentIntent]:
         run.model_provider = response.provider
         run.model_name = response.model_name
@@ -298,15 +321,17 @@ class SocietyWorker:
         run.context_digest = context.digest()
         run.context_summary = context.summary()
         run.decision_summary = response.decision.decision_summary[:1000]
-        run.tokens_in = response.tokens_in
-        run.tokens_out = response.tokens_out
-        run.cost_usd = Decimal(str(response.cost_usd or 0))
-        run.model_requests = int(getattr(response, "requests", 1) or 1)
-        run.model_retries = int(getattr(response, "retries", 0) or 0)
-        run.model_timeouts = int(getattr(response, "timeouts", 0) or 0)
+        # Accumulate across attempts: an earlier attempt that timed out or
+        # answered with invalid output was also a real (billed) model call.
+        run.tokens_in = int(run.tokens_in or 0) + int(response.tokens_in or 0)
+        run.tokens_out = int(run.tokens_out or 0) + int(response.tokens_out or 0)
+        run.cost_usd = Decimal(str(run.cost_usd or 0)) + Decimal(str(response.cost_usd or 0))
+        run.model_requests = int(run.model_requests or 0) + int(getattr(response, "requests", 1) or 1)
+        run.model_retries = int(run.model_retries or 0) + int(getattr(response, "retries", 0) or 0)
+        run.model_timeouts = int(run.model_timeouts or 0) + int(getattr(response, "timeouts", 0) or 0)
         run.tokens_cached = getattr(response, "tokens_cached", None)
         run.output_format = getattr(response, "output_format", None)
-        run.format_fallbacks = int(getattr(response, "format_fallbacks", 0) or 0)
+        run.format_fallbacks = int(run.format_fallbacks or 0) + int(getattr(response, "format_fallbacks", 0) or 0)
         run.sleep_until = utcnow() + timedelta(seconds=int(response.decision.sleep_for_seconds or 0))
         validated = validate_intents(response.decision, run.id)
         rows: List[AgentIntent] = []
@@ -530,6 +555,7 @@ class SocietyWorker:
                     status = fail_run(db, run, f"model provider error: {exc}", settings=self.settings)
                     return self._count_fail(status, stats)
                 except DecisionValidationError as exc:
+                    self._record_failed_decision(run, exc, route)
                     status = fail_run(db, run, f"invalid structured output: {exc}", settings=self.settings)
                     return self._count_fail(status, stats)
                 except Exception as exc:  # noqa: BLE001
