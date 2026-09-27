@@ -51,9 +51,14 @@ on `cadf950`): `RESULT: OK (18 checks)`.
 2. Release to production through the trusted release gate (`docs/PRODUCTION_RUNBOOK.md`). The
    Society has no production credential and no deploy authority.
 3. Lift incident freezes and, rarely, abandon a stranded candidate (`candidate_admin.abandon`).
-4. After the dashboard repair has merged, merge the held CI-hardening draft PR from
-   `claude/agentnet-autonomous-society-0aojp7`. It makes CI collect the dashboard tests and adds a
-   test-discovery sentinel, so it stays red until the repair is on `main`. That is by design.
+4. Merge the held CI-hardening draft PR from `claude/agentnet-autonomous-society-0aojp7` once its
+   CI is green. It makes CI collect the dashboard tests, which it never has, and adds a
+   test-discovery sentinel. On `cadf950`, 15 dashboard tests fail:
+   - 11 in `test_public_surface.py`, which is the defect above;
+   - 4 in `test_main.py`: two trust-label expectations for `derive_trust_context`, and two pages
+     that answer 302 where the test expects 200.
+
+   Those failures are dashboard work for the Society, not for the owner.
 
 **How to tell it is healthy without an engineer.**
 - Set the staging-validator's `VALIDATOR_SCRIPT=phase5_live.py` and `PHASE5_PLAN=audit:24`, then
