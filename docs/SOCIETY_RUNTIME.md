@@ -37,7 +37,7 @@ Phase 3 self-development (repo intelligence, risk tiers, promotion controller, f
 | `intent_approvals` (Phase 2) | Human decision audit for `awaiting_approval` intents | `intent_id` UNIQUE; who decided, decision, reason, original policy reason, resumed/executed timestamps, `final_state`, `resume_error` |
 | `users.society_role` (Phase 2) | Durable operator authority | `operator` \| `event_producer` \| NULL; the only source `operator_auth` consults besides the bootstrap allowlist |
 
-Candidate status machine: `requested → building → built → qa_running → qa_passed → (security_review →) ready` · `qa_failed` (one retry) `→ rejected` · `failed/abandoned`.
+Candidate status machine: `requested → building → built → qa_running → qa_passed → (security_review →) ready` · `qa_failed` (one retry) `→ rejected` · `requested/qa_failed → rejected` (Builder decline) · `failed/abandoned`.
 
 `abandoned` is reachable only by an **operator**, through
 `POST /v1/society/candidates/{id}/abandon` (`society/candidate_admin.py`). There is deliberately no
@@ -47,6 +47,10 @@ and persisted on the row, the call is idempotent (no second event, no second ref
 preserved), and any in-flight `implement_change` task is closed through the ordinary
 `task_service.fail_task_with_refund` escrow path — this code never writes a wallet.
 
+The one agent-side exit is narrower, and it is not an abandon: the Builder responsible for a
+`requested` or `qa_failed` candidate may `DECLINE_CODE_CANDIDATE` it (see *A Builder may decline*
+below). That ends in the ordinary `rejected`, a recorded failure, never in `abandoned`.
+
 ## Roles (v1 fleet)
 
 | Agent | Role | Wakes on | May emit |
@@ -54,7 +58,7 @@ preserved), and any in-flight `implement_change` task is closed through the ordi
 | Society_Governor | governor (MEDIUM) | `proposal.created`, `code_candidate.ready/rejected`, `promotion.merge_eligible/rejected`, `experiment.finished`, `society.heartbeat`, `company.cycle`, `incident.opened`, `a2a.task.finished`, `a2a.agent.discovered` | messages, memory, goals, `REVIEW_IMPROVEMENT`, `READ_CANDIDATE_STATE`, `REQUEST_PR_PROMOTION`, `REQUEST_STAGING_EVALUATION`, `DISCOVER_A2A_AGENT`, `REQUEST_A2A_TASK` (**approval-gated**), `CHECK_A2A_TASK` |
 | Society_Scout | scout | `company.cycle`, `a2a.agent.refreshed`, `platform.metric.anomaly`, `task.failed/timeout`, `qa.failed`, `agent.inactive`, candidate outcomes | messages, memory, `CREATE_IMPROVEMENT` (with structured evidence), agent goals, `REFRESH_A2A_AGENT`, `CHECK_A2A_TASK` |
 | Society_Architect | architect (MEDIUM) | `proposal.approved`, `code_candidate.qa_failed/ready`, `repo.read.result` (own reads only), `code_change.spec_rejected` | repo reads (`LIST_REPO_TREE`, `SEARCH_REPO`, `READ_REPO_FILE`, `READ_REPO_RANGE`), `REQUEST_CODE_CHANGE`, `CREATE_TASK` (≤50 credits), goal updates |
-| Society_Builder | builder (MEDIUM) | `code_change.requested`, `code_candidate.qa_failed/ready/rejected`, `repo.read.result` (own reads only), `society.heartbeat` | repo reads, `SUBMIT_CODE_CANDIDATE`, `START/COMPLETE/FAIL_TASK` |
+| Society_Builder | builder (MEDIUM) | `code_change.requested`, `code_candidate.qa_failed/ready/rejected`, `repo.read.result` (own reads only), `society.heartbeat` | repo reads, `SUBMIT_CODE_CANDIDATE`, `DECLINE_CODE_CANDIDATE`, `START/COMPLETE/FAIL_TASK` |
 | Society_QA | qa (MEDIUM) | `code_candidate.built` | `EVALUATE_CODE_CANDIDATE` (verdict computed by the runtime, not asserted) |
 | Society_Security | security (MEDIUM) | `code_candidate.security_review`, `repo.read.result` (own reads only) | `READ_DIFF`, `READ_REPO_FILE`, `READ_CANDIDATE_STATE`, `SECURITY_REVIEW_CANDIDATE` (combined with static scan; fails closed) |
 | Society_Evaluator (Phase 3) | evaluator | `promotion.ci_passed`, `experiment.finished` | `READ_CANDIDATE_STATE`, `REQUEST_MERGE_EVALUATION`, `RECORD_EVALUATION_RECOMMENDATION` (advisory only), memory, messages — it cannot change thresholds, approve, merge, deploy or alter evidence |
@@ -68,7 +72,7 @@ targets it (`payload.target_agent_id` / `subject_type=agent`), e.g. `agent.messa
 | Class | Intents | Handling |
 |---|---|---|
 | LOW | `SEND_MESSAGE`, `WRITE_MEMORY`, `CREATE_GOAL`, `UPDATE_GOAL`, `CREATE_IMPROVEMENT`, `REVIEW_IMPROVEMENT`, `SLEEP`, read-only repo intelligence (`LIST_REPO_TREE`, `SEARCH_REPO`, `READ_REPO_FILE`, `READ_REPO_RANGE`, `READ_DIFF`, `READ_CANDIDATE_STATE`), `RECORD_EVALUATION_RECOMMENDATION`, `REFRESH_A2A_AGENT`, `CHECK_A2A_TASK` | auto if in grant; repo reads are bounded (per run / per correlation / bytes), path-safe, persisted as `repo.read.result` and returned as untrusted data |
-| MEDIUM | `CREATE_OFFER`, `COUNTER_OFFER`, `ACCEPT_OFFER`, `CREATE_TASK`, `START/COMPLETE/FAIL_TASK`, `REQUEST_CODE_CHANGE`, `SUBMIT_CODE_CANDIDATE`, `REQUEST_QA`, `EVALUATE_CODE_CANDIDATE`, `SECURITY_REVIEW_CANDIDATE`, `REQUEST_PR_PROMOTION`, `REQUEST_MERGE_EVALUATION`, `REQUEST_STAGING_EVALUATION`, `REQUEST_STAGING_DEPLOY`, `DISCOVER_A2A_AGENT`, `REQUEST_A2A_TASK` | role-gated by grant ceiling; A2A intents need `A2A_SOCIETY_CLIENT_ENABLED` + `A2A_FEDERATION_ENABLED`, discovery only for `A2A_SOCIETY_DISCOVERY_ALLOWED_HOSTS`, tasks only to operator-verified agents under call budgets (`docs/A2A_FEDERATION.md` §6); escrow ≤ min(grant cap, `SOCIETY_MAX_TASK_ESCROW_CREDITS`); code intents need `SOCIETY_AUTONOMOUS_CODE_ENABLED`; staging needs `SOCIETY_STAGING_DEPLOY_ENABLED`; promotion/evaluation intents only *request* — the non-LLM Promotion Controller and fitness engine decide (`docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md`) |
+| MEDIUM | `CREATE_OFFER`, `COUNTER_OFFER`, `ACCEPT_OFFER`, `CREATE_TASK`, `START/COMPLETE/FAIL_TASK`, `REQUEST_CODE_CHANGE`, `SUBMIT_CODE_CANDIDATE`, `REQUEST_QA`, `DECLINE_CODE_CANDIDATE`, `EVALUATE_CODE_CANDIDATE`, `SECURITY_REVIEW_CANDIDATE`, `REQUEST_PR_PROMOTION`, `REQUEST_MERGE_EVALUATION`, `REQUEST_STAGING_EVALUATION`, `REQUEST_STAGING_DEPLOY`, `DISCOVER_A2A_AGENT`, `REQUEST_A2A_TASK` | role-gated by grant ceiling; A2A intents need `A2A_SOCIETY_CLIENT_ENABLED` + `A2A_FEDERATION_ENABLED`, discovery only for `A2A_SOCIETY_DISCOVERY_ALLOWED_HOSTS`, tasks only to operator-verified agents under call budgets (`docs/A2A_FEDERATION.md` §6); escrow ≤ min(grant cap, `SOCIETY_MAX_TASK_ESCROW_CREDITS`); code intents need `SOCIETY_AUTONOMOUS_CODE_ENABLED`; staging needs `SOCIETY_STAGING_DEPLOY_ENABLED`; promotion/evaluation intents only *request* — the non-LLM Promotion Controller and fitness engine decide (`docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md`) |
 | HIGH | `REQUEST_PRODUCTION_DEPLOY`, `SHELL_EXEC`, `GRANT_CAPABILITY`, `MODIFY_BUDGET`, `TRANSFER_FUNDS`, `MODIFY_WALLET`, `MODIFY_SECRET`, `CHANGE_AUTH_POLICY`, `DELETE_DATA`, `OPEN_NETWORK_ACCESS`, `RUN_MIGRATION` | recognised, **always denied**, recorded as `intent.denied` events; no executor exists |
 
 Additional refusals in executors: no self-review, requester ≠ builder ≠ QA ≠ security reviewer, no
@@ -181,6 +185,43 @@ and a2788678 (correlation b8db5936). Now each read wakes only its reader, and no
   sorted keys, the Architect's long description came before `files_allowed`, so the list was cut off. Every
   hour the Builder stopped work on its candidate because "the spec's files_allowed is truncated and
   unverified".
+- **A Builder may decline.** A candidate the Builder cannot finish within its spec is not stuck forever. The
+  Builder responsible for it may `DECLINE_CODE_CANDIDATE` with a structured reason:
+  - `spec_outside_files_allowed`: the fix needs `blocking_paths` outside `files_allowed`. The paths must be
+    canonical and repo-relative (no `.`, `..` or empty segments), and every one must be outside the list; a
+    path inside it means the change can still be made within the spec.
+  - `acceptance_unsatisfiable`: the acceptance tests cannot pass within the spec. Only after a QA failure:
+    a fresh candidate is built and judged first.
+
+  `detail` is required (20 to 1000 characters). Only these candidates can be declined:
+  - its status is `requested` or `qa_failed`; `building`, `built`, the QA and Security states, `ready` and
+    every terminal status are refused;
+  - it has no promotion;
+  - its recorded Builder is the declining agent, or it has none yet and the agent holds the `builder` role.
+
+  A decline moves the candidate to `rejected`, the ordinary recorded failure. The spec and QA report are
+  kept, and the reason and detail are persisted on the row and in the intent. It emits
+  `code_candidate.rejected` with `declined: true`, the reason, the blocking paths and the unchanged
+  `files_allowed`. That wakes the Scout, the Governor and the Builder, and the normal Scout → Governor →
+  Architect path designs the next candidate: `files_allowed` is never widened in place. A converted
+  proposal whose every candidate ended rejected, failed or abandoned is concluded, so the Scout may propose
+  it again under the same title, and the Governor reviews it again. A proposal with work in flight is still a
+  duplicate. After two such failed proposals under one title within 24 hours, a third is refused until the
+  approach and evidence change, so an attempt that fails at once cannot loop until the daily candidate
+  budget is spent. The implementation task is closed only when the declining Builder is its callee, which is the
+  authority `FAIL_TASK` already gives it. It is closed through `task_service.fail_task_with_refund`, and that
+  runs last, so the rejection, its event and the refund land in one commit. The escrow is released exactly
+  once, and no wallet is written here. The operator abandon is ordered the same way, so the two exits cannot
+  interleave. A task linked for anyone else is left to its own parties and the timeout worker. A repeat decline
+  returns `duplicate`, with no second event and no second refund. The intent is MEDIUM and needs
+  `SOCIETY_AUTONOMOUS_CODE_ENABLED`; no risk class, QA, Security, fitness, budget, merge or production rule
+  changes. Abandon stays operator-only.
+
+  Staging, 2026-09-27 03:00Z: once it saw the whole spec, the Builder judged that candidate a2788678 (QA
+  failed once) needed `base.html`, outside its `files_allowed`, and stopped. Nothing could close the
+  candidate: the Builder cannot widen its own spec, the Architect's same-spec request is a duplicate while
+  the candidate is open, and a new submission would fail QA on the same test. This was the third
+  stranded candidate. Operators abandoned the first two.
 - Security review is required when the spec flags it, when any file matches the risky-path pattern, when
   `kind == "code"`, or when the static scan produced findings; final verdict = reviewer verdict AND no
   static findings.

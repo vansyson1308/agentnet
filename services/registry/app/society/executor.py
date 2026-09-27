@@ -62,6 +62,7 @@ from ..models import (
     RiskTier,
     SocietyEvent,
     TaskSession,
+    TaskStatus,
 )
 from . import memory_grounding, repo_intel
 from .config import SocietySettings
@@ -71,6 +72,7 @@ from .events import REHEARSAL_MEMORY_TTL_SECONDS, EventType, emit_event, is_rehe
 from .ids import candidate_id_for
 from .intents import REPO_READ_INTENT_TYPES, IntentType, ValidatedIntent
 from .risk import assess as assess_risk
+from .roles import ROLE_BUILDER
 
 logger = logging.getLogger(__name__)
 
@@ -361,6 +363,26 @@ WORLD_SIGNAL_EVENTS = frozenset(
 )
 
 
+#: Same-title proposals whose every attempt failed that may precede a new one
+#: within 24 hours (recovery, bounded).
+MAX_FAILED_RETRIES_PER_TITLE = 2
+#: Candidate outcomes that end an attempt as a failure.
+_ATTEMPT_FAILED_STATUSES = (
+    CodeCandidateStatus.REJECTED.value,
+    CodeCandidateStatus.FAILED.value,
+    CodeCandidateStatus.ABANDONED.value,
+)
+
+
+def _every_attempt_failed(db: Session, proposal: ImprovementProposal) -> bool:
+    """A converted proposal whose every candidate ended as a failure. One with
+    no candidate, work in flight or a READY candidate is still open."""
+    if _ev(proposal.status) != ProposalStatus.CONVERTED_TO_TASK.value:
+        return False
+    statuses = [_ev(st) for (st,) in db.query(CodeCandidate.status).filter(CodeCandidate.proposal_id == proposal.id).all()]
+    return bool(statuses) and all(st in _ATTEMPT_FAILED_STATUSES for st in statuses)
+
+
 def _create_improvement(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
     _require_ref(ctx, TaskSession, p.source_task_id, "source_task_id")
@@ -369,13 +391,32 @@ def _create_improvement(ctx: ExecContext) -> ExecOutcome:
         # what was observed, against what baseline, over what window, and why
         # it is actionable (anti-busywork; docs/SELF_DEVELOPMENT.md).
         raise ExecutionError("signal-driven proposals must carry evidence (signal, baseline, observed, window, sample, actionable_reason)")
-    existing = (
+    same_title = (
         ctx.db.query(ImprovementProposal)
         .filter(ImprovementProposal.title == p.title, ImprovementProposal.status.in_(_OPEN_PROPOSAL_STATUSES))
-        .first()
+        .order_by(ImprovementProposal.created_at.desc())
+        .all()
     )
-    if existing is not None:
+    failed_recently = 0
+    for existing in same_title:
+        if _every_attempt_failed(ctx.db, existing):
+            # Concluded (company.portfolio_accounting): proposing it again is the
+            # designed recovery after a rejected / declined / abandoned attempt,
+            # and it goes through the Governor's review again. Otherwise a Scout
+            # that keeps the title would get "duplicate" forever and nothing
+            # would design the next candidate.
+            if existing.created_at is not None and existing.created_at >= ctx.now - timedelta(hours=24):
+                failed_recently += 1
+            continue
         return ExecOutcome(result={"proposal_id": str(existing.id), "duplicate": True, "status": _ev(existing.status)})
+    if failed_recently >= MAX_FAILED_RETRIES_PER_TITLE:
+        # The per-title brake: a hypothesis whose attempts keep failing (e.g. a
+        # busywork diff rejected at once) must not loop until the daily
+        # candidate budget is spent.
+        raise ExecutionError(
+            f"{failed_recently} proposals titled {p.title!r} concluded without success in 24h; "
+            "change the approach and the evidence before proposing again"
+        )
     if ctx.settings.company_cycle_enabled:
         # Company-mode portfolio cap (ADR-0009 D15): a few hypotheses pursued
         # to a conclusion beat many started. Close or reject one first.
@@ -830,6 +871,117 @@ def _request_qa(ctx: ExecContext) -> ExecOutcome:
         raise ExecutionError(f"candidate is {_ev(cand.status)}; QA can only be requested for BUILT candidates")
     ev = _emit(ctx, EventType.CODE_CANDIDATE_BUILT, {"candidate_id": str(cand.id), "title": cand.title, "head_sha": cand.head_sha, "branch_name": cand.branch_name, "changed_files": list(cand.changed_files or []), "requeued": True}, subject_type="code_candidate", subject_id=cand.id, key_suffix=f"requeue:{cand.head_sha or ''}"[:40])
     return ExecOutcome(result={"candidate_id": str(cand.id)}, events=[str(ev.id)])
+
+
+#: The only states a Builder can hand a candidate back from: nobody else holds
+#: the work. Anything being evaluated, passed (READY) or closed is refused.
+DECLINABLE_STATUSES = (CodeCandidateStatus.REQUESTED.value, CodeCandidateStatus.QA_FAILED.value)
+
+
+def _decline_code_candidate(ctx: ExecContext) -> ExecOutcome:
+    """The responsible Builder hands back an open candidate it cannot finish
+    within its spec: REJECTED, never widened.
+
+    Staging 2026-09-27: candidate a2788678 failed QA on endpoints referenced
+    by a template outside the spec's ``files_allowed``. The Builder correctly
+    refused to widen scope; the Architect could not re-specify (a request for
+    the same proposal is a duplicate while the candidate is open); QA rejects
+    only on a second failure, which needs a resubmission. Nothing could reach
+    the designed recovery -- REJECTED, the proposal concluded, the Scout
+    re-proposes, the Governor approves, the Architect designs the next one.
+
+    Unlike the operator's ``candidate_admin.abandon`` this is not a way to
+    retire evidence: the outcome is the ordinary REJECTED, the spec, QA report
+    and row are kept, and the structured reason is recorded in the intent
+    row, on the candidate and in the ``code_candidate.rejected`` event.
+    """
+    p = ctx.validated.payload
+    cand = _get_candidate(ctx, p.candidate_id)
+    status = _ev(cand.status)
+    if cand.builder_agent_id is not None and cand.builder_agent_id != ctx.agent.id:
+        raise ExecutionError("only the Builder responsible for this candidate may decline it")
+    if cand.builder_agent_id is None and ctx.grant.role != ROLE_BUILDER:
+        raise ExecutionError("only a Builder may decline a candidate")
+    if status == CodeCandidateStatus.REJECTED.value:
+        prior = (
+            ctx.db.query(SocietyEvent)
+            .filter(
+                SocietyEvent.event_type == EventType.CODE_CANDIDATE_REJECTED,
+                SocietyEvent.subject_id == cand.id,
+                SocietyEvent.payload["declined"].astext == "true",
+            )
+            .first()
+        )
+        if prior is not None:  # idempotent: no second event, no second refund
+            return ExecOutcome(result={"candidate_id": str(cand.id), "status": status, "duplicate": True})
+    if status not in DECLINABLE_STATUSES:
+        raise ExecutionError(f"candidate is {status}; only a requested or qa_failed candidate can be declined")
+    if ctx.db.query(CodePromotion).filter(CodePromotion.candidate_id == cand.id).first() is not None:
+        raise ExecutionError("candidate has a promotion; it cannot be declined")
+    if p.reason_code == "acceptance_unsatisfiable" and status != CodeCandidateStatus.QA_FAILED.value:
+        # The evidence that the acceptance tests cannot pass is a QA failure;
+        # a fresh candidate has none, so it is built first.
+        raise ExecutionError("acceptance_unsatisfiable needs a qa_failed candidate: build it and let QA judge first")
+    allowed = set((cand.spec or {}).get("files_allowed") or [])
+    blocking = list(dict.fromkeys(p.blocking_paths))
+    if p.reason_code == "spec_outside_files_allowed":
+        if not blocking:
+            raise ExecutionError("spec_outside_files_allowed needs the blocking_paths the fix would have to change")
+        inside = [b for b in blocking if b in allowed]
+        if inside:
+            raise ExecutionError(f"{inside[0]} is inside files_allowed: the change can be made within the spec")
+
+    # Economics: the implementation task is closed only when the declining
+    # Builder is its callee -- the authority FAIL_TASK already gives it -- and
+    # only through the ordinary escrow path, which refunds the caller exactly
+    # once. Any other linked task is left to its own parties and the timeout
+    # worker. The task row is locked here, so what is reported is what happens.
+    task_to_fail = None
+    if cand.task_id is not None:
+        task = ctx.db.query(TaskSession).filter(TaskSession.id == cand.task_id).with_for_update().first()
+        if (
+            task is not None
+            and task.callee_agent_id == ctx.agent.id
+            and _ev(task.status) in (TaskStatus.INITIATED.value, TaskStatus.IN_PROGRESS.value)
+        ):
+            task_to_fail = task
+    refunded = task_to_fail is not None
+
+    cand.status = CodeCandidateStatus.REJECTED
+    cand.error = f"declined by {ctx.agent.name} ({p.reason_code}): {p.detail}"[:2000]
+    ctx.db.flush()
+    payload = {
+        "candidate_id": str(cand.id),
+        "title": cand.title,
+        "branch_name": cand.branch_name,
+        "head_sha": cand.head_sha,
+        "proposal_id": str(cand.proposal_id) if cand.proposal_id else None,
+        "qa_summary": f"declined by the Builder ({p.reason_code})",
+        "declined": True,
+        "previous_status": status,
+        "reason_code": p.reason_code,
+        "detail": p.detail,
+        "blocking_paths": blocking,
+        "files_allowed": sorted(allowed),
+        "task_refunded": refunded,
+    }
+    ev = _emit(ctx, EventType.CODE_CANDIDATE_REJECTED, payload, subject_type="code_candidate", subject_id=cand.id, key_suffix="declined")
+    result = {"candidate_id": str(cand.id), "status": CodeCandidateStatus.REJECTED.value, "reason_code": p.reason_code, "task_refunded": refunded}
+    events = [str(ev.id)]
+    if task_to_fail is not None:
+        # Last, and still under the candidate lock: the escrow path commits, and
+        # that one commit carries the rejection, its event and the refund
+        # together. If it refuses, nothing above is kept either.
+        try:
+            task_service.fail_task_with_refund(
+                db=ctx.db,
+                task_id=task_to_fail.id,
+                error_message=f"candidate declined by the Builder: {p.reason_code}"[:500],
+                callee_agent_id=ctx.agent.id,
+            )
+        except task_service.EscrowError as exc:
+            raise ExecutionError(f"escrow: {exc}") from exc
+    return ExecOutcome(result=result, events=events)
 
 
 def _finish_candidate(ctx: ExecContext, cand: CodeCandidate, *, ready: bool, summary: str) -> List[str]:
@@ -1418,6 +1570,7 @@ HANDLERS: Dict[IntentType, Callable[[ExecContext], ExecOutcome]] = {
     IntentType.REQUEST_CODE_CHANGE: _request_code_change,
     IntentType.SUBMIT_CODE_CANDIDATE: _submit_code_candidate,
     IntentType.REQUEST_QA: _request_qa,
+    IntentType.DECLINE_CODE_CANDIDATE: _decline_code_candidate,
     IntentType.EVALUATE_CODE_CANDIDATE: _evaluate_code_candidate,
     IntentType.SECURITY_REVIEW_CANDIDATE: _security_review_candidate,
     IntentType.REQUEST_STAGING_DEPLOY: _request_staging_deploy,

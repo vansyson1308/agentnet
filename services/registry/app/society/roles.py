@@ -238,6 +238,9 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         + (
             IntentType.SUBMIT_CODE_CANDIDATE.value,
             IntentType.REQUEST_QA.value,
+            # Hand back a candidate it cannot finish within its spec: REJECTED,
+            # never widened (docs/SOCIETY_RUNTIME.md "A Builder may decline").
+            IntentType.DECLINE_CODE_CANDIDATE.value,
             IntentType.START_TASK.value,
             IntentType.COMPLETE_TASK.value,
             IntentType.FAIL_TASK.value,

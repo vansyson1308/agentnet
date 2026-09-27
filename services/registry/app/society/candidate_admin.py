@@ -11,6 +11,13 @@ intent type: a society that can retire its own unfinished work can also retire
 the evidence that it failed. The row is kept, the reason is required, and the
 in-flight implementation task is closed through the ordinary escrow path so the
 money moves exactly once.
+
+The one agent-side exit is narrower and is not an abandon: the responsible
+Builder may DECLINE_CODE_CANDIDATE a requested or qa_failed candidate it cannot
+finish within its spec (executor ``_decline_code_candidate``). That ends in the
+ordinary REJECTED -- a recorded failure with a structured reason, the spec and
+QA report kept -- and hands the work to the normal Scout -> Governor ->
+Architect path instead of hiding it.
 """
 
 from __future__ import annotations
@@ -87,17 +94,17 @@ def abandon(
     # Economics: close the implementation task through the ordinary escrow path.
     # Never touch a wallet here — fail_task_with_refund takes the row locks and
     # releases the reservation exactly once, and a task already in a terminal
-    # state is left alone so a repeat cannot double-release.
-    refunded = False
+    # state is left alone so a repeat cannot double-release. The task row is
+    # locked now so what is reported is what happens; the refund itself runs
+    # LAST (below), because its commit releases the candidate lock: the status,
+    # the event and the refund land in one commit, and a concurrent Builder
+    # decline can never interleave between them.
+    task_to_fail = None
     if row.task_id is not None:
-        task = db.query(TaskSession).filter(TaskSession.id == row.task_id).first()
+        task = db.query(TaskSession).filter(TaskSession.id == row.task_id).with_for_update().first()
         if task is not None and _ev(task.status) in (TaskStatus.INITIATED.value, TaskStatus.IN_PROGRESS.value):
-            task_service.fail_task_with_refund(
-                db=db,
-                task_id=row.task_id,
-                error_message=f"candidate abandoned by operator: {reason}"[:500],
-            )
-            refunded = True
+            task_to_fail = task
+    refunded = task_to_fail is not None
 
     row.status = CodeCandidateStatus.ABANDONED
     row.error = reason
@@ -122,6 +129,12 @@ def abandon(
         idempotency_key=f"candidate-abandoned:{row.id}",
         notify=True,
     )
+    if task_to_fail is not None:
+        task_service.fail_task_with_refund(
+            db=db,
+            task_id=task_to_fail.id,
+            error_message=f"candidate abandoned by operator: {reason}"[:500],
+        )
     return AbandonResult(candidate=row, already_abandoned=False, task_refunded=refunded, reason=reason)
 
 

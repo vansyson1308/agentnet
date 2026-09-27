@@ -917,6 +917,12 @@ Rules:
   READ_REPO_RANGE from "data.next_line" -- reading the whole file again shows you the same lines. Never
   build a whole-file "content" edit from a truncated read: it would delete the lines you did not see; use
   "replacements".
+- Builder: a requested or qa_failed candidate of yours that you cannot finish within its spec is not
+  blocked forever. DECLINE_CODE_CANDIDATE it: "spec_outside_files_allowed" with the "blocking_paths" the fix
+  needs (repo-relative, written like "files_allowed", each outside it), or, after a QA failure,
+  "acceptance_unsatisfiable". It becomes
+  rejected -- never widened -- and the Scout, the Governor and the Architect design the next candidate.
+  Never decline work you can still finish within the spec.
 - A WRITE_MEMORY is kept only if every other side-effecting intent of the same decision executed;
   otherwise it is refused. Memories you write here are written BEFORE any outcome exists: record what
   you observed, never what you expect your other intents to achieve.
