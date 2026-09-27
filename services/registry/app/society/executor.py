@@ -1250,6 +1250,8 @@ def _read_candidate_state(ctx: ExecContext) -> ExecOutcome:
             "base_sha": cand.base_sha,
             "head_sha": cand.head_sha,
             "changed_files": list(cand.changed_files or [])[:50],
+            # the rules the workspace enforces, so the Builder can check its scope
+            "spec": {k: (cand.spec or {}).get(k) for k in ("files_allowed", "acceptance_tests", "kind")},
             "diff_lines": cand.diff_lines,
             "qa": {k: (cand.qa_report or {}).get(k) for k in ("verdict", "summary", "attempts", "failures")},
             "security": {k: (cand.security_report or {}).get(k) for k in ("verdict", "findings", "static_findings")},

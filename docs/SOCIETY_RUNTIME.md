@@ -172,6 +172,15 @@ and a2788678 (correlation b8db5936). Now each read wakes only its reader, and no
   Staging, 2026-09-26 18:00Z: `repo_intel` returned `main.py` whole (8.6 KB), then the context cut each read's
   JSON mid-content. The Builder saw about 177 of 231 lines of `main.py` and 146 of 273 lines of the failing
   acceptance test, and was told nothing was truncated. It re-read the same files for its six turns.
+- **A spec's rules are never truncated.** In the `candidates` block, a candidate spec shows its structural
+  fields whole: `files_allowed`, `acceptance_tests`, `kind`, `must_compile` and `signal`. The schema already
+  bounds them. Only the prose is truncated: `description` and `expected_effect`. `READ_CANDIDATE_STATE` also
+  returns `files_allowed`, `acceptance_tests` and `kind`.
+
+  Staging, 2026-09-26 20:00Z to 01:00Z: the whole spec was one JSON string cut at 2000 characters. With
+  sorted keys, the Architect's long description came before `files_allowed`, so the list was cut off. Every
+  hour the Builder stopped work on its candidate because "the spec's files_allowed is truncated and
+  unverified".
 - Security review is required when the spec flags it, when any file matches the risky-path pattern, when
   `kind == "code"`, or when the static scan produced findings; final verdict = reviewer verdict AND no
   static findings.
