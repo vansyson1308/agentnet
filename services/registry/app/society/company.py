@@ -31,7 +31,7 @@ import json
 import sys
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -178,7 +178,6 @@ def portfolio_accounting(db: Session, settings: SocietySettings, now: Optional[d
     from .executor import _OPEN_PROPOSAL_STATUSES
 
     now = now or utcnow()
-    shelf_before = now - timedelta(hours=settings.company_hypothesis_shelf_hours)
     rows = (
         db.query(ImprovementProposal.id, ImprovementProposal.status, ImprovementProposal.updated_at, ImprovementProposal.converted_task_id)
         .filter(ImprovementProposal.proposed_by_agent_id.isnot(None), ImprovementProposal.status.in_(_OPEN_PROPOSAL_STATUSES))
@@ -186,6 +185,23 @@ def portfolio_accounting(db: Session, settings: SocietySettings, now: Optional[d
         .limit(_PORTFOLIO_SCAN)
         .all()
     )
+    out: Dict[str, list] = {"active": [], "concluded": [], "shelved": []}
+    for pid, (bucket, _outcome) in _classify(db, rows, settings, now).items():
+        out[bucket].append(pid)
+    return out
+
+
+#: How a concluded hypothesis ended. "failed": every attempt was rejected,
+#: declined or abandoned, or its promotion refused, or its task failed.
+#: "delivered": a change merged, or its task completed.
+OUTCOME_FAILED = "failed"
+OUTCOME_DELIVERED = "delivered"
+
+
+def _classify(db: Session, rows: list, settings: SocietySettings, now: datetime) -> Dict[str, Tuple[str, Optional[str]]]:
+    """(portfolio bucket, outcome) per open proposal row -- the ONE rule shared by
+    the portfolio cap, the agents' context and the same-title re-proposal check."""
+    shelf_before = now - timedelta(hours=settings.company_hypothesis_shelf_hours)
     converted = [r.id for r in rows if _status_value(r.status) == ProposalStatus.CONVERTED_TO_TASK.value]
     cands: Dict[uuid.UUID, list] = {}
     latest_promo: Dict[uuid.UUID, str] = {}
@@ -212,22 +228,48 @@ def portfolio_accounting(db: Session, settings: SocietySettings, now: Optional[d
             return True
         return status == CodeCandidateStatus.READY.value and latest_promo.get(cid) in _PROMOTION_ENDED
 
-    out: Dict[str, list] = {"active": [], "concluded": [], "shelved": []}
+    def merged(cid: uuid.UUID, status: str) -> bool:
+        return status == CodeCandidateStatus.READY.value and latest_promo.get(cid) == PromotionStatus.MERGED.value
+
+    out: Dict[str, Tuple[str, Optional[str]]] = {}
     for r in rows:
         status = _status_value(r.status)
+        bucket, outcome = "active", None
         if status == ProposalStatus.CONVERTED_TO_TASK.value:
             linked = cands.get(r.id, [])
+            task_status = tasks.get(r.converted_task_id) if r.converted_task_id is not None else None
             if linked:
-                bucket = "concluded" if all(ended(c, s) for c, s in linked) else "active"
-            elif r.converted_task_id is not None and tasks.get(r.converted_task_id) in _TASK_ENDED:
+                if all(ended(c, s) for c, s in linked):
+                    bucket = "concluded"
+                    outcome = OUTCOME_DELIVERED if any(merged(c, s) for c, s in linked) else OUTCOME_FAILED
+            elif task_status in _TASK_ENDED:
                 bucket = "concluded"
-            else:
-                bucket = "active"
+                outcome = OUTCOME_DELIVERED if task_status == TaskStatus.COMPLETED.value else OUTCOME_FAILED
         elif status == ProposalStatus.APPROVED.value and r.updated_at is not None and r.updated_at < shelf_before:
             bucket = "shelved"
-        else:
-            bucket = "active"
-        out[bucket].append(str(r.id))
+        out[str(r.id)] = (bucket, outcome)
+    return out
+
+
+def proposal_states(db: Session, settings: SocietySettings, proposal_ids: Iterable[Any], now: Optional[datetime] = None) -> Dict[str, Dict[str, Optional[str]]]:
+    """``portfolio_state`` and ``outcome`` for exactly these proposals: any
+    author, no scan bound. A proposal outside the open lifecycle (REJECTED /
+    IMPLEMENTED) is ``closed``."""
+    from .executor import _OPEN_PROPOSAL_STATUSES
+
+    ids = list(dict.fromkeys(uuid.UUID(str(i)) for i in proposal_ids))
+    if not ids:
+        return {}
+    rows = (
+        db.query(ImprovementProposal.id, ImprovementProposal.status, ImprovementProposal.updated_at, ImprovementProposal.converted_task_id)
+        .filter(ImprovementProposal.id.in_(ids))
+        .all()
+    )
+    open_values = {_status_value(st) for st in _OPEN_PROPOSAL_STATUSES}
+    out: Dict[str, Dict[str, Optional[str]]] = {str(r.id): {"portfolio_state": "closed", "outcome": None} for r in rows}
+    live = [r for r in rows if _status_value(r.status) in open_values]
+    for pid, (bucket, outcome) in _classify(db, live, settings, now or utcnow()).items():
+        out[pid] = {"portfolio_state": bucket, "outcome": outcome}
     return out
 
 

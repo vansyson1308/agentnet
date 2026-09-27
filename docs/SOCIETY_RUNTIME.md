@@ -203,9 +203,9 @@ and a2788678 (correlation b8db5936). Now each read wakes only its reader, and no
   kept, and the reason and detail are persisted on the row and in the intent. It emits
   `code_candidate.rejected` with `declined: true`, the reason, the blocking paths and the unchanged
   `files_allowed`. That wakes the Scout, the Governor and the Builder, and the normal Scout → Governor →
-  Architect path designs the next candidate: `files_allowed` is never widened in place. A converted
-  proposal whose every candidate ended rejected, failed or abandoned is concluded, so the Scout may propose
-  it again under the same title, and the Governor reviews it again. A proposal with work in flight is still a
+  Architect path designs the next candidate: `files_allowed` is never widened in place. A proposal whose
+  attempts all failed is concluded with outcome `failed` (see `signal_coverage` below), so the Scout may
+  propose it again under the same title, and the Governor reviews it again. A proposal with work in flight is still a
   duplicate. After two such failed proposals under one title within 24 hours, a third is refused until the
   approach and evidence change, so an attempt that fails at once cannot loop until the daily candidate
   budget is spent. The implementation task is closed only when the declining Builder is its callee, which is the
@@ -359,11 +359,30 @@ forming (`society/memory_grounding.py`):
   effect, so their memories are admitted. Each later run believed its own note, and operator
   refutation did not stop it. The context never answered the one question the Scout was deciding.
   It now does, from durable rows:
-  - `open_proposals`: every open proposal created by an **executed** `CREATE_IMPROVEMENT` whose
-    evidence named this signal type. There is no time window, so an old proposal is not forgotten.
-    Each entry carries its portfolio state (`active`, `concluded` or `shelved`, from
+  - `open_proposals`: every proposal still pursuing the signal, created by an **executed**
+    `CREATE_IMPROVEMENT` whose evidence named this signal type. There is no time window, so an old
+    proposal is not forgotten. Each entry carries its portfolio state (`active` or `shelved`, from
     `company.portfolio_accounting`). An empty list means no such proposal exists, whatever a memory
     says.
+  - `concluded_proposals`: the same, for proposals whose work ended, each with its `outcome`
+    (`company.proposal_states`, the one rule shared by the portfolio cap, the context and the
+    executor's same-title check). Newest first; the live proposals are listed before the cap.
+    - `failed`: every attempt was rejected, declined or abandoned, its promotion was refused, or its
+      task failed. It covers nothing. If the signal persists, a new proposal carrying the lesson is how
+      the work resumes (not a repeat; the same title is allowed, within the retry limit), and the
+      Governor reviews it again.
+    - `delivered`: its change merged or its task completed. A persisting signal may be waiting for a
+      deploy, so only a different change backed by new evidence justifies a new proposal; the same
+      title is still a duplicate.
+
+    The `proposals` block carries the same `portfolio_state` and `outcome` for each proposal it shows,
+    including the one a `code_candidate.rejected` event names, whoever proposed it.
+
+    Staging, 2026-09-27: the Builder declined candidate a2788678 at 05:00Z. Woken by the
+    rejection, the Scout and the Governor saw proposal ea350455 only as `CONVERTED_TO_TASK` and
+    judged the work still in hand. At 05:04Z the next critical `public.surface.anomaly` reached the
+    Scout with ea350455 listed among the *open* proposals, so *"no new proposal is warranted"*.
+    Nothing woke the Architect.
   - `attempts`: the last few `CREATE_IMPROVEMENT` intents for the signal, from any agent, within 7
     days. Each shows its outcome, whether it was yours (`by_you`), the proposal it produced and
     whether that was an idempotent `duplicate`. The reason is shown only for your own attempts, so no
