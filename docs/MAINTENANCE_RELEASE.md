@@ -21,7 +21,7 @@ Code: `app/maintenance/release.py` (controller), `release_providers.py` (the onl
    command `python -m app.maintenance.release_worker`, no public domain, restart policy ALWAYS. Mount
    the App key as a file; set `MAINTENANCE_RELEASE_GITHUB_APP_ID`, `..._INSTALLATION_ID`,
    `..._PRIVATE_KEY_FILE`. Create a **production-environment** project token and set
-   `MAINTENANCE_RAILWAY_TOKEN` (+ `MAINTENANCE_RAILWAY_TOKEN_KIND=project`), `MAINTENANCE_RAILWAY_PROJECT_ID`,
+   `MAINTENANCE_RAILWAY_TOKEN` (+ `MAINTENANCE_RAILWAY_AUTH_MODE=project`), `MAINTENANCE_RAILWAY_PROJECT_ID`,
    `MAINTENANCE_RAILWAY_ENVIRONMENT_ID` (production) and `MAINTENANCE_RAILWAY_SERVICE_IDS` (JSON of the
    six production service ids). Point `DATABASE_URL`/`POSTGRES_*` at the staging control-plane database
    (where the kernel writes releases). Set the same `MAINTENANCE_ATTESTATION_KEY` as the society-worker.

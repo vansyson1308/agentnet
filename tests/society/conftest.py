@@ -425,6 +425,34 @@ def grants_with_no_cooldown(db):
 # ── API auth helpers (Phase 2) ────────────────────────────────────────
 
 
+def _reset_rate_limit_windows() -> None:
+    """Each API test starts with fresh rate-limit windows. The limiter keys an
+    anonymous TestClient by its peer ("testclient") in a fixed per-minute Redis
+    window, so requests made by EARLIER tests in the same wall-clock minute
+    (e.g. the authz matrix walking every mutating route anonymously) would
+    otherwise leak into the next test as 429s. tests/test_rate_limiting.py
+    proves the limiter itself; this only stops cross-test leakage."""
+    try:
+        import redis  # noqa: PLC0415
+
+        r = redis.Redis(host=os.getenv("REDIS_HOST", "localhost"), port=int(os.getenv("REDIS_PORT", "6379")), password=os.getenv("REDIS_PASSWORD") or None, socket_connect_timeout=1)
+        keys = list(r.scan_iter("agentnet:rl:*", count=500))
+        if keys:
+            r.delete(*keys)
+    except Exception:  # noqa: BLE001 -- no Redis: the middleware uses per-process buckets
+        pass
+    try:
+        from services.registry.app.main import app  # noqa: PLC0415
+
+        stack = getattr(app, "middleware_stack", None)
+        while stack is not None:
+            if hasattr(stack, "_buckets"):
+                stack._buckets.clear()
+            stack = getattr(stack, "app", None)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @pytest.fixture
 def api_client(db, SessionLocal):
     """TestClient with get_db overridden to the test DB. Startup hooks are
@@ -445,6 +473,7 @@ def api_client(db, SessionLocal):
             s.close()
 
     app.dependency_overrides[get_db] = _override
+    _reset_rate_limit_windows()
     try:
         yield TestClient(app)
     finally:

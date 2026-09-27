@@ -8,7 +8,7 @@ controller process, at call time:
   (contents write on release/* branches, pull requests, checks read; no admin,
   no ruleset bypass, no secrets, no workflows);
 * ``MAINTENANCE_RAILWAY_TOKEN`` -- a Railway token scoped to the production
-  environment (``MAINTENANCE_RAILWAY_TOKEN_KIND=project`` sends it as
+  environment (``MAINTENANCE_RAILWAY_AUTH_MODE=project`` sends it as
   ``Project-Access-Token``; ``account`` as a Bearer token).
 
 Nothing here is imported by the kernel, the activities, context building or
@@ -407,7 +407,7 @@ class LiveRailway:
         tok = os.getenv("MAINTENANCE_RAILWAY_TOKEN", "")
         if not tok:
             raise ProviderRefused("no Railway release token in this process")
-        if os.getenv("MAINTENANCE_RAILWAY_TOKEN_KIND", "project").strip().lower() == "project":
+        if os.getenv("MAINTENANCE_RAILWAY_AUTH_MODE", "project").strip().lower() == "project":
             return {"Project-Access-Token": tok, "Content-Type": "application/json"}
         return {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
 
