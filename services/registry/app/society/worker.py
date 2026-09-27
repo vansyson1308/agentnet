@@ -51,6 +51,7 @@ from . import deployment as dep_mod
 from . import fitness as fitness_mod
 from . import memory_grounding
 from . import promotion as promo_mod
+from . import redelivery as redelivery_mod
 from . import router as router_mod
 from . import surface_monitor as surface_monitor_mod
 from . import telemetry as telemetry_mod
@@ -251,6 +252,9 @@ class SocietyWorker:
                 # SOCIETY_COMPANY_CYCLE_ENABLED (and the runtime) are on.
                 company_mod.maybe_start_scheduled_cycle(db, self.settings)
                 company_mod.settle_cycles(db)
+                # A candidate wake the loop breaker swallowed is re-sent once, in a
+                # fresh story, while the candidate still waits for it (redelivery.py).
+                redelivery_mod.redeliver_swallowed_wakes(db, self.settings)
             except Exception:  # noqa: BLE001 — world ingestion must never block dispatch
                 db.rollback()
                 logger.exception("society world ingestion failed")
