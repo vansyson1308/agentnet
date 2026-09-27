@@ -119,8 +119,10 @@ def _run_as(db, SessionLocal, settings, role, intents, *, max_cycles=6):
     return ev
 
 
-def _intent(db, itype):
-    return db.query(AgentIntent).filter(AgentIntent.intent_type == itype).order_by(AgentIntent.created_at.desc()).first()
+def _intent(db, itype, cid=None):
+    """The newest intent of ``itype`` -- for ``cid``, the newest about that candidate."""
+    rows = db.query(AgentIntent).filter(AgentIntent.intent_type == itype).order_by(AgentIntent.created_at.desc()).all()
+    return next((r for r in rows if cid is None or (r.payload or {}).get("candidate_id") == str(cid)), None)
 
 
 def test_the_live_deadlock_is_released_by_the_builder_and_recovery_designs_the_next_candidate(db, SessionLocal, code_settings, grants_with_no_cooldown):
@@ -133,6 +135,9 @@ def test_the_live_deadlock_is_released_by_the_builder_and_recovery_designs_the_n
     assert _intent(db, "REQUEST_CODE_CHANGE").result["result"]["duplicate"] is True, "the Architect cannot re-specify an open candidate"
     _run_as(db, SessionLocal, code_settings, "builder", [{"type": "REQUEST_QA", "payload": {"candidate_id": str(cand.id)}}])
     assert _ev(_intent(db, "REQUEST_QA").execution_status) == "failed", "QA cannot be re-run on a qa_failed candidate"
+    same_title = {"type": "CREATE_IMPROVEMENT", "payload": {"title": proposal.title, "problem": "public surface failing", "proposed_change": "repair it", "importance": 80}}
+    _run_as(db, SessionLocal, code_settings, "scout", [same_title])
+    assert _intent(db, "CREATE_IMPROVEMENT").result["result"]["duplicate"] is True, "an attempt in flight is not re-proposed"
     assert db.query(CodeCandidate).count() == 1 and _ev(db.get(CodeCandidate, cand.id).status) == "qa_failed"
 
     # ── the Builder declines; the Society recovers on its own ──
@@ -150,8 +155,10 @@ def test_the_live_deadlock_is_released_by_the_builder_and_recovery_designs_the_n
             return {"decision_summary": "cannot finish within the spec; declining", "intents": [_decline(cand.id)], "sleep_for_seconds": 60}
         if role == "scout" and et == EventType.CODE_CANDIDATE_REJECTED:
             assert p["declined"] is True and p["reason_code"] == "spec_outside_files_allowed"
+            # Same title as the concluded hypothesis: every attempt at it failed,
+            # so re-proposing it is recovery, not a duplicate.
             return {"decision_summary": "re-propose with the lesson", "intents": [{"type": "CREATE_IMPROVEMENT", "payload": {
-                "title": "Public surface repair, second design", "problem": "candidate declined: " + p["detail"][:200],
+                "title": proposal.title, "problem": "candidate declined: " + p["detail"][:200],
                 "proposed_change": "re-design including base.html", "importance": 80}}], "sleep_for_seconds": 60}
         if role == "governor" and et == EventType.PROPOSAL_CREATED:
             return {"decision_summary": "approve", "intents": [{"type": "REVIEW_IMPROVEMENT", "payload": {"proposal_id": p["proposal_id"], "decision": "approve", "reason": "bounded re-design"}}], "sleep_for_seconds": 60}
@@ -179,6 +186,8 @@ def test_the_live_deadlock_is_released_by_the_builder_and_recovery_designs_the_n
     assert str(proposal.id) in {str(x) for x in portfolio_accounting(db, code_settings)["concluded"]}, "the old hypothesis no longer holds a slot"
     new = db.query(CodeCandidate).filter(CodeCandidate.id != cand.id).one()
     assert _ev(new.status) == "requested" and new.proposal_id != proposal.id and BASE in new.spec["files_allowed"]
+    reproposed = db.get(ImprovementProposal, new.proposal_id)
+    assert reproposed.title == proposal.title and _ev(reproposed.status) == "CONVERTED_TO_TASK", "re-reviewed by the Governor"
 
 
 def test_only_the_responsible_builder_may_decline_an_open_candidate(db, SessionLocal, code_settings, grants_with_no_cooldown):
@@ -186,33 +195,41 @@ def test_only_the_responsible_builder_may_decline_an_open_candidate(db, SessionL
 
     _, other = _live_deadlock(db, report, builder="qa")  # built by someone else
     _run_as(db, SessionLocal, code_settings, "builder", [_decline(other.id)])
-    assert _ev(_intent(db, "DECLINE_CODE_CANDIDATE").execution_status) == "failed"
-    assert "responsible" in _intent(db, "DECLINE_CODE_CANDIDATE").error
+    i = _intent(db, "DECLINE_CODE_CANDIDATE", other.id)
+    assert _ev(i.execution_status) == "failed" and "responsible" in i.error
 
     _, mine = _live_deadlock(db, report)
     _run_as(db, SessionLocal, code_settings, "architect", [_decline(mine.id)])
-    assert _ev(_intent(db, "DECLINE_CODE_CANDIDATE").policy_decision) == "deny", "only the Builder's grant carries the intent"
+    assert _ev(_intent(db, "DECLINE_CODE_CANDIDATE", mine.id).policy_decision) == "deny", "only the Builder's grant carries the intent"
 
     for status in ("ready", "qa_passed", "security_review", "qa_running", "built", "building", "rejected", "abandoned", "failed"):
         _, c = _live_deadlock(db, report, status=status)
         _run_as(db, SessionLocal, code_settings, "builder", [_decline(c.id)])
-        i = _intent(db, "DECLINE_CODE_CANDIDATE")
-        assert _ev(i.execution_status) == "failed" and status in i.error, (status, i.error)
+        i = _intent(db, "DECLINE_CODE_CANDIDATE", c.id)
+        assert _ev(i.execution_status) == "failed" and f"candidate is {status};" in i.error, (status, i.error)
         assert _ev(db.get(CodeCandidate, c.id).status) == status
 
     _, promoted = _live_deadlock(db, report)
     db.add(CodePromotion(candidate_id=promoted.id, correlation_id=uuid.uuid4(), risk_tier="amber", provider="fake", status="requested"))
     db.commit()
     _run_as(db, SessionLocal, code_settings, "builder", [_decline(promoted.id)])
-    assert "promotion" in _intent(db, "DECLINE_CODE_CANDIDATE").error
+    assert "promotion" in _intent(db, "DECLINE_CODE_CANDIDATE", promoted.id).error
+
+    _, fresh = _live_deadlock(db, report, status="requested")
+    _run_as(db, SessionLocal, code_settings, "builder", [_decline(fresh.id, reason="acceptance_unsatisfiable", blocking=())])
+    assert "needs a qa_failed candidate" in _intent(db, "DECLINE_CODE_CANDIDATE", fresh.id).error, "no QA failure, no claim that QA cannot pass"
 
     _, c = _live_deadlock(db, report)
-    _run_as(db, SessionLocal, code_settings, "builder", [_decline(c.id, blocking=(MAIN,))])
-    assert "inside files_allowed" in _intent(db, "DECLINE_CODE_CANDIDATE").error, "a decline must be true, not convenient"
-    _run_as(db, SessionLocal, code_settings, "builder", [_decline(c.id, blocking=())])
-    assert "blocking_paths" in _intent(db, "DECLINE_CODE_CANDIDATE").error
-    _run_as(db, SessionLocal, code_settings, "builder", [_decline(c.id, detail="too short")])
-    assert _ev(_intent(db, "DECLINE_CODE_CANDIDATE").policy_decision) == "invalid", "the structured reason is required"
+    for blocking, refusal in (
+        ((MAIN,), "inside files_allowed"),  # a decline must be true, not convenient
+        ((BASE, MAIN), "inside files_allowed"),  # one real blocker does not excuse the rest
+        ((), "blocking_paths"),
+    ):
+        _run_as(db, SessionLocal, code_settings, "builder", [_decline(c.id, blocking=blocking)])
+        assert refusal in _intent(db, "DECLINE_CODE_CANDIDATE", c.id).error, blocking
+    for payload in (_decline(c.id, detail="too short"), _decline(c.id, blocking=("./" + MAIN,)), _decline(c.id, blocking=("services//dashboard/app/main.py",))):
+        _run_as(db, SessionLocal, code_settings, "builder", [payload])
+        assert _ev(_intent(db, "DECLINE_CODE_CANDIDATE", c.id).policy_decision) == "invalid", payload
     assert _ev(db.get(CodeCandidate, c.id).status) == "qa_failed" and db.get(CodeCandidate, c.id).spec["files_allowed"] == FILES_ALLOWED
 
 
@@ -229,16 +246,54 @@ def test_a_decline_is_idempotent_and_refunds_the_implementation_task_once(db, Se
     _, cand = _live_deadlock(db, report, status="requested", builder=None)  # never picked up: any Builder holds it
     cand.task_id = task.id
     db.commit()
-    _run_as(db, SessionLocal, code_settings, "builder", [_decline(cand.id, reason="acceptance_unsatisfiable", blocking=())])
-    first = _intent(db, "DECLINE_CODE_CANDIDATE")
+    _run_as(db, SessionLocal, code_settings, "builder", [_decline(cand.id)])
+    first = _intent(db, "DECLINE_CODE_CANDIDATE", cand.id)
     assert _ev(first.execution_status) == "executed" and first.result["result"]["task_refunded"] is True
     assert _ev(db.get(TaskSession, task.id).status) == "failed"
     caller = db.query(Wallet).filter(Wallet.id == caller.id).one()
     assert caller.balance_credits == 50 and caller.reserved_credits == 0, "the escrow is released exactly once"
 
-    _run_as(db, SessionLocal, code_settings, "builder", [_decline(cand.id, reason="acceptance_unsatisfiable", blocking=())])
-    again = _intent(db, "DECLINE_CODE_CANDIDATE")
+    _run_as(db, SessionLocal, code_settings, "builder", [_decline(cand.id)])
+    again = _intent(db, "DECLINE_CODE_CANDIDATE", cand.id)
     assert _ev(again.execution_status) == "executed" and again.result["result"]["duplicate"] is True
     assert db.query(SocietyEvent).filter(SocietyEvent.event_type == EventType.CODE_CANDIDATE_REJECTED, SocietyEvent.subject_id == cand.id).count() == 1
     caller = db.query(Wallet).filter(Wallet.id == caller.id).one()
     assert caller.balance_credits == 50 and caller.reserved_credits == 0
+
+
+def test_a_decline_never_closes_a_task_the_builder_is_not_a_party_to(db, SessionLocal, code_settings, grants_with_no_cooldown):
+    """The candidate's task id comes from the Architect's request. Declining is
+    the Builder's FAIL_TASK authority and no more: a task whose callee is
+    someone else stays open for its own parties (and the timeout worker)."""
+    report = _seed(db, grants_with_no_cooldown)
+    caller = db.query(Wallet).filter(Wallet.owner_type == WalletOwnerType.AGENT, Wallet.owner_id == report.agents["architect"]).first()
+    caller.balance_credits = 50
+    db.commit()
+    _run_as(db, SessionLocal, code_settings, "architect", [{"type": "CREATE_TASK", "payload": {"callee_agent": "Society_QA", "capability": "evaluate_candidate", "input": {"candidate_id": "x"}, "max_budget": 10}}])
+    foreign = db.query(TaskSession).one()
+    reserved = db.query(Wallet).filter(Wallet.id == caller.id).one().reserved_credits
+    assert reserved > 0
+
+    _, cand = _live_deadlock(db, report)
+    cand.task_id = foreign.id
+    db.commit()
+    _run_as(db, SessionLocal, code_settings, "builder", [_decline(cand.id)])
+    i = _intent(db, "DECLINE_CODE_CANDIDATE", cand.id)
+    assert _ev(i.execution_status) == "executed" and i.result["result"]["task_refunded"] is False
+    assert _ev(db.get(CodeCandidate, cand.id).status) == "rejected"
+    assert _ev(db.get(TaskSession, foreign.id).status) == "initiated", "someone else's task is never failed by a decline"
+    assert db.query(Wallet).filter(Wallet.id == caller.id).one().reserved_credits == reserved
+
+
+def test_the_decline_moves_money_only_through_the_escrow_path():
+    """Never a wallet write: like the operator abandon, the refund is
+    fail_task_with_refund's, for the callee's own task, once."""
+    import inspect
+
+    from services.registry.app.society import executor
+
+    src = inspect.getsource(executor._decline_code_candidate)
+    assert "task_service.fail_task_with_refund" in src and "callee_agent_id=ctx.agent.id" in src
+    for forbidden in ("balance_credits", "reserved_credits", "Wallet", "wallet."):
+        assert forbidden not in src, f"a decline must never move money itself: {forbidden!r}"
+    assert "TaskStatus.INITIATED.value, TaskStatus.IN_PROGRESS.value" in src

@@ -370,18 +370,16 @@ class CandidateRefPayload(_Strict):
     candidate_id: uuid.UUID
 
 
-#: Why a Builder hands an open candidate back instead of finishing it.
-DECLINE_REASON_CODES = ("spec_outside_files_allowed", "acceptance_unsatisfiable")
-
-
 class DeclineCodeCandidatePayload(_Strict):
     """The responsible Builder declines an open candidate it cannot finish
     within its spec. The candidate becomes REJECTED -- never widened -- and
     the normal Scout -> Governor -> Architect path designs the next one.
 
-    ``blocking_paths`` are the files the fix would need; for
-    ``spec_outside_files_allowed`` the executor checks that every one of them
-    really is outside the spec's ``files_allowed`` (fail closed)."""
+    ``blocking_paths`` are the files the fix would need, as canonical
+    repo-relative paths (no ``.``/``..``/empty segments, so ``./a`` can never
+    pose as a path other than ``a``); for ``spec_outside_files_allowed`` the
+    executor checks that every one of them is outside the spec's
+    ``files_allowed``."""
 
     candidate_id: uuid.UUID
     reason_code: Literal["spec_outside_files_allowed", "acceptance_unsatisfiable"]
@@ -392,8 +390,8 @@ class DeclineCodeCandidatePayload(_Strict):
     @classmethod
     def _safe_paths(cls, v: List[str]) -> List[str]:
         for p in v:
-            if p.startswith("/") or ".." in p.split("/") or p.startswith("~") or "\\" in p or len(p) > 255:
-                raise ValueError(f"unsafe path: {p!r}")
+            if any(seg in ("", ".", "..") for seg in p.split("/")) or p.startswith("~") or "\\" in p or len(p) > 255:
+                raise ValueError(f"not a canonical repo-relative path: {p!r}")
         return v
 
 

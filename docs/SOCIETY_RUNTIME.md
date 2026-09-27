@@ -187,9 +187,11 @@ and a2788678 (correlation b8db5936). Now each read wakes only its reader, and no
   unverified".
 - **A Builder may decline.** A candidate the Builder cannot finish within its spec is not stuck forever. The
   Builder responsible for it may `DECLINE_CODE_CANDIDATE` with a structured reason:
-  - `spec_outside_files_allowed`: the fix needs `blocking_paths` outside `files_allowed`. Every blocking path
-    must be outside the list; a path inside it means the change can still be made within the spec.
-  - `acceptance_unsatisfiable`: the acceptance tests cannot pass within the spec.
+  - `spec_outside_files_allowed`: the fix needs `blocking_paths` outside `files_allowed`. The paths must be
+    canonical and repo-relative (no `.`, `..` or empty segments), and every one must be outside the list; a
+    path inside it means the change can still be made within the spec.
+  - `acceptance_unsatisfiable`: the acceptance tests cannot pass within the spec. Only after a QA failure:
+    a fresh candidate is built and judged first.
 
   `detail` is required (20 to 1000 characters). Only these candidates can be declined:
   - its status is `requested` or `qa_failed`; `building`, `built`, the QA and Security states, `ready` and
@@ -200,12 +202,18 @@ and a2788678 (correlation b8db5936). Now each read wakes only its reader, and no
   A decline moves the candidate to `rejected`, the ordinary recorded failure. The spec and QA report are
   kept, and the reason and detail are persisted on the row and in the intent. It emits
   `code_candidate.rejected` with `declined: true`, the reason, the blocking paths and the unchanged
-  `files_allowed`. That wakes the Scout and the Governor, and the normal Scout → Governor → Architect path
-  designs the next candidate: `files_allowed` is never widened in place. An in-flight `implement_change`
-  task is closed through `task_service.fail_task_with_refund`, so the escrow is released exactly once and
-  no wallet is written here. A repeat decline returns `duplicate`, with no second event and no second
-  refund. The intent is MEDIUM and needs `SOCIETY_AUTONOMOUS_CODE_ENABLED`; no risk class, QA, Security,
-  fitness, budget, merge or production rule changes. Abandon stays operator-only.
+  `files_allowed`. That wakes the Scout, the Governor and the Builder, and the normal Scout → Governor →
+  Architect path designs the next candidate: `files_allowed` is never widened in place. A converted
+  proposal whose every candidate ended rejected, failed or abandoned is concluded, so the Scout may propose
+  it again under the same title, and the Governor reviews it again. A proposal with work in flight is still a
+  duplicate. The implementation task is closed only when the declining Builder is its callee, which is the
+  authority `FAIL_TASK` already gives it. It is closed through `task_service.fail_task_with_refund`, and that
+  runs last, so the rejection, its event and the refund land in one commit. The escrow is released exactly
+  once, and no wallet is written here. The operator abandon is ordered the same way, so the two exits cannot
+  interleave. A task linked for anyone else is left to its own parties and the timeout worker. A repeat decline
+  returns `duplicate`, with no second event and no second refund. The intent is MEDIUM and needs
+  `SOCIETY_AUTONOMOUS_CODE_ENABLED`; no risk class, QA, Security, fitness, budget, merge or production rule
+  changes. Abandon stays operator-only.
 
   Staging, 2026-09-27 03:00Z: once it saw the whole spec, the Builder judged that candidate a2788678 (QA
   failed once) needed `base.html`, outside its `files_allowed`, and stopped. Nothing could close the
