@@ -206,7 +206,9 @@ and a2788678 (correlation b8db5936). Now each read wakes only its reader, and no
   Architect path designs the next candidate: `files_allowed` is never widened in place. A converted
   proposal whose every candidate ended rejected, failed or abandoned is concluded, so the Scout may propose
   it again under the same title, and the Governor reviews it again. A proposal with work in flight is still a
-  duplicate. The implementation task is closed only when the declining Builder is its callee, which is the
+  duplicate. After two such failed proposals under one title within 24 hours, a third is refused until the
+  approach and evidence change, so an attempt that fails at once cannot loop until the daily candidate
+  budget is spent. The implementation task is closed only when the declining Builder is its callee, which is the
   authority `FAIL_TASK` already gives it. It is closed through `task_service.fail_task_with_refund`, and that
   runs last, so the rejection, its event and the refund land in one commit. The escrow is released exactly
   once, and no wallet is written here. The operator abandon is ordered the same way, so the two exits cannot

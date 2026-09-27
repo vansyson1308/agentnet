@@ -376,8 +376,9 @@ class DeclineCodeCandidatePayload(_Strict):
     the normal Scout -> Governor -> Architect path designs the next one.
 
     ``blocking_paths`` are the files the fix would need, as canonical
-    repo-relative paths (no ``.``/``..``/empty segments, so ``./a`` can never
-    pose as a path other than ``a``); for ``spec_outside_files_allowed`` the
+    repo-relative paths (no ``.``/``..``/empty segments, no whitespace or
+    control characters, so ``./a`` or ``a `` can never pose as a path other
+    than ``a``); for ``spec_outside_files_allowed`` the
     executor checks that every one of them is outside the spec's
     ``files_allowed``."""
 
@@ -390,7 +391,13 @@ class DeclineCodeCandidatePayload(_Strict):
     @classmethod
     def _safe_paths(cls, v: List[str]) -> List[str]:
         for p in v:
-            if any(seg in ("", ".", "..") for seg in p.split("/")) or p.startswith("~") or "\\" in p or len(p) > 255:
+            if (
+                any(seg in ("", ".", "..") for seg in p.split("/"))
+                or any(ch.isspace() or ord(ch) < 32 for ch in p)
+                or p.startswith("~")
+                or "\\" in p
+                or len(p) > 255
+            ):
                 raise ValueError(f"not a canonical repo-relative path: {p!r}")
         return v
 

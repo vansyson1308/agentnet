@@ -363,6 +363,9 @@ WORLD_SIGNAL_EVENTS = frozenset(
 )
 
 
+#: Same-title proposals whose every attempt failed that may precede a new one
+#: within 24 hours (recovery, bounded).
+MAX_FAILED_RETRIES_PER_TITLE = 2
 #: Candidate outcomes that end an attempt as a failure.
 _ATTEMPT_FAILED_STATUSES = (
     CodeCandidateStatus.REJECTED.value,
@@ -394,6 +397,7 @@ def _create_improvement(ctx: ExecContext) -> ExecOutcome:
         .order_by(ImprovementProposal.created_at.desc())
         .all()
     )
+    failed_recently = 0
     for existing in same_title:
         if _every_attempt_failed(ctx.db, existing):
             # Concluded (company.portfolio_accounting): proposing it again is the
@@ -401,8 +405,18 @@ def _create_improvement(ctx: ExecContext) -> ExecOutcome:
             # and it goes through the Governor's review again. Otherwise a Scout
             # that keeps the title would get "duplicate" forever and nothing
             # would design the next candidate.
+            if existing.created_at is not None and existing.created_at >= ctx.now - timedelta(hours=24):
+                failed_recently += 1
             continue
         return ExecOutcome(result={"proposal_id": str(existing.id), "duplicate": True, "status": _ev(existing.status)})
+    if failed_recently >= MAX_FAILED_RETRIES_PER_TITLE:
+        # The per-title brake: a hypothesis whose attempts keep failing (e.g. a
+        # busywork diff rejected at once) must not loop until the daily
+        # candidate budget is spent.
+        raise ExecutionError(
+            f"{failed_recently} proposals titled {p.title!r} concluded without success in 24h; "
+            "change the approach and the evidence before proposing again"
+        )
     if ctx.settings.company_cycle_enabled:
         # Company-mode portfolio cap (ADR-0009 D15): a few hypotheses pursued
         # to a conclusion beat many started. Close or reject one first.
