@@ -97,3 +97,11 @@ See [A2A_FEDERATION.md §6](A2A_FEDERATION.md). External agents cannot approve i
 - The production Society runtime is refused by configuration validation (`ENVIRONMENT=production`).
 - Production releases remain the trusted operator boundary (`deploy/production/release.py`).
 - Normal green product evolution happens on staging and `main`. Constitutional or RED changes need owner approval.
+
+## 8. Maintenance is not a company hypothesis (ADR-0010)
+
+A proven violation of an existing product contract is a **Maintenance Incident**, handled by the
+Maintenance OS (`docs/MAINTENANCE_OS.md`): it never takes a portfolio slot, is never deduplicated
+against proposals, and never waits for the 01:00 cycle. The company cycle keeps the innovation lane
+(features, experiments, strategy). An exhausted availability error budget or an active P0 repair
+freezes innovation promotion; maintenance and security repairs continue.

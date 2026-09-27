@@ -173,7 +173,27 @@ class SurfaceMonitor:
             if not getattr(ev, "deduplicated", False):
                 out.recovered_event_id = str(ev.id)
                 db.commit()
+        self._maintenance_ingest(db, report, now)
         return out
+
+    @staticmethod
+    def _maintenance_ingest(db: Session, report, now: datetime) -> None:
+        """ADR-0010: the same trusted report also feeds the Maintenance OS
+        (incidents + SLI samples) when MAINTENANCE_MONITORING_ENABLED is on.
+        Bounded: a failure here never affects the monitor's own events."""
+        from ..maintenance.config import get_maintenance_settings  # noqa: PLC0415
+
+        ms = get_maintenance_settings()
+        if not ms.monitoring_enabled:
+            return
+        try:
+            from ..maintenance.surface_ingest import ingest_report  # noqa: PLC0415
+
+            ingest_report(db, ms, report, now=now)
+            db.commit()
+        except Exception:  # noqa: BLE001
+            db.rollback()
+            logger.exception("maintenance ingestion of the public-surface report failed")
 
     def _emit_anomaly(self, db: Session, settings: SocietySettings, report, durable, *, now: datetime, out: MonitorOutcome) -> Optional[SocietyEvent]:
         failing = sorted(durable, key=lambda o: (-_rank(o.severity), o.name))[:MAX_FAILING_IN_EVENT]

@@ -142,6 +142,13 @@ jobs:
           pip install -r requirements-dev.txt
           pip check
           python -c "import importlib.metadata as m; print('pytest-timeout', m.version('pytest-timeout'))"
+      # Maintenance OS browser tier (ADR-0010 D10): the pinned Chromium for
+      # Playwright 1.56 and the pinned axe-core build. Dev/test only.
+      - name: Browser + axe-core for the deterministic experience probe
+        run: |
+          python -m playwright install --with-deps chromium
+          npm install --no-save --prefix "$RUNNER_TEMP/axe" axe-core@4.10.3
+          echo "MAINTENANCE_AXE_SOURCE=$RUNNER_TEMP/axe/node_modules/axe-core/axe.min.js" >> "$GITHUB_ENV"
       - name: Bootstrap the shared test database from the init-db bundle (fail hard)
         working-directory: services/registry
         run: python -m app.db_bootstrap --init-dir init-db
@@ -155,6 +162,14 @@ jobs:
             --cov=services --cov-report=term-missing --cov-report=xml
       - name: No unexplained skips
         run: python scripts/ci/check_skips.py pytest-report.xml --allow "fresh-install harness"
+      - name: Test-discovery sentinel (no active test suite outside required CI; HELD suites named)
+        run: python scripts/ci/check_test_discovery.py
+      # Autonomous Maintenance OS (ADR-0010): state machine + property tests,
+      # schema invariants, crash/concurrency, 24h accelerated reconciliation,
+      # release controller, rollback, secret boundary, browser probe, replay.
+      # Part of the suite above; re-run as a named gate. Deterministic fakes only.
+      - name: Maintenance OS gates (kernel, release controller, rollback, no-stranded invariant, browser probe)
+        run: pytest -q -p no:cacheprovider tests/society/maintenance tests/test_test_discovery.py
       # Self-development gates (Phase 3): named so a failure is visible at a glance.
       # They are part of the full suite above; this re-runs them as explicit gates
       # with deterministic fakes only (no DeepSeek, no GitHub App, no hosting).

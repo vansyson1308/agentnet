@@ -32,6 +32,7 @@ branch or PR (tests/society/test_promotion_crash_recovery.py).
 from __future__ import annotations
 
 import logging
+import os
 import pathlib
 import uuid
 from dataclasses import dataclass, field
@@ -696,9 +697,19 @@ def merge_freeze_reasons(db: Session, settings: SocietySettings, promotion: Code
         reasons.append("no_recorded_rollback_point")
     # Phase 8 (ADR-0009 D15): an open production/security incident freezes
     # merge authority until an OPERATOR lifts it (society/company.py).
-    open_incidents = db.query(IncidentFreeze).filter(IncidentFreeze.lifted_at.is_(None)).count()
-    if open_incidents:
-        reasons.append(f"incident_freeze_open({open_incidents})")
+    # ADR-0010 D14: the ONE exception is the maintenance repair of the very
+    # incident behind a freeze (maintenance/policy.repair_exception: linked
+    # case, diff inside its immutable plan, permitted class). Without it an
+    # incident freeze would deadlock its own recovery.
+    from ..maintenance import policy as maintenance_policy  # noqa: PLC0415 -- trusted base, avoids an import cycle
+
+    open_freezes = db.query(IncidentFreeze).filter(IncidentFreeze.lifted_at.is_(None)).all()
+    blocking = [f for f in open_freezes if not maintenance_policy.repair_exception(db, candidate, f)]
+    if blocking:
+        reasons.append(f"incident_freeze_open({len(blocking)})")
+    # ADR-0010 D13: an exhausted error budget (or an active P0 repair) freezes
+    # innovation promotion; maintenance repairs are not affected by this rule.
+    reasons.extend(maintenance_policy.innovation_freeze_reasons(db, target=os.getenv("MAINTENANCE_TARGET", "production"), candidate=candidate))
     return reasons
 
 

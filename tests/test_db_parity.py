@@ -227,7 +227,7 @@ def test_entrypoint_and_image_bootstrap_empty_databases():
     assert "alembic stamp 0003_spending_cap_fix" in entry
     assert "alembic upgrade head" in entry
     assert "COPY init-db /app/init-db" in docker
-    assert "18-a2a-federation.sql" in entry, "entrypoint comment must name the current end of the bundle"
+    assert "19-maintenance-os.sql" in entry, "entrypoint comment must name the current end of the bundle"
     assert "through 14-spending-cap-fix" not in entry, "stale comment: the bundle no longer stops at 14"
 
 

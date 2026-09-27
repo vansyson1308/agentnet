@@ -94,6 +94,16 @@ This repo involves financial invariants. Follow these rules strictly:
 - Flags `A2A_SERVER_ENABLED`, `A2A_FEDERATION_ENABLED`, `A2A_SOCIETY_CLIENT_ENABLED` default false (fail closed); 0.3 compat and push notifications are not implemented and must not be advertised.
 - Company mode (`society/company.py`) adds no authority: one scheduled cycle/day + operator cycles, portfolio caps, `no_high_value_change` is valid, incident freezes are lifted only by operators. See `docs/A2A_*.md`, `docs/AUTONOMOUS_COMPANY.md`.
 
+### Autonomous Maintenance OS (ADR-0010, services/registry/app/maintenance)
+- Agents are cognitive workers, not the maintenance state machine. Workflow state, retries, deadlines, dedup, rescope authority, risk, release eligibility, credentials, rollback and SLO policy live in deterministic code; a model only returns typed activity outputs (`activities.py`) that the reconciler applies.
+- The state machine (`state_machine.py`) is the spec: every non-terminal state has allowed transitions, a timeout, a try budget and recovery targets; the DB refuses a live case without `next_action_at`/`deadline_at`. Regenerate `docs/MAINTENANCE_STATE_MACHINE.md` from `markdown_table()`; never hand-edit it.
+- Coverage is an active RepairCase, never a memory, proposal or chat message. Maintenance incidents never enter the innovation portfolio. Rescope = a new immutable plan revision in the same case (never widen a revision in place, never a new proposal).
+- Schema changes: edit `maintenance/schema_sql.py` (idempotent DDL); `init-db/19-maintenance-os.sql` is generated from it (tested), migration `0014_maintenance_os`.
+- The Release Controller (`release.py`, process `release_worker.py`) is model-free, holds the ONLY production release credentials (read only in `release_providers.py`), recomputes every check from trusted code and fails closed. Never add a release credential to the kernel, activities, context, logs or events; never let the Society process hold one.
+- The maintenance package, `desired_state.json`, the detectors and verification tests it names, `services/dashboard/tests/test_experience_contract.py`, `docs/adr/0010-*` and `.railway/**` are RED trusted base (`society/risk.py`). A repair that edits the product and the contract/test that judges it is evaluation laundering (RED); anti-reward-hacking findings are refused.
+- Browser/UX evidence is structural only (rule id, selector class, counts, numbers). Page text never reaches the Society.
+- Do not author the product repairs used as graduation evidence; they belong to the Society. Do not claim the terminal verdicts in `docs/MAINTENANCE_LIVE_PROOF.md` without the live evidence it requires.
+
 ---
 
 ## 4) Work Order (Follow this priority)
@@ -207,6 +217,7 @@ pytest tests/test_rate_limiting.py -v          # Rate limiting
 pytest tests/test_task_contract.py -v           # Task contracts & state machine
 pytest tests/test_approval_workflow.py -v         # Approval workflow tests
 pytest tests/society -v                          # Autonomous Society Runtime (needs Postgres; skips with reason otherwise)
+pytest tests/society/maintenance -v              # Maintenance OS (kernel, release controller, rollback, no-stranded invariant)
 python examples/demo_autonomous_society.py       # Deterministic society E2E (one event -> Scout..QA -> READY)
 python examples/demo_autonomous_society.py --story code   # Real source-code candidate -> shadow PR -> offline fitness (fakes only)
 

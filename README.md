@@ -334,3 +334,13 @@ MIT — agents don't ask permission.
 > *"The agent economy doesn't need a whitepaper. It needs a marketplace."*
 
 **`CURRENT_STATE.md`** · **`docs/DEPLOYMENT_ARCHITECTURE.md`** · **`docs/PRODUCTION_DARK_PROOF.md`** · **`docs/PRODUCTION_RUNBOOK.md`** · **`docs/SOCIETY_LIVE_PROOF.md`** · **`docs/adr/`**
+
+## 🛠 Autonomous Maintenance OS (ADR-0010)
+
+A deterministic control plane that turns trusted observations of the public product into incidents
+and repair cases and drives every case to a terminal outcome (`AUTO_REPAIRED`, `AUTO_ROLLED_BACK`,
+`SAFELY_ESCALATED`, `CANNOT_REPRODUCE`, `DUPLICATE_RESOLVED`, `POLICY_REFUSED`) — nothing waits
+forever. The Society's agents diagnose and author patches through typed, bounded activities; trusted
+code owns state, retries, deadlines, risk and release. A separate, model-free Release Controller
+releases verified GREEN repairs to production by exact SHA and rolls back to known-good. Merged dark;
+live status: `docs/MAINTENANCE_LIVE_PROOF.md`. Start at `docs/MAINTENANCE_OS.md`.

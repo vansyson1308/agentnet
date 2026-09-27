@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "purpose": "The ONE registry of AgentNet's desired product state for the Maintenance OS (ADR-0010 D2). Each contract names the SLIs it feeds, the trusted detectors that observe it, the trusted tests that judge a repair of it, and what an autonomous repair may never touch. This file, every detector and every verification test named here are TRUSTED EVALUATION CRITERIA: a repair candidate that edits them together with the product is evaluation laundering and is classified RED (policy.py).",
+  "contracts": [
+    {
+      "id": "public_surface",
+      "description": "Every public page and API endpoint in the public-surface contract answers with the contracted status, final path and markers.",
+      "source_of_truth": "services/registry/app/society/public_surface_contract.json",
+      "detectors": ["services/registry/app/society/surface.py", "services/registry/app/society/surface_monitor.py", "services/registry/app/maintenance/surface_ingest.py"],
+      "verification_tests": ["services/dashboard/tests/test_public_surface.py", "tests/test_public_surface_contract.py"],
+      "item_sli": {"ui_root": "availability", "api_health": "availability", "api_ready": "api_readiness", "a2a_agent_card": "a2a_discovery", "login": "auth_journey", "register": "auth_journey", "*": "public_pages"},
+      "autonomous_repair": true
+    },
+    {
+      "id": "browser_experience",
+      "description": "Critical pages render readable, navigable, accessible content in a real browser: no console/JS errors, no failed same-origin requests, no dead navigation, WCAG 2.2 AA text contrast, labelled form fields, human-readable capability badges (never a raw structured value), no unexpected error banner on a successful page, no horizontal overflow.",
+      "source_of_truth": "services/registry/app/maintenance/desired_state.json",
+      "detectors": ["services/registry/app/maintenance/browser.py", "deploy/maintenance/browser_probe.py"],
+      "verification_tests": ["services/dashboard/tests/test_experience_contract.py"],
+      "rules": ["console_error", "js_exception", "failed_request", "dead_link", "redirect_loop", "text_contrast", "form_label", "raw_structured_value", "unexpected_error_banner", "layout_overflow", "critical_content_missing", "keyboard_focus"],
+      "sli": "browser_journey",
+      "autonomous_repair": true
+    },
+    {
+      "id": "api",
+      "description": "The public API is healthy and ready (health, readiness, no 5xx on contracted endpoints).",
+      "source_of_truth": "services/registry/app/society/public_surface_contract.json",
+      "detectors": ["services/registry/app/society/surface.py"],
+      "verification_tests": ["tests/test_health_metrics.py", "tests/test_runtime_contract.py"],
+      "sli": "api_readiness",
+      "autonomous_repair": true
+    },
+    {
+      "id": "a2a",
+      "description": "The A2A 1.0 Agent Card is served, protocol version and bindings match ADR-0009, official SDK clients interoperate, tenants stay isolated.",
+      "source_of_truth": "docs/A2A_ARCHITECTURE.md",
+      "detectors": ["services/registry/app/society/surface.py", "deploy/a2a/"],
+      "verification_tests": ["tests/society/test_a2a_server.py", "tests/society/test_a2a_sdk_interop.py", "tests/society/test_a2a_federation.py"],
+      "sli": "a2a_discovery",
+      "autonomous_repair": true
+    },
+    {
+      "id": "human_auth",
+      "description": "Anonymous register and login pages render and post to the API; redirects terminate; verification email health is signalled by a bounded canary, never one account per probe.",
+      "source_of_truth": "services/registry/app/society/public_surface_contract.json",
+      "detectors": ["services/registry/app/society/surface.py", "services/registry/app/maintenance/browser.py"],
+      "verification_tests": ["tests/test_production_email_flow.py", "tests/test_email_delivery.py"],
+      "sli": "auth_journey",
+      "autonomous_repair": true
+    },
+    {
+      "id": "email",
+      "description": "Transactional email is accepted by the provider for the verification flow.",
+      "source_of_truth": "docs/PRODUCTION_RUNBOOK.md",
+      "detectors": [],
+      "verification_tests": ["tests/test_email_delivery.py"],
+      "sli": "auth_journey",
+      "autonomous_repair": false
+    },
+    {
+      "id": "economic_invariants",
+      "description": "Wallet balances change only through triggers; escrow is reserved/released/refunded exactly once; platform fee math holds. A violation FREEZES mutations and escalates as P0; an autonomous repair never rewrites balances or data.",
+      "source_of_truth": "docs/DATABASE_SCHEMA_CONTRACT.md",
+      "detectors": ["deploy/railway/phase5_live.py"],
+      "verification_tests": ["tests/test_money_invariants.py", "tests/test_platform_fee.py", "tests/society/test_money_path.py", "tests/society/test_money_concurrency.py"],
+      "sli": "economic_integrity",
+      "autonomous_repair": false
+    },
+    {
+      "id": "security_invariants",
+      "description": "Rate limiting keys by the vouched peer (B1), /metrics exposes no request paths (X1), CORS admits only the canonical origin, session cookies are secure, every mutating route rejects anonymous callers, no secret is committed.",
+      "source_of_truth": "docs/CLOUDFLARE_MIGRATION.md",
+      "detectors": ["tests/test_rate_limiting.py"],
+      "verification_tests": ["tests/test_rate_limiting.py", "tests/test_cors_security.py", "tests/test_health_metrics.py", "tests/test_no_hardcoded_secrets.py", "tests/society/test_authz_matrix_smoke.py"],
+      "sli": "security_posture",
+      "autonomous_repair": false
+    },
+    {
+      "id": "performance_budgets",
+      "description": "Critical public pages stay within document/resource size and third-party budgets; a regression must be sustained across repeated runs before it is an incident.",
+      "source_of_truth": "services/registry/app/maintenance/desired_state.json",
+      "detectors": ["services/registry/app/maintenance/browser.py"],
+      "verification_tests": ["services/dashboard/tests/test_experience_contract.py"],
+      "budgets": {"document_bytes": 250000, "total_bytes": 2500000, "requests": 80, "third_party_origins": 6},
+      "sli": "performance",
+      "autonomous_repair": true
+    },
+    {
+      "id": "dependency_posture",
+      "description": "Every service requirement set passes pip-audit (documented exceptions only), dependency graphs resolve coherently, runtimes are supported. Major upgrades are never automatic.",
+      "source_of_truth": ".github/workflows/ci.yml",
+      "detectors": ["scripts/ci/check_service_envs.sh"],
+      "verification_tests": ["tests/test_pydantic_v2_config.py"],
+      "sli": "dependency_posture",
+      "autonomous_repair": false
+    }
+  ]
+}

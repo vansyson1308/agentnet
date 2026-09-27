@@ -232,6 +232,10 @@ class SocietyWorker:
         # probes run in a thread so public HTTP never stalls Society work.
         self.surface_monitor = surface_monitor_mod.SurfaceMonitor()
         self._surface_task: Optional[asyncio.Future] = None
+        # The Maintenance Kernel (ADR-0010) reconciles repair cases here, where
+        # the model and the isolated workspaces live. It is idle unless the
+        # MAINTENANCE_* switches are on, and it never holds release credentials.
+        self._maintenance_kernel = None
 
     # ── dispatch ───────────────────────────────────────────────────────
 
@@ -745,6 +749,24 @@ class SocietyWorker:
             self._surface_task = asyncio.ensure_future(asyncio.to_thread(self.surface_monitor.probe, self.settings))
         return None
 
+    async def reconcile_maintenance(self):
+        """One Maintenance Kernel cycle, in a thread (it runs tests and model
+        activities). Never raises into the loop."""
+        from ..maintenance.config import get_maintenance_settings  # noqa: PLC0415
+
+        ms = get_maintenance_settings()
+        if not (ms.autonomy_enabled or ms.monitoring_enabled):
+            return None
+        try:
+            if self._maintenance_kernel is None:
+                from ..maintenance.reconciler import MaintenanceKernel  # noqa: PLC0415
+
+                self._maintenance_kernel = MaintenanceKernel(self.session_factory, worker_id=f"{self.worker_id}-maint")
+            return await asyncio.to_thread(self._maintenance_kernel.reconcile)
+        except Exception:  # noqa: BLE001
+            logger.exception("maintenance kernel cycle failed")
+            return None
+
     def stop(self) -> None:
         self._stop = True
 
@@ -763,6 +785,7 @@ class SocietyWorker:
                 self.process_approved_intents()
                 self.process_controllers()
                 await self.pump_federation()
+                await self.reconcile_maintenance()
             except Exception:  # noqa: BLE001
                 logger.exception("society worker loop error")
                 await asyncio.sleep(settings.wake_poll_seconds)

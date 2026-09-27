@@ -54,6 +54,22 @@ TEST_DB = os.getenv("SOCIETY_TEST_DB", "agentnet_society_test")
 # handles the rest). Society tables first, then domain tables the runtime
 # writes through (chat, goals, memory, proposals, tasks, wallets, agents).
 TRUNCATE_TABLES = [
+    # Maintenance OS (ADR-0010): children first; CASCADE handles the rest.
+    "maintenance_knowledge",
+    "maintenance_heartbeats",
+    "maintenance_toil_events",
+    "maintenance_release_freezes",
+    "maintenance_known_good",
+    "maintenance_releases",
+    "repair_transitions",
+    "repair_evidence",
+    "repair_artifacts",
+    "repair_activities",
+    "repair_attempts",
+    "repair_plan_revisions",
+    "repair_cases",
+    "maintenance_observations",
+    "maintenance_incidents",
     "a2a_outbound_calls",
     "a2a_connections",
     "a2a_remote_card_versions",

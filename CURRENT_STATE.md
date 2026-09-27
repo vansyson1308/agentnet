@@ -4,6 +4,36 @@ This file replaces the earlier machine-specific snapshot. It describes the repos
 the running code, schema and tests define it. When something here disagrees with the code,
 the code and tests win and this file is stale — fix it in the same change.
 
+## Autonomous Maintenance OS — built, merged dark, NOT LIVE (2026-09-27, ADR-0010)
+
+A later owner mission asked for an Autonomous Maintenance OS. What exists now (see
+`docs/MAINTENANCE_OS.md`, `docs/MAINTENANCE_LIVE_PROOF.md`):
+
+- **Maintenance Kernel** (`services/registry/app/maintenance/`): desired-state registry, structural
+  incidents with deterministic fingerprints, one active RepairCase per incident, an executable state
+  machine whose liveness the database enforces, lease-fenced reconciliation (no events needed), typed
+  model activities with bounded tool loops and paged repo tools, immutable plan revisions for rescope,
+  an atomic PatchSet editor, deterministic QA + model reviews, the existing promotion controller to
+  `main`, trusted maintenance risk classes with anti-reward-hacking and evaluation-laundering rules,
+  SLOs/error budgets, a separate model budget and queue, a freeze repair exception, watchdog,
+  knowledge/postmortem facts, KPIs/toil, an operator console and API.
+- **Release Controller** (`release.py`, `release_worker.py`): model-free, fails closed, exact-SHA
+  production PR + service-aware deploy + post-deploy verification + rollback to known-good +
+  branch reconciliation. Railway mutations are discovered by schema introspection.
+- **Browser/UX probe** (Playwright + axe-core, structural only). On `main` it finds the real
+  experience defects deterministically: text contrast 1.06:1 on the dark theme, raw capability dicts
+  (`span.trust-badge`), an unexpected warning banner, `#` placeholder links, and `/marketplace`,
+  `/login`, `/register` landing on `/landing`.
+- **Migration** `0014_maintenance_os` (additive). Every `MAINTENANCE_*` switch defaults to `false`.
+- **Test-discovery sentinel** (PR #64's concept): required; the dashboard suite is explicitly HELD
+  until the Society's repair makes it pass. PR #64 should be superseded/updated once that happens.
+
+**Verdict: NOT LIVE.** No live kernel run, no live release, no live rollback and no Society-authored
+production repair have happened. Owner actions to get there: review/merge this RED change; enable the
+kernel switches on the staging society-worker; provision `release-control` (Release App, production
+Railway token, attestation key, release-preview surface) per `docs/MAINTENANCE_RELEASE.md`; schedule
+the deep-tier browser probe. The dashboard repairs still belong to the Society.
+
 ## Handoff: the external coding agent exits (2026-09-27)
 
 From this date the external coding agent (Claude Code) no longer watches or steers the system. Two
