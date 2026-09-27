@@ -362,6 +362,34 @@ OPEN_CANDIDATE_STATUSES = (
 )
 
 
+#: Spec fields that are rules, not prose: bounded by CodeChangeSpec itself and
+#: always shown whole.
+SPEC_STRUCTURAL_FIELDS = ("files_allowed", "acceptance_tests", "kind", "must_compile", "signal")
+
+
+def _spec_view(spec: Any) -> Dict[str, Any]:
+    """A candidate spec as the model sees it: the rules whole, the prose bounded.
+
+    Staging 2026-09-26 20:00Z-01:00Z: the Builder stopped working candidate
+    a2788678 every hour, citing "the spec's files_allowed is truncated and
+    unverified". The spec was rendered as one JSON document cut at TXT_LONG,
+    and with sorted keys the Architect's long ``description`` comes before
+    ``files_allowed`` -- the hard allow-list the workspace enforces was the
+    part that fell off.
+    """
+    if not isinstance(spec, dict):
+        return _bounded_json(spec if spec is not None else {}, TXT_LONG)
+    view: Dict[str, Any] = {k: spec[k] for k in SPEC_STRUCTURAL_FIELDS if k in spec}
+    if "description" in spec:
+        view["description"] = _t(spec.get("description"), TXT_LONG)
+    if "expected_effect" in spec:
+        view["expected_effect"] = _t(spec.get("expected_effect"), TXT_MED)
+    rest = {k: v for k, v in spec.items() if k not in view}
+    if rest:  # a spec written before CodeChangeSpec was strict
+        view["other"] = _bounded_json(rest, TXT_SHORT)
+    return view
+
+
 def _candidates(db: Session, event: SocietyEvent) -> List[Dict[str, Any]]:
     rows = (
         db.query(CodeCandidate)
@@ -390,7 +418,7 @@ def _candidates(db: Session, event: SocietyEvent) -> List[Dict[str, Any]]:
                 "proposal_id": str(c.proposal_id) if c.proposal_id else None,
                 "task_id": str(c.task_id) if c.task_id else None,
                 "requires_security_review": bool(c.requires_security_review),
-                "spec": untrusted(_bounded_json(c.spec or {}, TXT_LONG), source="architect_spec"),
+                "spec": untrusted(_spec_view(c.spec or {}), source="architect_spec"),
                 "changed_files": list(c.changed_files or [])[:20],
                 "diff_stat": _t(c.diff_stat, TXT_MED),
                 "qa": {

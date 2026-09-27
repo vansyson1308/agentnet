@@ -425,6 +425,43 @@ def test_the_live_story_reaches_the_builder_within_the_staging_run_budget(db, Se
     assert db.query(CodeCandidate).filter(CodeCandidate.proposal_id == prop.id).count() == 1
 
 
+def test_a_long_spec_never_hides_the_files_the_builder_may_change(db, SessionLocal, code_settings, grants_with_no_cooldown):
+    """Staging 2026-09-26 20:00Z-01:00Z: the Builder stopped working its
+    candidate every hour because "the spec's files_allowed is truncated and
+    unverified". The spec was one JSON document cut at TXT_LONG; sorted keys
+    put the Architect's long description before files_allowed. The rules of a
+    spec are now always whole -- in the candidates block and in
+    READ_CANDIDATE_STATE."""
+    from types import SimpleNamespace
+
+    from services.registry.app.society import context as ctx_mod
+
+    report = _seed(db, grants_with_no_cooldown)
+    files = ["services/dashboard/app/main.py", "services/dashboard/app/templates/landing.html", "services/dashboard/app/templates/metaverse.html"]
+    spec = {
+        "kind": "code",
+        "description": "Bounded follow-up: " + "design detail " * 400,
+        "expected_effect": "contract checks turn green " * 60,
+        "files_allowed": files,
+        "acceptance_tests": ["services/dashboard/tests/test_public_surface.py"],
+        "must_compile": True,
+    }
+    cid = uuid.uuid4()
+    db.add(CodeCandidate(id=cid, correlation_id=uuid.uuid4(), title="t", spec=spec, status="qa_failed", requested_by_agent_id=report.agents["architect"]))
+    db.commit()
+
+    seen = ctx_mod._candidates(db, SimpleNamespace(payload={}))[0]["spec"]["data"]
+    assert seen["files_allowed"] == files and seen["acceptance_tests"] == spec["acceptance_tests"] and seen["kind"] == "code"
+    assert len(seen["description"]) <= ctx_mod.TXT_LONG and len(seen["expected_effect"]) <= ctx_mod.TXT_MED
+
+    # a state read spends no engineering turn (no wake); its result is what the next context shows
+    script = {"builder": [{"decision_summary": "scope", "intents": [{"type": "READ_CANDIDATE_STATE", "payload": {"candidate_id": str(cid)}}], "sleep_for_seconds": 1}]}
+    _run(db, SessionLocal, code_settings, FakeModel(script), {"x": 1}, roles=("builder",))
+    read = db.query(AgentIntent).filter(AgentIntent.intent_type == "READ_CANDIDATE_STATE").one()
+    assert _ev(read.execution_status) == "executed"
+    assert read.result["result"]["data"]["candidate"]["spec"] == {"files_allowed": files, "acceptance_tests": spec["acceptance_tests"], "kind": "code"}
+
+
 def test_reads_for_an_open_candidate_carry_into_the_next_story(db, SessionLocal, code_settings, grants_with_no_cooldown):
     """Staging 2026-09-26 15:00Z/16:00Z: after candidate a2788678 failed QA the
     Builder resumed it on each hourly heartbeat -- a new correlation each time
