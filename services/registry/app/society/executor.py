@@ -366,21 +366,16 @@ WORLD_SIGNAL_EVENTS = frozenset(
 #: Same-title proposals whose every attempt failed that may precede a new one
 #: within 24 hours (recovery, bounded).
 MAX_FAILED_RETRIES_PER_TITLE = 2
-#: Candidate outcomes that end an attempt as a failure.
-_ATTEMPT_FAILED_STATUSES = (
-    CodeCandidateStatus.REJECTED.value,
-    CodeCandidateStatus.FAILED.value,
-    CodeCandidateStatus.ABANDONED.value,
-)
 
 
-def _every_attempt_failed(db: Session, proposal: ImprovementProposal) -> bool:
-    """A converted proposal whose every candidate ended as a failure. One with
-    no candidate, work in flight or a READY candidate is still open."""
-    if _ev(proposal.status) != ProposalStatus.CONVERTED_TO_TASK.value:
-        return False
-    statuses = [_ev(st) for (st,) in db.query(CodeCandidate.status).filter(CodeCandidate.proposal_id == proposal.id).all()]
-    return bool(statuses) and all(st in _ATTEMPT_FAILED_STATUSES for st in statuses)
+def _every_attempt_failed(ctx: ExecContext, proposal: ImprovementProposal) -> bool:
+    """A proposal that concluded with outcome "failed" (company.proposal_states:
+    every attempt rejected, declined or abandoned, its promotion refused, or its
+    task failed). One with work in flight, or whose change merged, is not."""
+    from .company import OUTCOME_FAILED, proposal_states  # noqa: PLC0415 - company imports this module
+
+    state = proposal_states(ctx.db, ctx.settings, [proposal.id], ctx.now).get(str(proposal.id)) or {}
+    return state.get("portfolio_state") == "concluded" and state.get("outcome") == OUTCOME_FAILED
 
 
 def _create_improvement(ctx: ExecContext) -> ExecOutcome:
@@ -399,7 +394,7 @@ def _create_improvement(ctx: ExecContext) -> ExecOutcome:
     )
     failed_recently = 0
     for existing in same_title:
-        if _every_attempt_failed(ctx.db, existing):
+        if _every_attempt_failed(ctx, existing):
             # Concluded (company.portfolio_accounting): proposing it again is the
             # designed recovery after a rejected / declined / abandoned attempt,
             # and it goes through the Governor's review again. Otherwise a Scout

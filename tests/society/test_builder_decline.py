@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import timedelta
 
 from services.registry.app.models import (
     AgentCapabilityGrant,
@@ -36,7 +37,7 @@ from services.registry.app.models import (
 )
 from services.registry.app.society.cognition import FakeModel
 from services.registry.app.society.company import portfolio_accounting
-from services.registry.app.society.events import EventType, emit_event
+from services.registry.app.society.events import EventType, emit_event, utcnow
 from services.registry.app.society.seed import seed_society
 from services.registry.app.society.worker import SocietyWorker
 
@@ -370,6 +371,9 @@ def test_after_a_decline_the_concluded_proposal_covers_nothing_and_every_role_is
 
     run("public.surface.anomaly")
     prop = db.query(ImprovementProposal).one()
+    reviewed = next(c for c in calls if c.role == "governor" and c.event["type"] == EventType.PROPOSAL_CREATED)
+    fresh = {p["data"]["id"]: p["data"] for p in reviewed.proposals}[str(prop.id)]
+    assert (fresh["portfolio_state"], fresh["outcome"]) == ("active", None), "a proposal under review is live"
     prop.status = "CONVERTED_TO_TASK"
     cand = CodeCandidate(
         id=uuid.uuid4(), proposal_id=prop.id, correlation_id=uuid.uuid4(), requested_by_agent_id=report.agents["architect"],
@@ -395,7 +399,7 @@ def test_after_a_decline_the_concluded_proposal_covers_nothing_and_every_role_is
     assert {"scout", "governor"} <= set(woken), sorted(woken)
     for role in ("scout", "governor"):
         shown = {p["data"]["id"]: p["data"] for p in woken[role].proposals}
-        assert shown[str(prop.id)]["portfolio_state"] == "concluded", role
+        assert (shown[str(prop.id)]["portfolio_state"], shown[str(prop.id)]["outcome"]) == ("concluded", "failed"), role
         assert shown[str(prop.id)]["status"] == "CONVERTED_TO_TASK", "the lifecycle status is unchanged; the state says the work ended"
 
     # the next anomaly: nothing open covers it any more
@@ -403,5 +407,63 @@ def test_after_a_decline_the_concluded_proposal_covers_nothing_and_every_role_is
     run("public.surface.anomaly")
     cov = next(c for c in calls if c.role == "scout").signal_coverage
     assert cov["open_proposals"] == [], "a concluded proposal covers nothing"
-    assert cov["concluded_proposals"] == [{"id": str(prop.id), "status": "CONVERTED_TO_TASK", "portfolio_state": "concluded"}]
-    assert "concluded_proposals" in SYSTEM_PROMPT and "covers nothing" in SYSTEM_PROMPT
+    assert cov["concluded_proposals"] == [{"id": str(prop.id), "status": "CONVERTED_TO_TASK", "portfolio_state": "concluded", "outcome": "failed"}]
+    assert "concluded_proposals" in SYSTEM_PROMPT and "covers nothing" in SYSTEM_PROMPT and "awaiting a deploy" in SYSTEM_PROMPT
+
+
+def test_how_a_hypothesis_ended_decides_whether_it_may_be_proposed_again(db, SessionLocal, code_settings, grants_with_no_cooldown):
+    """One rule (company.proposal_states) for the context and the executor:
+    a FAILED conclusion covers nothing and its title may be proposed again; a
+    DELIVERED one (merged, or its task completed) is not re-proposed under the
+    same title -- a persisting signal may be waiting for a deploy -- and work in
+    flight is never "concluded"."""
+    from services.registry.app.society.company import proposal_states
+
+    report = _seed(db, grants_with_no_cooldown)
+
+    def hypothesis(title, candidate_status=None, promotion=None, task_status=None):
+        prop = ImprovementProposal(id=uuid.uuid4(), proposed_by_agent_id=None, source="audit", title=title, problem="p",
+                                   proposed_change="c", status="CONVERTED_TO_TASK", target_scope="platform", importance=50)
+        db.add(prop)
+        db.flush()
+        if task_status:
+            task = TaskSession(id=uuid.uuid4(), caller_agent_id=report.agents["architect"], callee_agent_id=report.agents["builder"],
+                               capability="implement_change", input_hash="0" * 64, status=task_status, escrow_amount=0,
+                               timeout_at=(utcnow() + timedelta(hours=1)).replace(tzinfo=None), trace_id=uuid.uuid4(), span_id=uuid.uuid4())
+            db.add(task)
+            db.flush()
+            prop.converted_task_id = task.id
+        if candidate_status:
+            cand = CodeCandidate(id=uuid.uuid4(), proposal_id=prop.id, correlation_id=uuid.uuid4(), requested_by_agent_id=report.agents["architect"],
+                                 title=title, spec={"files_allowed": [MAIN], "acceptance_tests": [], "kind": "code"}, status=candidate_status)
+            db.add(cand)
+            db.flush()
+            if promotion:
+                db.add(CodePromotion(candidate_id=cand.id, correlation_id=uuid.uuid4(), risk_tier="green", provider="fake", status=promotion))
+        db.commit()
+        return prop
+
+    cases = {
+        "declined": (hypothesis("h-declined", "rejected"), ("concluded", "failed")),
+        "abandoned": (hypothesis("h-abandoned", "abandoned"), ("concluded", "failed")),
+        "promotion refused": (hypothesis("h-refused", "ready", "rejected"), ("concluded", "failed")),
+        "merged": (hypothesis("h-merged", "ready", "merged"), ("concluded", "delivered")),
+        "task failed": (hypothesis("h-task-failed", task_status="failed"), ("concluded", "failed")),
+        "task completed": (hypothesis("h-task-done", task_status="completed"), ("concluded", "delivered")),
+        "in flight": (hypothesis("h-flight", "qa_failed"), ("active", None)),
+        "awaiting merge": (hypothesis("h-awaiting", "ready", "requested"), ("active", None)),
+    }
+    states = proposal_states(db, code_settings, [prop.id for prop, _ in cases.values()])
+    for name, (prop, expected) in cases.items():
+        got = states[str(prop.id)]
+        assert (got["portfolio_state"], got["outcome"]) == expected, (name, got)
+    assert all(p.proposed_by_agent_id is None for p, _ in cases.values()), "an operator's proposal is classified too, not assumed active"
+
+    for name, allowed in (("declined", True), ("promotion refused", True), ("merged", False), ("task completed", False), ("in flight", False)):
+        prop = cases[name][0]
+        again = {"type": "CREATE_IMPROVEMENT", "payload": {"title": prop.title, "problem": "signal persists", "proposed_change": "again", "importance": 50}}
+        i = _intent_of(db, _run_as(db, SessionLocal, code_settings, "scout", [again]))
+        result = i.result["result"]
+        assert result.get("duplicate", False) is (not allowed), (name, result)
+        if not allowed:
+            assert result["proposal_id"] == str(prop.id)

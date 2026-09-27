@@ -325,7 +325,8 @@ def _proposals(db: Session, agent: Agent, event: SocietyEvent, settings: Society
     spec-scoping defect in the already-open proposal", "remains approved but
     unimplemented"), so nobody raised the next proposal and nothing woke the
     Architect. "concluded" says what is true: every attempt ended and nothing
-    more is built for it unless a new proposal is approved."""
+    more is built for it unless a new proposal is approved. ``outcome`` says how
+    it ended: "failed" or "delivered" (company.proposal_states)."""
     q = db.query(ImprovementProposal).filter(
         ImprovementProposal.status.in_([ProposalStatus.PROPOSED, ProposalStatus.UNDER_REVIEW, ProposalStatus.APPROVED])
     )
@@ -339,11 +340,9 @@ def _proposals(db: Session, agent: Agent, event: SocietyEvent, settings: Society
         if extra is not None and all(r.id != extra.id for r in rows):
             rows = [extra] + rows
     rows = rows[:LIMIT_PROPOSALS]
-    state: Dict[str, str] = {}
-    if rows:
-        from .company import portfolio_accounting  # noqa: PLC0415 - company imports this module
+    from .company import proposal_states  # noqa: PLC0415 - company imports this module
 
-        state = {pid: bucket for bucket, ids in portfolio_accounting(db, settings, now).items() for pid in ids}
+    states = proposal_states(db, settings, [r.id for r in rows], now)
     out = []
     for p in rows:
         out.append(
@@ -352,7 +351,8 @@ def _proposals(db: Session, agent: Agent, event: SocietyEvent, settings: Society
                     "id": str(p.id),
                     "title": _t(p.title, TXT_SHORT),
                     "status": _ev(p.status),
-                    "portfolio_state": state.get(str(p.id), "active"),
+                    "portfolio_state": (states.get(str(p.id)) or {}).get("portfolio_state"),
+                    "outcome": (states.get(str(p.id)) or {}).get("outcome"),
                     "source": _ev(p.source),
                     "importance": p.importance,
                     "target_scope": _ev(p.target_scope),
@@ -659,6 +659,9 @@ def _recent_refusals(db: Session, agent: Agent, now: datetime) -> List[Dict[str,
 SIGNAL_COVERAGE_DAYS = 7
 LIMIT_SIGNAL_ATTEMPTS = 5
 LIMIT_SIGNAL_PROPOSALS = 10
+LIMIT_SIGNAL_CONCLUDED = 5
+#: Proposals read per signal before the open/concluded split (newest first).
+LIMIT_SIGNAL_SCAN = 50
 
 
 def _signal_coverage(db: Session, agent: Agent, event: SocietyEvent, settings: SocietySettings, now: datetime) -> Dict[str, Any]:
@@ -677,10 +680,12 @@ def _signal_coverage(db: Session, agent: Agent, event: SocietyEvent, settings: S
       this signal TYPE, with its portfolio state (active / shelved;
       company.py). Empty means no such proposal exists, whatever a memory item
       says.
-    * ``concluded_proposals`` -- the same, for proposals whose work ended
-      (every candidate rejected / declined / abandoned, or merged). They no
-      longer cover the signal. Staging, 2026-09-27 05:04Z: listed among the
-      "open" ones, the concluded ea350455 made the Scout call a persisting
+    * ``concluded_proposals`` -- the same, for proposals whose work ended, each
+      with its ``outcome`` (company.proposal_states): "failed" (every attempt
+      rejected, declined or abandoned, its promotion refused, or its task
+      failed) covers nothing; "delivered" (merged, or its task completed) may
+      be awaiting a deploy. Staging, 2026-09-27 05:04Z: listed among the
+      "open" ones, the failed ea350455 made the Scout call a persisting
       critical anomaly covered ("no new proposal is warranted") an hour after
       its only candidate was declined.
     * ``attempts`` -- the most recent CREATE_IMPROVEMENT intents for the signal
@@ -691,7 +696,7 @@ def _signal_coverage(db: Session, agent: Agent, event: SocietyEvent, settings: S
     Coverage is per signal type: whether an open proposal addresses THIS
     event (e.g. which task failed) remains the agent's judgement. Trusted
     facts only; no title or payload text is repeated here."""
-    from .company import portfolio_accounting  # noqa: PLC0415 - company imports this module
+    from .company import portfolio_accounting, proposal_states  # noqa: PLC0415 - company imports this module
     from .executor import _OPEN_PROPOSAL_STATUSES, WORLD_SIGNAL_EVENTS  # noqa: PLC0415 - executor pulls in the whole runtime
 
     if event.event_type not in WORLD_SIGNAL_EVENTS:
@@ -721,22 +726,34 @@ def _signal_coverage(db: Session, agent: Agent, event: SocietyEvent, settings: S
             "duplicate": bool(res.get("duplicate")),
         })
     # every open proposal an executed attempt created for this signal, however old
+    # newest first, split, THEN bounded: concluded rows accumulate per signal and
+    # must never push the live proposal out of the list
     proposals = (
-        db.query(ImprovementProposal.id, ImprovementProposal.status)
+        db.query(ImprovementProposal.id, ImprovementProposal.status, ImprovementProposal.created_at)
         .join(AgentIntent, AgentIntent.result["result"]["proposal_id"].astext == cast(ImprovementProposal.id, String))
         .filter(*for_signal, AgentIntent.execution_status == IntentExecutionStatus.EXECUTED, ImprovementProposal.status.in_(list(_OPEN_PROPOSAL_STATUSES)))
         .distinct()
-        .order_by(ImprovementProposal.id)
-        .limit(LIMIT_SIGNAL_PROPOSALS)
+        .order_by(ImprovementProposal.created_at.desc(), ImprovementProposal.id)
+        .limit(LIMIT_SIGNAL_SCAN)
         .all()
     )
-    accounting = portfolio_accounting(db, settings, now)
-    state = {pid: bucket for bucket, ids in accounting.items() for pid in ids}
-    rows_ = [{"id": str(pid), "status": _ev(st), "portfolio_state": state.get(str(pid), "active")} for pid, st in proposals]
-    open_rows = [r for r in rows_ if r["portfolio_state"] != "concluded"]
-    concluded = [r for r in rows_ if r["portfolio_state"] == "concluded"]
-    out: Dict[str, Any] = {"signal": signal, "open_proposals": open_rows, "concluded_proposals": concluded, "attempts": attempts}
+    states = proposal_states(db, settings, [pid for pid, _st, _at in proposals], now)
+    open_rows: List[Dict[str, Any]] = []
+    concluded: List[Dict[str, Any]] = []
+    for pid, st, _at in proposals:
+        state = states.get(str(pid)) or {}
+        if state.get("portfolio_state") == "concluded":
+            concluded.append({"id": str(pid), "status": _ev(st), "portfolio_state": "concluded", "outcome": state.get("outcome")})
+        else:
+            open_rows.append({"id": str(pid), "status": _ev(st), "portfolio_state": state.get("portfolio_state")})
+    out: Dict[str, Any] = {
+        "signal": signal,
+        "open_proposals": open_rows[:LIMIT_SIGNAL_PROPOSALS],
+        "concluded_proposals": concluded[:LIMIT_SIGNAL_CONCLUDED],
+        "attempts": attempts,
+    }
     if settings.company_cycle_enabled:
+        accounting = portfolio_accounting(db, settings, now)
         active = len(accounting["active"])
         cap = settings.company_max_active_hypotheses
         out["portfolio"] = {"active": active, "max": cap, "full": active >= cap}
