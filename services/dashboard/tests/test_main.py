@@ -1,6 +1,6 @@
 import pytest
 from flask import Flask
-from app.main import app, derive_trust_context
+from services.dashboard.app.main import app, derive_trust_context
 
 @pytest.fixture
 def client():
