@@ -59,6 +59,7 @@ class IntentType(str, enum.Enum):
     REQUEST_CODE_CHANGE = "REQUEST_CODE_CHANGE"
     SUBMIT_CODE_CANDIDATE = "SUBMIT_CODE_CANDIDATE"
     REQUEST_QA = "REQUEST_QA"
+    DECLINE_CODE_CANDIDATE = "DECLINE_CODE_CANDIDATE"
     EVALUATE_CODE_CANDIDATE = "EVALUATE_CODE_CANDIDATE"
     SECURITY_REVIEW_CANDIDATE = "SECURITY_REVIEW_CANDIDATE"
     REQUEST_STAGING_DEPLOY = "REQUEST_STAGING_DEPLOY"
@@ -369,6 +370,33 @@ class CandidateRefPayload(_Strict):
     candidate_id: uuid.UUID
 
 
+#: Why a Builder hands an open candidate back instead of finishing it.
+DECLINE_REASON_CODES = ("spec_outside_files_allowed", "acceptance_unsatisfiable")
+
+
+class DeclineCodeCandidatePayload(_Strict):
+    """The responsible Builder declines an open candidate it cannot finish
+    within its spec. The candidate becomes REJECTED -- never widened -- and
+    the normal Scout -> Governor -> Architect path designs the next one.
+
+    ``blocking_paths`` are the files the fix would need; for
+    ``spec_outside_files_allowed`` the executor checks that every one of them
+    really is outside the spec's ``files_allowed`` (fail closed)."""
+
+    candidate_id: uuid.UUID
+    reason_code: Literal["spec_outside_files_allowed", "acceptance_unsatisfiable"]
+    detail: str = Field(..., min_length=20, max_length=1000)
+    blocking_paths: List[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("blocking_paths")
+    @classmethod
+    def _safe_paths(cls, v: List[str]) -> List[str]:
+        for p in v:
+            if p.startswith("/") or ".." in p.split("/") or p.startswith("~") or "\\" in p or len(p) > 255:
+                raise ValueError(f"unsafe path: {p!r}")
+        return v
+
+
 class SecurityReviewPayload(_Strict):
     candidate_id: uuid.UUID
     verdict: Literal["pass", "fail"]
@@ -483,6 +511,7 @@ PAYLOAD_MODELS: Dict[IntentType, type] = {
     IntentType.REQUEST_CODE_CHANGE: RequestCodeChangePayload,
     IntentType.SUBMIT_CODE_CANDIDATE: SubmitCodeCandidatePayload,
     IntentType.REQUEST_QA: CandidateRefPayload,
+    IntentType.DECLINE_CODE_CANDIDATE: DeclineCodeCandidatePayload,
     IntentType.EVALUATE_CODE_CANDIDATE: CandidateRefPayload,
     IntentType.SECURITY_REVIEW_CANDIDATE: SecurityReviewPayload,
     IntentType.REQUEST_STAGING_DEPLOY: CandidateRefPayload,

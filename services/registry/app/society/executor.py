@@ -62,6 +62,7 @@ from ..models import (
     RiskTier,
     SocietyEvent,
     TaskSession,
+    TaskStatus,
 )
 from . import memory_grounding, repo_intel
 from .config import SocietySettings
@@ -832,6 +833,103 @@ def _request_qa(ctx: ExecContext) -> ExecOutcome:
     return ExecOutcome(result={"candidate_id": str(cand.id)}, events=[str(ev.id)])
 
 
+#: The only states a Builder can hand a candidate back from: nobody else holds
+#: the work. Anything being evaluated, passed (READY) or closed is refused.
+DECLINABLE_STATUSES = (CodeCandidateStatus.REQUESTED.value, CodeCandidateStatus.QA_FAILED.value)
+
+
+def _decline_code_candidate(ctx: ExecContext) -> ExecOutcome:
+    """The responsible Builder hands back an open candidate it cannot finish
+    within its spec: REJECTED, never widened.
+
+    Staging 2026-09-27: candidate a2788678 failed QA on endpoints referenced
+    by a template outside the spec's ``files_allowed``. The Builder correctly
+    refused to widen scope; the Architect could not re-specify (a request for
+    the same proposal is a duplicate while the candidate is open); QA rejects
+    only on a second failure, which needs a resubmission. Nothing could reach
+    the designed recovery -- REJECTED, the proposal concluded, the Scout
+    re-proposes, the Governor approves, the Architect designs the next one.
+
+    Unlike the operator's ``candidate_admin.abandon`` this is not a way to
+    retire evidence: the outcome is the ordinary REJECTED, the spec, QA report
+    and row are kept, and the structured reason is recorded in the intent
+    row, on the candidate and in the ``code_candidate.rejected`` event.
+    """
+    p = ctx.validated.payload
+    cand = _get_candidate(ctx, p.candidate_id)
+    status = _ev(cand.status)
+    if cand.builder_agent_id is not None and cand.builder_agent_id != ctx.agent.id:
+        raise ExecutionError("only the Builder responsible for this candidate may decline it")
+    if cand.builder_agent_id is None and ctx.grant.role != "builder":
+        raise ExecutionError("only a Builder may decline a candidate")
+    if status == CodeCandidateStatus.REJECTED.value:
+        prior = (
+            ctx.db.query(SocietyEvent)
+            .filter(
+                SocietyEvent.event_type == EventType.CODE_CANDIDATE_REJECTED,
+                SocietyEvent.subject_id == cand.id,
+                SocietyEvent.payload["declined"].astext == "true",
+            )
+            .first()
+        )
+        if prior is not None:  # idempotent: no second event, no second refund
+            return ExecOutcome(result={"candidate_id": str(cand.id), "status": status, "duplicate": True})
+    if status not in DECLINABLE_STATUSES:
+        raise ExecutionError(f"candidate is {status}; only a requested or qa_failed candidate can be declined")
+    if ctx.db.query(CodePromotion).filter(CodePromotion.candidate_id == cand.id).first() is not None:
+        raise ExecutionError("candidate has a promotion; it cannot be declined")
+    allowed = set((cand.spec or {}).get("files_allowed") or [])
+    blocking = list(dict.fromkeys(p.blocking_paths))
+    if p.reason_code == "spec_outside_files_allowed":
+        if not blocking:
+            raise ExecutionError("spec_outside_files_allowed needs the blocking_paths the fix would have to change")
+        inside = [b for b in blocking if b in allowed]
+        if inside:
+            raise ExecutionError(f"{inside[0]} is inside files_allowed: the change can be made within the spec")
+
+    # Economics: close the implementation task through the ordinary escrow path
+    # (exactly as candidate_admin.abandon does) -- the caller is refunded once;
+    # a task already in a terminal state is left alone.
+    refunded = False
+    if cand.task_id is not None:
+        task = ctx.db.query(TaskSession).filter(TaskSession.id == cand.task_id).first()
+        if task is not None and _ev(task.status) in (TaskStatus.INITIATED.value, TaskStatus.IN_PROGRESS.value):
+            try:
+                task_service.fail_task_with_refund(
+                    db=ctx.db, task_id=cand.task_id, error_message=f"candidate declined by the Builder: {p.reason_code}"[:500]
+                )
+            except task_service.EscrowError as exc:
+                raise ExecutionError(f"escrow: {exc}") from exc
+            refunded = True
+            # The escrow path commits, which releases the candidate's row lock:
+            # re-lock and re-check, so a change made meanwhile is never overwritten.
+            cand = _get_candidate(ctx, p.candidate_id)
+            now_status = _ev(cand.status)
+            if now_status != status:
+                raise ExecutionError(f"candidate moved to {now_status} while it was being declined; the task was refunded once")
+
+    cand.status = CodeCandidateStatus.REJECTED
+    cand.error = f"declined by {ctx.agent.name} ({p.reason_code}): {p.detail}"[:2000]
+    ctx.db.flush()
+    payload = {
+        "candidate_id": str(cand.id),
+        "title": cand.title,
+        "branch_name": cand.branch_name,
+        "head_sha": cand.head_sha,
+        "proposal_id": str(cand.proposal_id) if cand.proposal_id else None,
+        "qa_summary": f"declined by the Builder ({p.reason_code})",
+        "declined": True,
+        "previous_status": status,
+        "reason_code": p.reason_code,
+        "detail": p.detail,
+        "blocking_paths": blocking,
+        "files_allowed": sorted(allowed),
+        "task_refunded": refunded,
+    }
+    ev = _emit(ctx, EventType.CODE_CANDIDATE_REJECTED, payload, subject_type="code_candidate", subject_id=cand.id, key_suffix="declined")
+    return ExecOutcome(result={"candidate_id": str(cand.id), "status": CodeCandidateStatus.REJECTED.value, "reason_code": p.reason_code, "task_refunded": refunded}, events=[str(ev.id)])
+
+
 def _finish_candidate(ctx: ExecContext, cand: CodeCandidate, *, ready: bool, summary: str) -> List[str]:
     events = []
     cand.status = CodeCandidateStatus.READY if ready else CodeCandidateStatus.REJECTED
@@ -1418,6 +1516,7 @@ HANDLERS: Dict[IntentType, Callable[[ExecContext], ExecOutcome]] = {
     IntentType.REQUEST_CODE_CHANGE: _request_code_change,
     IntentType.SUBMIT_CODE_CANDIDATE: _submit_code_candidate,
     IntentType.REQUEST_QA: _request_qa,
+    IntentType.DECLINE_CODE_CANDIDATE: _decline_code_candidate,
     IntentType.EVALUATE_CODE_CANDIDATE: _evaluate_code_candidate,
     IntentType.SECURITY_REVIEW_CANDIDATE: _security_review_candidate,
     IntentType.REQUEST_STAGING_DEPLOY: _request_staging_deploy,

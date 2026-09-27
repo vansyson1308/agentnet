@@ -11,6 +11,13 @@ intent type: a society that can retire its own unfinished work can also retire
 the evidence that it failed. The row is kept, the reason is required, and the
 in-flight implementation task is closed through the ordinary escrow path so the
 money moves exactly once.
+
+The one agent-side exit is narrower and is not an abandon: the responsible
+Builder may DECLINE_CODE_CANDIDATE a requested or qa_failed candidate it cannot
+finish within its spec (executor ``_decline_code_candidate``). That ends in the
+ordinary REJECTED -- a recorded failure with a structured reason, the spec and
+QA report kept -- and hands the work to the normal Scout -> Governor ->
+Architect path instead of hiding it.
 """
 
 from __future__ import annotations
