@@ -121,6 +121,27 @@ and a2788678 (correlation b8db5936). Now each read wakes only its reader, and no
 - `tests/society/test_events_and_dispatch.py` fails if an event type emitted as a targeted wake is
   subscribed by a role without being targeted-only.
 
+**A swallowed candidate wake is re-delivered once (`society/redelivery.py`).** The loop breaker is the
+right answer to a runaway conversation. It is the wrong answer to a code candidate whose next stage
+owner was about to be woken. A wake it ignored was never sent again, so the candidate waited forever:
+- 9da14a08 and f8296297 each needed an operator abandon;
+- 23ac830a's `code_candidate.built` was swallowed in correlation 4017ce48.
+
+The Builder's heartbeat resumes only the Builder's own stages. Nothing re-woke Security for
+`security_review` or the Governor for `ready`. On each dispatch cycle the worker now re-emits a
+candidate lifecycle wake the breaker swallowed, under these rules:
+- The wake is one of `code_change.requested`, `code_candidate.built`, `code_candidate.qa_failed`,
+  `code_candidate.security_review` or `code_candidate.ready`.
+- The candidate still sits in the stage that wake was for. For `ready`, no promotion exists yet.
+- It is re-sent once, as a fresh story (new correlation, depth 0, system actor) with the original
+  payload plus `redelivered_from`. The idempotency key is `redeliver:<event id>`.
+- A re-delivery that is swallowed again stays swallowed, so the finite state machine bounds the total.
+  At most 5 are re-sent per cycle, and only wakes from the last 24 h are considered. Every rule is
+  in the query, so a wake already re-delivered or no longer owed never crowds out one that is.
+
+It adds no authority: the same role gets the same payload it would have received, and every guard
+still decides. `tests/society/test_redelivery.py` replays the failure through the real dispatcher.
+
 ## Engineering loop safety
 
 - Builder: `git worktree add -B agentnet-auto/<id> <workspace_root>/<id> <base>`; every edit path must be
