@@ -1,8 +1,74 @@
-# AgentNet — current state (truth as of 2026-09-19, Phase 5 closure)
+# AgentNet — current state (truth as of 2026-09-27, external coding agent exit)
 
 This file replaces the earlier machine-specific snapshot. It describes the repository as
 the running code, schema and tests define it. When something here disagrees with the code,
 the code and tests win and this file is stale — fix it in the same change.
+
+## Handoff: the external coding agent exits (2026-09-27)
+
+From this date the external coding agent (Claude Code) no longer watches or steers the system. Two
+parties remain: the **Society** does the engineering, and the **owner** holds every
+constitutional decision. Everything below was read from the running system on 2026-09-27. The
+rows further down that carry older dates are kept as history.
+
+**What runs by itself (staging Society, `main` `cadf950`).**
+- The runtime, autonomous code, GitHub promotion and GREEN auto-merge were switched on at the
+  staging society-worker service on 2026-09-20 (see below). The external agent has not changed
+  them since. The IaC defaults in `.railway/railway.ts` stay `false`.
+- The live model is `deepseek-flash`. There is one scheduled company cycle a day (01:00Z) and a
+  public-surface monitor that turns production defects into `public.surface.anomaly` events.
+- The fleet (Scout, Governor, Architect, Builder, QA, Security, Evaluator) finds problems,
+  proposes, builds in isolated worktrees, runs QA and Security, and promotes. It declines
+  candidates it cannot finish (`DECLINE_CODE_CANDIDATE`, #60). It re-proposes hypotheses whose
+  attempts all failed (#61). It recovers candidate wakes the loop breaker swallowed (#62).
+- Deploys stay disabled (`SOCIETY_DEPLOYMENT_PROVIDER=disabled`). The production Society is **OFF**.
+
+**Last audit before exit** (2026-09-27T14:04Z, validator `phase5_live.py`, plan `candidates:4,audit:6`,
+on `cadf950`): `RESULT: OK (18 checks)`.
+- Loop breaker: 0 trips. Dead runs: 0. Forbidden HIGH intents: 0. Duplicate candidates or
+  proposal titles: 0.
+- Money E01–E03: PASS. Secret, token and chain-of-thought scans X01–X03: PASS.
+- Public surface P01–P04: PASS.
+- Model spend today: $0.147 of $1.00, over 76 runs.
+
+**Open work that belongs to the Society: the production dashboard defect.**
+- **The defect.** The monitor found templates that call `url_for` on endpoints the dashboard does
+  not register. The gate that proves it is
+  `services/dashboard/tests/test_public_surface.py::test_every_active_template_url_for_names_a_route`.
+- **Attempt 1.** Candidate `a2788678` (AMBER) changed only `services/dashboard/app/main.py`. It
+  failed that gate. On 2026-09-27 its Builder declined it as `spec_outside_files_allowed`.
+- **Other candidates.** `23ac830a` (RED, telemetry) was declined as `acceptance_unsatisfiable`.
+  `9da14a08` was abandoned by an operator with owner approval; it is the only operator abandon.
+- **Next.** No dashboard candidate is open. The next attempt starts from the Scout → Governor → Architect
+  path at the next anomaly or company cycle.
+- **Recording rules.** No human or external agent writes this repair. Claude's PRs #50–#53 and
+  #55–#62 changed only the control plane, the evaluation gates and tooling, and are recorded that
+  way.
+
+**What only the owner does.**
+1. Review and merge the Society's **AMBER** promotion PR for the dashboard repair when it
+   appears. RED and constitutional changes also need the owner. GREEN changes merge on their own.
+2. Release to production through the trusted release gate (`docs/PRODUCTION_RUNBOOK.md`). The
+   Society has no production credential and no deploy authority.
+3. Lift incident freezes and, rarely, abandon a stranded candidate (`candidate_admin.abandon`).
+4. After the dashboard repair has merged, merge the held CI-hardening draft PR from
+   `claude/agentnet-autonomous-society-0aojp7`. It makes CI collect the dashboard tests and adds a
+   test-discovery sentinel, so it stays red until the repair is on `main`. That is by design.
+
+**How to tell it is healthy without an engineer.**
+- Set the staging-validator's `VALIDATOR_SCRIPT=phase5_live.py` and `PHASE5_PLAN=audit:24`, then
+  read the `PHASE5` lines. Set it back to `surface_watch.py` afterwards.
+- Any failing L0x (loop or dead runs), E0x (money) or X0x (secrets) check is a stop signal.
+- The public `/v1/society/status` and `/v1/society/metrics` endpoints are structural and safe to
+  poll.
+- The kill switch is `SOCIETY_RUNTIME_ENABLED=false` on the staging society-worker.
+
+**Graduation verdict at exit: NOT COMPLETE.**
+- Autonomous monitoring of the public surface is live, and the autonomous GREEN evolution loop
+  is proven (`docs/SOCIETY_LIVE_PROOF.md` §9).
+- **Autonomous self-healing of the production defect is not yet proven.** No Society repair has
+  reached READY, an owner-approved merge or a trusted production release.
+- The exit happened at the owner's direction, with the remaining steps assigned above.
 
 ## Status line
 
