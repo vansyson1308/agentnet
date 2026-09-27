@@ -359,11 +359,22 @@ forming (`society/memory_grounding.py`):
   effect, so their memories are admitted. Each later run believed its own note, and operator
   refutation did not stop it. The context never answered the one question the Scout was deciding.
   It now does, from durable rows:
-  - `open_proposals`: every open proposal created by an **executed** `CREATE_IMPROVEMENT` whose
-    evidence named this signal type. There is no time window, so an old proposal is not forgotten.
-    Each entry carries its portfolio state (`active`, `concluded` or `shelved`, from
+  - `open_proposals`: every proposal still pursuing the signal, created by an **executed**
+    `CREATE_IMPROVEMENT` whose evidence named this signal type. There is no time window, so an old
+    proposal is not forgotten. Each entry carries its portfolio state (`active` or `shelved`, from
     `company.portfolio_accounting`). An empty list means no such proposal exists, whatever a memory
     says.
+  - `concluded_proposals`: the same, for proposals whose work ended (every candidate rejected,
+    declined or abandoned, or merged). They cover nothing: if the signal persists, a new proposal is
+    how the work resumes, and the Governor reviews it again. The `proposals` block carries the same
+    `portfolio_state` for each proposal it shows, including the one a `code_candidate.rejected` event
+    names.
+
+    Staging, 2026-09-27: the Builder declined candidate a2788678 at 05:00Z. Woken by the
+    rejection, the Scout and the Governor saw proposal ea350455 only as `CONVERTED_TO_TASK` and
+    judged the work still in hand. At 05:04Z the next critical `public.surface.anomaly` reached the
+    Scout with ea350455 listed among the *open* proposals, so *"no new proposal is warranted"*.
+    Nothing woke the Architect.
   - `attempts`: the last few `CREATE_IMPROVEMENT` intents for the signal, from any agent, within 7
     days. Each shows its outcome, whether it was yours (`by_you`), the proposal it produced and
     whether that was an idempotent `duplicate`. The reason is shown only for your own attempts, so no

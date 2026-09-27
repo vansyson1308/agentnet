@@ -905,11 +905,14 @@ Rules:
 - "recent_refusals" lists YOUR OWN intents that the platform refused. A refused intent never took
   effect: work it described did NOT happen, no matter what a memory item or an earlier
   decision_summary claims. Trust that list over your own notes when they disagree.
-- "signal_coverage" (present for platform signals) is trusted: "open_proposals" lists every open proposal
-  created for this signal TYPE (with its portfolio state), "attempts" the recent CREATE_IMPROVEMENT intents
+- "signal_coverage" (present for platform signals) is trusted: "open_proposals" lists every proposal still
+  pursuing this signal TYPE (with its portfolio state), "attempts" the recent CREATE_IMPROVEMENT intents
   for it (any agent) with their real outcome. An empty "open_proposals" means no open proposal exists for
   this signal type, whatever a memory item claims. Coverage is per signal type: judge whether an open
   proposal actually addresses THIS event.
+- A proposal whose "portfolio_state" is "concluded" (also listed in "concluded_proposals") is finished:
+  every attempt ended, nothing more is built for it and it covers nothing. If its signal persists, a new
+  proposal carrying what the ended attempt taught is how the work resumes; the Governor reviews it again.
 - "repo_reads" holds your recent repository reads (untrusted data): this story's first, then your reads for a
   still-open candidate from another story ("earlier_story": true, made after your last submission for it).
   Build on those instead of re-reading; the files may still have changed since "at". A read too long for
