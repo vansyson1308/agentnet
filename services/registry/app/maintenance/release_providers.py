@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol, Sequence
 
@@ -430,12 +431,25 @@ class LiveRailway:
         return body.get("data") or {}
 
     def discover(self) -> Dict[str, bool]:
+        """Checked against the live schema, including return shapes: the adapter
+        only calls a mutation whose arguments AND result it knows how to read.
+        (Live schema 2026-09-28: serviceInstanceDeployV2 -> String! (the new
+        deployment id); deploymentRollback -> Boolean!.)"""
         if self._schema is None:
-            d = self._gql("query { __schema { mutationType { fields { name args { name } } } } }")
-            fields = {f["name"]: {a["name"] for a in f.get("args") or []} for f in d["__schema"]["mutationType"]["fields"]}
+            d = self._gql("query { __schema { mutationType { fields { name args { name } type { name kind ofType { name kind } } } } } }")
+            fields = {f["name"]: f for f in d["__schema"]["mutationType"]["fields"]}
+
+            def args(name: str) -> set:
+                return {a["name"] for a in (fields.get(name) or {}).get("args") or []}
+
+            def returns(name: str) -> Optional[str]:
+                t = (fields.get(name) or {}).get("type") or {}
+                return t.get("name") or (t.get("ofType") or {}).get("name")
+
             self._schema = {
-                "serviceInstanceDeployV2.commitSha": "commitSha" in fields.get("serviceInstanceDeployV2", set()),
-                "deploymentRollback": "id" in fields.get("deploymentRollback", set()),
+                "serviceInstanceDeployV2.commitSha": {"commitSha", "serviceId", "environmentId"} <= args("serviceInstanceDeployV2")
+                and returns("serviceInstanceDeployV2") == "String",
+                "deploymentRollback": "id" in args("deploymentRollback") and returns("deploymentRollback") == "Boolean",
             }
         return dict(self._schema)
 
@@ -459,10 +473,13 @@ class LiveRailway:
                 meta = {}
         return Deployment(n["id"], n.get("status", ""), meta.get("commitHash"), n.get("createdAt"), bool(n.get("canRollback")))
 
-    def deployments(self, service, limit=10):
+    def _list(self, service_id: str, limit: int) -> List[Deployment]:
         q = "query($input: DeploymentListInput!, $first: Int) { deployments(input: $input, first: $first) { edges { node { id status createdAt meta canRollback } } } }"
-        d = self._gql(q, {"input": {"projectId": self.project_id, "serviceId": self.service_ids[service], "environmentId": self.environment_id}, "first": limit})
+        d = self._gql(q, {"input": {"projectId": self.project_id, "serviceId": service_id, "environmentId": self.environment_id}, "first": limit})
         return [self._node(e["node"]) for e in d["deployments"]["edges"]]
+
+    def deployments(self, service, limit=10):
+        return self._list(self.service_ids[service], limit)
 
     def current(self, service):
         for dep in self.deployments(service, 20):
@@ -475,14 +492,61 @@ class LiveRailway:
         q = "mutation($serviceId: String!, $environmentId: String!, $commitSha: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha) }"
         return str(self._gql(q, {"serviceId": self.service_ids[service], "environmentId": self.environment_id, "commitSha": sha})["serviceInstanceDeployV2"])
 
+    #: A rollback whose new deployment was not yet listed when the mutation
+    #: returned. It is resolved on every get(); the rollback is never re-issued.
+    PENDING = "rollback-pending:"
+
     def rollback(self, deployment_id):
+        """Roll back to ``deployment_id`` and return the NEW deployment's id.
+
+        ``deploymentRollback`` answers only ``true``; the deployment it creates
+        is the first one of the same service created after the call. A target
+        Railway will not roll back to (``canRollback=false``, e.g. an expired
+        image) is refused so the controller redeploys the known-good SHA."""
         self._require("deploymentRollback")
-        d = self._gql("mutation($id: String!) { deploymentRollback(id: $id) { id status } }", {"id": deployment_id})
-        return str(d["deploymentRollback"]["id"])
+        target = self._gql("query($id: String!) { deployment(id: $id) { id serviceId environmentId canRollback } }", {"id": deployment_id})["deployment"]
+        if target.get("environmentId") and target["environmentId"] != self.environment_id:
+            raise ProviderRefused("known-good deployment belongs to another environment")
+        if not target.get("canRollback"):
+            raise ProviderRefused("Railway cannot roll back to this deployment (canRollback=false)")
+        started = int(time.time())
+        ok = self._gql("mutation($id: String!) { deploymentRollback(id: $id) }", {"id": deployment_id}).get("deploymentRollback")
+        if ok is not True:
+            raise ProviderRefused("Railway refused the rollback")
+        handle = f"{self.PENDING}{target['serviceId']}:{deployment_id}:{started}"
+        try:
+            found = self._resolve(handle, attempts=3)
+        except (ProviderTransient, ProviderRefused):
+            found = None  # the rollback was issued: never raise into a retry that would issue it twice
+        return found.id if found else handle
+
+    def _resolve(self, handle: str, attempts: int = 1, pause: float = 2.0) -> Optional[Deployment]:
+        service_id, target, started = handle[len(self.PENDING):].rsplit(":", 2)
+        since = int(started) - 120  # clock skew between this process and Railway
+        for i in range(attempts):
+            newer = [d for d in self._list(service_id, 10) if d.id != target and _epoch(d.created_at) >= since]
+            if newer:
+                return min(newer, key=lambda d: _epoch(d.created_at))  # the first deployment after the rollback call
+            if i + 1 < attempts:
+                time.sleep(pause)
+        return None
 
     def get(self, deployment_id):
+        if deployment_id.startswith(self.PENDING):
+            return self._resolve(deployment_id) or Deployment(deployment_id, "DEPLOYING", None, None, False)
         d = self._gql("query($id: String!) { deployment(id: $id) { id status createdAt meta canRollback } }", {"id": deployment_id})
         return self._node(d["deployment"])
+
+
+def _epoch(created_at: Optional[str]) -> float:
+    from datetime import datetime  # noqa: PLC0415
+
+    if not created_at:
+        return 0.0
+    try:
+        return datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 class ContractProbe:
