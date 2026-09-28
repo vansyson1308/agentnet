@@ -104,7 +104,7 @@ class PublicProbe(Protocol):
 
 
 class Preview(Protocol):
-    def validate(self, sha: str) -> Dict[str, Any]: ...  # pragma: no cover -- {"state": passed|pending|failed, ...}
+    def validate(self, sha: str, services: Sequence[str] = ()) -> Dict[str, Any]: ...  # pragma: no cover -- {"state": passed|pending|failed, ...}
 
 
 # ── fakes (tests, simulations; never used by a live release) ─────────────────
@@ -281,7 +281,7 @@ class FakeProbe:
 class FakePreview:
     state: str = "passed"
 
-    def validate(self, sha):
+    def validate(self, sha, services=()):
         return {"state": self.state, "sha": sha, "mode": "fake"}
 
 
@@ -399,16 +399,18 @@ class LiveGitHub:
 class LiveRailway:
     ENDPOINT = "https://backboard.railway.com/graphql/v2"
 
-    def __init__(self, *, project_id: str, environment_id: str, service_ids: Dict[str, str], transport: Optional[httpx.BaseTransport] = None, timeout: float = 20.0):
+    def __init__(self, *, project_id: str, environment_id: str, service_ids: Dict[str, str], transport: Optional[httpx.BaseTransport] = None, timeout: float = 20.0,
+                 token_env: str = "MAINTENANCE_RAILWAY_TOKEN", auth_mode_env: str = "MAINTENANCE_RAILWAY_AUTH_MODE"):
         self.project_id, self.environment_id, self.service_ids = project_id, environment_id, dict(service_ids)
         self._transport, self._timeout = transport, timeout
+        self._token_env, self._auth_mode_env = token_env, auth_mode_env
         self._schema: Optional[Dict[str, bool]] = None
 
     def _headers(self) -> Dict[str, str]:
-        tok = os.getenv("MAINTENANCE_RAILWAY_TOKEN", "")
+        tok = os.getenv(self._token_env, "")
         if not tok:
-            raise ProviderRefused("no Railway release token in this process")
-        if os.getenv("MAINTENANCE_RAILWAY_AUTH_MODE", "project").strip().lower() == "project":
+            raise ProviderRefused("no Railway token for this environment in this process")
+        if os.getenv(self._auth_mode_env, "project").strip().lower() == "project":
             return {"Project-Access-Token": tok, "Content-Type": "application/json"}
         return {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
 
@@ -547,6 +549,79 @@ def _epoch(created_at: Optional[str]) -> float:
         return datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return 0.0
+
+
+class LivePreview:
+    """Release preview by EXACT-SHA parity on an isolated, non-production
+    Railway environment (ADR-0010 D12; staging by default: its own database,
+    its own staging-safe credentials, it deploys ``main`` through Wait for CI).
+
+    ``passed`` only when, for every service the release changes, the preview
+    environment's ACTIVE deployment (newest SUCCESS) is the candidate SHA,
+    and then the preview's public surface answers: readiness, the monitored
+    public-surface contract, the A2A card and a security smoke (no public
+    metrics, no wildcard CORS for a foreign origin). ``pending`` while the
+    preview is still building the SHA; anything else fails closed. It reads a
+    NON-production Railway token (``MAINTENANCE_PREVIEW_RAILWAY_TOKEN``) and
+    refuses to treat the production environment as a preview."""
+
+    FOREIGN_ORIGIN = "https://preview-smoke.invalid"
+
+    def __init__(self, railway: "LiveRailway", *, ui_origin: str, api_origin: str, production_environment_id: str, timeout: float = 10.0,
+                 transport: Optional[httpx.BaseTransport] = None, contract: Optional[Any] = None):
+        if not railway.environment_id or railway.environment_id == production_environment_id:
+            raise ValueError("the release preview must be a non-production Railway environment")
+        self.railway, self.ui_origin, self.api_origin = railway, ui_origin.rstrip("/"), api_origin.rstrip("/")
+        self.timeout, self._transport = timeout, transport
+        self._contract = contract or ContractProbe(self.ui_origin, self.api_origin, timeout=timeout)
+
+    def validate(self, sha: str, services: Sequence[str] = ()) -> Dict[str, Any]:
+        wanted = [s for s in services if s in self.railway.service_ids] or sorted(self.railway.service_ids)
+        missing = [s for s in services if s not in self.railway.service_ids]
+        if missing:
+            return {"state": "failed", "sha": sha, "reason": f"no preview service mapped for {missing}"}
+        active: Dict[str, Optional[str]] = {}
+        building = False
+        try:
+            for svc in wanted:
+                deps = self.railway.deployments(svc, 10)
+                cur = next((d for d in deps if d.status == "SUCCESS"), None)
+                active[svc] = cur.commit_sha if cur else None
+                if any(d.commit_sha == sha and d.status in ("BUILDING", "DEPLOYING", "INITIALIZING", "QUEUED", "WAITING") for d in deps):
+                    building = True
+        except ProviderTransient as exc:
+            return {"state": "pending", "sha": sha, "reason": f"preview provider transient: {exc}"[:200]}
+        except ProviderRefused as exc:
+            return {"state": "failed", "sha": sha, "reason": f"preview provider refused: {exc}"[:200]}
+        parity = {svc: active[svc] == sha for svc in wanted}
+        if not all(parity.values()):
+            # not (yet) running the candidate: wait; the release deadline fails it closed
+            return {"state": "pending", "sha": sha, "reason": "preview is not running the candidate SHA yet", "parity": parity, "building": building}
+        checks = self._surface_checks()
+        ok = all(checks.values())
+        return {"state": "passed" if ok else "failed", "sha": sha, "parity": parity, "checks": checks,
+                "reason": "" if ok else f"preview checks failed: {sorted(k for k, v in checks.items() if not v)}"}
+
+    def _surface_checks(self) -> Dict[str, bool]:
+        out: Dict[str, bool] = {}
+        try:
+            with httpx.Client(timeout=self.timeout, transport=self._transport, follow_redirects=False) as c:
+                out["readiness"] = c.get(f"{self.api_origin}/readyz").status_code == 200
+                card = c.get(f"{self.api_origin}/.well-known/agent-card.json")
+                try:
+                    out["a2a_card"] = card.status_code == 200 and bool(card.json().get("name"))
+                except ValueError:
+                    out["a2a_card"] = False
+                out["metrics_not_public"] = c.get(f"{self.api_origin}/metrics").status_code in (401, 403, 404)
+                pre = c.options(f"{self.api_origin}/readyz", headers={"Origin": self.FOREIGN_ORIGIN, "Access-Control-Request-Method": "GET"})
+                acao = pre.headers.get("access-control-allow-origin", "")
+                out["cors_foreign_origin_refused"] = acao not in ("*", self.FOREIGN_ORIGIN)
+        except httpx.HTTPError:
+            out["reachable"] = False
+            return out
+        contract = self._contract.check()
+        out["public_surface_contract"] = bool(contract) and all(contract.values())
+        return out
 
 
 class ContractProbe:

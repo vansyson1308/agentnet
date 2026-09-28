@@ -59,6 +59,7 @@ from .orm import MaintenanceHeartbeat, MaintenanceIncident, MaintenanceKnownGood
 from .release_providers import (
     ContractProbe,
     LiveGitHub,
+    LivePreview,
     LiveRailway,
     Preview,
     ProviderRefused,
@@ -91,6 +92,12 @@ class ReleaseSettings:
     deploy_grace_seconds: int = field(default_factory=lambda: int(os.getenv("MAINTENANCE_RELEASE_DEPLOY_GRACE_SECONDS") or "180"))
     step_backoff_seconds: int = field(default_factory=lambda: int(os.getenv("MAINTENANCE_RELEASE_BACKOFF_SECONDS") or "30"))
     max_transient: int = field(default_factory=lambda: int(os.getenv("MAINTENANCE_RELEASE_MAX_TRANSIENT") or "20"))
+    # release preview: exact-SHA parity on an isolated non-production environment (none = fail closed)
+    preview: str = field(default_factory=lambda: (os.getenv("MAINTENANCE_RELEASE_PREVIEW") or "none").strip().lower())
+    preview_environment_id: str = field(default_factory=lambda: (os.getenv("MAINTENANCE_PREVIEW_RAILWAY_ENVIRONMENT_ID") or "").strip())
+    preview_service_ids: Dict[str, str] = field(default_factory=lambda: json.loads(os.getenv("MAINTENANCE_PREVIEW_RAILWAY_SERVICE_IDS") or "{}"))
+    preview_ui_origin: str = field(default_factory=lambda: (os.getenv("MAINTENANCE_PREVIEW_UI_ORIGIN") or "").strip())
+    preview_api_origin: str = field(default_factory=lambda: (os.getenv("MAINTENANCE_PREVIEW_API_ORIGIN") or "").strip())
 
 
 @dataclass
@@ -110,8 +117,24 @@ def live_providers(rs: ReleaseSettings) -> Optional[Providers]:
         github=LiveGitHub(rs.repo),
         railway=LiveRailway(project_id=rs.railway_project_id, environment_id=rs.railway_environment_id, service_ids=rs.railway_service_ids),
         probe=ContractProbe(rs.ui_origin, rs.api_origin),
-        preview=None,  # a release-preview surface must be configured explicitly (fail closed without one)
+        preview=live_preview(rs),  # None unless configured explicitly: every release then refuses (fail closed)
     )
+
+
+def live_preview(rs: "ReleaseSettings") -> Optional[Preview]:
+    """The exact-SHA preview, or None (fail closed) when it is not fully configured
+    or would point at the production environment."""
+    if rs.preview != "staging_parity":
+        return None
+    if not (rs.preview_environment_id and rs.preview_service_ids and rs.preview_ui_origin and rs.preview_api_origin):
+        return None
+    try:
+        railway = LiveRailway(project_id=rs.railway_project_id, environment_id=rs.preview_environment_id, service_ids=rs.preview_service_ids,
+                              token_env="MAINTENANCE_PREVIEW_RAILWAY_TOKEN", auth_mode_env="MAINTENANCE_PREVIEW_RAILWAY_AUTH_MODE")
+        return LivePreview(railway, ui_origin=rs.preview_ui_origin, api_origin=rs.preview_api_origin, production_environment_id=rs.railway_environment_id)
+    except ValueError:
+        logger.error("release preview refused: it must be a non-production environment")
+        return None
 
 
 @dataclass
@@ -306,7 +329,7 @@ class ReleaseController:
     def _s_preview_validating(self, db, rel, p, now, st):
         if p.preview is None:
             return self._refuse(db, rel, now, "no release-preview surface is configured (fail closed)", st)
-        res = p.preview.validate(rel.head_sha)
+        res = p.preview.validate(rel.head_sha, services=list(rel.services or []))
         rel.verification = {**(rel.verification or {}), "preview": res}
         state = res.get("state")
         if state == "pending":
