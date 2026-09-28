@@ -100,3 +100,64 @@ def test_findings_become_separate_structural_incidents(db, mset, site):
     refs = {i.desired_state_ref: i.incident_class for i in db.query(MaintenanceIncident).all()}
     assert refs["broken:text_contrast"] == "ACCESSIBILITY" and refs["broken:raw_structured_value"] == "UI_RENDERING" and refs["broken:dead_link"] == "UI_NAVIGATION"
     assert not any(r.startswith("clean:") for r in refs), "one incident per (page, rule); unrelated defects are never bundled"
+
+
+# ── scheduled-probe ingress credential (user JWTs expire, so log in per run) ──
+
+
+class _Resp:
+    def __init__(self, status, body=None):
+        self.status_code = status
+        self._body = body
+
+    def json(self):
+        if self._body is None:
+            raise ValueError("no json")
+        return self._body
+
+
+class _Http:
+    def __init__(self, resp):
+        self.resp, self.calls = resp, []
+
+    def post(self, url, json=None, timeout=None):  # noqa: A002
+        self.calls.append((url, json))
+        return self.resp
+
+
+def _probe():
+    import importlib
+
+    return importlib.import_module("deploy.maintenance.browser_probe")
+
+
+def test_ingest_logs_in_on_the_ingest_origin_and_never_echoes_the_credential():
+    bp = _probe()
+    http = _Http(_Resp(200, {"access_token": "fresh-jwt"}))
+    env = {"MAINTENANCE_INGEST_EMAIL": "probe@example.test", "MAINTENANCE_INGEST_PASSWORD": "pw-secret-value"}
+    tok, how = bp.ingest_token(http, "https://registry.example.test/v1/maintenance/observations/browser", env)
+    assert tok == "fresh-jwt"
+    assert http.calls == [("https://registry.example.test/v1/auth/user/login", {"email": "probe@example.test", "password": "pw-secret-value"})]
+    assert "pw-secret-value" not in how and "fresh-jwt" not in how
+
+
+def test_a_static_token_wins_and_no_login_happens():
+    bp = _probe()
+    http = _Http(_Resp(500))
+    tok, _ = bp.ingest_token(http, "https://r.example.test/v1/maintenance/observations/browser", {"MAINTENANCE_INGEST_TOKEN": "t"})
+    assert tok == "t" and http.calls == []
+
+
+@pytest.mark.parametrize("resp", [_Resp(401), _Resp(200, None), _Resp(200, {})])
+def test_a_failed_login_yields_no_token(resp):
+    bp = _probe()
+    env = {"MAINTENANCE_INGEST_EMAIL": "a@b.test", "MAINTENANCE_INGEST_PASSWORD": "x"}
+    tok, how = bp.ingest_token(_Http(resp), "https://r.example.test/v1/maintenance/observations/browser", env)
+    assert tok == "" and "x" != how
+
+
+def test_the_login_url_is_derived_only_from_an_absolute_ingest_url():
+    bp = _probe()
+    assert bp.ingest_login_url("https://r.example.test:8443/v1/maintenance/observations/browser?x=1") == "https://r.example.test:8443/v1/auth/user/login"
+    with pytest.raises(ValueError):
+        bp.ingest_login_url("/v1/maintenance/observations/browser")
