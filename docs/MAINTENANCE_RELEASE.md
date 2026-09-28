@@ -33,8 +33,10 @@ Code: `app/maintenance/release.py` (controller), `release_providers.py` (the onl
    `MAINTENANCE_PREVIEW_API_ORIGIN`, and a token scoped to that environment only as
    `MAINTENANCE_PREVIEW_RAILWAY_TOKEN`. The preview passes only when every service the release
    changes has the candidate SHA as its active deployment there, and the preview answers readiness,
-   the monitored public-surface contract, the A2A card, no public `/metrics` and no wildcard CORS for
-   a foreign origin. It is `pending` while that SHA builds and refuses the production environment.
+   the A2A card, no public `/metrics`, no wildcard CORS for a foreign origin, and the monitored
+   public-surface contract judged like post-deploy verification: no item healthy in the production
+   baseline fails on the preview, and the repaired incident's own item is healthy there (defects that
+   are still open in production do not block the repair of one of them). It is `pending` while that SHA builds and refuses the production environment.
    Without a complete configuration the controller refuses every release (fail closed).
 4. Flip `MAINTENANCE_RELEASE_PROVIDER=live`, `MAINTENANCE_GREEN_RELEASE_ENABLED=true`,
    `MAINTENANCE_AUTONOMY_ENABLED=true` on release-control, and list `MAINTENANCE_RELEASE_OWNER_LOGINS`.

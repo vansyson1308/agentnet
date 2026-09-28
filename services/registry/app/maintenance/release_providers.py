@@ -104,7 +104,8 @@ class PublicProbe(Protocol):
 
 
 class Preview(Protocol):
-    def validate(self, sha: str, services: Sequence[str] = ()) -> Dict[str, Any]: ...  # pragma: no cover -- {"state": passed|pending|failed, ...}
+    def validate(self, sha: str, services: Sequence[str] = (), baseline: Optional[Dict[str, bool]] = None,
+                 required: Sequence[str] = ()) -> Dict[str, Any]: ...  # pragma: no cover -- {"state": passed|pending|failed, ...}
 
 
 # ── fakes (tests, simulations; never used by a live release) ─────────────────
@@ -281,7 +282,7 @@ class FakeProbe:
 class FakePreview:
     state: str = "passed"
 
-    def validate(self, sha, services=()):
+    def validate(self, sha, services=(), baseline=None, required=()):
         return {"state": self.state, "sha": sha, "mode": "fake"}
 
 
@@ -558,9 +559,13 @@ class LivePreview:
 
     ``passed`` only when, for every service the release changes, the preview
     environment's ACTIVE deployment (newest SUCCESS) is the candidate SHA,
-    and then the preview's public surface answers: readiness, the monitored
-    public-surface contract, the A2A card and a security smoke (no public
-    metrics, no wildcard CORS for a foreign origin). ``pending`` while the
+    and then the preview's public surface answers: readiness, the A2A card,
+    a security smoke (no public metrics, no wildcard CORS for a foreign
+    origin) and the monitored public-surface contract judged like the
+    post-deploy check -- no item healthy in the production ``baseline`` may
+    fail on the preview, and the repaired incident's own item(s)
+    (``required``) must be healthy there. Other defects that are still open
+    in production do not block a repair of one of them. ``pending`` while the
     preview is still building the SHA; anything else fails closed. It reads a
     NON-production Railway token (``MAINTENANCE_PREVIEW_RAILWAY_TOKEN``) and
     refuses to treat the production environment as a preview."""
@@ -575,7 +580,8 @@ class LivePreview:
         self.timeout, self._transport = timeout, transport
         self._contract = contract or ContractProbe(self.ui_origin, self.api_origin, timeout=timeout)
 
-    def validate(self, sha: str, services: Sequence[str] = ()) -> Dict[str, Any]:
+    def validate(self, sha: str, services: Sequence[str] = (), baseline: Optional[Dict[str, bool]] = None,
+                 required: Sequence[str] = ()) -> Dict[str, Any]:
         wanted = [s for s in services if s in self.railway.service_ids] or sorted(self.railway.service_ids)
         missing = [s for s in services if s not in self.railway.service_ids]
         if missing:
@@ -597,12 +603,12 @@ class LivePreview:
         if not all(parity.values()):
             # not (yet) running the candidate: wait; the release deadline fails it closed
             return {"state": "pending", "sha": sha, "reason": "preview is not running the candidate SHA yet", "parity": parity, "building": building}
-        checks = self._surface_checks()
+        checks = self._surface_checks(baseline or {}, list(required))
         ok = all(checks.values())
         return {"state": "passed" if ok else "failed", "sha": sha, "parity": parity, "checks": checks,
                 "reason": "" if ok else f"preview checks failed: {sorted(k for k, v in checks.items() if not v)}"}
 
-    def _surface_checks(self) -> Dict[str, bool]:
+    def _surface_checks(self, baseline: Dict[str, bool], required: List[str]) -> Dict[str, bool]:
         out: Dict[str, bool] = {}
         try:
             with httpx.Client(timeout=self.timeout, transport=self._transport, follow_redirects=False) as c:
@@ -620,7 +626,9 @@ class LivePreview:
             out["reachable"] = False
             return out
         contract = self._contract.check()
-        out["public_surface_contract"] = bool(contract) and all(contract.values())
+        # judged like post-deploy verification: an item unknown to the baseline counts as healthy there
+        out["public_surface_no_regression"] = bool(contract) and not [k for k, ok in contract.items() if not ok and baseline.get(k, True)]
+        out["repaired_item_healthy"] = all(contract.get(r, True) for r in required)
         return out
 
 

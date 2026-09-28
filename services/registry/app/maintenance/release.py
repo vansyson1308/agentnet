@@ -329,7 +329,9 @@ class ReleaseController:
     def _s_preview_validating(self, db, rel, p, now, st):
         if p.preview is None:
             return self._refuse(db, rel, now, "no release-preview surface is configured (fail closed)", st)
-        res = p.preview.validate(rel.head_sha, services=list(rel.services or []))
+        incident = db.get(MaintenanceIncident, rel.incident_id)
+        res = p.preview.validate(rel.head_sha, services=list(rel.services or []), baseline=(rel.rollback or {}).get("baseline_probe") or {},
+                                 required=[incident.desired_state_ref] if incident is not None else [])
         rel.verification = {**(rel.verification or {}), "preview": res}
         state = res.get("state")
         if state == "pending":

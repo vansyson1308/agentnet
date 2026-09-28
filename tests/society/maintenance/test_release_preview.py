@@ -45,11 +45,11 @@ class World:
 
 
 class Contract:
-    def __init__(self, ok=True):
-        self.ok = ok
+    def __init__(self, ok=True, login=True):
+        self.ok, self.login = ok, login
 
     def check(self):
-        return {"ui_root": self.ok, "login": True}
+        return {"ui_root": self.ok, "login": self.login}
 
 
 @pytest.fixture
@@ -99,9 +99,23 @@ def test_a_security_or_readiness_regression_fails_the_preview(world, breakage, c
     assert res["state"] == "failed" and res["checks"][check] is False
 
 
-def test_a_public_surface_contract_failure_fails_the_preview(world):
-    res = _preview(world, contract=Contract(ok=False)).validate(SHA, services=["dashboard"])
-    assert res["state"] == "failed" and res["checks"]["public_surface_contract"] is False
+def test_a_public_surface_regression_fails_the_preview(world):
+    res = _preview(world, contract=Contract(ok=False)).validate(SHA, services=["dashboard"], baseline={"ui_root": True, "login": True})
+    assert res["state"] == "failed" and res["checks"]["public_surface_no_regression"] is False
+
+
+def test_another_defect_still_open_in_production_does_not_block_the_repair_of_this_one(world):
+    # login is broken in production too (baseline False) and stays broken: not a regression
+    res = _preview(world, contract=Contract(ok=True, login=False)).validate(SHA, services=["dashboard"], baseline={"ui_root": False, "login": False},
+                                                                          required=["ui_root"])
+    assert res["state"] == "passed", res
+    assert res["checks"]["public_surface_no_regression"] and res["checks"]["repaired_item_healthy"]
+
+
+def test_the_repaired_item_must_be_healthy_on_the_preview(world):
+    res = _preview(world, contract=Contract(ok=True, login=False)).validate(SHA, services=["dashboard"], baseline={"ui_root": False, "login": False},
+                                                                          required=["login"])
+    assert res["state"] == "failed" and res["checks"]["repaired_item_healthy"] is False
 
 
 def test_an_unmapped_changed_service_fails_closed(world):
