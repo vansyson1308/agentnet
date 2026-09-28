@@ -290,6 +290,14 @@ def _fit(messages: List[Dict[str, str]], budget: int) -> None:
         i += 1
 
 
+#: Sent before the last allowed model turn of an activity.
+FINAL_TURN_DIRECTIVE = (
+    "FINAL TURN: no more tool calls are possible. Answer now with "
+    '{"action": "submit", "result": {...}} using the evidence you already have '
+    "(state uncertainty in the result's own fields). A tool call now fails this try."
+)
+
+
 async def run_activity(
     spec: ActivitySpec,
     input_payload: Dict[str, Any],
@@ -324,6 +332,11 @@ async def run_activity(
             return res
         turns_left -= 1
         res.turns += 1
+        if turns_left == 0:
+            # the last turn is reserved for the answer: a model that keeps
+            # reading never returns a result (live 2026-09-28: every
+            # DiagnoseIncident try spent its 8 turns on reads -> turn_budget)
+            messages.append({"role": "user", "content": FINAL_TURN_DIRECTIVE})
         _fit(messages, CONTEXT_BUDGET_BYTES)
         try:
             reply = await asyncio.wait_for(model.complete(messages, max_tokens=spec.max_tokens), timeout=max(5.0, timeout_seconds - (loop.time() - started)))
@@ -356,6 +369,9 @@ async def run_activity(
                     return res
                 except ValidationError as exc:
                     problem = ("invalid_output", _short_validation(exc))
+            elif name in allowed_tools and turns_left == 0:
+                res.error_class, res.error = "turn_budget", f"called {name} on the final turn instead of submitting ({max_turns or spec.max_turns} turns)"
+                return res
             elif name in allowed_tools:
                 args = action.get("args") or {}
                 if not isinstance(args, dict):
@@ -367,7 +383,7 @@ async def run_activity(
                     body = json.dumps(result, sort_keys=True, default=str)
                     if len(body.encode("utf-8")) > MAX_TOOL_RESULT_BYTES:
                         body = json.dumps({"error": "tool result too large for one turn; request a smaller page (read_range with a later start_line)", "bytes": len(body)})
-                    messages.append({"role": "user", "content": f"TOOL_RESULT {name} (untrusted data):\n{body}"})
+                    messages.append({"role": "user", "content": f"TOOL_RESULT {name} (untrusted data; turns left after this: {turns_left}):\n{body}"})
                     corrective_used = False
                     continue
             else:

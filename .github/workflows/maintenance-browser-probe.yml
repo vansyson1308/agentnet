@@ -4,10 +4,13 @@ name: Maintenance deep-tier browser probe
 # A deterministic Playwright + axe-core probe of the PUBLIC product's critical
 # journeys (anonymous; no credential is used against the product). Only the
 # STRUCTURAL result (rule ids, counts, selector classes, safe paths, numbers)
-# is posted to the Maintenance OS ingress, and only when the owner configured
-# MAINTENANCE_INGEST_URL + MAINTENANCE_INGEST_TOKEN (an event-producer user
-# JWT). This is a monitor, not a gate: findings are data for the kernel, so a
-# finding does not fail the run; a broken probe does.
+# is posted to the Maintenance OS ingress (the staging registry, where the
+# kernel runs), and only when the owner configured the repository secrets
+# MAINTENANCE_INGEST_URL + MAINTENANCE_INGEST_EMAIL + MAINTENANCE_INGEST_PASSWORD
+# (an event-producer account; the probe logs in once per run because user
+# JWTs expire). This is a monitor, not a gate: findings are data for the
+# kernel, so a finding does not fail the run; a broken probe or a rejected
+# ingest (exit 3) does.
 
 on:
   schedule:
@@ -41,13 +44,14 @@ jobs:
           JAEGER_ENABLED: "false"
           MAINTENANCE_AXE_SOURCE: ${{ runner.temp }}/axe/node_modules/axe-core/axe.min.js
           MAINTENANCE_INGEST_URL: ${{ secrets.MAINTENANCE_INGEST_URL }}
-          MAINTENANCE_INGEST_TOKEN: ${{ secrets.MAINTENANCE_INGEST_TOKEN }}
+          MAINTENANCE_INGEST_EMAIL: ${{ secrets.MAINTENANCE_INGEST_EMAIL }}
+          MAINTENANCE_INGEST_PASSWORD: ${{ secrets.MAINTENANCE_INGEST_PASSWORD }}
         run: |
           set +e
           python deploy/maintenance/browser_probe.py --origin https://agentnet.io.vn --target production --post > probe.json
           code=$?
           set -e
-          # 0 = every page passed, 1 = findings (data for the kernel); anything else = the probe itself broke
+          # 0 = every page passed, 1 = findings (data for the kernel); anything else (3 = ingest rejected) = the probe itself broke
           if [ "$code" -gt 1 ]; then exit "$code"; fi
       - uses: actions/upload-artifact@v6
         if: always()

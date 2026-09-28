@@ -26,9 +26,18 @@ Code: `app/maintenance/release.py` (controller), `release_providers.py` (the onl
    six production service ids). Point `DATABASE_URL`/`POSTGRES_*` at the staging control-plane database
    (where the kernel writes releases). Set the same `MAINTENANCE_ATTESTATION_KEY` as the society-worker.
    Never set a model key or a Society GitHub credential here (the process refuses to start).
-3. **Release preview**: configure a preview surface that runs the exact candidate SHA (a dedicated
-   Railway environment, or staging with exact-SHA parity) and wire it as the controller's `preview`
-   provider. Without one the controller refuses every release (fail closed).
+3. **Release preview** (`LivePreview`, `release_providers.py`): exact-SHA parity on an isolated,
+   non-production environment (staging by default: its own database and staging-safe credentials).
+   Set `MAINTENANCE_RELEASE_PREVIEW=staging_parity`, `MAINTENANCE_PREVIEW_RAILWAY_ENVIRONMENT_ID`,
+   `MAINTENANCE_PREVIEW_RAILWAY_SERVICE_IDS`, `MAINTENANCE_PREVIEW_UI_ORIGIN`,
+   `MAINTENANCE_PREVIEW_API_ORIGIN`, and a token scoped to that environment only as
+   `MAINTENANCE_PREVIEW_RAILWAY_TOKEN`. The preview passes only when every service the release
+   changes has the candidate SHA as its active deployment there, and the preview answers readiness,
+   the A2A card, no public `/metrics`, no wildcard CORS for a foreign origin, and the monitored
+   public-surface contract judged like post-deploy verification: no item healthy in the production
+   baseline fails on the preview, and the repaired incident's own item is healthy there (defects that
+   are still open in production do not block the repair of one of them). It is `pending` while that SHA builds and refuses the production environment.
+   Without a complete configuration the controller refuses every release (fail closed).
 4. Flip `MAINTENANCE_RELEASE_PROVIDER=live`, `MAINTENANCE_GREEN_RELEASE_ENABLED=true`,
    `MAINTENANCE_AUTONOMY_ENABLED=true` on release-control, and list `MAINTENANCE_RELEASE_OWNER_LOGINS`.
 

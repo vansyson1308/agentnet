@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol, Sequence
 
@@ -103,7 +104,8 @@ class PublicProbe(Protocol):
 
 
 class Preview(Protocol):
-    def validate(self, sha: str) -> Dict[str, Any]: ...  # pragma: no cover -- {"state": passed|pending|failed, ...}
+    def validate(self, sha: str, services: Sequence[str] = (), baseline: Optional[Dict[str, bool]] = None,
+                 required: Sequence[str] = ()) -> Dict[str, Any]: ...  # pragma: no cover -- {"state": passed|pending|failed, ...}
 
 
 # ── fakes (tests, simulations; never used by a live release) ─────────────────
@@ -280,7 +282,7 @@ class FakeProbe:
 class FakePreview:
     state: str = "passed"
 
-    def validate(self, sha):
+    def validate(self, sha, services=(), baseline=None, required=()):
         return {"state": self.state, "sha": sha, "mode": "fake"}
 
 
@@ -398,16 +400,18 @@ class LiveGitHub:
 class LiveRailway:
     ENDPOINT = "https://backboard.railway.com/graphql/v2"
 
-    def __init__(self, *, project_id: str, environment_id: str, service_ids: Dict[str, str], transport: Optional[httpx.BaseTransport] = None, timeout: float = 20.0):
+    def __init__(self, *, project_id: str, environment_id: str, service_ids: Dict[str, str], transport: Optional[httpx.BaseTransport] = None, timeout: float = 20.0,
+                 token_env: str = "MAINTENANCE_RAILWAY_TOKEN", auth_mode_env: str = "MAINTENANCE_RAILWAY_AUTH_MODE"):
         self.project_id, self.environment_id, self.service_ids = project_id, environment_id, dict(service_ids)
         self._transport, self._timeout = transport, timeout
+        self._token_env, self._auth_mode_env = token_env, auth_mode_env
         self._schema: Optional[Dict[str, bool]] = None
 
     def _headers(self) -> Dict[str, str]:
-        tok = os.getenv("MAINTENANCE_RAILWAY_TOKEN", "")
+        tok = os.getenv(self._token_env, "")
         if not tok:
-            raise ProviderRefused("no Railway release token in this process")
-        if os.getenv("MAINTENANCE_RAILWAY_AUTH_MODE", "project").strip().lower() == "project":
+            raise ProviderRefused("no Railway token for this environment in this process")
+        if os.getenv(self._auth_mode_env, "project").strip().lower() == "project":
             return {"Project-Access-Token": tok, "Content-Type": "application/json"}
         return {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
 
@@ -430,12 +434,25 @@ class LiveRailway:
         return body.get("data") or {}
 
     def discover(self) -> Dict[str, bool]:
+        """Checked against the live schema, including return shapes: the adapter
+        only calls a mutation whose arguments AND result it knows how to read.
+        (Live schema 2026-09-28: serviceInstanceDeployV2 -> String! (the new
+        deployment id); deploymentRollback -> Boolean!.)"""
         if self._schema is None:
-            d = self._gql("query { __schema { mutationType { fields { name args { name } } } } }")
-            fields = {f["name"]: {a["name"] for a in f.get("args") or []} for f in d["__schema"]["mutationType"]["fields"]}
+            d = self._gql("query { __schema { mutationType { fields { name args { name } type { name kind ofType { name kind } } } } } }")
+            fields = {f["name"]: f for f in d["__schema"]["mutationType"]["fields"]}
+
+            def args(name: str) -> set:
+                return {a["name"] for a in (fields.get(name) or {}).get("args") or []}
+
+            def returns(name: str) -> Optional[str]:
+                t = (fields.get(name) or {}).get("type") or {}
+                return t.get("name") or (t.get("ofType") or {}).get("name")
+
             self._schema = {
-                "serviceInstanceDeployV2.commitSha": "commitSha" in fields.get("serviceInstanceDeployV2", set()),
-                "deploymentRollback": "id" in fields.get("deploymentRollback", set()),
+                "serviceInstanceDeployV2.commitSha": {"commitSha", "serviceId", "environmentId"} <= args("serviceInstanceDeployV2")
+                and returns("serviceInstanceDeployV2") == "String",
+                "deploymentRollback": "id" in args("deploymentRollback") and returns("deploymentRollback") == "Boolean",
             }
         return dict(self._schema)
 
@@ -459,10 +476,13 @@ class LiveRailway:
                 meta = {}
         return Deployment(n["id"], n.get("status", ""), meta.get("commitHash"), n.get("createdAt"), bool(n.get("canRollback")))
 
-    def deployments(self, service, limit=10):
+    def _list(self, service_id: str, limit: int) -> List[Deployment]:
         q = "query($input: DeploymentListInput!, $first: Int) { deployments(input: $input, first: $first) { edges { node { id status createdAt meta canRollback } } } }"
-        d = self._gql(q, {"input": {"projectId": self.project_id, "serviceId": self.service_ids[service], "environmentId": self.environment_id}, "first": limit})
+        d = self._gql(q, {"input": {"projectId": self.project_id, "serviceId": service_id, "environmentId": self.environment_id}, "first": limit})
         return [self._node(e["node"]) for e in d["deployments"]["edges"]]
+
+    def deployments(self, service, limit=10):
+        return self._list(self.service_ids[service], limit)
 
     def current(self, service):
         for dep in self.deployments(service, 20):
@@ -475,14 +495,141 @@ class LiveRailway:
         q = "mutation($serviceId: String!, $environmentId: String!, $commitSha: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha) }"
         return str(self._gql(q, {"serviceId": self.service_ids[service], "environmentId": self.environment_id, "commitSha": sha})["serviceInstanceDeployV2"])
 
+    #: A rollback whose new deployment was not yet listed when the mutation
+    #: returned. It is resolved on every get(); the rollback is never re-issued.
+    PENDING = "rollback-pending:"
+
     def rollback(self, deployment_id):
+        """Roll back to ``deployment_id`` and return the NEW deployment's id.
+
+        ``deploymentRollback`` answers only ``true``; the deployment it creates
+        is the first one of the same service created after the call. A target
+        Railway will not roll back to (``canRollback=false``, e.g. an expired
+        image) is refused so the controller redeploys the known-good SHA."""
         self._require("deploymentRollback")
-        d = self._gql("mutation($id: String!) { deploymentRollback(id: $id) { id status } }", {"id": deployment_id})
-        return str(d["deploymentRollback"]["id"])
+        target = self._gql("query($id: String!) { deployment(id: $id) { id serviceId environmentId canRollback } }", {"id": deployment_id})["deployment"]
+        if target.get("environmentId") and target["environmentId"] != self.environment_id:
+            raise ProviderRefused("known-good deployment belongs to another environment")
+        if not target.get("canRollback"):
+            raise ProviderRefused("Railway cannot roll back to this deployment (canRollback=false)")
+        started = int(time.time())
+        ok = self._gql("mutation($id: String!) { deploymentRollback(id: $id) }", {"id": deployment_id}).get("deploymentRollback")
+        if ok is not True:
+            raise ProviderRefused("Railway refused the rollback")
+        handle = f"{self.PENDING}{target['serviceId']}:{deployment_id}:{started}"
+        try:
+            found = self._resolve(handle, attempts=3)
+        except (ProviderTransient, ProviderRefused):
+            found = None  # the rollback was issued: never raise into a retry that would issue it twice
+        return found.id if found else handle
+
+    def _resolve(self, handle: str, attempts: int = 1, pause: float = 2.0) -> Optional[Deployment]:
+        service_id, target, started = handle[len(self.PENDING):].rsplit(":", 2)
+        since = int(started) - 120  # clock skew between this process and Railway
+        for i in range(attempts):
+            newer = [d for d in self._list(service_id, 10) if d.id != target and _epoch(d.created_at) >= since]
+            if newer:
+                return min(newer, key=lambda d: _epoch(d.created_at))  # the first deployment after the rollback call
+            if i + 1 < attempts:
+                time.sleep(pause)
+        return None
 
     def get(self, deployment_id):
+        if deployment_id.startswith(self.PENDING):
+            return self._resolve(deployment_id) or Deployment(deployment_id, "DEPLOYING", None, None, False)
         d = self._gql("query($id: String!) { deployment(id: $id) { id status createdAt meta canRollback } }", {"id": deployment_id})
         return self._node(d["deployment"])
+
+
+def _epoch(created_at: Optional[str]) -> float:
+    from datetime import datetime  # noqa: PLC0415
+
+    if not created_at:
+        return 0.0
+    try:
+        return datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+class LivePreview:
+    """Release preview by EXACT-SHA parity on an isolated, non-production
+    Railway environment (ADR-0010 D12; staging by default: its own database,
+    its own staging-safe credentials, it deploys ``main`` through Wait for CI).
+
+    ``passed`` only when, for every service the release changes, the preview
+    environment's ACTIVE deployment (newest SUCCESS) is the candidate SHA,
+    and then the preview's public surface answers: readiness, the A2A card,
+    a security smoke (no public metrics, no wildcard CORS for a foreign
+    origin) and the monitored public-surface contract judged like the
+    post-deploy check -- no item healthy in the production ``baseline`` may
+    fail on the preview, and the repaired incident's own item(s)
+    (``required``) must be healthy there. Other defects that are still open
+    in production do not block a repair of one of them. ``pending`` while the
+    preview is still building the SHA; anything else fails closed. It reads a
+    NON-production Railway token (``MAINTENANCE_PREVIEW_RAILWAY_TOKEN``) and
+    refuses to treat the production environment as a preview."""
+
+    FOREIGN_ORIGIN = "https://preview-smoke.invalid"
+
+    def __init__(self, railway: "LiveRailway", *, ui_origin: str, api_origin: str, production_environment_id: str, timeout: float = 10.0,
+                 transport: Optional[httpx.BaseTransport] = None, contract: Optional[Any] = None):
+        if not railway.environment_id or railway.environment_id == production_environment_id:
+            raise ValueError("the release preview must be a non-production Railway environment")
+        self.railway, self.ui_origin, self.api_origin = railway, ui_origin.rstrip("/"), api_origin.rstrip("/")
+        self.timeout, self._transport = timeout, transport
+        self._contract = contract or ContractProbe(self.ui_origin, self.api_origin, timeout=timeout)
+
+    def validate(self, sha: str, services: Sequence[str] = (), baseline: Optional[Dict[str, bool]] = None,
+                 required: Sequence[str] = ()) -> Dict[str, Any]:
+        wanted = [s for s in services if s in self.railway.service_ids] or sorted(self.railway.service_ids)
+        missing = [s for s in services if s not in self.railway.service_ids]
+        if missing:
+            return {"state": "failed", "sha": sha, "reason": f"no preview service mapped for {missing}"}
+        active: Dict[str, Optional[str]] = {}
+        building = False
+        try:
+            for svc in wanted:
+                deps = self.railway.deployments(svc, 10)
+                cur = next((d for d in deps if d.status == "SUCCESS"), None)
+                active[svc] = cur.commit_sha if cur else None
+                if any(d.commit_sha == sha and d.status in ("BUILDING", "DEPLOYING", "INITIALIZING", "QUEUED", "WAITING") for d in deps):
+                    building = True
+        except ProviderTransient as exc:
+            return {"state": "pending", "sha": sha, "reason": f"preview provider transient: {exc}"[:200]}
+        except ProviderRefused as exc:
+            return {"state": "failed", "sha": sha, "reason": f"preview provider refused: {exc}"[:200]}
+        parity = {svc: active[svc] == sha for svc in wanted}
+        if not all(parity.values()):
+            # not (yet) running the candidate: wait; the release deadline fails it closed
+            return {"state": "pending", "sha": sha, "reason": "preview is not running the candidate SHA yet", "parity": parity, "building": building}
+        checks = self._surface_checks(baseline or {}, list(required))
+        ok = all(checks.values())
+        return {"state": "passed" if ok else "failed", "sha": sha, "parity": parity, "checks": checks,
+                "reason": "" if ok else f"preview checks failed: {sorted(k for k, v in checks.items() if not v)}"}
+
+    def _surface_checks(self, baseline: Dict[str, bool], required: List[str]) -> Dict[str, bool]:
+        out: Dict[str, bool] = {}
+        try:
+            with httpx.Client(timeout=self.timeout, transport=self._transport, follow_redirects=False) as c:
+                out["readiness"] = c.get(f"{self.api_origin}/readyz").status_code == 200
+                card = c.get(f"{self.api_origin}/.well-known/agent-card.json")
+                try:
+                    out["a2a_card"] = card.status_code == 200 and bool(card.json().get("name"))
+                except ValueError:
+                    out["a2a_card"] = False
+                out["metrics_not_public"] = c.get(f"{self.api_origin}/metrics").status_code in (401, 403, 404)
+                pre = c.options(f"{self.api_origin}/readyz", headers={"Origin": self.FOREIGN_ORIGIN, "Access-Control-Request-Method": "GET"})
+                acao = pre.headers.get("access-control-allow-origin", "")
+                out["cors_foreign_origin_refused"] = acao not in ("*", self.FOREIGN_ORIGIN)
+        except httpx.HTTPError:
+            out["reachable"] = False
+            return out
+        contract = self._contract.check()
+        # judged like post-deploy verification: an item unknown to the baseline counts as healthy there
+        out["public_surface_no_regression"] = bool(contract) and not [k for k, ok in contract.items() if not ok and baseline.get(k, True)]
+        out["repaired_item_healthy"] = all(contract.get(r, True) for r in required)
+        return out
 
 
 class ContractProbe:
