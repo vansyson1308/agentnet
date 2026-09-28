@@ -30,6 +30,7 @@ from services.registry.app.models import (
     SocietyEvent,
 )
 from services.registry.app.society import approvals as ap
+from services.registry.app.society import company as company_mod
 from services.registry.app.society import memory_grounding as mg
 from services.registry.app.society.cognition import FakeModel
 from services.registry.app.society.config import SocietySettings, reset_settings_cache
@@ -98,6 +99,11 @@ def _settings(monkeypatch, **env) -> SocietySettings:
     base = {"SOCIETY_RUNTIME_ENABLED": "true", "SOCIETY_MODEL_PROVIDER": "scripted", "SOCIETY_COMPANY_CYCLE_ENABLED": "true"}
     for k, v in {**base, **env}.items():
         monkeypatch.setenv(k, v)
+    # Company mode is on for its portfolio accounting, but the wall-clock
+    # SCHEDULED cycle (from SOCIETY_COMPANY_CYCLE_HOUR_UTC on) must not add a
+    # Scout wake: these stories are driven by explicit events only, so the
+    # tests give the same answer at 00:30 UTC and at 14:00 UTC.
+    monkeypatch.setattr(company_mod, "maybe_start_scheduled_cycle", lambda *a, **k: None)
     reset_settings_cache()
     return SocietySettings()
 
@@ -105,7 +111,9 @@ def _settings(monkeypatch, **env) -> SocietySettings:
 def _run_scout(db, SessionLocal, settings, decisions, event_type="public.surface.anomaly"):
     model = FakeModel({"Society_Scout": decisions})
     worker = SocietyWorker(SessionLocal, settings=settings, model=model, worker_id="w", telemetry_enabled=False)
-    for _ in decisions:
+    # one event per scripted decision; counted BEFORE the loop because the fake
+    # consumes (pops) ``decisions`` as the Scout answers
+    for _ in range(len(decisions)):
         emit_event(db, event_type=event_type, payload={"source": "public_surface_monitor", "failing_count": 6})
         db.commit()
         asyncio.run(worker.run_until_idle(max_cycles=10))
