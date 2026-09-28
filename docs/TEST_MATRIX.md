@@ -55,3 +55,18 @@ are gone (those suites pass).
 | `python -m app.society.canary` | LIVE-CREDENTIAL | model credential + staging | never run in CI by design (`NO LIVE MODEL KEY`) |
 
 Classes: RUNS IN CI · DOCKER-ONLY (none remain) · EXTERNAL-SERVICE · LIVE-CREDENTIAL · OBSOLETE (none) · BROKEN TEST (none) · TEST FIXTURE.
+
+## Maintenance OS (ADR-0010)
+
+| Files | Classification | Needs |
+|---|---|---|
+| `tests/society/maintenance/test_state_machine.py` | required (unit + Hypothesis property tests) | — |
+| `tests/society/maintenance/test_fingerprint_policy_patch.py` | required (fingerprints, trusted risk, PatchSet atomicity, paged reads) | a git binary |
+| `tests/society/maintenance/test_schema_and_incidents.py` | required (DB-enforced liveness, uniqueness, immutability; incidents; SLO) | PostgreSQL |
+| `tests/society/maintenance/test_kernel_e2e.py`, `test_kernel_scenarios.py` | required (GREEN release, rollback, AMBER/RED, rescope, QA loop, kill switch, no-op, model/GitHub/Railway failures) | PostgreSQL |
+| `tests/society/maintenance/test_crash_and_concurrency.py` | required (crash at every boundary, races, 24 h accelerated replay) | PostgreSQL |
+| `tests/society/maintenance/test_historical_replay.py` | required (PRs #51–#62 replayed) | PostgreSQL |
+| `tests/society/maintenance/test_boundaries.py` | required (secret boundary, money invariant, watchdog, operator API, ingress, config parity, classifier) | PostgreSQL |
+| `tests/society/maintenance/test_browser_probe.py` | required (probe machinery on planted defects) | Playwright Chromium; axe-core via `MAINTENANCE_AXE_SOURCE` |
+| `tests/test_test_discovery.py` + `scripts/ci/check_test_discovery.py` | required (test-discovery sentinel) | — |
+| `services/dashboard/tests/test_public_surface.py`, `test_experience_contract.py`, `test_main.py` | **HELD** — trusted verification tests, RED on the current product; collected by required CI when the Society's dashboard repair makes them pass (PR #64 finalisation). Never weakened. | Playwright for the experience gate |

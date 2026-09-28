@@ -355,3 +355,15 @@ Authoritative DNS is on Cloudflare; the registrar is Nhân Hòa (.vn). Enable DN
 4. **Rollback, in order:** remove the DS at Nhân Hòa first. Wait until the DS has expired from caches (the parent TTL, often up to 24–48 h). Only then disable DNSSEC in Cloudflare. Disabling Cloudflare signing while the DS is still published breaks resolution.
 
 Mail (Resend DKIM/SPF/DMARC) and the Railway custom domains are unaffected, because DNSSEC signs the same records.
+
+## Autonomous maintenance releases (ADR-0010)
+
+Production remains application-only; the production Society stays OFF. When provisioned
+(`docs/MAINTENANCE_RELEASE.md`), the deterministic Maintenance Release Controller may release
+**MAINTENANCE_GREEN** repairs (and AMBER repairs after a verified owner merge) through the same
+`production` PR + required CI ruleset as a human release, deploy only the changed services at the
+exact SHA, verify the public contract, and roll back to recorded known-good deployments on a
+regression. Owner controls: the console `/v1/maintenance/console`, release freezes
+(`/v1/maintenance/release-freezes`), and the master kill `MAINTENANCE_AUTONOMY_ENABLED=false`.
+Emergency revocation of the Release App or the Railway release token stops releases (fail closed)
+without affecting the running product. A RED repair is always released through the manual gate above.

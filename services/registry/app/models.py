@@ -1330,3 +1330,5 @@ class IncidentFreeze(Base):
 # A2A integration tables live in their own module (app/a2a/orm.py) but must be
 # part of this metadata: the parity tests and every Base consumer see them.
 from .a2a import orm as _a2a_orm  # noqa: E402,F401
+# Maintenance OS tables (ADR-0010) likewise live in app/maintenance/orm.py.
+from .maintenance import orm as _maintenance_orm  # noqa: E402,F401

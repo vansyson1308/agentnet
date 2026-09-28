@@ -46,7 +46,7 @@ done
 
 cd "$(dirname "$0")/.."
 INIT_DIR="services/registry/init-db"
-EXPECTED_HEAD="0013_a2a_federation"
+EXPECTED_HEAD="0014_maintenance_os"
 PG_USER="${POSTGRES_USER:-agentnet}"
 PG_HOST="${POSTGRES_HOST:-127.0.0.1}"
 PG_PORT="${POSTGRES_PORT:-5432}"
@@ -94,7 +94,7 @@ apply_bundle() {  # apply_bundle DB skip_society(0|1) — 1 = pre-society snapsh
     local db="$1" skip="$2" f
     for f in "$INIT_DIR"/*.sql; do
         case "$(basename "$f")" in
-            16-society-runtime.sql|17-app-tables.sql|18-a2a-federation.sql) [[ "$skip" == "1" ]] && continue ;;
+            16-society-runtime.sql|17-app-tables.sql|18-a2a-federation.sql|19-maintenance-os.sql) [[ "$skip" == "1" ]] && continue ;;
         esac
         run_psql "$db" < "$f" >/dev/null
     done
@@ -113,7 +113,9 @@ check_schema() {  # check_schema DB
                 code_candidates:risk_tier code_candidates:diff_hash agent_runs:model_tier memory_items:validation_state memory_items:superseded_by \
                 code_promotions:status code_promotions:external_pr_number change_experiments:decision change_experiments:criteria_snapshot deployment_requests:status \
                 a2a_tasks:idempotency_key a2a_tasks:task_session_id a2a_task_events:seq a2a_remote_agents:state a2a_connections:sealed_credential \
-                a2a_outbound_calls:status society_company_cycles:outcome society_incident_freezes:lifted_at; do
+                a2a_outbound_calls:status society_company_cycles:outcome society_incident_freezes:lifted_at \
+                repair_cases:next_action_at repair_cases:deadline_at maintenance_incidents:fingerprint maintenance_releases:attestation_digest \
+                repair_transitions:reason_code repair_plan_revisions:files_allowed maintenance_known_good:production_sha; do
         t="${spec%%:*}"; c="${spec##*:}"
         n="$(scalar "$db" "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='$t' AND column_name='$c'")"
         if [[ "$n" == "1" ]]; then ok "$db: $t.$c"; else bad "$db: missing column $t.$c"; fi
@@ -172,7 +174,8 @@ for hop in \
   "0009_app_tables -> 0010_self_development" \
   "0010_self_development -> 0011_expire_rehearsal_memory" \
   "0011_expire_rehearsal_memory -> 0012_memory_validation_history" \
-  "0012_memory_validation_history -> $EXPECTED_HEAD"; do
+  "0012_memory_validation_history -> 0013_a2a_federation" \
+  "0013_a2a_federation -> $EXPECTED_HEAD"; do
   [[ "$out" == *"$hop"* ]] && ok "$UPGRADE_DB: ran $hop" || bad "$UPGRADE_DB: hop did not run ($hop): $out"
 done
 expect_head "$UPGRADE_DB"

@@ -227,7 +227,7 @@ def test_entrypoint_and_image_bootstrap_empty_databases():
     assert "alembic stamp 0003_spending_cap_fix" in entry
     assert "alembic upgrade head" in entry
     assert "COPY init-db /app/init-db" in docker
-    assert "18-a2a-federation.sql" in entry, "entrypoint comment must name the current end of the bundle"
+    assert "19-maintenance-os.sql" in entry, "entrypoint comment must name the current end of the bundle"
     assert "through 14-spending-cap-fix" not in entry, "stale comment: the bundle no longer stops at 14"
 
 
@@ -598,7 +598,14 @@ PHASE8_TABLES = {
     "a2a_remote_agents", "a2a_remote_card_versions", "a2a_connections", "a2a_outbound_calls",
     "society_company_cycles", "society_incident_freezes",
 }
-POST_0008_TABLES = APP_TABLES | PHASE3_TABLES | PHASE6_TABLES | PHASE8_TABLES
+# ADR-0010 (migration 0014): the Maintenance OS tables.
+MAINTENANCE_TABLES = {
+    "maintenance_incidents", "maintenance_observations", "repair_cases", "repair_plan_revisions", "repair_attempts",
+    "repair_activities", "repair_artifacts", "repair_evidence", "repair_transitions", "maintenance_releases",
+    "maintenance_known_good", "maintenance_release_freezes", "maintenance_toil_events", "maintenance_heartbeats",
+    "maintenance_knowledge",
+}
+POST_0008_TABLES = APP_TABLES | PHASE3_TABLES | PHASE6_TABLES | PHASE8_TABLES | MAINTENANCE_TABLES
 
 
 def test_downgrade_0008_then_upgrade_head_round_trips(upgrade_db):

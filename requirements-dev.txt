@@ -23,6 +23,12 @@ pytest-asyncio==1.4.0
 pytest-timeout==2.4.0
 pytest-cov==7.1.0
 PyYAML>=6.0  # compose topology guard tests
+# Maintenance OS (ADR-0010): property-based state-machine tests and the
+# deterministic browser probe. Playwright 1.56 drives the pinned Chromium build
+# (`python -m playwright install --with-deps chromium` in CI); these are
+# dev/test-only -- no service image ships a browser.
+hypothesis==6.140.2
+playwright==1.56.0
 
 # Linting & formatting (advisory in CI, see .github/workflows/ci.yml)
 black>=23.0.0
