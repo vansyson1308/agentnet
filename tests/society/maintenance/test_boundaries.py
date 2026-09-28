@@ -204,3 +204,33 @@ def test_the_trusted_classifier_protects_the_maintenance_os():
     for p in ("services/registry/app/maintenance/release.py", "services/registry/app/maintenance/desired_state.json", "services/registry/app/api/routes/maintenance.py",
               "services/dashboard/tests/test_experience_contract.py", "docs/adr/0010-autonomous-maintenance-os.md", ".railway/production.ts", "tests/society/maintenance/test_boundaries.py"):
         assert tier_for_path(p) is RiskTier.RED, p
+
+
+def test_the_release_control_process_boots_dark_and_runs_cycles(db):
+    """The real process entrypoint (release-control's start command) starts, runs
+    bounded cycles with the provider disabled and exits cleanly. Found live: the
+    first staging boot crash-looped on a bad setup_logging() call that an
+    import-only test never executed."""
+    import sys as _sys
+
+    registry = pathlib.Path(__file__).resolve().parents[3] / "services" / "registry"
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("SOCIETY_MODEL", "MAINTENANCE_", "OPENAI", "DEEPSEEK", "LLM_"))}
+    env.update({"ENVIRONMENT": "development", "JAEGER_ENABLED": "false", "POSTGRES_DB": db.bind.url.database,
+                "MAINTENANCE_RELEASE_PROVIDER": "disabled", "MAINTENANCE_RELEASE_WORKER_MAX_CYCLES": "2", "MAINTENANCE_RELEASE_INTERVAL_SECONDS": "0"})
+    r = subprocess.run([_sys.executable, "-m", "app.maintenance.release_worker"], cwd=registry, env=env, capture_output=True, text=True, timeout=120)
+    out = r.stdout + r.stderr
+    assert r.returncode == 0, out[-3000:]
+    assert "maintenance release controller starting (provider=disabled)" in out
+    assert "Traceback" not in out, out[-3000:]
+
+
+def test_the_release_control_process_refuses_to_boot_with_a_model_credential(db):
+    import sys as _sys
+
+    registry = pathlib.Path(__file__).resolve().parents[3] / "services" / "registry"
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("SOCIETY_MODEL", "MAINTENANCE_"))}
+    env.update({"ENVIRONMENT": "development", "JAEGER_ENABLED": "false", "POSTGRES_DB": db.bind.url.database,
+                "SOCIETY_MODEL_API_KEY": "sk-test-not-a-real-key", "MAINTENANCE_RELEASE_WORKER_MAX_CYCLES": "1"})
+    r = subprocess.run([_sys.executable, "-m", "app.maintenance.release_worker"], cwd=registry, env=env, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 2
+    assert "sk-test-not-a-real-key" not in (r.stdout + r.stderr)

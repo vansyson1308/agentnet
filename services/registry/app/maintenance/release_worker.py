@@ -21,6 +21,9 @@ import time
 
 logger = logging.getLogger("maintenance.release_worker")
 
+#: The structured-logging service name of this process (logging_config.setup_logging).
+SERVICE_NAME = "release-control"
+
 #: Variables that must NOT exist in the release-control environment.
 FORBIDDEN_ENV = ("SOCIETY_MODEL_API_KEY", "LLM_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "SOCIETY_GITHUB_TOKEN", "SOCIETY_GITHUB_APP_PRIVATE_KEY_PEM")
 
@@ -37,7 +40,7 @@ def main() -> None:  # pragma: no cover -- process entrypoint
     from .release import ReleaseController
     from .watchdog import check
 
-    setup_logging()
+    setup_logging(SERVICE_NAME)
     problems = startup_problems()
     if problems:
         for p in problems:
@@ -47,7 +50,10 @@ def main() -> None:  # pragma: no cover -- process entrypoint
     signal.signal(signal.SIGTERM, lambda *_: stop.__setitem__("flag", True))
     ctl = ReleaseController(SessionLocal)
     interval = int(os.getenv("MAINTENANCE_RELEASE_INTERVAL_SECONDS") or "30")
+    # 0 (default) = run until SIGTERM; a positive bound exists for the boot smoke test
+    max_cycles = int(os.getenv("MAINTENANCE_RELEASE_WORKER_MAX_CYCLES") or "0")
     logger.info("maintenance release controller starting (provider=%s)", ctl.rs.provider)
+    cycles = 0
     while not stop["flag"]:
         try:
             st = ctl.run_once()
@@ -64,6 +70,9 @@ def main() -> None:  # pragma: no cover -- process entrypoint
                 db.close()
         except Exception:  # noqa: BLE001
             logger.exception("release controller cycle failed")
+        cycles += 1
+        if max_cycles and cycles >= max_cycles:
+            break
         time.sleep(interval)
 
 
