@@ -39,6 +39,9 @@ jobs:
       # forces a recompile so a cached .pyc can never hide one.
       - name: compile with warnings as errors
         run: python -W error -m compileall -q -f services/ sdk/ examples/ tests/ scripts/
+      # Every tracked path must be checkoutable on Windows (no : " < > | ? *).
+      - name: Windows-portable tracked paths
+        run: python scripts/ci/check_portable_paths.py
       # Style is reported, not enforced (no large reformat by design).
       - name: style report (advisory)
         run: |
