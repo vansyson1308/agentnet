@@ -21,7 +21,8 @@ Steps (MAINT_PLAN, comma-separated, in order):
     schema                 alembic head, the 15 tables, liveness/uniqueness constraints, immutability triggers
     heartbeat              kernel/release/watchdog heartbeats (component, age, cycles, errors)
     incidents              every incident (class, priority, status, fingerprint, ref, counts)
-    cases                  every case (state, risk, next action, deadline, lease) + activities + transitions
+    cases                  every case (state, risk, next action, deadline, lease) + activities (+ turn_log) + transitions
+    turns                  where activity turns go, per kind: reads, read bytes, first patch turn, refusals (turn_log)
     invariants             one active case per incident, one open incident per fingerprint, stranded = 0
     model                  activity model providers (no scripted provider may count as live)
     secrets                release/model credential shapes across every maintenance table
@@ -30,7 +31,7 @@ Steps (MAINT_PLAN, comma-separated, in order):
     watch:<min>[:<sec>]    bounded synchronous poll: cases + stranded every <sec> (default 60) for <min>
 
 Environment (never printed): POSTGRES_*, REGISTRY_PUBLIC_URL, STAGING_VALIDATOR_SECRET,
-VALIDATOR_OPERATOR_EMAIL, EXPECTED_ALEMBIC_HEAD (default 0014_maintenance_os), MAINT_PLAN.
+VALIDATOR_OPERATOR_EMAIL, EXPECTED_ALEMBIC_HEAD (default 0015_activity_turn_log), MAINT_PLAN.
 """
 
 from __future__ import annotations
@@ -109,7 +110,7 @@ def iso(v: Any) -> Any:
 
 
 def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
-    known = ("schema", "heartbeat", "incidents", "cases", "invariants", "model", "secrets", "releases", "api", "watch")
+    known = ("schema", "heartbeat", "incidents", "cases", "turns", "invariants", "model", "secrets", "releases", "api", "watch")
     out: List[Tuple[str, List[str]]] = []
     for raw in text.split(","):
         raw = raw.strip()
@@ -128,7 +129,7 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
 
 
 def step_schema(rep: Rep, cur) -> None:
-    want = vs.env("EXPECTED_ALEMBIC_HEAD", "0014_maintenance_os")
+    want = vs.env("EXPECTED_ALEMBIC_HEAD", "0015_activity_turn_log")
     heads = [r["version_num"] for r in rows(cur, "SELECT version_num FROM alembic_version")]
     rep.record("S01", want in heads, f"alembic head {heads} (want {want})")
     present = {r["table_name"] for r in rows(cur, "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY(%s)", (list(TABLES),))}
@@ -183,8 +184,9 @@ def step_cases(rep: Rep, cur) -> None:
     for c in cs:
         c["lease_owner"] = (c["lease_owner"] or "")[:40] or None
         emit(f"case {c['id']}", {k: iso(v) for k, v in c.items() if k != "id"})
-        acts = rows(cur, """SELECT kind, role, plan_revision, attempt, try_number, status, error_class, model_provider, model_name,
-                                   tokens_in, tokens_out, cost_usd, turns, started_at, finished_at, output_digest
+        tl = ", turn_log" if _has_col(cur, "repair_activities", "turn_log") else ""
+        acts = rows(cur, f"""SELECT kind, role, plan_revision, attempt, try_number, status, error_class, model_provider, model_name,
+                                   tokens_in, tokens_out, cost_usd, turns, started_at, finished_at, output_digest{tl}
                               FROM repair_activities WHERE case_id=%s ORDER BY started_at""", (c["id"],))
         emit(f"case {c['id']} activities", [{k: iso(v) for k, v in a.items()} for a in acts])
         tr = rows(cur, """SELECT id, from_state, to_state, actor_type, reason_code, evidence_digest, created_at
@@ -197,6 +199,40 @@ def step_cases(rep: Rep, cur) -> None:
                              FROM repair_attempts WHERE case_id=%s ORDER BY attempt""", (c["id"],))
         if atts:
             emit(f"case {c['id']} attempts", [{k: iso(v) for k, v in a.items()} for a in atts])
+
+
+def turn_summary(acts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Aggregate turn_log per activity kind: structural numbers only."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for a in acts:
+        log = a.get("turn_log") or []
+        k = out.setdefault(f"{a['kind']}:{a['status']}:{a.get('error_class') or '-'}", {"tries": 0, "turns": 0, "reads": 0, "read_bytes": 0, "patch_turns": [], "refused": {}, "last": {}})
+        k["tries"] += 1
+        k["turns"] += len(log)
+        k["reads"] += sum(1 for t in log if t.get("read"))
+        k["read_bytes"] += sum(int(t.get("bytes") or 0) for t in log if t.get("read"))
+        first = next((t["turn"] for t in log if t.get("action") == "apply_patch"), None)
+        if first is not None:
+            k["patch_turns"].append(first)
+        for t in log:
+            if t.get("refused"):
+                k["refused"][t["refused"]] = k["refused"].get(t["refused"], 0) + 1
+        if log:
+            k["last"][str(log[-1].get("action"))] = k["last"].get(str(log[-1].get("action")), 0) + 1
+    for k in out.values():
+        n = max(1, k["tries"])
+        pt = k.pop("patch_turns")
+        k.update(avg_turns=round(k["turns"] / n, 1), avg_reads=round(k["reads"] / n, 1), avg_read_bytes=k["read_bytes"] // n,
+                 tries_with_patch=len(pt), avg_first_patch_turn=round(sum(pt) / len(pt), 1) if pt else None)
+    return out
+
+
+def step_turns(rep: Rep, cur) -> None:
+    if not _has_col(cur, "repair_activities", "turn_log"):
+        info("turns", "repair_activities.turn_log is not present (migration 0015 not applied)")
+        return
+    acts = rows(cur, "SELECT kind, status, error_class, turn_log FROM repair_activities ORDER BY started_at DESC LIMIT 500")
+    emit("turns.by_kind", turn_summary(acts))
 
 
 def _has_col(cur, table: str, col: str) -> bool:
@@ -347,7 +383,7 @@ def main() -> int:
                     continue
                 with conn.cursor() as cur:
                     {"schema": step_schema, "heartbeat": step_heartbeat, "incidents": step_incidents, "cases": step_cases,
-                     "invariants": step_invariants, "model": step_model, "secrets": step_secrets, "releases": step_releases}[name](rep, cur)
+                     "turns": step_turns, "invariants": step_invariants, "model": step_model, "secrets": step_secrets, "releases": step_releases}[name](rep, cur)
                 conn.rollback()
             except Exception as e:  # noqa: BLE001  (a step failure never hides later evidence)
                 conn.rollback()

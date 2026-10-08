@@ -571,7 +571,13 @@ class MaintenanceKernel:
             "feedback_from_previous_attempts": self._feedback(db, case),
             "patch_protocol": "apply_patch args: {files: [{path, operations: [{op: replace_exact|insert_after|insert_before|create|delete, old/new | anchor/text | text}]}]} -- exact text, each old/anchor unique",
         }
-        res = self._run_activity_sync(db, case, ActivityKind.AUTHOR_PATCH, payload, tools=h.builder_tools(state), model=self.model(), plan_revision=plan.revision, attempt=attempt.attempt, max_turns=self.settings.builder_max_turns)
+        # front-loaded: the target files (or the cited windows) are in the input, so reads are the exception
+        diag = self._latest_artifact(db, case, "diagnosis")
+        cites = [plan.root_cause or "", plan.approach or ""] + [str(x) for x in (((diag.content or {}) if diag else {}).get("evidence") or [])]
+        payload["target_files"] = {"trust": "untrusted_repository_data", "files": h.target_file_context(ws.path, list(plan.files_allowed or []), cites)}
+        payload["read_budget"] = f"at most {self.settings.builder_max_read_calls} read-tool calls this try; the target files are above"
+        res = self._run_activity_sync(db, case, ActivityKind.AUTHOR_PATCH, payload, tools=h.builder_tools(state), model=self.model(), plan_revision=plan.revision, attempt=attempt.attempt,
+                                      max_turns=self.settings.builder_max_turns, max_read_calls=self.settings.builder_max_read_calls, submit_check=h.submit_check(state))
         attempt.turns = int(attempt.turns or 0) + (res.turns if res else 0)
         attempt.test_runs = int(attempt.test_runs or 0) + state.test_runs
         if res is None:
@@ -988,7 +994,8 @@ class MaintenanceKernel:
     def _activity_tries(self, db, case, kind: ActivityKind, rev: int, attempt: int) -> int:
         return db.query(RepairActivity).filter(RepairActivity.case_id == case.id, RepairActivity.kind == kind.value, RepairActivity.plan_revision == rev, RepairActivity.attempt == attempt).count()
 
-    def _run_activity_sync(self, db, case, kind: ActivityKind, payload: Dict[str, Any], *, tools, model, plan_revision: int = 0, attempt: int = 0, max_turns: Optional[int] = None) -> Optional[act.ActivityResult]:
+    def _run_activity_sync(self, db, case, kind: ActivityKind, payload: Dict[str, Any], *, tools, model, plan_revision: int = 0, attempt: int = 0, max_turns: Optional[int] = None,
+                           max_read_calls: Optional[int] = None, submit_check=None) -> Optional[act.ActivityResult]:
         """Record the try (committed), run the model loop outside any open
         transaction, then fence and record the outcome. Returns None when the
         lease was lost meanwhile."""
@@ -1011,7 +1018,8 @@ class MaintenanceKernel:
         remaining = max(Decimal("0.0001"), self.settings.max_case_cost_usd * (2 if case.priority in pol.URGENT else 1) - Decimal(str(case.model_cost_usd or 0)))
         try:
             res = asyncio.run(act.run_activity(spec, payload, model=model, tools=tools, max_turns=max_turns, cost_cap=remaining,
-                                               timeout_seconds=float(self._activity_timeout or self.settings.activity_timeout_seconds)))
+                                               timeout_seconds=float(self._activity_timeout or self.settings.activity_timeout_seconds),
+                                               max_read_calls=max_read_calls, submit_check=submit_check))
         except Exception as exc:  # noqa: BLE001
             res = act.ActivityResult(ok=False, kind=kind, error_class="harness_error", error=type(exc).__name__)
         case = self._fence(db, case_id)
@@ -1020,6 +1028,7 @@ class MaintenanceKernel:
         row.error_class = res.error_class
         row.error = (res.error or "")[:500] or None
         row.tokens_in, row.tokens_out, row.cost_usd, row.turns = res.tokens_in, res.tokens_out, res.cost_usd, res.turns
+        row.turn_log = list(res.turn_log)[:40]
         row.output_digest = digest(res.output or res.rescope or {}) if res.ok else None
         row.finished_at = utcnow()
         row.lease_owner = None
