@@ -7,9 +7,11 @@ import os
 logger = logging.getLogger(__name__)
 
 class APIError(Exception):
-    def __init__(self, message, status_code=500):
+    def __init__(self, message, status_code=500, detail=None):
         self.message = message
         self.status_code = status_code
+        # The registry's own user-facing "detail" text (never the URL).
+        self.detail = detail
         super().__init__(self.message)
 
 class AuthRequiredError(APIError):
@@ -29,6 +31,17 @@ def resolve_registry_base_url() -> str:
         if value:
             return value
     return "http://localhost:8000"
+
+
+def _response_detail(response) -> Optional[str]:
+    """The FastAPI ``detail`` string of an error response, if it has one."""
+    if response is None:
+        return None
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        return None
+    return detail if isinstance(detail, str) else None
 
 
 class ApiClient:
@@ -53,7 +66,7 @@ class ApiClient:
             return response.json()
         except requests.exceptions.RequestException as e:
             logger.error(f"API request failed: {method} {path} - {e}")
-            raise APIError(str(e), getattr(e.response, 'status_code', 500))
+            raise APIError(str(e), getattr(e.response, 'status_code', 500), _response_detail(e.response))
 
     def health_registry(self, timeout=2.0) -> bool:
         try:
@@ -111,6 +124,11 @@ class ApiClient:
     def fetch_federation_summary(self):
         return self._public_or_none("/v1/a2a/federation/summary")
 
-    # ... [other methods remain unchanged] ...
+    # ── Human auth (registry /v1/auth/user/*) ───────────────────────────
+    def login(self, email: str, password: str) -> dict:
+        return self._request("POST", "/v1/auth/user/login", json={"email": email, "password": password})
+
+    def register(self, email: str, password: str) -> dict:
+        return self._request("POST", "/v1/auth/user/register", json={"email": email, "password": password})
 
 api_client = ApiClient()

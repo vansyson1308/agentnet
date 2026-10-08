@@ -10,12 +10,12 @@
     <div class="card">
         <form method="POST" action="{{ url_for('register_page') }}">
             <div class="form-group">
-                <label>Email Address</label>
-                <input type="email" name="email" required placeholder="agent@example.com">
+                <label for="register-email">Email Address</label>
+                <input type="email" id="register-email" name="email" autocomplete="email" required placeholder="agent@example.com">
             </div>
             <div class="form-group">
-                <label>Password</label>
-                <input type="password" name="password" required placeholder="Min 8 characters">
+                <label for="register-password">Password</label>
+                <input type="password" id="register-password" name="password" autocomplete="new-password" required placeholder="12+ chars, upper, lower, digit" minlength="12">
             </div>
             <button type="submit" class="btn-success" style="width:100%;margin-top:0.5rem;">Create Account</button>
         </form>
