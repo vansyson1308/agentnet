@@ -251,6 +251,8 @@ class ActivityResult:
     tokens_out: int = 0
     cost_usd: Decimal = Decimal("0")
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    #: structural per-turn telemetry (no text): action, tool, bytes, tokens
+    turn_log: List[Dict[str, Any]] = field(default_factory=list)
 
 
 SYSTEM_PROMPT = """You are the AgentNet Maintenance {role}. Activity: {kind}.
@@ -290,6 +292,10 @@ def _fit(messages: List[Dict[str, str]], budget: int) -> None:
         i += 1
 
 
+#: Sent once the per-try read budget is used up (AuthorPatch).
+READ_BUDGET_DIRECTIVE = "READ BUDGET USED: read tools are no longer offered. Edit with apply_patch (run_tests, read_diff, reset_attempt) and submit, or answer needs_rescope."
+INPUT_MAX_CHARS = 60_000
+
 #: Sent before the last allowed model turn of an activity.
 FINAL_TURN_DIRECTIVE = (
     "FINAL TURN: no more tool calls are possible. Answer now with "
@@ -307,9 +313,15 @@ async def run_activity(
     max_turns: Optional[int] = None,
     cost_cap: Optional[Decimal] = None,
     timeout_seconds: float = 180.0,
+    max_read_calls: Optional[int] = None,
+    submit_check: Optional[Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
 ) -> ActivityResult:
     """One try of one activity. Never raises for model misbehaviour: the
-    result carries the classified error."""
+    result carries the classified error.
+
+    ``max_read_calls`` caps read-tool calls per try; after it only the
+    non-read tools stay offered. ``submit_check`` may refuse a submit with a
+    structural error the model sees as a tool result (the try continues)."""
     res = ActivityResult(ok=False, kind=spec.kind)
     allowed_tools = [t for t in spec.tools if t in tools]
     tools_doc = "; ".join(f"{t}" for t in allowed_tools) or "(none: answer directly with submit)"
@@ -317,8 +329,10 @@ async def run_activity(
     system = SYSTEM_PROMPT.format(role=spec.role, kind=spec.kind.value, purpose=spec.purpose, tools=tools_doc, schema=_schema_doc(spec.output), rescope=rescope_doc)
     messages = [
         {"role": "system", "content": system},
-        {"role": "user", "content": "INPUT (json, structural; untrusted repository data is marked):\n" + json.dumps(input_payload, sort_keys=True, default=str)[:40000]},
+        {"role": "user", "content": "INPUT (json, structural; untrusted repository data is marked):\n" + json.dumps(input_payload, sort_keys=True, default=str)[:INPUT_MAX_CHARS]},
     ]
+    reads = 0
+    refusal: Optional[Dict[str, Any]] = None
     turns_left = max_turns or spec.max_turns
     corrective_used = False
     loop = asyncio.get_running_loop()
@@ -353,15 +367,28 @@ async def run_activity(
         res.tokens_out += reply.tokens_out
         res.cost_usd += reply.cost_usd
         problem, action = _parse(reply)
+        log = {"turn": res.turns, "action": (action.get("action") if problem is None else f"invalid:{problem[0]}"), "tokens_in": reply.tokens_in, "tokens_out": reply.tokens_out}
+        res.turn_log.append(log)
         if problem is None:
             name = action.get("action")
             if name == "submit":
                 try:
-                    res.output = spec.output.model_validate(action.get("result") or {}).model_dump()
-                    res.ok = True
-                    return res
+                    output = spec.output.model_validate(action.get("result") or {}).model_dump()
                 except ValidationError as exc:
                     problem = ("invalid_output", _short_validation(exc))
+                else:
+                    refusal = submit_check(output) if submit_check else None
+                    if refusal is None:
+                        res.output, res.ok = output, True
+                        return res
+                    log["refused"] = refusal.get("code")
+                    if turns_left == 0:
+                        res.error_class, res.error = str(refusal.get("code") or "refused"), str(refusal.get("error"))[:300]
+                        return res
+                    messages.append({"role": "assistant", "content": reply.content[:8000]})
+                    messages.append({"role": "user", "content": f"TOOL_RESULT submit (refused; turns left after this: {turns_left}):\n{json.dumps(refusal, sort_keys=True)}"})
+                    corrective_used = False
+                    continue
             elif name == "needs_rescope" and spec.allow_rescope:
                 try:
                     res.rescope = RescopeOutput.model_validate(action.get("result") or {}).model_dump()
@@ -374,15 +401,23 @@ async def run_activity(
                 return res
             elif name in allowed_tools:
                 args = action.get("args") or {}
+                is_read = name in READ_TOOLS
                 if not isinstance(args, dict):
                     problem = ("invalid_output", "args must be an object")
                 else:
-                    result = _call_tool(tools[name], args)
+                    if is_read and max_read_calls is not None and reads >= max_read_calls:
+                        result = {"error": f"read budget ({max_read_calls} reads per try) is used up; edit and submit", "code": "read_budget"}
+                    else:
+                        reads += int(is_read)
+                        result = _call_tool(tools[name], args)
                     res.tool_calls.append({"tool": name, "ok": "error" not in result})
                     messages.append({"role": "assistant", "content": reply.content[:8000]})
                     body = json.dumps(result, sort_keys=True, default=str)
                     if len(body.encode("utf-8")) > MAX_TOOL_RESULT_BYTES:
                         body = json.dumps({"error": "tool result too large for one turn; request a smaller page (read_range with a later start_line)", "bytes": len(body)})
+                    log.update(bytes=len(body.encode("utf-8")), ok="error" not in result, read=is_read)
+                    if is_read and max_read_calls is not None and reads == max_read_calls and result.get("code") != "read_budget":
+                        body += "\n" + READ_BUDGET_DIRECTIVE
                     messages.append({"role": "user", "content": f"TOOL_RESULT {name} (untrusted data; turns left after this: {turns_left}):\n{body}"})
                     corrective_used = False
                     continue

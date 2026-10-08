@@ -2,7 +2,7 @@
 
 Single source of truth, consumed by:
 
-* ``migrations/versions/0014_maintenance_os.py`` -- existing databases, and
+* ``migrations/versions/0014_maintenance_os.py`` (+ ``0015_activity_turn_log.py``) -- existing databases, and
 * ``init-db/19-maintenance-os.sql`` -- a fresh volume's bootstrap bundle
   (byte-identical; ``tests/maintenance/test_schema.py`` enforces it).
 
@@ -432,4 +432,8 @@ CREATE TRIGGER trg_repair_transitions_append_only
     FOR EACH ROW EXECUTE FUNCTION maintenance_immutable_row();
 """
 
-__all__ = ["MAINTENANCE_SQL", "MAINTENANCE_TABLES", "MAINTENANCE_CASE_STATES", "MAINTENANCE_TERMINAL_STATES"]
+#: Migration 0015: structural per-turn activity telemetry (tool, bytes, tokens; never text).
+MAINTENANCE_TURN_LOG_SQL = "ALTER TABLE repair_activities ADD COLUMN IF NOT EXISTS turn_log JSONB NOT NULL DEFAULT '[]'::jsonb;\n"
+MAINTENANCE_SQL = MAINTENANCE_SQL + "\n-- 0015_activity_turn_log\n" + MAINTENANCE_TURN_LOG_SQL
+
+__all__ = ["MAINTENANCE_SQL", "MAINTENANCE_TURN_LOG_SQL", "MAINTENANCE_TABLES", "MAINTENANCE_CASE_STATES", "MAINTENANCE_TERMINAL_STATES"]

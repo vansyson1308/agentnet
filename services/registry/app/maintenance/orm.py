@@ -170,6 +170,7 @@ class RepairActivity(Base):
     tokens_out = Column(Integer, nullable=False, server_default=text("0"))
     cost_usd = Column(Numeric(12, 6), nullable=False, server_default=text("0"))
     turns = Column(Integer, nullable=False, server_default=text("0"))
+    turn_log = Column(JSONB, nullable=False, server_default=_ARR)  # structural per-turn telemetry (migration 0015)
     lease_owner = Column(String(128))
     lease_expires_at = Column(TZ)
     started_at = Column(TZ, nullable=False, server_default=func.now())

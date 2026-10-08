@@ -46,7 +46,7 @@ done
 
 cd "$(dirname "$0")/.."
 INIT_DIR="services/registry/init-db"
-EXPECTED_HEAD="0014_maintenance_os"
+EXPECTED_HEAD="0015_activity_turn_log"
 PG_USER="${POSTGRES_USER:-agentnet}"
 PG_HOST="${POSTGRES_HOST:-127.0.0.1}"
 PG_PORT="${POSTGRES_PORT:-5432}"
@@ -115,7 +115,7 @@ check_schema() {  # check_schema DB
                 a2a_tasks:idempotency_key a2a_tasks:task_session_id a2a_task_events:seq a2a_remote_agents:state a2a_connections:sealed_credential \
                 a2a_outbound_calls:status society_company_cycles:outcome society_incident_freezes:lifted_at \
                 repair_cases:next_action_at repair_cases:deadline_at maintenance_incidents:fingerprint maintenance_releases:attestation_digest \
-                repair_transitions:reason_code repair_plan_revisions:files_allowed maintenance_known_good:production_sha; do
+                repair_transitions:reason_code repair_plan_revisions:files_allowed maintenance_known_good:production_sha repair_activities:turn_log; do
         t="${spec%%:*}"; c="${spec##*:}"
         n="$(scalar "$db" "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='$t' AND column_name='$c'")"
         if [[ "$n" == "1" ]]; then ok "$db: $t.$c"; else bad "$db: missing column $t.$c"; fi
@@ -175,7 +175,8 @@ for hop in \
   "0010_self_development -> 0011_expire_rehearsal_memory" \
   "0011_expire_rehearsal_memory -> 0012_memory_validation_history" \
   "0012_memory_validation_history -> 0013_a2a_federation" \
-  "0013_a2a_federation -> $EXPECTED_HEAD"; do
+  "0013_a2a_federation -> 0014_maintenance_os" \
+  "0014_maintenance_os -> $EXPECTED_HEAD"; do
   [[ "$out" == *"$hop"* ]] && ok "$UPGRADE_DB: ran $hop" || bad "$UPGRADE_DB: hop did not run ($hop): $out"
 done
 expect_head "$UPGRADE_DB"

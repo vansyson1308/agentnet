@@ -365,3 +365,6 @@ DROP TRIGGER IF EXISTS trg_repair_transitions_append_only ON repair_transitions;
 CREATE TRIGGER trg_repair_transitions_append_only
     BEFORE UPDATE ON repair_transitions
     FOR EACH ROW EXECUTE FUNCTION maintenance_immutable_row();
+
+-- 0015_activity_turn_log
+ALTER TABLE repair_activities ADD COLUMN IF NOT EXISTS turn_log JSONB NOT NULL DEFAULT '[]'::jsonb;

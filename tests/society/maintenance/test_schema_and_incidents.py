@@ -14,7 +14,7 @@ from services.registry.app.maintenance import incidents as inc_mod
 from services.registry.app.maintenance import state_machine as sm
 from services.registry.app.maintenance.ledger import open_case, transition
 from services.registry.app.maintenance.orm import MaintenanceIncident, RepairCase, RepairPlanRevision, RepairTransition
-from services.registry.app.maintenance.schema_sql import MAINTENANCE_SQL, MAINTENANCE_TABLES
+from services.registry.app.maintenance.schema_sql import MAINTENANCE_SQL, MAINTENANCE_TABLES, MAINTENANCE_TURN_LOG_SQL
 from services.registry.app.maintenance.taxonomy import ActorType, IncidentClass, Priority, Severity
 
 from .conftest import at, raise_incident
@@ -28,6 +28,9 @@ def test_init_db_bundle_is_generated_from_the_schema_module():
     assert 'down_revision = "0013_a2a_federation"' in mig and "op.execute(MAINTENANCE_SQL)" in mig
     for t in MAINTENANCE_TABLES:
         assert f"CREATE TABLE IF NOT EXISTS {t} (" in MAINTENANCE_SQL
+    mig = (REGISTRY / "migrations" / "versions" / "0015_activity_turn_log.py").read_text(encoding="utf-8")
+    assert 'down_revision = "0014_maintenance_os"' in mig and "op.execute(MAINTENANCE_TURN_LOG_SQL)" in mig
+    assert MAINTENANCE_TURN_LOG_SQL in MAINTENANCE_SQL and "ADD COLUMN IF NOT EXISTS turn_log" in MAINTENANCE_TURN_LOG_SQL
 
 
 def test_the_database_refuses_a_live_case_without_a_next_action(db, mset):
