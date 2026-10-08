@@ -108,12 +108,6 @@ services/registry/app/features/chat_threads.py
 services/registry/app/features/collaboration.py
 services/registry/app/features/event_bus.py
 services/registry/app/features/rate_limiter_v2.py
-services/registry/app/features/re-review:_review:_task_completion_chart.md
-services/registry/app/features/re-review:_task_completion_chart_(d3).md
-services/registry/app/features/re_review:_re_review:_re_review:_re_revi.md
-services/registry/app/features/re_review:_re_review:_re_review:_review:.md
-services/registry/app/features/re_review:_re_review:_review:_agent_chat.md
-services/registry/app/features/review:_task_completion_chart_(d3).md
 services/registry/app/features/search_&_filter_agents.md
 services/registry/app/features/task_completion_chart_(d3).md
 services/registry/app/features/telegram_reporter.py
