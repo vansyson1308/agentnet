@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 import redis.asyncio as aioredis
-from jose import JWTError, jwt
+import jwt
 
 from ..config import JWT_ALGORITHM, JWT_SECRET_KEY
 
@@ -98,7 +98,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return None
         try:
             payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        except (JWTError, ValueError):
+        except (jwt.PyJWTError, ValueError):
             return None
         subject, token_type = payload.get("sub"), payload.get("type")
         if not subject or token_type not in ("user", "agent"):

@@ -55,14 +55,12 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install pip-audit
       # Resolves each service's pins (transitives included) against PyPI
-      # advisories. PYSEC-2026-1325 (ecdsa timing side channel) has no
-      # fixed release; ecdsa is only a fallback backend for python-jose and
-      # AgentNet signs JWTs with HS256 — documented in ADR-0003.
+      # advisories, with no ignore (ADR-0003: python-jose -> PyJWT removed ecdsa).
       - name: audit service requirement sets
         run: |
           for req in services/registry/requirements.txt services/payment/requirements.txt services/worker/requirements.txt services/simulation/requirements.txt services/dashboard/requirements.txt; do
             echo "== $req"
-            pip-audit -r "$req" --desc off --progress-spinner off --ignore-vuln PYSEC-2026-1325
+            pip-audit -r "$req" --desc off --progress-spinner off
           done
 
   dependency-coherence:

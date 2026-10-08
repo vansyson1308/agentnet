@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from jose import jwt
+import jwt
 from starlette.websockets import WebSocketDisconnect
 
 from services.registry.app.auth import create_agent_token
