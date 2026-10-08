@@ -231,8 +231,8 @@
             <a href="/">📊 Dashboard</a>
         </div>
         <div style="display:flex;gap:10px;align-items:center;">
-            <a href="/login" class="btn-jarvis">Sign In</a>
-            <a href="/register" class="btn-jarvis btn-jarvis-primary">Initialize Agent</a>
+            <a href="{{ url_for('login_page') }}" class="btn-jarvis">Sign In</a>
+            <a href="{{ url_for('register_page') }}" class="btn-jarvis btn-jarvis-primary">Initialize Agent</a>
         </div>
     </nav>
 
@@ -243,10 +243,10 @@
         </div>
 
         <form method="GET" action="/marketplace" class="search-section">
-            <input type="text" name="search" class="search-input"
+            <input type="text" name="search" class="search-input" aria-label="Search agents"
                    placeholder="🔍 Search agents by name or capability..."
                    value="{{ current_search or '' }}">
-            <select name="category" class="search-select">
+            <select name="category" class="search-select" aria-label="Category">
                 <option value="">All Categories</option>
                 <option value="utility" {% if current_category=='utility' %}selected{% endif %}>Utility</option>
                 <option value="data" {% if current_category=='data' %}selected{% endif %}>Data</option>
@@ -255,14 +255,14 @@
                 <option value="devops" {% if current_category=='devops' %}selected{% endif %}>DevOps</option>
                 <option value="research" {% if current_category=='research' %}selected{% endif %}>Research</option>
             </select>
-            <select name="sort" class="search-select">
+            <select name="sort" class="search-select" aria-label="Sort by">
                 <option value="">Default Sort</option>
                 <option value="rating" {% if current_sort=='rating' %}selected{% endif %}>Rating</option>
                 <option value="price" {% if current_sort=='price' %}selected{% endif %}>Price</option>
                 <option value="tasks" {% if current_sort=='tasks' %}selected{% endif %}>Tasks Done</option>
                 <option value="name" {% if current_sort=='name' %}selected{% endif %}>Name</option>
             </select>
-            <select name="order" class="search-select">
+            <select name="order" class="search-select" aria-label="Sort order">
                 <option value="desc" {% if current_order=='desc' %}selected{% endif %}>Descending</option>
                 <option value="asc" {% if current_order=='asc' %}selected{% endif %}>Ascending</option>
             </select>
@@ -283,11 +283,11 @@
                 {% endfor %}
             {% endif %}
             {% set status_class = 'status-active' if agent.status == 'active' else ('status-unverified' if agent.status == 'unverified' else 'status-offline') %}
-            {% set avatar_bg = ['#4da8da','#a78bfa','#34d399','#fbbf24','#fb7185','#00d4ff','#f472b6','#2dd4bf'] | random %}
+            {% set avatar_bg = ['#4da8da','#a78bfa','#34d399','#fbbf24','#fb7185','#00d4ff','#f472b6','#2dd4bf'][agent.name|length % 8] %}
             {% set initials = agent.name[:2].upper() %}
             <div class="agent-card">
                 <div class="agent-name-row">
-                    <div class="agent-avatar" style="background:{{avatar_bg}};color:#fff;">{{initials}}</div>
+                    <div class="agent-avatar" style="background:{{avatar_bg}};color:#050914;">{{initials}}</div>
                     <div>
                         <div class="agent-name">{{ agent.name }}</div>
                     </div>
@@ -325,8 +325,13 @@
             {% else %}
             <div class="empty-state">
                 <div class="icon">🤖</div>
+                {% if registry_unavailable %}
+                <h3>The agent registry is unreachable right now</h3>
+                <p>Agent listings will appear here as soon as it is back. Please check again shortly.</p>
+                {% else %}
                 <h3>No agents found</h3>
                 <p>Try adjusting your search filters or check back later.</p>
+                {% endif %}
             </div>
             {% endif %}
         </div>

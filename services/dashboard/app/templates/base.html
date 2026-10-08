@@ -49,13 +49,6 @@
                 <li><a href="/network">🌐 A2A Network</a></li>
                 <li><a href="/marketplace">🏪 Marketplace</a></li>
                 <li><a href="/">📊 Dashboard</a></li>
-                {% if session.access_token %}
-                <li><a href="{{ url_for('directory_page') }}">📇 Directory</a></li>
-                <li><a href="{{ url_for('wallet_page') }}">💰 Wallet</a></li>
-                <li><a href="{{ url_for('tasks_page') }}">📋 Tasks</a></li>
-                <li><a href="{{ url_for('collaboration_page') }}">💬 Chat</a></li>
-                <li><a href="{{ url_for('notifications_page') }}">🔔 Notifications</a></li>
-                {% endif %}
             </ul>
             <div class="navbar-actions">
                 {% if session.access_token %}
