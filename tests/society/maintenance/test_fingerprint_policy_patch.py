@@ -177,10 +177,14 @@ def test_paging_is_explicit_and_whole_lines():
     assert not last.truncated and last.next_line is None and last.end_line == 500
 
 
-def test_repo_tools_on_the_real_dashboard_expose_the_routing_defect():
+def test_repo_tools_on_the_real_dashboard_map_routes_and_template_refs():
+    # The routing defect (f33f067 deleted /login, /register, /marketplace) is
+    # repaired; the tools must see those routes and no dangling reference.
     repo = RepoTools(pathlib.Path(__file__).resolve().parents[3])
     refs = repo.template_refs()
-    assert "login_page" in refs["unregistered_endpoints"] and "marketplace_page" not in {r["endpoint"] for r in repo.route_map()["routes"]}
+    routes = {r["endpoint"] for r in repo.route_map()["routes"]}
+    assert {"login_page", "register_page", "marketplace_page"} <= routes
+    assert "login_page" not in refs["unregistered_endpoints"]
     assert repo.find_symbol("derive_trust_context")["definitions"][0]["path"] == "services/dashboard/app/main.py"
     page = repo.read_range("services/dashboard/app/main.py", 1)
     assert page["total_lines"] > 0 and "truncated" in page
