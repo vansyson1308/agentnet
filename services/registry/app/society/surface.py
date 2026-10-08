@@ -466,12 +466,13 @@ def _crawl(client: httpx.Client, contract: Contract, origins: Mapping[str, str],
         parsed = extract(body)
         if src in nav.sources and (nav.monitor or not only_monitored):
             dead = sum(1 for v in parsed.links if _is_placeholder(v, form=False)) + sum(1 for v in parsed.forms if _is_placeholder(v, form=True))
-            if dead:
-                report.observations.append(Observation(
-                    name=f"{src}:placeholders", kind="placeholder", origin=item.origin, path=item.path,
-                    severity=nav.severity, failure=PLACEHOLDER_LINK, source=src,
-                    detail=f"{dead} dead link(s) ('#' or 'javascript:') on {item.path}",
-                ))
+            # Emitted for every crawled source, clean or not: a clean page is the
+            # healthy sample that lets an open "<src>:placeholders" incident recover.
+            report.observations.append(Observation(
+                name=f"{src}:placeholders", kind="placeholder", origin=item.origin, path=item.path,
+                severity=nav.severity, failure=PLACEHOLDER_LINK if dead else None, source=src,
+                detail=f"{dead} dead link(s) ('#' or 'javascript:') on {item.path}" if dead else "",
+            ))
             for kind_map, values in ((link_targets, parsed.links), (form_targets, parsed.forms)):
                 for v in values:
                     if _is_placeholder(v, form=kind_map is form_targets) or v.startswith("#"):
