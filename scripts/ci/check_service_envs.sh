@@ -52,7 +52,7 @@ import re, sys, pathlib
 work, services = pathlib.Path(sys.argv[1]), sys.argv[2:]
 SHARED = {
     "fastapi", "starlette", "pydantic", "pydantic-core", "pydantic-settings", "sqlalchemy",
-    "psycopg2-binary", "redis", "httpx", "httpcore", "h11", "anyio", "python-jose", "passlib",
+    "psycopg2-binary", "redis", "httpx", "httpcore", "h11", "anyio", "pyjwt", "passlib",
     "bcrypt", "websockets", "uvicorn", "opentelemetry-api", "opentelemetry-sdk",
     "opentelemetry-semantic-conventions", "opentelemetry-instrumentation-fastapi",
     "opentelemetry-instrumentation-sqlalchemy", "opentelemetry-exporter-otlp-proto-http",
