@@ -10,7 +10,7 @@
     --bg-secondary: rgba(15, 20, 35, 0.75);
     --text-primary: #e8ecf4;
     --text-secondary: #8892b0;
-    --text-muted: #64748b;
+    --text-muted: #8390a6;
     --border-color: rgba(77, 168, 218, 0.10);
     --border-glow: rgba(77, 168, 218, 0.25);
     --card-bg: rgba(12, 16, 30, 0.88);
@@ -48,30 +48,11 @@
     --alert-info-text: #4da8da;
 }
 
-/* Keep dark-theme compatibility for existing code */
+/* Dark-theme alias. Never re-declare a token as var(itself) here: a
+   self-referencing custom property is a cycle, the token becomes invalid and
+   every text colour falls back to black on the dark background. */
 html.dark-theme {
     --bg-primary: var(--bg-deep);
-    --bg-secondary: var(--bg-secondary);
-    --text-primary: var(--text-primary);
-    --text-secondary: var(--text-secondary);
-    --border-color: var(--border-color);
-    --card-bg: var(--card-bg);
-    --card-shadow: var(--card-shadow);
-    --navbar-bg: var(--navbar-bg);
-    --navbar-border: var(--navbar-border);
-    --link-color: var(--link-color);
-    --link-hover: var(--link-hover);
-    --btn-primary-bg: var(--btn-primary-bg);
-    --btn-primary-text: var(--btn-primary-text);
-    --btn-secondary-bg: var(--btn-secondary-bg);
-    --btn-secondary-text: var(--btn-secondary-text);
-    --btn-secondary-hover-bg: var(--btn-secondary-hover-bg);
-    --success-color: var(--success-color);
-    --warning-color: var(--warning-color);
-    --danger-color: var(--danger-color);
-    --info-color: var(--info-color);
-    --accent: var(--accent);
-    --bg-dark: var(--bg-dark);
 }
 
 /*── RESET & BASE ─────────────────────────────────*/

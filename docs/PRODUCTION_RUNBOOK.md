@@ -162,8 +162,7 @@ claimed to be.
 
 ## Validation
 
-Production has no public domain, so validation runs **inside** its private
-network, from `prod-validator`: a non-public service built from the registry
+Validation runs **inside** production's private network, from `prod-validator`: a non-public service built from the registry
 image, restart policy NEVER, which clones `$VALIDATOR_REF` at start and runs
 one validator. Its only credentials are references to the Postgres/Redis
 passwords (the Redis auth check and the verification-token read need them); the
@@ -286,9 +285,11 @@ the release gate refuses migrations without explicit owner acknowledgement.
 
 ## A2A enablement (Phase 8)
 
+**Status (2026-09-26): steps 1 and 2 are DONE and proven live** (docs/A2A_LIVE_PROOF.md §5: inbound 37/37, federation 14/14). Step 3 stays off by design.
+
 The A2A code ships dark. Every flag defaults to `false`. Enable **one flag at a time**, validate, then continue. Each step is a variable change on `prod-registry` only, which redeploys only that service.
 
-`.railway/production.ts` declares these variables **dark** (`a2aDark`) until each is live; after enablement a follow-up change flips the declared values and adds `A2A_CREDENTIAL_KEY: ctx.shared.A2A_CREDENTIAL_KEY`, so the file never claims a state production lacks and an apply never deletes a live variable.
+`.railway/production.ts` declared these variables dark until each was live. It now declares the live state (`a2a`): server and federation `true`, `A2A_CREDENTIAL_KEY: ctx.shared.A2A_CREDENTIAL_KEY`, the Society client and the company cycle `false`. So the file never claims a state production lacks, and an apply never deletes a live variable.
 
 1. **Server:** `A2A_PUBLIC_BASE_URL=https://api.agentnet.io.vn` is already declared; set `A2A_SERVER_ENABLED=true`. Validate:
    - `GET /.well-known/agent-card.json`: a v1 card with two interfaces, `streaming: true`, `pushNotifications: false`;
@@ -305,6 +306,21 @@ The A2A code ships dark. Every flag defaults to `false`. Enable **one flag at a 
 3. **Society client:** stays `false` in production. The production Society is OFF by configuration, so this flag has nothing to enable there.
 
 **Rollback:** set the flag back to `false`. The tables are additive and harmless when unused, and the DB is never downgraded automatically.
+
+### Re-running the A2A proof in production
+
+`deploy/railway/a2a_live_proof.py` runs from `prod-validator` with an **owner-verified public identity**. It never reads the database:
+
+* `A2A_PROOF_IDENTITY=public` and `A2A_PROOF_CANARY_EMAIL` (an inbox the owner reads). The password is derived in the validator from `VALIDATOR_SECRET`, generated in Railway with `${{secret(64, "abcdef0123456789")}}` so nobody sees it.
+* First run: `A2A_PROOF_SIGNUP_ONLY=true`. It signs up through the public API, AgentNet sends the normal verification email, and the proof stops at `A2A PROOF AWAITING OWNER VERIFICATION`. The owner clicks the link. Later runs in the same window reuse the account.
+* `A2A_PROOF_MODES`: `server` (read-mostly, free skills only), `federation`, or `federation_cleanup`. The federation modes need operator authority. Name the canary in `SOCIETY_OPERATOR_BOOTSTRAP_EMAILS` on `prod-registry` for the window only, then empty it again. The role is evaluated per request and never persisted.
+* The start command installs the pinned SDK, clones `$VALIDATOR_REF` and runs the script:
+  `sh -c 'pip install -q "a2a-sdk[http-server]==1.1.5" && rm -rf /tmp/repo && git clone -q --depth 1 --branch "$VALIDATOR_REF" https://github.com/vansyson1308/agentnet.git /tmp/repo && python /tmp/repo/deploy/railway/a2a_live_proof.py; echo "validator finished with exit $?"; exec tail -f /dev/null'`.
+  The JS interop step downloads Node 22 from nodejs.org and checks it against `SHASUMS256.txt`. Afterwards, restore the idle start command.
+
+After the 2026-09-26 proof, every proof variable on `prod-validator` (including `VALIDATOR_SECRET`, the canary address and a stale `SMTP_PASSWORD` reference) was blanked, and the idle start command was deployed. The validator holds no credential beyond the Postgres/Redis references, and the canary's password can no longer be derived. A later proof uses a **new** canary address and a newly generated secret.
+
+The canary account and its three proof agents (`A2A_Proof_Callee`, `A2A_Proof_Caller`, `A2A_Proof_Other`) remain in production. Their skills are free and they hold no funds.
 
 Metrics are bounded and `/metrics` stays unserved in production. The audit trail is `a2a_audit_log`, which is append-only.
 
@@ -339,3 +355,15 @@ Authoritative DNS is on Cloudflare; the registrar is Nhân Hòa (.vn). Enable DN
 4. **Rollback, in order:** remove the DS at Nhân Hòa first. Wait until the DS has expired from caches (the parent TTL, often up to 24–48 h). Only then disable DNSSEC in Cloudflare. Disabling Cloudflare signing while the DS is still published breaks resolution.
 
 Mail (Resend DKIM/SPF/DMARC) and the Railway custom domains are unaffected, because DNSSEC signs the same records.
+
+## Autonomous maintenance releases (ADR-0010)
+
+Production remains application-only; the production Society stays OFF. When provisioned
+(`docs/MAINTENANCE_RELEASE.md`), the deterministic Maintenance Release Controller may release
+**MAINTENANCE_GREEN** repairs (and AMBER repairs after a verified owner merge) through the same
+`production` PR + required CI ruleset as a human release, deploy only the changed services at the
+exact SHA, verify the public contract, and roll back to recorded known-good deployments on a
+regression. Owner controls: the console `/v1/maintenance/console`, release freezes
+(`/v1/maintenance/release-freezes`), and the master kill `MAINTENANCE_AUTONOMY_ENABLED=false`.
+Emergency revocation of the Release App or the Railway release token stops releases (fail closed)
+without affecting the running product. A RED repair is always released through the manual gate above.

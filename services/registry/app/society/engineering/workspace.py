@@ -135,10 +135,34 @@ def ensure_workspace(settings: SocietySettings, candidate_id: uuid.UUID, *, base
     return Workspace(candidate_id=candidate_id, path=path, branch=branch, base_sha=base_sha, repo_root=repo_root)
 
 
+def _apply_replacements(target: pathlib.Path, rel: str, replacements, planned: dict) -> str:
+    """Resolve exact-text replacements against the file as it currently
+    stands (including earlier edits to the same path in this submission).
+    Each ``old`` must occur EXACTLY once: zero is a stale edit, more than one
+    is ambiguous -- both abort the whole submission."""
+    if rel in planned:
+        text = planned[rel]
+    elif target.is_file():
+        text = target.read_text(encoding="utf-8")
+    else:
+        raise WorkspaceError(f"{rel!r}: replacements need an existing file (send 'content' to create one)")
+    for i, r in enumerate(replacements, 1):
+        count = text.count(r.old)
+        if count == 0:
+            raise WorkspaceError(f"{rel!r}: replacement {i}: the 'old' text does not occur in the current file")
+        if count > 1:
+            raise WorkspaceError(f"{rel!r}: replacement {i}: the 'old' text occurs {count} times; include more surrounding lines so it is unique")
+        text = text.replace(r.old, r.new, 1)
+    return text
+
+
 def apply_edits(ws: Workspace, edits: Iterable[FileEdit], allowed: Sequence[str]) -> List[str]:
-    """Validate every edit first, then write. Returns written relative paths."""
+    """Validate every edit first, then write. Returns written relative paths.
+    A whole-file ``content`` replaces the file; ``replacements`` are exact-text
+    edits of the existing file. Nothing is written unless every edit is valid."""
     allowed_set = {a.replace(os.sep, "/") for a in allowed}
     plan: List[tuple[pathlib.Path, str, str]] = []
+    planned: dict = {}
     for edit in edits:
         rel = edit.path.replace(os.sep, "/")
         if rel not in allowed_set:
@@ -146,7 +170,9 @@ def apply_edits(ws: Workspace, edits: Iterable[FileEdit], allowed: Sequence[str]
         if is_protected(rel):
             raise WorkspaceError(f"{rel!r} matches a protected path pattern")
         target = contained_path(ws.path, rel)
-        plan.append((target, rel, edit.content))
+        content = edit.content if edit.replacements is None else _apply_replacements(target, rel, edit.replacements, planned)
+        planned[rel] = content
+        plan.append((target, rel, content))
     written = []
     for target, rel, content in plan:
         target.parent.mkdir(parents=True, exist_ok=True)

@@ -59,6 +59,7 @@ class IntentType(str, enum.Enum):
     REQUEST_CODE_CHANGE = "REQUEST_CODE_CHANGE"
     SUBMIT_CODE_CANDIDATE = "SUBMIT_CODE_CANDIDATE"
     REQUEST_QA = "REQUEST_QA"
+    DECLINE_CODE_CANDIDATE = "DECLINE_CODE_CANDIDATE"
     EVALUATE_CODE_CANDIDATE = "EVALUATE_CODE_CANDIDATE"
     SECURITY_REVIEW_CANDIDATE = "SECURITY_REVIEW_CANDIDATE"
     REQUEST_STAGING_DEPLOY = "REQUEST_STAGING_DEPLOY"
@@ -316,7 +317,22 @@ class RequestCodeChangePayload(_Strict):
     requires_security_review: bool = False
 
 
+class TextReplacement(_Strict):
+    """One exact-text edit inside an EXISTING file: ``old`` must occur exactly
+    once in the file as it stands after the earlier replacements."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    old: str = Field(..., min_length=1, max_length=20_000)
+    new: str = Field(..., max_length=20_000)
+
+
 class FileEdit(_Strict):
+    """Either the whole new file (``content``) or exact-text ``replacements``
+    in an existing file -- never both. Replacements let a real change to a
+    large file fit the model's output budget: only the changed text is sent,
+    and the trusted workspace applies it all-or-nothing."""
+
     # File content is byte-exact: the shared ``str_strip_whitespace`` would
     # silently drop the trailing newline of every submitted file (a
     # whitespace-only diff on an otherwise identical file — busywork the
@@ -324,7 +340,14 @@ class FileEdit(_Strict):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
     path: str = Field(..., min_length=1, max_length=255)
-    content: str = Field(..., max_length=200_000)
+    content: Optional[str] = Field(None, max_length=200_000)
+    replacements: Optional[List[TextReplacement]] = Field(None, min_length=1, max_length=40)
+
+    @model_validator(mode="after")
+    def _one_mode(self) -> "FileEdit":
+        if (self.content is None) == (self.replacements is None):
+            raise ValueError("a file edit carries exactly one of 'content' (whole file) or 'replacements' (exact-text edits)")
+        return self
 
     @field_validator("path")
     @classmethod
@@ -345,6 +368,38 @@ class SubmitCodeCandidatePayload(_Strict):
 
 class CandidateRefPayload(_Strict):
     candidate_id: uuid.UUID
+
+
+class DeclineCodeCandidatePayload(_Strict):
+    """The responsible Builder declines an open candidate it cannot finish
+    within its spec. The candidate becomes REJECTED -- never widened -- and
+    the normal Scout -> Governor -> Architect path designs the next one.
+
+    ``blocking_paths`` are the files the fix would need, as canonical
+    repo-relative paths (no ``.``/``..``/empty segments, no whitespace or
+    control characters, so ``./a`` or ``a `` can never pose as a path other
+    than ``a``); for ``spec_outside_files_allowed`` the
+    executor checks that every one of them is outside the spec's
+    ``files_allowed``."""
+
+    candidate_id: uuid.UUID
+    reason_code: Literal["spec_outside_files_allowed", "acceptance_unsatisfiable"]
+    detail: str = Field(..., min_length=20, max_length=1000)
+    blocking_paths: List[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("blocking_paths")
+    @classmethod
+    def _safe_paths(cls, v: List[str]) -> List[str]:
+        for p in v:
+            if (
+                any(seg in ("", ".", "..") for seg in p.split("/"))
+                or any(ch.isspace() or ord(ch) < 32 for ch in p)
+                or p.startswith("~")
+                or "\\" in p
+                or len(p) > 255
+            ):
+                raise ValueError(f"not a canonical repo-relative path: {p!r}")
+        return v
 
 
 class SecurityReviewPayload(_Strict):
@@ -461,6 +516,7 @@ PAYLOAD_MODELS: Dict[IntentType, type] = {
     IntentType.REQUEST_CODE_CHANGE: RequestCodeChangePayload,
     IntentType.SUBMIT_CODE_CANDIDATE: SubmitCodeCandidatePayload,
     IntentType.REQUEST_QA: CandidateRefPayload,
+    IntentType.DECLINE_CODE_CANDIDATE: DeclineCodeCandidatePayload,
     IntentType.EVALUATE_CODE_CANDIDATE: CandidateRefPayload,
     IntentType.SECURITY_REVIEW_CANDIDATE: SecurityReviewPayload,
     IntentType.REQUEST_STAGING_DEPLOY: CandidateRefPayload,
@@ -562,6 +618,47 @@ def parse_decision(raw: Any, *, max_intents: int) -> AgentDecision:
     return decision
 
 
+#: Schema-derived context an error summary may repeat (never the rejected value).
+_SAFE_ERROR_CTX = ("min_length", "max_length", "ge", "gt", "le", "lt", "expected")
+
+
+def _declared_fields(model: Any, seen: Optional[set] = None) -> set:
+    """Every field name declared by ``model`` and the models nested in it."""
+    seen = set() if seen is None else seen
+    if not (isinstance(model, type) and issubclass(model, BaseModel)) or model in seen:
+        return set()
+    seen.add(model)
+    names = set(model.model_fields)
+    for f in model.model_fields.values():
+        stack = [f.annotation]
+        while stack:
+            ann = stack.pop()
+            stack.extend(get_args(ann))
+            names |= _declared_fields(ann, seen)
+    return names
+
+
+def safe_error_summary(exc: ValidationError, model: Any, limit: int = 3) -> List[Dict[str, Any]]:
+    """A structural account of why a payload failed validation.
+
+    The summary is recorded as the intent's error and shown back to the agent
+    as a trusted refusal (context.py), so it carries no model text: pydantic's
+    ``input``, its messages (a custom validator may quote the value) and any
+    key the model invented (an ``extra_forbidden`` or dict key in ``loc``)
+    are dropped. What remains is the error type, the location built from
+    declared field names and list indices, and schema-derived limits."""
+    known = _declared_fields(model)
+    out: List[Dict[str, Any]] = []
+    for err in exc.errors(include_input=False, include_url=False, include_context=True)[:limit]:
+        loc = [p if isinstance(p, int) or p in known else "<key>" for p in err.get("loc", ())]
+        item: Dict[str, Any] = {"type": err.get("type"), "loc": loc}
+        ctx = {k: v for k, v in (err.get("ctx") or {}).items() if k in _SAFE_ERROR_CTX and isinstance(v, (int, float, str))}
+        if ctx:
+            item["ctx"] = ctx
+        out.append(item)
+    return out
+
+
 def validate_intents(decision: AgentDecision, run_id: uuid.UUID) -> List[ValidatedIntent]:
     out: List[ValidatedIntent] = []
     for seq, spec in enumerate(decision.intents):
@@ -575,7 +672,8 @@ def validate_intents(decision: AgentDecision, run_id: uuid.UUID) -> List[Validat
                     type_name=spec.type[:64],
                     intent_type=None,
                     valid=False,
-                    error=f"unknown intent type {spec.type!r}",
+                    # the type the model wrote stays in type_name (audit), not in the trusted reason
+                    error="unknown intent type (not in the intent vocabulary)",
                     raw_payload=spec.payload,
                     idempotency_key=key,
                 )
@@ -591,7 +689,8 @@ def validate_intents(decision: AgentDecision, run_id: uuid.UUID) -> List[Validat
                     type_name=itype.value,
                     intent_type=itype,
                     valid=False,
-                    error=f"payload schema violation: {exc.errors()[:3]}",
+                    # structural only: this reason is shown back as a trusted refusal
+                    error=f"payload schema violation: {safe_error_summary(exc, model)}",
                     raw_payload=spec.payload,
                     idempotency_key=key,
                 )

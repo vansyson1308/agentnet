@@ -49,8 +49,11 @@ from ..models import (
 )
 from . import deployment as dep_mod
 from . import fitness as fitness_mod
+from . import memory_grounding
 from . import promotion as promo_mod
+from . import redelivery as redelivery_mod
 from . import router as router_mod
+from . import surface_monitor as surface_monitor_mod
 from . import telemetry as telemetry_mod
 from .approvals import claim_next_approved_intent, execute_approved_intent
 from .cognition import CognitiveModel, ModelProviderError, ModelTimeout, get_model
@@ -225,6 +228,14 @@ class SocietyWorker:
         self.promotion_provider = promo_mod.get_promotion_provider(self.settings, override=promotion_provider)
         self.deployment_provider = dep_mod.get_deployment_provider(self.settings, override=deployment_provider)
         self.telemetry_enabled = telemetry_enabled
+        # The public-surface monitor (the Society's eyes on the public product):
+        # probes run in a thread so public HTTP never stalls Society work.
+        self.surface_monitor = surface_monitor_mod.SurfaceMonitor()
+        self._surface_task: Optional[asyncio.Future] = None
+        # The Maintenance Kernel (ADR-0010) reconciles repair cases here, where
+        # the model and the isolated workspaces live. It is idle unless the
+        # MAINTENANCE_* switches are on, and it never holds release credentials.
+        self._maintenance_kernel = None
 
     # ── dispatch ───────────────────────────────────────────────────────
 
@@ -245,6 +256,9 @@ class SocietyWorker:
                 # SOCIETY_COMPANY_CYCLE_ENABLED (and the runtime) are on.
                 company_mod.maybe_start_scheduled_cycle(db, self.settings)
                 company_mod.settle_cycles(db)
+                # A candidate wake the loop breaker swallowed is re-sent once, in a
+                # fresh story, while the candidate still waits for it (redelivery.py).
+                redelivery_mod.redeliver_swallowed_wakes(db, self.settings)
             except Exception:  # noqa: BLE001 — world ingestion must never block dispatch
                 db.rollback()
                 logger.exception("society world ingestion failed")
@@ -291,6 +305,29 @@ class SocietyWorker:
             return await asyncio.wait_for(self.model.decide(context, model_name=route.model_name), timeout=total)
         return await asyncio.wait_for(self.model.decide(context), timeout=total)
 
+    def _record_failed_decision(self, run: AgentRun, exc: Exception, route: Optional[router_mod.Route]) -> None:
+        """A model call that produced no usable decision still happened and
+        still cost money. Record which model answered, in which format and at
+        what cost, so the operator API shows it and the daily budget counts it
+        (``spend_today_usd`` sums ``cost_usd``). The caller commits via fail_run."""
+        attempt = getattr(exc, "attempt", None)
+        if attempt is None:  # e.g. empty content: the call happened, its accounting is unknown
+            run.model_provider = getattr(self.model, "provider", None)
+            routed = route.model_name if route is not None and getattr(self.model, "supports_routing", False) else None
+            run.model_name = routed or getattr(self.model, "model_name", None)
+            run.model_requests = int(run.model_requests or 0) + 1
+            return
+        run.model_provider = attempt.provider
+        run.model_name = attempt.model_name
+        run.output_format = attempt.output_format or run.output_format
+        run.tokens_in = int(run.tokens_in or 0) + int(attempt.tokens_in or 0)
+        run.tokens_out = int(run.tokens_out or 0) + int(attempt.tokens_out or 0)
+        run.cost_usd = Decimal(str(run.cost_usd or 0)) + Decimal(str(attempt.cost_usd or 0))
+        run.model_requests = int(run.model_requests or 0) + int(attempt.requests or 0)
+        run.model_retries = int(run.model_retries or 0) + int(attempt.retries or 0)
+        run.model_timeouts = int(run.model_timeouts or 0) + int(attempt.timeouts or 0)
+        run.format_fallbacks = int(run.format_fallbacks or 0) + int(attempt.format_fallbacks or 0)
+
     def _persist_decision(self, db: Session, run: AgentRun, agent: Agent, grant: AgentCapabilityGrant, context, response) -> List[AgentIntent]:
         run.model_provider = response.provider
         run.model_name = response.model_name
@@ -298,15 +335,17 @@ class SocietyWorker:
         run.context_digest = context.digest()
         run.context_summary = context.summary()
         run.decision_summary = response.decision.decision_summary[:1000]
-        run.tokens_in = response.tokens_in
-        run.tokens_out = response.tokens_out
-        run.cost_usd = Decimal(str(response.cost_usd or 0))
-        run.model_requests = int(getattr(response, "requests", 1) or 1)
-        run.model_retries = int(getattr(response, "retries", 0) or 0)
-        run.model_timeouts = int(getattr(response, "timeouts", 0) or 0)
+        # Accumulate across attempts: an earlier attempt that timed out or
+        # answered with invalid output was also a real (billed) model call.
+        run.tokens_in = int(run.tokens_in or 0) + int(response.tokens_in or 0)
+        run.tokens_out = int(run.tokens_out or 0) + int(response.tokens_out or 0)
+        run.cost_usd = Decimal(str(run.cost_usd or 0)) + Decimal(str(response.cost_usd or 0))
+        run.model_requests = int(run.model_requests or 0) + int(getattr(response, "requests", 1) or 1)
+        run.model_retries = int(run.model_retries or 0) + int(getattr(response, "retries", 0) or 0)
+        run.model_timeouts = int(run.model_timeouts or 0) + int(getattr(response, "timeouts", 0) or 0)
         run.tokens_cached = getattr(response, "tokens_cached", None)
         run.output_format = getattr(response, "output_format", None)
-        run.format_fallbacks = int(getattr(response, "format_fallbacks", 0) or 0)
+        run.format_fallbacks = int(run.format_fallbacks or 0) + int(getattr(response, "format_fallbacks", 0) or 0)
         run.sleep_until = utcnow() + timedelta(seconds=int(response.decision.sleep_for_seconds or 0))
         validated = validate_intents(response.decision, run.id)
         rows: List[AgentIntent] = []
@@ -382,6 +421,9 @@ class SocietyWorker:
             .order_by(AgentIntent.seq)
             .all()
         )
+        # Memories last: a memory is admitted only once every side effect of its
+        # decision has an outcome (memory_grounding.py).
+        pending.sort(key=lambda r: memory_grounding.execution_order_key(r.intent_type, r.seq))
         for row in pending:
             validated = self._revalidate(row, run)
             verdict = evaluate_intent(validated, grant=grant, settings=self.settings, agent=agent)
@@ -530,6 +572,7 @@ class SocietyWorker:
                     status = fail_run(db, run, f"model provider error: {exc}", settings=self.settings)
                     return self._count_fail(status, stats)
                 except DecisionValidationError as exc:
+                    self._record_failed_decision(run, exc, route)
                     status = fail_run(db, run, f"invalid structured output: {exc}", settings=self.settings)
                     return self._count_fail(status, stats)
                 except Exception as exc:  # noqa: BLE001
@@ -676,6 +719,54 @@ class SocietyWorker:
         except Exception:  # noqa: BLE001
             logger.exception("society federation pump failed")
 
+    async def watch_public_surface(self):
+        """Start a public-surface probe when one is due, and fold a finished
+        probe into the Society (debounce, typed events). Deterministic HTTP
+        only; never raises into the loop, never blocks it on the network."""
+        task = self._surface_task
+        if task is not None:
+            if not task.done():
+                return None
+            self._surface_task = None
+            try:
+                report = task.result()
+            except Exception as exc:  # noqa: BLE001 -- a monitor failure is bounded and observable
+                surface_monitor_mod._inc(surface_monitor_mod.M_ERRORS)
+                logger.warning("public surface probe failed (%s); the next probe runs after the interval", type(exc).__name__)
+                return None
+            db = self.session_factory()
+            try:
+                return self.surface_monitor.observe(db, self.settings, report)
+            except Exception:  # noqa: BLE001
+                db.rollback()
+                surface_monitor_mod._inc(surface_monitor_mod.M_ERRORS)
+                logger.exception("public surface observation failed")
+                return None
+            finally:
+                db.close()
+        if self.surface_monitor.due(self.settings):
+            self.surface_monitor.last_run_at = utcnow()
+            self._surface_task = asyncio.ensure_future(asyncio.to_thread(self.surface_monitor.probe, self.settings))
+        return None
+
+    async def reconcile_maintenance(self):
+        """One Maintenance Kernel cycle, in a thread (it runs tests and model
+        activities). Never raises into the loop."""
+        from ..maintenance.config import get_maintenance_settings  # noqa: PLC0415
+
+        ms = get_maintenance_settings()
+        if not (ms.autonomy_enabled or ms.monitoring_enabled):
+            return None
+        try:
+            if self._maintenance_kernel is None:
+                from ..maintenance.reconciler import MaintenanceKernel  # noqa: PLC0415
+
+                self._maintenance_kernel = MaintenanceKernel(self.session_factory, worker_id=f"{self.worker_id}-maint")
+            return await asyncio.to_thread(self._maintenance_kernel.reconcile)
+        except Exception:  # noqa: BLE001
+            logger.exception("maintenance kernel cycle failed")
+            return None
+
     def stop(self) -> None:
         self._stop = True
 
@@ -689,10 +780,12 @@ class SocietyWorker:
                 continue
             try:
                 self.dispatch()
+                await self.watch_public_surface()
                 await self.process_claimable()
                 self.process_approved_intents()
                 self.process_controllers()
                 await self.pump_federation()
+                await self.reconcile_maintenance()
             except Exception:  # noqa: BLE001
                 logger.exception("society worker loop error")
                 await asyncio.sleep(settings.wake_poll_seconds)

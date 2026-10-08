@@ -177,6 +177,8 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             EventType.COMPANY_CYCLE,
             EventType.A2A_AGENT_REFRESHED,
             EventType.PLATFORM_METRIC_ANOMALY,
+            EventType.PUBLIC_SURFACE_ANOMALY,
+            EventType.PUBLIC_SURFACE_RECOVERED,
             EventType.PLATFORM_HEALTH_DEGRADED,
             EventType.USER_FEEDBACK_RECEIVED,
             EventType.STAGING_CANARY_SIGNAL,
@@ -236,6 +238,9 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         + (
             IntentType.SUBMIT_CODE_CANDIDATE.value,
             IntentType.REQUEST_QA.value,
+            # Hand back a candidate it cannot finish within its spec: REJECTED,
+            # never widened (docs/SOCIETY_RUNTIME.md "A Builder may decline").
+            IntentType.DECLINE_CODE_CANDIDATE.value,
             IntentType.START_TASK.value,
             IntentType.COMPLETE_TASK.value,
             IntentType.FAIL_TASK.value,

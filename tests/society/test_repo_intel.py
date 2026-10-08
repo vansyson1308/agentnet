@@ -6,10 +6,21 @@ import asyncio
 import os
 import pathlib
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from services.registry.app.models import AgentIntent, AgentRun, CodeCandidate, SocietyEvent
+from services.registry.app.models import (
+    Agent,
+    AgentIntent,
+    AgentRun,
+    CodeCandidate,
+    ImprovementProposal,
+    ProposalSource,
+    ProposalStatus,
+    SocietyEvent,
+    SocietyEventStatus,
+)
 from services.registry.app.society import repo_intel as ri
 from services.registry.app.society.cognition import FakeModel
 from services.registry.app.society.events import EventType, emit_event
@@ -229,3 +240,286 @@ def test_read_range_past_eof_is_empty_and_reports_the_real_length(code_repo):
     out = ri.read_range(code_repo, rel, 12000, 12200)
     assert out.data["content"] == ""
     assert out.data["total_lines"] == 92, "the reader must be able to tell it overshot"
+
+
+# ── the context's own cut of a read (staging 2026-09-26 18:00Z) ─────────
+#
+# repo_intel returned main.py whole (8.6 KB, truncated=false); the context then
+# cut each read's JSON at TXT_READ mid-content. The Builder saw ~177 of 231
+# lines of main.py and ~146 of 273 of the failing test, was told nothing was
+# truncated, and re-read the same files for six turns.
+
+
+def test_a_read_too_long_for_context_shows_whole_lines_and_where_to_continue(code_repo):
+    from services.registry.app.society import context as ctx_mod
+
+    rel = "services/app/long.py"
+    target = code_repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    text = "".join(f"def f{i}():  # \"quoted\" \\ padding padding padding padding\n" for i in range(1, 301))
+    target.write_text(text, encoding="utf-8")
+    budget = ctx_mod.TXT_READ
+
+    whole = ri.read_file(code_repo, rel)
+    assert whole.truncated is False, "the repo layer returned the whole file"
+    view, cut = ctx_mod._read_view(whole.op, whole.data)
+    assert cut is True and ctx_mod._json_len(view) <= budget
+    assert "_truncated" not in view, "never a JSON preview cut mid-content"
+    first, last = view["context_cut"]["shown_lines"]
+    assert first == 1 and view["context_cut"]["total_lines"] == 300 and last < 300
+    assert view["content"] == "".join(text.splitlines(keepends=True)[:last]), "whole lines, exactly the ones it says"
+    assert view["next_line"] == last + 1
+
+    # following next_line with READ_REPO_RANGE walks the file without a gap or overlap
+    seen, nxt = view["content"], view["next_line"]
+    while nxt <= 300:
+        part = ri.read_range(code_repo, rel, nxt, nxt + 399)  # to EOF
+        pview, pcut = ctx_mod._read_view(part.op, part.data)
+        assert ctx_mod._json_len(pview) <= budget
+        if pcut:
+            assert pview["context_cut"]["shown_lines"][0] == nxt, "a range's view counts lines from its own start"
+        seen += pview["content"]
+        nxt = pview["next_line"] if pcut else 301
+    assert seen == text.rstrip("\n"), "read_range omits the final newline; nothing else may differ"
+
+    # a read that fits is shown as it is -- including the repo layer's own continuation
+    head = ri.read_file(code_repo, rel, max_bytes=500)
+    hview, hcut = ctx_mod._read_view(head.op, head.data)
+    assert hcut is False and hview == head.data and hview["next_line"] == head.data["next_line"]
+
+    # search hits are kept whole, and the view says how many were left out
+    (code_repo / "services/app/hits.py").write_text("".join(f"needle {'x' * 380} {i}\n" for i in range(40)), encoding="utf-8")
+    found = ri.search(code_repo, "needle", glob="*.py", max_results=40)
+    sview, scut = ctx_mod._read_view(found.op, found.data)
+    assert scut is True and ctx_mod._json_len(sview) <= budget
+    assert 0 < sview["context_cut"]["hits_shown"] == len(sview["hits"]) < sview["context_cut"]["hits_total"] == 40
+    assert all(h in found.data["hits"] for h in sview["hits"])
+
+
+def test_a_cut_read_counts_lines_like_read_range_and_never_becomes_a_whole_file_edit(code_repo):
+    from types import SimpleNamespace
+
+    from services.registry.app.society import cognition as cg
+    from services.registry.app.society import context as ctx_mod
+
+    # line breaks other than "\n": shown_lines, total_lines and next_line all count
+    # the way READ_REPO_RANGE does, so the model is never told it read past the end
+    rel = "services/app/breaks.py"
+    target = code_repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    breaks = ("\u2028", "\r", "\r")  # never "\n"
+    target.write_text("".join(f"row {i} padding padding padding" + breaks[i % 3] for i in range(1, 401)), encoding="utf-8", newline="")
+    view, cut = ctx_mod._read_view("read_file", ri.read_file(code_repo, rel).data)
+    first, last = view["context_cut"]["shown_lines"]
+    assert cut and last < view["context_cut"]["total_lines"] == 400 and view["next_line"] == last + 1
+    assert ri.read_range(code_repo, rel, view["next_line"], view["next_line"]).data["content"].startswith(f"row {last + 1} ")
+
+    # malformed stored rows and a line longer than the whole budget still say where to continue
+    assert ctx_mod._read_view("read_range", {"start": "x", "content": "a\n" * 5000})[0]["context_cut"]["shown_lines"][0] == 1
+    minified, mcut = ctx_mod._read_view("read_file", {"content": "x" * 9000 + "\nshort\n"})
+    assert mcut and minified["_truncated"] and minified["next_line"] == 1
+
+    # the scripted Builder rewrites a WHOLE file from a read: it must refuse a partial one
+    src = '_TRUE = {"true", "1"}\n' + "".join(f"x{i} = {i}\n" for i in range(10))
+    cand = {"id": "c1", "spec": {"files_allowed": ["app/textutil.py", "tests/test_x.py"]}}
+
+    def decide(**extra):
+        read = {"op": "read_file", "path": "app/textutil.py", "truncated": False, "data": {"content": src}}
+        read.update(extra)
+        return cg._builder_code_fix(SimpleNamespace(repo_reads=[{"_untrusted": True, "data": read}]), cand, None)
+
+    assert [i["type"] for i in decide()["intents"]] == ["SUBMIT_CODE_CANDIDATE"]
+    assert decide(truncated=True)["intents"] == []
+    assert decide(data={"content": src, "context_cut": {"shown_lines": [1, 5], "total_lines": 11}})["intents"] == []
+
+
+def test_the_reader_is_told_when_its_context_cut_a_read(db, SessionLocal, code_settings, grants_with_no_cooldown):
+    _seed(db, grants_with_no_cooldown)
+    rel = "app/long_module.py"
+    (pathlib.Path(code_settings.repo_root) / rel).write_text("".join(f"x_{i} = {i}  # padding padding padding padding\n" for i in range(1, 401)), encoding="utf-8")
+    script = {
+        "architect": [
+            {"decision_summary": "read", "intents": [{"type": "READ_REPO_FILE", "payload": {"path": rel}}], "sleep_for_seconds": 1},
+            {"decision_summary": "done", "intents": [], "sleep_for_seconds": 1},
+        ]
+    }
+    model = FakeModel(script)
+    _run(db, SessionLocal, code_settings, model, {"x": 1})
+    entry = model.calls[1].repo_reads[0]["data"]
+    assert entry["truncated"] is True, "a read the context cut is a truncated read"
+    assert entry["data"]["context_cut"]["total_lines"] == 400
+    assert entry["data"]["next_line"] == entry["data"]["context_cut"]["shown_lines"][1] + 1
+
+
+# ── a read result wakes the reader only (staging 2026-09-26) ────────────
+
+
+def _woken_by(db, event_id):
+    return sorted(n for (n,) in db.query(Agent.name).join(AgentRun, AgentRun.agent_id == Agent.id).filter(AgentRun.event_id == event_id).all())
+
+
+def test_a_read_result_wakes_only_the_reading_agent(db, SessionLocal, code_settings, grants_with_no_cooldown):
+    """repo.read.result is the reading agent's next engineering turn. The
+    default routing subscribes the Architect, the Builder and Security to the
+    type (each reads for itself); another agent's read must wake none of
+    them -- they would spend runs saying "not for me" on an untrusted preview."""
+    _seed(db, grants_with_no_cooldown)
+    model = FakeModel({"architect": [
+        {"decision_summary": "look", "intents": [{"type": "SEARCH_REPO", "payload": {"pattern": "parse_bool", "glob": "*.py"}}], "sleep_for_seconds": 1},
+        {"decision_summary": "done", "intents": [], "sleep_for_seconds": 1},
+    ]})
+    worker = SocietyWorker(SessionLocal, settings=code_settings, model=model, worker_id="w-read", telemetry_enabled=False)
+    assert {"architect", "builder", "security"} <= set(worker.routing[EventType.REPO_READ_RESULT])
+    worker.routing = {**worker.routing, "t.read": ["architect"]}
+    emit_event(db, event_type="t.read", payload={"x": 1}, idempotency_key=f"t-read-{uuid.uuid4()}")
+    db.commit()
+    asyncio.run(worker.run_until_idle(max_cycles=8))
+    wake = db.query(SocietyEvent).filter(SocietyEvent.event_type == EventType.REPO_READ_RESULT).one()
+    assert _woken_by(db, wake.id) == ["Society_Architect"]
+    assert {c.agent["name"] for c in model.calls} == {"Society_Architect"}
+
+
+def test_the_live_story_reaches_the_builder_within_the_staging_run_budget(db, SessionLocal, code_settings, grants_with_no_cooldown, monkeypatch):
+    """Staging 2026-09-26 11:06-11:08Z (correlation b8db5936, candidate a2788678): Scout, Governor,
+    then the Architect grounding its design in three reads before
+    REQUEST_CODE_CHANGE. Each read also woke the Builder and Security, so the
+    correlation reached SOCIETY_MAX_RUNS_PER_CORRELATION=12 exactly when
+    code_change.requested arrived: it was ignored by the loop breaker and the
+    candidate stranded in REQUESTED (as candidate 9da14a08 had earlier that day).
+    Same story, same cap: the request reaches the Builder."""
+    from services.registry.app.society.config import SocietySettings, reset_settings_cache
+    from services.registry.app.society.runs import runs_in_correlation
+
+    monkeypatch.setenv("SOCIETY_MAX_RUNS_PER_CORRELATION", "12")
+    reset_settings_cache()
+    settings = SocietySettings()
+    report = _seed(db, grants_with_no_cooldown)
+    prop = ImprovementProposal(id=uuid.uuid4(), proposed_by_agent_id=report.agents["scout"], source=ProposalSource.AUDIT, title="parse_bool rejects yes/on", problem="p", proposed_change="c", status=ProposalStatus.APPROVED, target_scope="platform", importance=70)
+    db.add(prop)
+    db.commit()
+    request = {"type": "REQUEST_CODE_CHANGE", "payload": {"title": "fix parse_bool", "proposal_id": str(prop.id), "spec": {
+        "kind": "code", "description": "accept yes/on", "files_allowed": ["app/textutil.py"],
+        "acceptance_tests": ["tests/acceptance/test_parse_bool_regression.py"], "expected_effect": "parse_bool('yes') is True",
+    }}}
+    model = FakeModel({"architect": [
+        {"decision_summary": "search", "intents": [{"type": "SEARCH_REPO", "payload": {"pattern": "parse_bool", "glob": "*.py"}}], "sleep_for_seconds": 1},
+        {"decision_summary": "read", "intents": [{"type": "READ_REPO_FILE", "payload": {"path": "app/textutil.py"}}], "sleep_for_seconds": 1},
+        {"decision_summary": "range", "intents": [{"type": "READ_REPO_RANGE", "payload": {"path": "app/textutil.py", "start": 1, "end": 5}}], "sleep_for_seconds": 1},
+        {"decision_summary": "design", "intents": [request], "sleep_for_seconds": 1},
+    ]})
+    worker = SocietyWorker(SessionLocal, settings=settings, model=model, worker_id="w-story", telemetry_enabled=False)
+    worker.routing = {**worker.routing, "t.story": ["scout", "governor", "architect"]}  # the live story's first three runs
+    root = emit_event(db, event_type="t.story", payload={"x": 1}, idempotency_key=f"t-story-{uuid.uuid4()}")
+    db.commit()
+    corr = root.correlation_id
+    asyncio.run(worker.run_until_idle(max_cycles=30))
+
+    reads = db.query(AgentIntent).filter(AgentIntent.intent_type.in_(["SEARCH_REPO", "READ_REPO_FILE", "READ_REPO_RANGE"])).all()
+    assert len(reads) == 3 and all(_ev(r.execution_status) == "executed" for r in reads)
+    requested = db.query(SocietyEvent).filter(SocietyEvent.event_type == EventType.CODE_CHANGE_REQUESTED, SocietyEvent.correlation_id == corr).one()
+    assert _ev(requested.status) != "ignored", requested.dispatch_note
+    assert _woken_by(db, requested.id) == ["Society_Builder"]
+    assert db.query(SocietyEvent).filter(SocietyEvent.event_type == EventType.LOOP_BREAKER_TRIPPED, SocietyEvent.correlation_id == corr).count() == 0
+    # root: 3 runs; each read: 1 run for its reader; the request: 1 Builder run
+    assert runs_in_correlation(db, corr) == 3 + 3 + 1
+    assert db.query(CodeCandidate).filter(CodeCandidate.proposal_id == prop.id).count() == 1
+
+
+def test_a_long_spec_never_hides_the_files_the_builder_may_change(db, SessionLocal, code_settings, grants_with_no_cooldown):
+    """Staging 2026-09-26 20:00Z-01:00Z: the Builder stopped working its
+    candidate every hour because "the spec's files_allowed is truncated and
+    unverified". The spec was one JSON document cut at TXT_LONG; sorted keys
+    put the Architect's long description before files_allowed. The rules of a
+    spec are now always whole -- in the candidates block and in
+    READ_CANDIDATE_STATE."""
+    from types import SimpleNamespace
+
+    from services.registry.app.society import context as ctx_mod
+
+    report = _seed(db, grants_with_no_cooldown)
+    files = ["services/dashboard/app/main.py", "services/dashboard/app/templates/landing.html", "services/dashboard/app/templates/metaverse.html"]
+    spec = {
+        "kind": "code",
+        "description": "Bounded follow-up: " + "design detail " * 400,
+        "expected_effect": "contract checks turn green " * 60,
+        "files_allowed": files,
+        "acceptance_tests": ["services/dashboard/tests/test_public_surface.py"],
+        "must_compile": True,
+    }
+    cid = uuid.uuid4()
+    db.add(CodeCandidate(id=cid, correlation_id=uuid.uuid4(), title="t", spec=spec, status="qa_failed", requested_by_agent_id=report.agents["architect"]))
+    db.commit()
+
+    seen = ctx_mod._candidates(db, SimpleNamespace(payload={}))[0]["spec"]["data"]
+    assert seen["files_allowed"] == files and seen["acceptance_tests"] == spec["acceptance_tests"] and seen["kind"] == "code"
+    assert len(seen["description"]) <= ctx_mod.TXT_LONG and len(seen["expected_effect"]) <= ctx_mod.TXT_MED
+
+    # a state read spends no engineering turn (no wake); its result is what the next context shows
+    script = {"builder": [{"decision_summary": "scope", "intents": [{"type": "READ_CANDIDATE_STATE", "payload": {"candidate_id": str(cid)}}], "sleep_for_seconds": 1}]}
+    _run(db, SessionLocal, code_settings, FakeModel(script), {"x": 1}, roles=("builder",))
+    read = db.query(AgentIntent).filter(AgentIntent.intent_type == "READ_CANDIDATE_STATE").one()
+    assert _ev(read.execution_status) == "executed"
+    assert read.result["result"]["data"]["candidate"]["spec"] == {"files_allowed": files, "acceptance_tests": spec["acceptance_tests"], "kind": "code"}
+
+
+def test_reads_for_an_open_candidate_carry_into_the_next_story(db, SessionLocal, code_settings, grants_with_no_cooldown):
+    """Staging 2026-09-26 15:00Z/16:00Z: after candidate a2788678 failed QA the
+    Builder resumed it on each hourly heartbeat -- a new correlation each time
+    -- re-read the same failing test, templates and main.py, ran out of its
+    per-correlation engineering turns and never resubmitted: its reads lived
+    only in the story that made them. Reads for a still-open candidate now
+    follow the agent into its next story (marked earlier_story, with their
+    time); reads for a closed candidate, reads without a candidate, other
+    agents' reads, repeats and reads older than the agent's own last
+    submission do not, and they never displace the current story's reads."""
+    from services.registry.app.models import Agent
+    from services.registry.app.society import context as ctx_mod
+
+    report = _seed(db, grants_with_no_cooldown)
+    open_id, closed_id = uuid.uuid4(), uuid.uuid4()
+    for cid, status in ((open_id, "qa_failed"), (closed_id, "requested")):
+        db.add(CodeCandidate(id=cid, correlation_id=uuid.uuid4(), title="t", spec={"files_allowed": ["app/textutil.py"], "acceptance_tests": ["tests/test_textutil.py"], "kind": "code"}, status=status, requested_by_agent_id=report.agents["architect"]))
+    db.commit()
+
+    def read(path, cid=None, start=1):
+        return {"type": "READ_REPO_RANGE", "payload": {"path": path, "start": start, "end": start + 2, **({"candidate_id": str(cid)} if cid else {})}}
+
+    story1 = {"builder": [
+        {"decision_summary": "read", "intents": [read("app/textutil.py", open_id), read("tests/test_textutil.py", closed_id), read("README.md")], "sleep_for_seconds": 1},
+        {"decision_summary": "read again", "intents": [read("app/textutil.py", open_id)], "sleep_for_seconds": 1},  # identical repeat
+        {"decision_summary": "out of time", "intents": [], "sleep_for_seconds": 1},
+    ], "architect": [{"decision_summary": "read", "intents": [read("app/__init__.py", open_id)], "sleep_for_seconds": 1}, {"decision_summary": "x", "intents": [], "sleep_for_seconds": 1}]}
+    _run(db, SessionLocal, code_settings, FakeModel(story1), {"x": 1}, roles=("builder", "architect"))
+    executed = db.query(AgentIntent).filter(AgentIntent.intent_type == "READ_REPO_RANGE", AgentIntent.execution_status == "executed").count()
+    assert executed == 5, "every story-1 read executed, so the exclusions below are real"
+    db.query(CodeCandidate).filter(CodeCandidate.id == closed_id).update({CodeCandidate.status: "rejected"}, synchronize_session=False)
+    db.commit()
+
+    builder = db.query(Agent).filter(Agent.id == report.agents["builder"]).one()
+    story2 = emit_event(db, event_type="t.read", payload={"x": 2}, idempotency_key=f"t-read-{uuid.uuid4()}")
+    db.commit()
+    reads = ctx_mod._repo_reads(db, builder, None, story2)
+    assert [(r["data"]["path"], r["data"]["earlier_story"]) for r in reads] == [("app/textutil.py", True)], "one carried read: open candidate, own, repeat collapsed"
+    assert reads[0]["data"]["at"]
+    story2.status = SocietyEventStatus.PROCESSED  # a context probe only: no worker may pick it up
+    db.commit()
+
+    # the current story's reads come first and are never displaced; carried reads fill the rest
+    now_reads = {"builder": [
+        {"decision_summary": "own story", "intents": [read("app/textutil.py", open_id, start=4 + i) for i in range(3)], "sleep_for_seconds": 1},
+        {"decision_summary": "more", "intents": [read("app/textutil.py", open_id, start=10 + i) for i in range(3)], "sleep_for_seconds": 1},
+        {"decision_summary": "x", "intents": [], "sleep_for_seconds": 1},
+    ]}
+    story3, _ = _run(db, SessionLocal, code_settings, FakeModel(now_reads), {"x": 3}, roles=("builder",))
+    reads = ctx_mod._repo_reads(db, builder, None, story3)
+    assert len(reads) == ctx_mod.LIMIT_REPO_READS and not any(r["data"]["earlier_story"] for r in reads)
+
+    # a read made before the agent's own last submission for the candidate is stale: not carried
+    db.add(AgentIntent(run_id=db.query(AgentRun.id).filter(AgentRun.agent_id == builder.id).first()[0], agent_id=builder.id, seq=99, intent_type="SUBMIT_CODE_CANDIDATE", payload={"candidate_id": str(open_id)}, idempotency_key=f"submit-{uuid.uuid4()}", execution_status="executed", executed_at=datetime.now(timezone.utc)))
+    db.commit()
+    story4 = emit_event(db, event_type="t.read", payload={"x": 4}, idempotency_key=f"t-read-{uuid.uuid4()}")
+    db.commit()
+    assert ctx_mod._repo_reads(db, builder, None, story4) == []
+    # and nothing is remembered past the window
+    later = datetime.now(timezone.utc) + timedelta(hours=ctx_mod.CANDIDATE_READS_WINDOW_HOURS + 1)
+    assert ctx_mod._repo_reads(db, builder, None, story2, now=later) == []

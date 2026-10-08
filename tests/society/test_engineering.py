@@ -159,3 +159,78 @@ def test_static_scan_flags_shell_primitives_and_risky_paths(society_settings, te
     findings = static_security_scan(ws, changed)
     assert any("risky code primitive" in f for f in findings)
     assert os.path.basename(py) == "net.py"
+
+
+# ── exact-text replacements (graduation: real edits to large files) ─────────
+
+SRC = "services/demo/app.py"
+SRC_TEXT = "def a():\n    return 1\n\n\ndef b():\n    return 2\n"
+
+
+def _ws_with(society_settings, files):
+    ws = ws_mod.ensure_workspace(society_settings, uuid.uuid4())
+    for rel, text in files.items():
+        p = ws.path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+    return ws
+
+
+def test_replacements_edit_only_the_changed_text(society_settings):
+    from services.registry.app.society.intents import TextReplacement
+
+    ws = _ws_with(society_settings, {SRC: SRC_TEXT})
+    ws_mod.apply_edits(ws, [FileEdit(path=SRC, replacements=[TextReplacement(old="return 1", new="return 10"), TextReplacement(old="def b():\n    return 2\n", new="def b():\n    return 20\n\n\ndef c():\n    return 3\n")])], allowed=[SRC])
+    assert (ws.path / SRC).read_text() == "def a():\n    return 10\n\n\ndef b():\n    return 20\n\n\ndef c():\n    return 3\n"
+
+
+def test_replacements_see_earlier_edits_to_the_same_file(society_settings):
+    from services.registry.app.society.intents import TextReplacement
+
+    ws = _ws_with(society_settings, {SRC: SRC_TEXT})
+    ws_mod.apply_edits(ws, [
+        FileEdit(path=SRC, replacements=[TextReplacement(old="return 1", new="return 7")]),
+        FileEdit(path=SRC, replacements=[TextReplacement(old="return 7", new="return 8")]),
+    ], allowed=[SRC])
+    assert "return 8" in (ws.path / SRC).read_text()
+
+
+@pytest.mark.parametrize("old,why", [("return 99", "does not occur"), ("return", "occurs 2 times")])
+def test_a_stale_or_ambiguous_replacement_aborts_everything(society_settings, old, why):
+    from services.registry.app.society.intents import TextReplacement
+
+    other = "services/demo/other.py"
+    ws = _ws_with(society_settings, {SRC: SRC_TEXT, other: "x = 1\n"})
+    with pytest.raises(ws_mod.WorkspaceError, match=why):
+        ws_mod.apply_edits(ws, [
+            FileEdit(path=other, content="x = 2\n"),  # valid, but must not be written
+            FileEdit(path=SRC, replacements=[TextReplacement(old=old, new="z")]),
+        ], allowed=[SRC, other])
+    assert (ws.path / other).read_text() == "x = 1\n" and (ws.path / SRC).read_text() == SRC_TEXT
+
+
+def test_replacements_cannot_create_a_file_or_bypass_the_allow_list(society_settings):
+    from services.registry.app.society.intents import TextReplacement
+
+    ws = _ws_with(society_settings, {SRC: SRC_TEXT})
+    with pytest.raises(ws_mod.WorkspaceError, match="existing file"):
+        ws_mod.apply_edits(ws, [FileEdit(path="services/demo/new.py", replacements=[TextReplacement(old="a", new="b")])], allowed=["services/demo/new.py"])
+    with pytest.raises(ws_mod.WorkspaceError, match="files_allowed"):
+        ws_mod.apply_edits(ws, [FileEdit(path=SRC, replacements=[TextReplacement(old="return 1", new="x")])], allowed=["services/demo/other.py"])
+    with pytest.raises(ws_mod.WorkspaceError, match="protected"):
+        ws_mod.apply_edits(ws, [FileEdit(path=".env.local", replacements=[TextReplacement(old="a", new="b")])], allowed=[".env.local"])
+
+
+def test_a_file_edit_is_exactly_one_mode():
+    from pydantic import ValidationError
+
+    from services.registry.app.society.intents import TextReplacement
+
+    with pytest.raises(ValidationError, match="exactly one"):
+        FileEdit(path=SRC)
+    with pytest.raises(ValidationError, match="exactly one"):
+        FileEdit(path=SRC, content="x", replacements=[TextReplacement(old="a", new="b")])
+    with pytest.raises(ValidationError):
+        FileEdit(path=SRC, replacements=[])
+    with pytest.raises(ValidationError):
+        FileEdit(path=SRC, replacements=[TextReplacement(old="", new="b")])

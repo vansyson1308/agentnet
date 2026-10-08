@@ -184,3 +184,56 @@ def test_the_heartbeat_reaches_the_builder_through_the_dispatch_table():
 
     routing = subscriptions_by_event(DEFAULT_ROLES)
     assert ROLE_BUILDER in routing.get(EventType.SOCIETY_HEARTBEAT, ())
+
+
+def _agent_targeted_event_types() -> set:
+    """Every event type the Society emits with ``subject_type="agent"`` (a
+    targeted wake), read from the source so a new emitter is seen."""
+    import ast
+    import pathlib
+
+    from services.registry.app.society import runs as runs_mod
+
+    def targets_agent(node) -> bool:
+        return any(isinstance(n, ast.Constant) and n.value == "agent" for n in ast.walk(node))
+
+    def resolve(node):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "EventType":
+            return getattr(EventType, node.attr)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        return None
+
+    found = set()
+    pkg = pathlib.Path(runs_mod.__file__).resolve().parent
+    for path in pkg.rglob("*.py"):
+        for call in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(call, ast.Call):
+                continue
+            kw = {k.arg: k.value for k in call.keywords if k.arg}
+            if "subject_type" not in kw or not targets_agent(kw["subject_type"]):
+                continue
+            name = getattr(call.func, "id", None) or getattr(call.func, "attr", None)
+            node = kw.get("event_type") if name == "emit_event" else (call.args[1] if name == "_emit" and len(call.args) > 1 else None)
+            etype = resolve(node) if node is not None else None
+            assert etype is not None, f"{path.name}:{call.lineno}: cannot resolve the event type of an agent-targeted emit"
+            found.add(etype)
+    return found
+
+
+def test_an_agent_targeted_event_is_never_also_broadcast_to_its_subscribers():
+    """Structural guard for the staging failure of 2026-09-26: repo.read.result
+    targets the reading agent, but dispatch also woke every role subscribed to
+    the type, spending three runs of the correlation's loop-breaker budget per
+    read until the Architect's code_change.requested was ignored. An event type
+    emitted as a targeted wake may be subscribed by a role only if it is
+    TARGETED_ONLY (dispatch then wakes the target alone); otherwise a new
+    subscription silently recreates the broadcast."""
+    from services.registry.app.society.roles import DEFAULT_ROLES
+    from services.registry.app.society.runs import TARGETED_ONLY_EVENT_TYPES
+
+    targeted = _agent_targeted_event_types()
+    assert EventType.REPO_READ_RESULT in targeted, "the scan must see the executor's read-result wake"
+    routing = subscriptions_by_event(DEFAULT_ROLES)
+    broadcast = sorted(t for t in targeted if routing.get(t) and t not in TARGETED_ONLY_EVENT_TYPES)
+    assert broadcast == [], f"agent-targeted events also broadcast to subscribers: {broadcast}"

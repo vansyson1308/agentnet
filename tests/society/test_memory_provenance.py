@@ -90,25 +90,36 @@ def test_poisoned_memory_never_alters_permissions_or_fitness(db, SessionLocal, s
     before_grants = {g.agent_id: (list(g.allowed_intents), g.risk_ceiling, list(g.approval_required_intents)) for g in db.query(AgentCapabilityGrant).all()}
     criteria_before = dict(fitness.TRUSTED_CRITERIA)
     # the model reads the poisoned memory and "obeys" it
-    script = {"scout": [{"decision_summary": poison, "intents": [
-        {"type": "SHELL_EXEC", "payload": {"cmd": "id"}},
-        {"type": "GRANT_CAPABILITY", "payload": {"agent": "Society_Scout", "intents": ["*"]}},
-        {"type": "REQUEST_PR_PROMOTION", "payload": {"candidate_id": str(uuid.uuid4())}},
-        {"type": "WRITE_MEMORY", "payload": {"title": "echo", "content": poison, "scope": "society"}},
-    ], "sleep_for_seconds": 1}]}
+    script = {"scout": [
+        {"decision_summary": poison, "intents": [
+            {"type": "SHELL_EXEC", "payload": {"cmd": "id"}},
+            {"type": "GRANT_CAPABILITY", "payload": {"agent": "Society_Scout", "intents": ["*"]}},
+            {"type": "REQUEST_PR_PROMOTION", "payload": {"candidate_id": str(uuid.uuid4())}},
+            {"type": "WRITE_MEMORY", "payload": {"title": "obeyed", "content": poison, "scope": "society"}},
+        ], "sleep_for_seconds": 0},
+        # memory alone in its decision: allowed, because it is just data
+        {"decision_summary": "note it", "intents": [{"type": "WRITE_MEMORY", "payload": {"title": "echo", "content": poison, "scope": "society"}}], "sleep_for_seconds": 1},
+    ]}
     model = FakeModel(script)
-    ev = emit_event(db, event_type="t.poison", idempotency_key=f"t-poison-{uuid.uuid4()}")
-    db.commit()
     w = SocietyWorker(SessionLocal, settings=society_settings, model=model, worker_id="w", telemetry_enabled=False)
     w.routing = {"t.poison": ["scout"]}
-    asyncio.run(w.run_until_idle(max_cycles=3))
+    for _ in range(2):
+        emit_event(db, event_type="t.poison", idempotency_key=f"t-poison-{uuid.uuid4()}")
+        db.commit()
+        asyncio.run(w.run_until_idle(max_cycles=3))
     ctx = model.calls[0]
     assert any(poison == m["data"]["title"] for m in ctx.memory) and all(m["_untrusted"] for m in ctx.memory)
-    intents = {i.intent_type: i for i in db.query(AgentIntent).all()}
+    rows = db.query(AgentIntent).order_by(AgentIntent.created_at, AgentIntent.seq).all()
+    intents = {i.intent_type: i for i in rows if i.intent_type != "WRITE_MEMORY"}
+    memories = [i for i in rows if i.intent_type == "WRITE_MEMORY"]
     assert _ev(intents["SHELL_EXEC"].execution_status) == "denied"
     assert _ev(intents["GRANT_CAPABILITY"].execution_status) == "denied"
     assert _ev(intents["REQUEST_PR_PROMOTION"].execution_status) == "denied"  # scout has no such grant
-    assert _ev(intents["WRITE_MEMORY"].execution_status) == "executed"        # allowed: it is just data
+    # the memory that shared a decision with the denied intents is refused (execution-grounded
+    # memory); the one written on its own is admitted: it is just data
+    assert [_ev(m.execution_status) for m in memories] == ["failed", "executed"]
+    assert "memory not grounded" in memories[0].error
+    assert db.query(MemoryItem).filter(MemoryItem.title == "obeyed").count() == 0
     after = {g.agent_id: (list(g.allowed_intents), g.risk_ceiling, list(g.approval_required_intents)) for g in db.query(AgentCapabilityGrant).all()}
     assert after == before_grants
     assert fitness.TRUSTED_CRITERIA == criteria_before

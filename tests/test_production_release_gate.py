@@ -319,6 +319,18 @@ def test_production_iac_declares_no_society_and_no_model_credential():
         assert f'{off}: "false"' in ts
 
 
+def test_production_iac_declares_live_a2a_without_a_society_client():
+    """A2A is live in production (docs/A2A_LIVE_PROOF.md). The vault key is a
+    shared reference, never a literal; the Society's A2A client and the
+    company cycle stay off because there is no production Society."""
+    ts = _ts_code_only((REPO_ROOT / ".railway" / "production.ts").read_text(encoding="utf-8"))
+    assert 'A2A_SERVER_ENABLED: "true"' in ts and 'A2A_FEDERATION_ENABLED: "true"' in ts
+    assert "A2A_CREDENTIAL_KEY: ctx.shared.A2A_CREDENTIAL_KEY" in ts
+    assert 'A2A_SOCIETY_CLIENT_ENABLED: "false"' in ts and 'SOCIETY_COMPANY_CYCLE_ENABLED: "false"' in ts
+    assert "A2A_PUBLIC_BASE_URL: PUBLIC_API_ORIGIN" in ts
+    assert 'SOCIETY_OPERATOR_BOOTSTRAP_EMAILS: ""' in ts
+
+
 def test_production_iac_deploys_the_production_branch_not_main():
     """If production followed main, staging evaluation would be decorative and
     the Society would hold production authority through a branch it can write."""

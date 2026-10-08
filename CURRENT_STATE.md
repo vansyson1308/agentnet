@@ -1,8 +1,109 @@
-# AgentNet — current state (truth as of 2026-09-19, Phase 5 closure)
+# AgentNet — current state (truth as of 2026-09-27, external coding agent exit)
 
 This file replaces the earlier machine-specific snapshot. It describes the repository as
 the running code, schema and tests define it. When something here disagrees with the code,
 the code and tests win and this file is stale — fix it in the same change.
+
+## Autonomous Maintenance OS — built, merged dark, NOT LIVE (2026-09-27, ADR-0010)
+
+A later owner mission asked for an Autonomous Maintenance OS. What exists now (see
+`docs/MAINTENANCE_OS.md`, `docs/MAINTENANCE_LIVE_PROOF.md`):
+
+- **Maintenance Kernel** (`services/registry/app/maintenance/`): desired-state registry, structural
+  incidents with deterministic fingerprints, one active RepairCase per incident, an executable state
+  machine whose liveness the database enforces, lease-fenced reconciliation (no events needed), typed
+  model activities with bounded tool loops and paged repo tools, immutable plan revisions for rescope,
+  an atomic PatchSet editor, deterministic QA + model reviews, the existing promotion controller to
+  `main`, trusted maintenance risk classes with anti-reward-hacking and evaluation-laundering rules,
+  SLOs/error budgets, a separate model budget and queue, a freeze repair exception, watchdog,
+  knowledge/postmortem facts, KPIs/toil, an operator console and API.
+- **Release Controller** (`release.py`, `release_worker.py`): model-free, fails closed, exact-SHA
+  production PR + service-aware deploy + post-deploy verification + rollback to known-good +
+  branch reconciliation. Railway mutations are discovered by schema introspection.
+- **Browser/UX probe** (Playwright + axe-core, structural only). On `main` it finds the real
+  experience defects deterministically: text contrast 1.06:1 on the dark theme, raw capability dicts
+  (`span.trust-badge`), an unexpected warning banner, `#` placeholder links, and `/marketplace`,
+  `/login`, `/register` landing on `/landing`.
+- **Migration** `0014_maintenance_os` (additive). Every `MAINTENANCE_*` switch defaults to `false`.
+- **Test-discovery sentinel** (PR #64's concept): required; the dashboard suite is explicitly HELD
+  until the Society's repair makes it pass. PR #64 should be superseded/updated once that happens.
+
+**Verdict: NOT LIVE.** No live kernel run, no live release, no live rollback and no Society-authored
+production repair have happened. Owner actions to get there: review/merge this RED change; enable the
+kernel switches on the staging society-worker; provision `release-control` (Release App, production
+Railway token, attestation key, release-preview surface) per `docs/MAINTENANCE_RELEASE.md`; schedule
+the deep-tier browser probe. The dashboard repairs still belong to the Society.
+
+## Handoff: the external coding agent exits (2026-09-27)
+
+From this date the external coding agent (Claude Code) no longer watches or steers the system. Two
+parties remain: the **Society** does the engineering, and the **owner** holds every
+constitutional decision. Everything below was read from the running system on 2026-09-27. The
+rows further down that carry older dates are kept as history.
+
+**What runs by itself (staging Society, `main` `cadf950`).**
+- The runtime, autonomous code, GitHub promotion and GREEN auto-merge were switched on at the
+  staging society-worker service on 2026-09-20 (see below). The external agent has not changed
+  them since. The IaC defaults in `.railway/railway.ts` stay `false`.
+- The live model is `deepseek-flash`. There is one scheduled company cycle a day (01:00Z) and a
+  public-surface monitor that turns production defects into `public.surface.anomaly` events.
+- The fleet (Scout, Governor, Architect, Builder, QA, Security, Evaluator) finds problems,
+  proposes, builds in isolated worktrees, runs QA and Security, and promotes. It declines
+  candidates it cannot finish (`DECLINE_CODE_CANDIDATE`, #60). It re-proposes hypotheses whose
+  attempts all failed (#61). It recovers candidate wakes the loop breaker swallowed (#62).
+- Deploys stay disabled (`SOCIETY_DEPLOYMENT_PROVIDER=disabled`). The production Society is **OFF**.
+
+**Last audit before exit** (2026-09-27T14:04Z, validator `phase5_live.py`, plan `candidates:4,audit:6`,
+on `cadf950`): `RESULT: OK (18 checks)`.
+- Loop breaker: 0 trips. Dead runs: 0. Forbidden HIGH intents: 0. Duplicate candidates or
+  proposal titles: 0.
+- Money E01–E03: PASS. Secret, token and chain-of-thought scans X01–X03: PASS.
+- Public surface P01–P04: PASS.
+- Model spend today: $0.147 of $1.00, over 76 runs.
+
+**Open work that belongs to the Society: the production dashboard defect.**
+- **The defect.** The monitor found templates that call `url_for` on endpoints the dashboard does
+  not register. The gate that proves it is
+  `services/dashboard/tests/test_public_surface.py::test_every_active_template_url_for_names_a_route`.
+- **Attempt 1.** Candidate `a2788678` (AMBER) changed only `services/dashboard/app/main.py`. It
+  failed that gate. On 2026-09-27 its Builder declined it as `spec_outside_files_allowed`.
+- **Other candidates.** `23ac830a` (RED, telemetry) was declined as `acceptance_unsatisfiable`.
+  `9da14a08` was abandoned by an operator with owner approval; it is the only operator abandon.
+- **Next.** No dashboard candidate is open. The next attempt starts from the Scout → Governor → Architect
+  path at the next anomaly or company cycle.
+- **Recording rules.** No human or external agent writes this repair. Claude's PRs #50–#53 and
+  #55–#62 changed only the control plane, the evaluation gates and tooling, and are recorded that
+  way.
+
+**What only the owner does.**
+1. Review and merge the Society's **AMBER** promotion PR for the dashboard repair when it
+   appears. RED and constitutional changes also need the owner. GREEN changes merge on their own.
+2. Release to production through the trusted release gate (`docs/PRODUCTION_RUNBOOK.md`). The
+   Society has no production credential and no deploy authority.
+3. Lift incident freezes and, rarely, abandon a stranded candidate (`candidate_admin.abandon`).
+4. Merge the held CI-hardening draft PR from `claude/agentnet-autonomous-society-0aojp7` once its
+   CI is green. It makes CI collect the dashboard tests, which it never has, and adds a
+   test-discovery sentinel. On `cadf950`, 15 dashboard tests fail:
+   - 11 in `test_public_surface.py`, which is the defect above;
+   - 4 in `test_main.py`: two trust-label expectations for `derive_trust_context`, and two pages
+     that answer 302 where the test expects 200.
+
+   Those failures are dashboard work for the Society, not for the owner.
+
+**How to tell it is healthy without an engineer.**
+- Set the staging-validator's `VALIDATOR_SCRIPT=phase5_live.py` and `PHASE5_PLAN=audit:24`, then
+  read the `PHASE5` lines. Set it back to `surface_watch.py` afterwards.
+- Any failing L0x (loop or dead runs), E0x (money) or X0x (secrets) check is a stop signal.
+- The public `/v1/society/status` and `/v1/society/metrics` endpoints are structural and safe to
+  poll.
+- The kill switch is `SOCIETY_RUNTIME_ENABLED=false` on the staging society-worker.
+
+**Graduation verdict at exit: NOT COMPLETE.**
+- Autonomous monitoring of the public surface is live, and the autonomous GREEN evolution loop
+  is proven (`docs/SOCIETY_LIVE_PROOF.md` §9).
+- **Autonomous self-healing of the production defect is not yet proven.** No Society repair has
+  reached READY, an owner-approved merge or a trusted production release.
+- The exit happened at the owner's direction, with the remaining steps assigned above.
 
 ## Status line
 
@@ -19,7 +120,7 @@ the code and tests win and this file is stale — fix it in the same change.
 | Live model | **LIVE — OPERATIONAL; autonomous promotion NOT yet proven (Phase 6, 2026-09-20)** — the Society runs on real DeepSeek against Railway staging with `SOCIETY_RUNTIME_ENABLED=true`: 175 completed live runs, 0 non-live, 0 DEAD in the final window, $0.082 spent. Proven live: the full engineering chain from one world event to a real `CodeCandidate` (causation depth 7); multi-agent operation on a REAL `task.failed`; both approval lifecycles; operator memory refutation with an append-only audit row; the GitHub App credential minting a correctly scoped installation token (**GITHUB APP READY** ×4, installation scoped to exactly this repository, Actions secrets refused 403); the promotion controller **refusing** a `REQUEST_PR_PROMOTION` for a candidate that was not READY; the anti-busywork guard rejecting a no-op candidate before QA; `SOCIETY RED-TEAM: ALL DEFENDED` twice against live cognition. **Not** proven live: any candidate producing a real diff, and therefore no promotion record exists — see `docs/SOCIETY_LIVE_PROOF.md` §4 |
 | Staging deployment | **Railway managed staging — GREEN** (2026-09-18, `main` ae42d7a): project `AgentNet`, environment `staging`, Postgres + Redis (private), registry + dashboard on Railway-generated domains, payment / worker / society-worker private, one `society-workspace` volume, registry pre-deploy as the only migration owner (`0010_self_development`, fleet seed), `TRUST_X_REAL_IP` spoof test PASS at the live edge, Society flags OFF, scripted model only. Two consecutive full validations by the in-environment `staging-validator` (`deploy/railway/validate_staging.py`, 26 checks each, distinct operators) plus restart / persistence / rollback / secret-leak / resource proofs — `docs/RAILWAY_STAGING.md` §20. Open owner action: *Wait for CI* on each service (the flag does not persist through the connector). `docker-compose.staging.yml` remains the Compose alternative |
 | Production deployment | **PUBLIC PRODUCTION LIVE: canonical UI https://agentnet.io.vn, API https://api.agentnet.io.vn, through Cloudflare** (2026-09-25): Railway environment `production` (`5e23ccb2`), six services from branch `production` @ `95830331` (security release of approved `main` `57dab99c`, tree-identical; before it `60559d7f`, the first gated release of 2026-09-24). `https://api.agentnet.io.vn` → prod-registry and `https://dashboard.agentnet.io.vn` → prod-dashboard serve through ZoneDNS since the Stage A cutover (`docs/PRODUCTION_CUTOVER.md`): edge smoke 34/36, the two failures being the apex's missing HTTPS; public signup → Resend email → verify → login proven through `https://api.agentnet.io.vn` (11/11). The legacy VPS is retired. The owner delegated `agentnet.io.vn` to Cloudflare (zone active 2026-09-25T07:57Z); api/dashboard, signup and email re-proven through the edge. Railway verified the apex; `https://agentnet.io.vn` serves the dashboard, `dashboard.*` answers 301 to it, and live CORS admits only the apex (registry `34bd9c7b`). The final edge validation (38/40) found a rate-limit identity bypass (unverified bearer tokens) and request paths leaking into a public `/metrics`. The fix (#43) was released through the gate (#44, registry `8c903a22`), and both were re-proven closed on the public edge: B1/X1 10/10, full edge suite 40/40, fresh signup 11/11 (`docs/CLOUDFLARE_MIGRATION.md` §10.3). Zero TCP proxies, no Railway-generated domain, payment/worker/Postgres/Redis private. `.railway/production.ts` declares three domains and the final apex CORS origin (matches live since the 2026-09-25 CORS change; ADR-0008 D13) |
-| A2A 1.0 + federation + company mode (Phase 8) | **IMPLEMENTED AND TESTED; ships dark** — official `a2a-sdk` 1.1.5 types and handler, JSON-RPC + HTTP+JSON bindings, durable Postgres task store, SSE streaming, tenant = agent id, escrow through the economics extension, operator-verified federation catalog with an SSRF-pinned fetcher and sealed credentials, Society A2A intents (approval-gated `REQUEST_A2A_TASK`) and the company cycle. Interop proven against the official Python and JS SDKs and the official reference server. The v0.3 card, the crawler and `/agents/import` are retired. All flags default to `false`; `.railway/production.ts` declares them dark until enabled (ADR-0009; `docs/A2A_*.md`, `docs/AUTONOMOUS_COMPANY.md`) |
+| A2A 1.0 + federation + company mode (Phase 8) | **A2A server and federation LIVE IN PRODUCTION** (release `322e76b` = `main` `39e7c6b`; inbound 37/37 with the official Python and JS SDKs, federation 14/14); **company mode LIVE ON STAGING** (the production Society is OFF by design) (docs/A2A_LIVE_PROOF.md, docs/AUTONOMOUS_COMPANY_LIVE_PROOF.md) — official `a2a-sdk` 1.1.5 types and handler, JSON-RPC + HTTP+JSON bindings, durable Postgres task store, SSE streaming, tenant = agent id, escrow through the economics extension, operator-verified federation catalog with an SSRF-pinned fetcher and sealed credentials, Society A2A intents (approval-gated `REQUEST_A2A_TASK`) and the company cycle. Interop proven against the official Python and JS SDKs and the official reference server. The v0.3 card, the crawler and `/agents/import` are retired. All flags default to `false`; `.railway/production.ts` declares production's live state: server and federation `true`, the Society client and the company cycle `false` (ADR-0009; `docs/A2A_*.md`, `docs/AUTONOMOUS_COMPANY.md`) |
 | Final managed hosting | **Railway** — staging DEPLOYED AND VALIDATED (`docs/RAILWAY_STAGING.md`, ADR-0006 D12); production PUBLIC and LIVE through Cloudflare (canonical UI at the apex; `docs/PRODUCTION_CUTOVER.md`, `docs/CLOUDFLARE_MIGRATION.md`, ADR-0008) |
 
 Self-development status (Phase 3). PROVEN means the mechanics are exercised by deterministic
@@ -65,8 +166,11 @@ PUBLIC LAUNCH VERDICT: LIVE (2026-09-25) — B1 rate-limit bypass CLOSED, X1 /me
 EMAIL SECRET LEAK CHECK: PASS (complete registry log, not a sample)
 DNS CHANGED: YES — authoritative DNS delegated to Cloudflare by the owner (2026-09-25); ZoneDNS retired
   from the delegation, its zone untouched as the rollback target
-A2A V1: IMPLEMENTED AND TESTED (dark by default; enablement per docs/PRODUCTION_RUNBOOK.md "A2A enablement")
-AUTONOMOUS COMPANY MODE: IMPLEMENTED AND TESTED (SOCIETY_COMPANY_CYCLE_ENABLED, staging only)
+A2A V1: LIVE IN PRODUCTION (2026-09-26; release 322e76b = main 39e7c6b, PR #49) — inbound 37/37
+  (official Python + JS SDKs), federation 14/14, final core validation 18/18; staging 39/39 + 18/18
+A2A ECONOMICS BRIDGE: ENFORCED LIVE (refusals: no extension, budget < price, unfunded); a funded
+  settlement is proven by tests only (no real money)
+AUTONOMOUS COMPANY MODE: LIVE ON STAGING (operator + scheduled cycles settled by the live Society, 9/9 each; staging only by design)
 PRODUCTION SOCIETY: OFF
 LEGACY FILE BACKLOG: RETIRED FROM ACTIVE RUNTIME
 SYNTHETIC POLL ACTIVITY: LEGACY/DEMO ONLY

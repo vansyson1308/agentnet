@@ -217,7 +217,7 @@ class TestClientIdentityIsNotSpoofable:
     def _jwt(sub="7b0a6a53-1f2f-4f55-9a58-4d7d0c2f1e11", token_type="user", secret=None, expires_in=600):
         from datetime import datetime, timedelta, timezone
 
-        from jose import jwt
+        import jwt
 
         from services.registry.app.config import JWT_ALGORITHM, JWT_SECRET_KEY
 

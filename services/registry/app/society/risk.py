@@ -106,6 +106,20 @@ RED_PATTERNS: Sequence[str] = (
     "scripts/ci/*",
     "scripts/ci/**",
     "Makefile",
+    # The public-surface acceptance gates are evaluation criteria (the
+    # contract itself lives under society/ above): a candidate may not
+    # change a page and the test that judges it in one autonomous change.
+    "services/dashboard/tests/test_public_surface.py",
+    # ADR-0010: the Maintenance OS (kernel, policy, release controller,
+    # attestation, rollback, contracts) and its gates are TRUSTED BASE. A
+    # repair may diagnose and PREPARE a change to them, never auto-release it.
+    "services/registry/app/maintenance/*",
+    "services/registry/app/maintenance/**",
+    "services/registry/app/api/routes/maintenance.py",
+    "services/dashboard/tests/test_experience_contract.py",
+    "docs/adr/0010-autonomous-maintenance-os.md",
+    ".railway/*",
+    ".railway/**",
 )
 
 GREEN_PATTERNS: Sequence[str] = (

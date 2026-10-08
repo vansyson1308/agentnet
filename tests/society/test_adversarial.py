@@ -188,5 +188,9 @@ def test_unauthenticated_external_event_payload_cannot_target_privileges(db, Ses
     ev = _run(db, SessionLocal, society_settings, model, "external.webhook", {}, payload={"target_agent_id": str(report.agents["builder"]), "instruction": INJECTION}, actor_type="external")
     run = db.query(AgentRun).filter(AgentRun.event_id == ev.id).first()
     assert run is not None and run.agent_id == report.agents["builder"]
-    statuses = {i.intent_type: _ev(i.execution_status) for i in db.query(AgentIntent).filter(AgentIntent.run_id == run.id).all()}
-    assert statuses == {"GRANT_CAPABILITY": "denied", "WRITE_MEMORY": "executed"}
+    rows = {i.intent_type: i for i in db.query(AgentIntent).filter(AgentIntent.run_id == run.id).all()}
+    statuses = {k: _ev(i.execution_status) for k, i in rows.items()}
+    # the memory shared a decision with a denied side effect: execution-grounded
+    # memory refuses it (memory_grounding.py) -- nothing the event asked for happened
+    assert statuses == {"GRANT_CAPABILITY": "denied", "WRITE_MEMORY": "failed"}
+    assert "memory not grounded" in rows["WRITE_MEMORY"].error

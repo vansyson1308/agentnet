@@ -1,8 +1,7 @@
 import os
 import json
 import uuid
-import time
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, Response, stream_with_context
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
 from werkzeug.middleware.proxy_fix import ProxyFix
 from .api_client import api_client, APIError, AuthRequiredError
 import pathlib
@@ -29,22 +28,6 @@ app.secret_key = _resolve_flask_secret()
 
 if os.getenv("BEHIND_PROXY", "").lower() == "true":
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
-
-# The templates still link to pages that were removed from this app (login,
-# register, wallet, tasks, ...). A render must not 500 on such a link — it
-# becomes an inert "#" anchor, logged once per endpoint, until the dashboard
-# pages are rebuilt (tracked separately). Real routes are unaffected.
-_STALE_ENDPOINTS_SEEN: set = set()
-
-
-def _stale_template_link(error, endpoint, values):
-    if endpoint not in _STALE_ENDPOINTS_SEEN:
-        _STALE_ENDPOINTS_SEEN.add(endpoint)
-        app.logger.warning("template links to removed endpoint %r; rendering '#'", endpoint)
-    return "#"
-
-
-app.url_build_error_handlers.append(_stale_template_link)
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -83,27 +66,19 @@ def derive_trust_context(agent):
     timeouts = agent.get('total_tasks_timeout', 0)
     tier = str(agent.get('reputation_tier', 'unranked')).capitalize()
     
-    label = "Unknown Reliability"
-    color = "#64748b"
     if total < 5:
-        label = "Limited History"
-        color = "#8b5cf6"
-    elif success >= 0.90 and timeouts == 0:
-        label = "Highly Reliable"
-        color = "#10b981"
-    elif success >= 0.80:
-        label = "Generally Reliable"
-        color = "#3b82f6"
+        label, color = "Limited History", "#8b5cf6"
     elif timeouts > (total * 0.1):
-        label = "Frequent Timeout Risk"
-        color = "#ef4444"
+        label, color = "Frequent Timeout Risk", "#ef4444"
+    elif success >= 0.90 and timeouts == 0:
+        label, color = "Highly Reliable", "#10b981"
     elif timeouts > 0:
-        label = "Occasional Timeout Risk"
-        color = "#f59e0b"
+        label, color = "Occasional Timeout Risk", "#f59e0b"
+    elif success >= 0.80:
+        label, color = "Generally Reliable", "#3b82f6"
     else:
-        label = "Moderate Reliability"
-        color = "#64748b"
-        
+        label, color = "Moderate Reliability", "#64748b"
+
     return {
         "total": total,
         "label": label,
@@ -117,6 +92,17 @@ def derive_trust_context(agent):
 app.jinja_env.filters['trust_context'] = derive_trust_context
 
 
+def capability_name(cap) -> str:
+    """A capability as the text a badge shows: the registry returns objects
+    ({"name", "description", "price"}); older shapes are plain strings."""
+    if isinstance(cap, dict):
+        return str(cap.get("name") or cap.get("description") or "capability")
+    return str(cap)
+
+
+app.jinja_env.filters['capability_name'] = capability_name
+
+
 @app.errorhandler(404)
 def handle_not_found(e):
     app.logger.warning(f"404: {request.path}")
@@ -126,8 +112,8 @@ def handle_not_found(e):
        request.path.startswith("/static/") or \
        request.path.startswith("/assets/"):
         return "", 204
-    flash("Page not found.", "warning")
-    return redirect(url_for('landing_page'))
+    # A missing page answers 404; a redirect to /landing would disguise it.
+    return render_template("error.html", title="Page Not Found", error="That page does not exist."), 404
 
 
 @app.errorhandler(Exception)
@@ -145,7 +131,7 @@ def handle_exception(e):
     if request.path.startswith("/api"):
         return jsonify({"error": "internal_error"}), 500
     flash("An unexpected backend error occurred.", "danger")
-    return render_template("error.html", error=str(e) if app.debug else "Internal Server Error"), 500
+    return render_template("error.html", title="Internal Server Error", error=str(e) if app.debug else "Internal Server Error"), 500
 
 
 @app.context_processor
@@ -186,7 +172,86 @@ def metaverse_page():
         flash("An error occurred while loading the command center.", "danger")
         return render_template("metaverse.html", agents=[], is_logged_in=bool(session.get("access_token")))
 
-# ... [TRUNCATED -- preserve when editing] ...
+
+@app.route("/marketplace")
+def marketplace_page():
+    """Marketplace – browse and search agents. Always accessible: when the
+    registry is unreachable the page still renders, with an empty state."""
+    search = request.args.get("search", "")
+    category = request.args.get("category", "")
+    sort = request.args.get("sort", "")
+    order = request.args.get("order", "desc")
+    agents, unavailable = [], False
+    try:
+        fetched = api_client.fetch_agents(search=search, category=category, sort=sort or None, order=order, limit=100)
+        agents = [{**a, "trust": derive_trust_context(a)} for a in fetched]
+    except Exception as e:
+        app.logger.warning("marketplace: registry unavailable (%s)", type(e).__name__)
+        unavailable = True
+    return render_template(
+        "marketplace.html", agents=agents, registry_unavailable=unavailable,
+        current_search=search, current_category=category, current_sort=sort, current_order=order,
+    )
+
+
+# ============================================================
+# AUTHENTICATION ROUTES
+# ============================================================
+
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip()
+        password = request.form.get("password") or ""
+        if not email or not password:
+            flash("Email and password are required.", "danger")
+            return render_template("login.html"), 400
+        try:
+            data = api_client.login(email=email, password=password)
+        except APIError as e:
+            if e.status_code == 401:
+                flash("Invalid email or password.", "danger")
+            elif e.status_code == 403:
+                flash("Please verify your email address before signing in.", "warning")
+            else:
+                app.logger.warning("login: registry error (%s)", e.status_code)
+                flash("Sign-in is unavailable right now. Please try again later.", "danger")
+            return render_template("login.html"), 400 if e.status_code in (401, 403) else 503
+        session.clear()
+        session["access_token"] = data["access_token"]
+        flash("Welcome back, Commander!", "success")
+        return redirect(url_for("metaverse_page"))
+    return render_template("login.html")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register_page():
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip()
+        password = request.form.get("password") or ""
+        if not email or not password:
+            flash("Email and password are required.", "danger")
+            return render_template("register.html"), 400
+        try:
+            api_client.register(email=email, password=password)
+        except APIError as e:
+            if e.status_code == 400 and e.detail:
+                flash(f"Registration failed: {e.detail}", "danger")
+            else:
+                app.logger.warning("register: registry error (%s)", e.status_code)
+                flash("Registration is unavailable right now. Please try again later.", "danger")
+            return render_template("register.html"), 400 if e.status_code == 400 else 503
+        flash("Account created. Check your email for the verification link, then sign in.", "success")
+        return redirect(url_for("login_page"))
+    return render_template("register.html")
+
+
+@app.route("/logout")
+def logout_page():
+    session.clear()
+    flash("You have been signed out.", "info")
+    return redirect(url_for("landing_page"))
+
 
 # ============================================================
 # A2A NETWORK (Phase 8, ADR-0009) -- public, read-only

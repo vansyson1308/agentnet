@@ -83,6 +83,10 @@ class EventType:
     LOOP_BREAKER_TRIPPED = "loop_breaker.tripped"
     # Phase 8 — A2A federation + autonomous company mode (ADR-0009)
     COMPANY_CYCLE = "company.cycle"
+    # Graduation: the trusted synthetic monitor of the PUBLIC product surface
+    # (surface_monitor.py). System-authored, structural payloads only.
+    PUBLIC_SURFACE_ANOMALY = "public.surface.anomaly"
+    PUBLIC_SURFACE_RECOVERED = "public.surface.recovered"
     INCIDENT_OPENED = "incident.opened"
     INCIDENT_LIFTED = "incident.lifted"
     A2A_TASK_REQUESTED = "a2a.task.requested"

@@ -45,3 +45,7 @@ router.include_router(projects_router, tags=["projects"])
 router.include_router(orchestrator_router, tags=["orchestrator"])
 # Autonomous Society Runtime v1 — observability + JARVIS-style queries
 router.include_router(society_router, tags=["society"])
+# Autonomous Maintenance OS (ADR-0010) — operator status/decisions + public summary
+from .maintenance import router as maintenance_router  # noqa: E402
+
+router.include_router(maintenance_router, tags=["maintenance"])

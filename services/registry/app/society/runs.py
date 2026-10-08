@@ -15,6 +15,7 @@ Concurrency model
 Loop-storm guards applied at dispatch (cheap, before any run exists):
   - event TTL, max causation depth, max runs per correlation,
   - an agent is never woken by its own event unless explicitly targeted,
+  - a targeted-only event wakes its target and nobody else,
   - UNIQUE(agent_id, event_id) makes double-dispatch impossible.
 """
 
@@ -62,6 +63,20 @@ class DispatchStats:
     duplicates_prevented: int = 0
     loop_breaks: int = 0
     notes: List[str] = field(default_factory=list)
+
+
+#: Events that exist to wake ONE agent (``target_agent_id`` or an ``agent``
+#: subject): they reach that agent only and are never also broadcast to every
+#: role subscribed to the type. ``repo.read.result`` is the reading agent's
+#: next engineering turn (events.py). Broadcasting it (staging, 2026-09-26)
+#: woke the Architect, the Builder and Security on every Architect read, and
+#: the two bystanders answered "not for me". Each read spent three runs of the
+#: correlation's loop-breaker budget, so three reconnaissance reads exhausted
+#: SOCIETY_MAX_RUNS_PER_CORRELATION=12, and the Architect's code_change.requested
+#: was ignored. The candidate was stranded in REQUESTED. The bystander
+#: runs were also shown another agent's untrusted read preview. No cap changes:
+#: the same story now spends one run per read.
+TARGETED_ONLY_EVENT_TYPES = frozenset({EventType.REPO_READ_RESULT})
 
 
 def _agents_for_roles(db: Session, roles: Iterable[str]) -> List[tuple[Agent, AgentCapabilityGrant]]:
@@ -157,7 +172,8 @@ def dispatch_pending_events(
         targeted = _targeted_agent(db, event)
         if targeted is not None:
             selected[targeted[0].id] = targeted
-        for agent, grant in _agents_for_roles(db, routing.get(event.event_type, [])):
+        subscribers = [] if event.event_type in TARGETED_ONLY_EVENT_TYPES else routing.get(event.event_type, [])
+        for agent, grant in _agents_for_roles(db, subscribers):
             if event.actor_type == "agent" and event.actor_id == agent.id and targeted is None:
                 continue  # never wake an agent on its own untargeted event
             selected.setdefault(agent.id, (agent, grant))
@@ -192,7 +208,7 @@ def dispatch_pending_events(
         event.dispatched_at = now
         if created == 0 and not selected:
             event.status = SocietyEventStatus.IGNORED
-            event.dispatch_note = "no subscriber"
+            event.dispatch_note = "targeted-only: target unresolved" if event.event_type in TARGETED_ONLY_EVENT_TYPES else "no subscriber"
             event.processed_at = now
             stats.events_ignored += 1
         else:

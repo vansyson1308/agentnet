@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "purpose": "The public product surface AgentNet promises to humans and agents. One source of truth for the Society's synthetic monitor, deploy/public_surface_validate.py and CI. Structural expectations only: status, final path after redirects, and page-specific markers. A landing-page 200 at the end of a redirect chain is a FAILURE for any other page.",
+  "origins": {
+    "ui": "https://agentnet.io.vn",
+    "api": "https://api.agentnet.io.vn"
+  },
+  "product_source": "services/dashboard (Flask app: app/main.py, app/api_client.py, app/templates/)",
+  "verification_tests": ["services/dashboard/tests/test_public_surface.py"],
+  "login_path": "/login",
+  "landing_path": "/landing",
+  "items": [
+    {
+      "name": "ui_root",
+      "origin": "ui",
+      "path": "/",
+      "auth": "public",
+      "initial_status": [301, 302, 303, 307, 308],
+      "final_status": 200,
+      "final_path": "/metaverse",
+      "markers": ["Metaverse Command Center"],
+      "severity": "critical",
+      "monitor": true,
+      "intent": "The canonical entrypoint redirects to the command center."
+    },
+    {
+      "name": "landing",
+      "origin": "ui",
+      "path": "/landing",
+      "auth": "public",
+      "initial_status": [200],
+      "final_status": 200,
+      "final_path": "/landing",
+      "markers": ["Explore Marketplace"],
+      "severity": "major",
+      "monitor": true,
+      "intent": "The landing page; every call to action must lead to a real page."
+    },
+    {
+      "name": "metaverse",
+      "origin": "ui",
+      "path": "/metaverse",
+      "auth": "public",
+      "initial_status": [200],
+      "final_status": 200,
+      "final_path": "/metaverse",
+      "markers": ["Metaverse Command Center"],
+      "severity": "major",
+      "monitor": true,
+      "intent": "The command center."
+    },
+    {
+      "name": "network",
+      "origin": "ui",
+      "path": "/network",
+      "auth": "public",
+      "initial_status": [200],
+      "final_status": 200,
+      "final_path": "/network",
+      "markers": ["AgentNet A2A Network"],
+      "severity": "major",
+      "monitor": true,
+      "intent": "The public A2A network page."
+    },
+    {
+      "name": "marketplace",
+      "origin": "ui",
+      "path": "/marketplace",
+      "auth": "public",
+      "initial_status": [200],
+      "final_status": 200,
+      "final_path": "/marketplace",
+      "markers": ["Agent Registry"],
+      "severity": "major",
+      "monitor": true,
+      "intent": "The public agent marketplace (the landing page advertises it)."
+    },
+    {
+      "name": "login",
+      "origin": "ui",
+      "path": "/login",
+      "auth": "public",
+      "initial_status": [200],
+      "final_status": 200,
+      "final_path": "/login",
+      "markers": ["Sign In", "name=\"password\""],
+      "severity": "critical",
+      "monitor": true,
+      "intent": "Human sign-in form."
+    },
+    {
+      "name": "register",
+      "origin": "ui",
+      "path": "/register",
+      "auth": "public",
+      "initial_status": [200],
+      "final_status": 200,
+      "final_path": "/register",
+      "markers": ["Initialize Access", "name=\"password\""],
+      "severity": "critical",
+      "monitor": true,
+      "intent": "Human signup form (the registry sends the verification email)."
+    },
+    {
+      "name": "api_health",
+      "origin": "api",
+      "path": "/healthz",
+      "auth": "public",
+      "initial_status": [200],
+      "final_status": 200,
+      "final_path": "/healthz",
+      "markers": ["\"status\""],
+      "severity": "critical",
+      "monitor": true,
+      "intent": "Public API liveness."
+    },
+    {
+      "name": "api_ready",
+      "origin": "api",
+      "path": "/readyz",
+      "auth": "public",
+      "initial_status": [200],
+      "final_status": 200,
+      "final_path": "/readyz",
+      "markers": ["\"status\""],
+      "severity": "critical",
+      "monitor": true,
+      "intent": "Public API readiness (database and cache reachable)."
+    },
+    {
+      "name": "a2a_agent_card",
+      "origin": "api",
+      "path": "/.well-known/agent-card.json",
+      "auth": "public",
+      "initial_status": [200],
+      "final_status": 200,
+      "final_path": "/.well-known/agent-card.json",
+      "markers": ["supportedInterfaces", "JSONRPC"],
+      "severity": "critical",
+      "monitor": true,
+      "intent": "The canonical A2A 1.0 Agent Card."
+    }
+  ],
+  "navigation": {
+    "from": ["landing", "metaverse", "network", "marketplace", "login", "register"],
+    "max_links": 30,
+    "severity": "major",
+    "monitor": true,
+    "intent": "Every same-origin link and form action on the core pages resolves to its own page (or to the login page for a protected page). A bare '#' or 'javascript:' link is a dead link; a redirect that ends on the landing page is a missing page."
+  },
+  "assets": {
+    "from": ["landing", "metaverse", "network", "marketplace", "login", "register"],
+    "max_assets": 20,
+    "severity": "minor",
+    "monitor": true,
+    "intent": "Local stylesheets, scripts and images referenced by the core pages load."
+  }
+}

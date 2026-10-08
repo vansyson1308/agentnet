@@ -1,0 +1,60 @@
+name: Maintenance deep-tier browser probe
+
+# ADR-0010 D10: the deep tier of the Maintenance OS's synthetic monitoring.
+# A deterministic Playwright + axe-core probe of the PUBLIC product's critical
+# journeys (anonymous; no credential is used against the product). Only the
+# STRUCTURAL result (rule ids, counts, selector classes, safe paths, numbers)
+# is posted to the Maintenance OS ingress (the staging registry, where the
+# kernel runs), and only when the owner configured the repository secrets
+# MAINTENANCE_INGEST_URL + MAINTENANCE_INGEST_EMAIL + MAINTENANCE_INGEST_PASSWORD
+# (an event-producer account; the probe logs in once per run because user
+# JWTs expire). This is a monitor, not a gate: findings are data for the
+# kernel, so a finding does not fail the run; a broken probe or a rejected
+# ingest (exit 3) does.
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"   # every 3 hours (the fast HTTP tier runs every 10 minutes elsewhere)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintenance-browser-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Probe dependencies (pinned)
+        run: |
+          pip install -r services/registry/requirements.txt playwright==1.56.0
+          python -m playwright install --with-deps chromium
+          npm install --no-save --prefix "$RUNNER_TEMP/axe" axe-core@4.10.3
+      - name: Probe production (structural output only)
+        env:
+          ENVIRONMENT: development
+          JAEGER_ENABLED: "false"
+          MAINTENANCE_AXE_SOURCE: ${{ runner.temp }}/axe/node_modules/axe-core/axe.min.js
+          MAINTENANCE_INGEST_URL: ${{ secrets.MAINTENANCE_INGEST_URL }}
+          MAINTENANCE_INGEST_EMAIL: ${{ secrets.MAINTENANCE_INGEST_EMAIL }}
+          MAINTENANCE_INGEST_PASSWORD: ${{ secrets.MAINTENANCE_INGEST_PASSWORD }}
+        run: |
+          set +e
+          python deploy/maintenance/browser_probe.py --origin https://agentnet.io.vn --target production --post > probe.json
+          code=$?
+          set -e
+          # 0 = every page passed, 1 = findings (data for the kernel); anything else (3 = ingest rejected) = the probe itself broke
+          if [ "$code" -gt 1 ]; then exit "$code"; fi
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: browser-probe
+          path: probe.json

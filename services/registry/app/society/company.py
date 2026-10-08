@@ -31,7 +31,7 @@ import json
 import sys
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -49,12 +49,16 @@ from ..models import (
     ImprovementProposal,
     IncidentFreeze,
     IntentExecutionStatus,
+    PromotionStatus,
+    ProposalStatus,
     RiskTier,
     SocietyEvent,
     TaskSession,
+    TaskStatus,
     User,
 )
 from .config import SocietySettings
+from .context import TXT_LONG
 from .events import emit_event, utcnow
 
 COMPANY_CYCLE_EVENT = "company.cycle"
@@ -139,19 +143,198 @@ def a2a_fitness(evidence: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _portfolio(db: Session, settings: SocietySettings) -> Dict[str, Any]:
+#: A candidate in one of these states ended its hypothesis' attempt.
+_CANDIDATE_ENDED = (CodeCandidateStatus.REJECTED.value, CodeCandidateStatus.FAILED.value, CodeCandidateStatus.ABANDONED.value)
+#: A READY candidate whose promotion reached one of these put the attempt somewhere final.
+_PROMOTION_ENDED = (PromotionStatus.MERGED.value, PromotionStatus.REJECTED.value, PromotionStatus.SUPERSEDED.value)
+_TASK_ENDED = (TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.TIMEOUT.value, TaskStatus.REFUNDED.value)
+#: Bound on the proposals one accounting pass reads, NEWEST first: shelved rows
+#: accumulate at the old end, live work is at the new end (the cap is single digits).
+_PORTFOLIO_SCAN = 500
+
+
+def portfolio_accounting(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> Dict[str, list]:
+    """Which open Society hypotheses actually hold a portfolio slot.
+
+    ``_OPEN_PROPOSAL_STATUSES`` is a lifecycle, not a workload: a proposal
+    stays CONVERTED_TO_TASK after its candidate merged or was rejected, and
+    stays APPROVED forever when nobody converts it. Counting those rows made
+    the cap permanently full (staging, 2026-09-26: 6 "active", 2 concluded
+    and 3 untouched for 6-7 days), so the company could never open a new
+    hypothesis -- not even for a critical production regression -- and no
+    role had a way to "conclude one" as the refusal asks. The cap is not
+    raised; what counts against it becomes true:
+
+    * **concluded** -- CONVERTED_TO_TASK whose every linked candidate ended
+      (rejected / failed / abandoned, or READY with a merged / rejected /
+      superseded promotion), or whose converted task reached a terminal state;
+    * **shelved** -- APPROVED and untouched for
+      ``SOCIETY_COMPANY_HYPOTHESIS_SHELF_HOURS``; converting it later makes it
+      active again;
+    * **active** -- everything else (PROPOSED, UNDER_REVIEW, fresh APPROVED,
+      work in flight, a conversion with no linked work found).
+
+    Durable rows only; the status of every proposal is left untouched."""
     from .executor import _OPEN_PROPOSAL_STATUSES
 
-    active = db.query(func.count(ImprovementProposal.id)).filter(ImprovementProposal.proposed_by_agent_id.isnot(None), ImprovementProposal.status.in_(_OPEN_PROPOSAL_STATUSES)).scalar() or 0
+    now = now or utcnow()
+    rows = (
+        db.query(ImprovementProposal.id, ImprovementProposal.status, ImprovementProposal.updated_at, ImprovementProposal.converted_task_id)
+        .filter(ImprovementProposal.proposed_by_agent_id.isnot(None), ImprovementProposal.status.in_(_OPEN_PROPOSAL_STATUSES))
+        .order_by(ImprovementProposal.created_at.desc())
+        .limit(_PORTFOLIO_SCAN)
+        .all()
+    )
+    out: Dict[str, list] = {"active": [], "concluded": [], "shelved": []}
+    for pid, (bucket, _outcome) in _classify(db, rows, settings, now).items():
+        out[bucket].append(pid)
+    return out
+
+
+#: How a concluded hypothesis ended. "failed": every attempt was rejected,
+#: declined or abandoned, or its promotion refused, or its task failed.
+#: "delivered": a change merged, or its task completed.
+OUTCOME_FAILED = "failed"
+OUTCOME_DELIVERED = "delivered"
+
+
+def _classify(db: Session, rows: list, settings: SocietySettings, now: datetime) -> Dict[str, Tuple[str, Optional[str]]]:
+    """(portfolio bucket, outcome) per open proposal row -- the ONE rule shared by
+    the portfolio cap, the agents' context and the same-title re-proposal check."""
+    shelf_before = now - timedelta(hours=settings.company_hypothesis_shelf_hours)
+    converted = [r.id for r in rows if _status_value(r.status) == ProposalStatus.CONVERTED_TO_TASK.value]
+    cands: Dict[uuid.UUID, list] = {}
+    latest_promo: Dict[uuid.UUID, str] = {}
+    tasks: Dict[uuid.UUID, str] = {}
+    if converted:
+        for cid, pid, st in db.query(CodeCandidate.id, CodeCandidate.proposal_id, CodeCandidate.status).filter(CodeCandidate.proposal_id.in_(converted)).all():
+            cands.setdefault(pid, []).append((cid, _status_value(st)))
+        cand_ids = [c for lst in cands.values() for c, _ in lst]
+        if cand_ids:
+            # the LATEST promotion decides: a rejected attempt followed by a retry is still in flight
+            for cid, st in (
+                db.query(CodePromotion.candidate_id, CodePromotion.status)
+                .filter(CodePromotion.candidate_id.in_(cand_ids))
+                .order_by(CodePromotion.created_at, CodePromotion.id)
+                .all()
+            ):
+                latest_promo[cid] = _status_value(st)
+        task_ids = [r.converted_task_id for r in rows if r.converted_task_id is not None]
+        if task_ids:
+            tasks = {tid: _status_value(st) for tid, st in db.query(TaskSession.id, TaskSession.status).filter(TaskSession.id.in_(task_ids)).all()}
+
+    def ended(cid: uuid.UUID, status: str) -> bool:
+        if status in _CANDIDATE_ENDED:
+            return True
+        return status == CodeCandidateStatus.READY.value and latest_promo.get(cid) in _PROMOTION_ENDED
+
+    def merged(cid: uuid.UUID, status: str) -> bool:
+        return status == CodeCandidateStatus.READY.value and latest_promo.get(cid) == PromotionStatus.MERGED.value
+
+    out: Dict[str, Tuple[str, Optional[str]]] = {}
+    for r in rows:
+        status = _status_value(r.status)
+        bucket, outcome = "active", None
+        if status == ProposalStatus.CONVERTED_TO_TASK.value:
+            linked = cands.get(r.id, [])
+            task_status = tasks.get(r.converted_task_id) if r.converted_task_id is not None else None
+            if linked:
+                if all(ended(c, s) for c, s in linked):
+                    bucket = "concluded"
+                    outcome = OUTCOME_DELIVERED if any(merged(c, s) for c, s in linked) else OUTCOME_FAILED
+            elif task_status in _TASK_ENDED:
+                bucket = "concluded"
+                outcome = OUTCOME_DELIVERED if task_status == TaskStatus.COMPLETED.value else OUTCOME_FAILED
+        elif status == ProposalStatus.APPROVED.value and r.updated_at is not None and r.updated_at < shelf_before:
+            bucket = "shelved"
+        out[str(r.id)] = (bucket, outcome)
+    return out
+
+
+def proposal_states(db: Session, settings: SocietySettings, proposal_ids: Iterable[Any], now: Optional[datetime] = None) -> Dict[str, Dict[str, Optional[str]]]:
+    """``portfolio_state`` and ``outcome`` for exactly these proposals: any
+    author, no scan bound. A proposal outside the open lifecycle (REJECTED /
+    IMPLEMENTED) is ``closed``."""
+    from .executor import _OPEN_PROPOSAL_STATUSES
+
+    ids = list(dict.fromkeys(uuid.UUID(str(i)) for i in proposal_ids))
+    if not ids:
+        return {}
+    rows = (
+        db.query(ImprovementProposal.id, ImprovementProposal.status, ImprovementProposal.updated_at, ImprovementProposal.converted_task_id)
+        .filter(ImprovementProposal.id.in_(ids))
+        .all()
+    )
+    open_values = {_status_value(st) for st in _OPEN_PROPOSAL_STATUSES}
+    out: Dict[str, Dict[str, Optional[str]]] = {str(r.id): {"portfolio_state": "closed", "outcome": None} for r in rows}
+    live = [r for r in rows if _status_value(r.status) in open_values]
+    for pid, (bucket, outcome) in _classify(db, live, settings, now or utcnow()).items():
+        out[pid] = {"portfolio_state": bucket, "outcome": outcome}
+    return out
+
+
+def _status_value(status: Any) -> str:
+    return str(getattr(status, "value", status))
+
+
+def active_hypothesis_count(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> int:
+    return len(portfolio_accounting(db, settings, now)["active"])
+
+
+def _portfolio(db: Session, settings: SocietySettings) -> Dict[str, Any]:
+    accounting = portfolio_accounting(db, settings)
+    active = len(accounting["active"])
     closed = [CodeCandidateStatus.READY, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED]
     red = db.query(func.count(CodeCandidate.id)).filter(CodeCandidate.risk_tier == RiskTier.RED.value, CodeCandidate.status.notin_(closed)).scalar() or 0
     return {
-        "active_hypotheses": int(active),
+        "active_hypotheses": active,
         "max_active_hypotheses": settings.company_max_active_hypotheses,
+        "concluded_open_rows": len(accounting["concluded"]),
+        "shelved_hypotheses": len(accounting["shelved"]),
         "high_risk_investigations": int(red),
         "max_high_risk_investigations": settings.company_max_high_risk_investigations,
         "full": active >= settings.company_max_active_hypotheses,
     }
+
+
+#: What the Governor and Scout are told a cycle is for.
+CYCLE_INSTRUCTIONS = (
+    "Observe the evidence, diagnose, and prioritize at most one high-value change. "
+    "'No high-value change' is a valid outcome: do not create work to look busy."
+)
+
+
+def cycle_event_payload(cycle_id: uuid.UUID, trigger: str, evidence: Dict[str, Any], portfolio: Dict[str, Any]) -> Dict[str, Any]:
+    """The ``company.cycle`` event payload: the Observe step, as ONE object.
+
+    The context builder shows an event payload to the model only while its
+    canonical JSON fits ``context.TXT_LONG``; past that it becomes a string
+    preview that is cut mid-structure and drops the keys that sort last
+    (``instructions``, ``portfolio``, ``trigger``). Everything here is
+    therefore bounded: counts over closed status sets, two timestamps and
+    fixed text. The static function->role map is NOT repeated per cycle (the
+    roles already know their missions; the operator status still shows it).
+    If the counts ever grow past the limit, ``fitness`` goes first: it is
+    derived from ``evidence`` (the Evaluator recomputes it), and the payload
+    says it was omitted. ``tests/society/test_company_cycle_context.py`` pins
+    the worst case."""
+    payload: Dict[str, Any] = {
+        "cycle_id": str(cycle_id),
+        "trigger": trigger,
+        "evidence": evidence,
+        "fitness": a2a_fitness(evidence),
+        "portfolio": portfolio,
+        "instructions": CYCLE_INSTRUCTIONS,
+    }
+    if _canonical_size(payload) > TXT_LONG:
+        del payload["fitness"]
+        payload["omitted"] = ["fitness"]
+    return payload
+
+
+def _canonical_size(obj: Any) -> int:
+    """Length of the canonical JSON the context builder measures."""
+    return len(json.dumps(obj, sort_keys=True, default=str, ensure_ascii=False))
 
 
 def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Optional[datetime] = None, operator_id: Optional[uuid.UUID] = None) -> Optional[CompanyCycle]:
@@ -172,18 +355,7 @@ def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Op
     event = emit_event(
         db,
         event_type=COMPANY_CYCLE_EVENT,
-        payload={
-            "cycle_id": str(cycle.id),
-            "trigger": trigger,
-            "evidence": evidence,
-            "fitness": a2a_fitness(evidence),
-            "portfolio": _portfolio(db, settings),
-            "function_roles": FUNCTION_ROLE_MAP,
-            "instructions": (
-                "Observe the evidence, diagnose, and prioritize at most one high-value change. "
-                "'No high-value change' is a valid outcome: do not create work to look busy."
-            ),
-        },
+        payload=cycle_event_payload(cycle.id, trigger, evidence, _portfolio(db, settings)),
         actor_type="operator" if trigger == "operator" else "system",
         actor_id=operator_id,
         subject_type="company_cycle",
@@ -337,7 +509,37 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
         },
         "incidents": [incident_view(i) for i in incidents],
         "function_roles": FUNCTION_ROLE_MAP,
+        "public_surface": _public_surface_view(db, settings),
     }
+
+
+def _public_surface_view(db: Session, settings: SocietySettings) -> Dict[str, Any]:
+    """Public-surface health as the Society sees it: the monitor's settings,
+    the open anomaly (structural), recent anomaly/recovery events and the
+    Society's workstream on the newest anomaly. No page content, no secrets."""
+    from .surface_monitor import self_healing_workstream, surface_status
+
+    view = surface_status(db)
+    latest = (view.get("open_anomaly") or {}).get("correlation_id")
+    if latest is None:
+        recent = [e for e in view.get("recent_events", []) if e.get("type") == "public.surface.anomaly"]
+        if recent:
+            ev = db.query(SocietyEvent).filter(SocietyEvent.id == uuid.UUID(recent[0]["event_id"])).first()
+            latest = str(ev.correlation_id) if ev is not None and ev.correlation_id else None
+    # This view is served by the REGISTRY; the monitor runs only in the
+    # society-worker, whose own SOCIETY_PUBLIC_SURFACE_* settings decide. The
+    # registry cannot see them (staging 2026-09-26: the view said
+    # "enabled": false while the worker was probing), so it does not claim to.
+    view["monitor"] = {
+        "runs_in": "society-worker",
+        "liveness": "the worker's society_public_surface_checks_total metric and the durable events below",
+        "enabled_in_this_process": settings.public_surface_monitor_enabled,
+        "target": settings.public_surface_target_label,
+        "ui_origin": settings.public_product_ui_origin,
+        "api_origin": settings.public_product_api_origin,
+    }
+    view["workstream"] = self_healing_workstream(db, uuid.UUID(latest)) if latest else {}
+    return view
 
 
 def main() -> None:  # pragma: no cover - CLI
@@ -370,6 +572,7 @@ __all__ = [
     "FUNCTION_ROLE_MAP",
     "evidence_bundle",
     "a2a_fitness",
+    "cycle_event_payload",
     "start_cycle",
     "maybe_start_scheduled_cycle",
     "settle_cycles",

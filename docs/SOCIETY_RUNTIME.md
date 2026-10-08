@@ -37,7 +37,7 @@ Phase 3 self-development (repo intelligence, risk tiers, promotion controller, f
 | `intent_approvals` (Phase 2) | Human decision audit for `awaiting_approval` intents | `intent_id` UNIQUE; who decided, decision, reason, original policy reason, resumed/executed timestamps, `final_state`, `resume_error` |
 | `users.society_role` (Phase 2) | Durable operator authority | `operator` \| `event_producer` \| NULL; the only source `operator_auth` consults besides the bootstrap allowlist |
 
-Candidate status machine: `requested → building → built → qa_running → qa_passed → (security_review →) ready` · `qa_failed` (one retry) `→ rejected` · `failed/abandoned`.
+Candidate status machine: `requested → building → built → qa_running → qa_passed → (security_review →) ready` · `qa_failed` (one retry) `→ rejected` · `requested/qa_failed → rejected` (Builder decline) · `failed/abandoned`.
 
 `abandoned` is reachable only by an **operator**, through
 `POST /v1/society/candidates/{id}/abandon` (`society/candidate_admin.py`). There is deliberately no
@@ -47,16 +47,20 @@ and persisted on the row, the call is idempotent (no second event, no second ref
 preserved), and any in-flight `implement_change` task is closed through the ordinary
 `task_service.fail_task_with_refund` escrow path — this code never writes a wallet.
 
+The one agent-side exit is narrower, and it is not an abandon: the Builder responsible for a
+`requested` or `qa_failed` candidate may `DECLINE_CODE_CANDIDATE` it (see *A Builder may decline*
+below). That ends in the ordinary `rejected`, a recorded failure, never in `abandoned`.
+
 ## Roles (v1 fleet)
 
 | Agent | Role | Wakes on | May emit |
 |---|---|---|---|
 | Society_Governor | governor (MEDIUM) | `proposal.created`, `code_candidate.ready/rejected`, `promotion.merge_eligible/rejected`, `experiment.finished`, `society.heartbeat`, `company.cycle`, `incident.opened`, `a2a.task.finished`, `a2a.agent.discovered` | messages, memory, goals, `REVIEW_IMPROVEMENT`, `READ_CANDIDATE_STATE`, `REQUEST_PR_PROMOTION`, `REQUEST_STAGING_EVALUATION`, `DISCOVER_A2A_AGENT`, `REQUEST_A2A_TASK` (**approval-gated**), `CHECK_A2A_TASK` |
 | Society_Scout | scout | `company.cycle`, `a2a.agent.refreshed`, `platform.metric.anomaly`, `task.failed/timeout`, `qa.failed`, `agent.inactive`, candidate outcomes | messages, memory, `CREATE_IMPROVEMENT` (with structured evidence), agent goals, `REFRESH_A2A_AGENT`, `CHECK_A2A_TASK` |
-| Society_Architect | architect (MEDIUM) | `proposal.approved`, `code_candidate.qa_failed/ready`, `repo.read.result`, `code_change.spec_rejected` | repo reads (`LIST_REPO_TREE`, `SEARCH_REPO`, `READ_REPO_FILE`, `READ_REPO_RANGE`), `REQUEST_CODE_CHANGE`, `CREATE_TASK` (≤50 credits), goal updates |
-| Society_Builder | builder (MEDIUM) | `code_change.requested`, `code_candidate.qa_failed/ready/rejected`, `repo.read.result`, `society.heartbeat` | repo reads, `SUBMIT_CODE_CANDIDATE`, `START/COMPLETE/FAIL_TASK` |
+| Society_Architect | architect (MEDIUM) | `proposal.approved`, `code_candidate.qa_failed/ready`, `repo.read.result` (own reads only), `code_change.spec_rejected` | repo reads (`LIST_REPO_TREE`, `SEARCH_REPO`, `READ_REPO_FILE`, `READ_REPO_RANGE`), `REQUEST_CODE_CHANGE`, `CREATE_TASK` (≤50 credits), goal updates |
+| Society_Builder | builder (MEDIUM) | `code_change.requested`, `code_candidate.qa_failed/ready/rejected`, `repo.read.result` (own reads only), `society.heartbeat` | repo reads, `SUBMIT_CODE_CANDIDATE`, `DECLINE_CODE_CANDIDATE`, `START/COMPLETE/FAIL_TASK` |
 | Society_QA | qa (MEDIUM) | `code_candidate.built` | `EVALUATE_CODE_CANDIDATE` (verdict computed by the runtime, not asserted) |
-| Society_Security | security (MEDIUM) | `code_candidate.security_review` | `READ_DIFF`, `READ_REPO_FILE`, `READ_CANDIDATE_STATE`, `SECURITY_REVIEW_CANDIDATE` (combined with static scan; fails closed) |
+| Society_Security | security (MEDIUM) | `code_candidate.security_review`, `repo.read.result` (own reads only) | `READ_DIFF`, `READ_REPO_FILE`, `READ_CANDIDATE_STATE`, `SECURITY_REVIEW_CANDIDATE` (combined with static scan; fails closed) |
 | Society_Evaluator (Phase 3) | evaluator | `promotion.ci_passed`, `experiment.finished` | `READ_CANDIDATE_STATE`, `REQUEST_MERGE_EVALUATION`, `RECORD_EVALUATION_RECOMMENDATION` (advisory only), memory, messages — it cannot change thresholds, approve, merge, deploy or alter evidence |
 
 Roles are configuration (`roles.py`), overridable/extendable with `SOCIETY_ROLES_FILE` (JSON). Agents are
@@ -68,7 +72,7 @@ targets it (`payload.target_agent_id` / `subject_type=agent`), e.g. `agent.messa
 | Class | Intents | Handling |
 |---|---|---|
 | LOW | `SEND_MESSAGE`, `WRITE_MEMORY`, `CREATE_GOAL`, `UPDATE_GOAL`, `CREATE_IMPROVEMENT`, `REVIEW_IMPROVEMENT`, `SLEEP`, read-only repo intelligence (`LIST_REPO_TREE`, `SEARCH_REPO`, `READ_REPO_FILE`, `READ_REPO_RANGE`, `READ_DIFF`, `READ_CANDIDATE_STATE`), `RECORD_EVALUATION_RECOMMENDATION`, `REFRESH_A2A_AGENT`, `CHECK_A2A_TASK` | auto if in grant; repo reads are bounded (per run / per correlation / bytes), path-safe, persisted as `repo.read.result` and returned as untrusted data |
-| MEDIUM | `CREATE_OFFER`, `COUNTER_OFFER`, `ACCEPT_OFFER`, `CREATE_TASK`, `START/COMPLETE/FAIL_TASK`, `REQUEST_CODE_CHANGE`, `SUBMIT_CODE_CANDIDATE`, `REQUEST_QA`, `EVALUATE_CODE_CANDIDATE`, `SECURITY_REVIEW_CANDIDATE`, `REQUEST_PR_PROMOTION`, `REQUEST_MERGE_EVALUATION`, `REQUEST_STAGING_EVALUATION`, `REQUEST_STAGING_DEPLOY`, `DISCOVER_A2A_AGENT`, `REQUEST_A2A_TASK` | role-gated by grant ceiling; A2A intents need `A2A_SOCIETY_CLIENT_ENABLED` + `A2A_FEDERATION_ENABLED`, discovery only for `A2A_SOCIETY_DISCOVERY_ALLOWED_HOSTS`, tasks only to operator-verified agents under call budgets (`docs/A2A_FEDERATION.md` §6); escrow ≤ min(grant cap, `SOCIETY_MAX_TASK_ESCROW_CREDITS`); code intents need `SOCIETY_AUTONOMOUS_CODE_ENABLED`; staging needs `SOCIETY_STAGING_DEPLOY_ENABLED`; promotion/evaluation intents only *request* — the non-LLM Promotion Controller and fitness engine decide (`docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md`) |
+| MEDIUM | `CREATE_OFFER`, `COUNTER_OFFER`, `ACCEPT_OFFER`, `CREATE_TASK`, `START/COMPLETE/FAIL_TASK`, `REQUEST_CODE_CHANGE`, `SUBMIT_CODE_CANDIDATE`, `REQUEST_QA`, `DECLINE_CODE_CANDIDATE`, `EVALUATE_CODE_CANDIDATE`, `SECURITY_REVIEW_CANDIDATE`, `REQUEST_PR_PROMOTION`, `REQUEST_MERGE_EVALUATION`, `REQUEST_STAGING_EVALUATION`, `REQUEST_STAGING_DEPLOY`, `DISCOVER_A2A_AGENT`, `REQUEST_A2A_TASK` | role-gated by grant ceiling; A2A intents need `A2A_SOCIETY_CLIENT_ENABLED` + `A2A_FEDERATION_ENABLED`, discovery only for `A2A_SOCIETY_DISCOVERY_ALLOWED_HOSTS`, tasks only to operator-verified agents under call budgets (`docs/A2A_FEDERATION.md` §6); escrow ≤ min(grant cap, `SOCIETY_MAX_TASK_ESCROW_CREDITS`); code intents need `SOCIETY_AUTONOMOUS_CODE_ENABLED`; staging needs `SOCIETY_STAGING_DEPLOY_ENABLED`; promotion/evaluation intents only *request* — the non-LLM Promotion Controller and fitness engine decide (`docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md`) |
 | HIGH | `REQUEST_PRODUCTION_DEPLOY`, `SHELL_EXEC`, `GRANT_CAPABILITY`, `MODIFY_BUDGET`, `TRANSFER_FUNDS`, `MODIFY_WALLET`, `MODIFY_SECRET`, `CHANGE_AUTH_POLICY`, `DELETE_DATA`, `OPEN_NETWORK_ACCESS`, `RUN_MIGRATION` | recognised, **always denied**, recorded as `intent.denied` events; no executor exists |
 
 Additional refusals in executors: no self-review, requester ≠ builder ≠ QA ≠ security reviewer, no
@@ -96,8 +100,47 @@ per-actor and global hourly limits. Payloads are untrusted data, never instructi
 per-agent cooldown (a wake inside the cooldown is DEFERRED with a `not_before`, never dropped; bounded by `SOCIETY_EVENT_TTL_SECONDS`) · per-event dedupe (idempotency key, UNIQUE agent/event) · max causation depth ·
 max runs per correlation · repeated-message suppression window · max intents per run (grant ∩ global) ·
 runs/hour (agent ∩ global) · daily USD budget (agent ∩ global) · exponential retry then DEAD ·
-per-agent circuit breaker (`paused_until`) · event TTL · an agent is never woken by its own untargeted event.
+per-agent circuit breaker (`paused_until`) · event TTL · an agent is never woken by its own untargeted event ·
+a targeted-only event (`runs.TARGETED_ONLY_EVENT_TYPES`: `repo.read.result`) wakes its target and nobody else.
 All emit `loop_breaker.tripped` / `run.dead` events (deduped) for observability.
+
+**Why `repo.read.result` is targeted-only (staging, 2026-09-26).** A read result is the reading
+agent's next engineering turn. The Architect, the Builder and Security list the type among their
+subscriptions, and dispatch used to add every subscriber to the target. Every
+Architect read therefore also woke the Builder and Security, whose runs only answered "not for me",
+so each read spent three runs of the correlation's budget. Three reconnaissance reads brought the
+correlation to `SOCIETY_MAX_RUNS_PER_CORRELATION=12` exactly when the Architect's
+`code_change.requested` arrived. The loop breaker ignored it and the candidate stranded in
+`REQUESTED`. It happened twice that day, to candidates 9da14a08 (later abandoned by an operator)
+and a2788678 (correlation b8db5936). Now each read wakes only its reader, and no cap changed.
+- A subscription to a targeted-only type wakes nobody extra; this includes one added through
+  `SOCIETY_ROLES_FILE`.
+- If the target cannot be resolved, the event is ignored with the dispatch note
+  "targeted-only: target unresolved".
+- `tests/society/test_repo_intel.py` replays the live story at the staging cap.
+- `tests/society/test_events_and_dispatch.py` fails if an event type emitted as a targeted wake is
+  subscribed by a role without being targeted-only.
+
+**A swallowed candidate wake is re-delivered once (`society/redelivery.py`).** The loop breaker is the
+right answer to a runaway conversation. It is the wrong answer to a code candidate whose next stage
+owner was about to be woken. A wake it ignored was never sent again, so the candidate waited forever:
+- 9da14a08 and f8296297 each needed an operator abandon;
+- 23ac830a's `code_candidate.built` was swallowed in correlation 4017ce48.
+
+The Builder's heartbeat resumes only the Builder's own stages. Nothing re-woke Security for
+`security_review` or the Governor for `ready`. On each dispatch cycle the worker now re-emits a
+candidate lifecycle wake the breaker swallowed, under these rules:
+- The wake is one of `code_change.requested`, `code_candidate.built`, `code_candidate.qa_failed`,
+  `code_candidate.security_review` or `code_candidate.ready`.
+- The candidate still sits in the stage that wake was for. For `ready`, no promotion exists yet.
+- It is re-sent once, as a fresh story (new correlation, depth 0, system actor) with the original
+  payload plus `redelivered_from`. The idempotency key is `redeliver:<event id>`.
+- A re-delivery that is swallowed again stays swallowed, so the finite state machine bounds the total.
+  At most 5 are re-sent per cycle, and only wakes from the last 24 h are considered. Every rule is
+  in the query, so a wake already re-delivered or no longer owed never crowds out one that is.
+
+It adds no authority: the same role gets the same payload it would have received, and every guard
+still decides. `tests/society/test_redelivery.py` replays the failure through the real dispatcher.
 
 ## Engineering loop safety
 
@@ -123,6 +166,83 @@ All emit `loop_breaker.tripped` / `run.dead` events (deduped) for observability.
   `.py` compile in memory, no secret patterns in the diff, then `python -m pytest <acceptance targets>` in
   the worktree with a scrubbed environment (no `*_PASSWORD/_KEY/_SECRET/*TOKEN*`). Zero acceptance
   criteria is a FAIL. Two failed attempts → `rejected`.
+- **Work on a candidate outlives a story.** Engineering turns are bounded per correlation
+  (`SOCIETY_MAX_ENGINEERING_TURNS`), and the Builder resumes an open candidate on the hourly heartbeat,
+  which starts a new correlation each time. An agent's context (`repo_reads`, at most 6 entries) holds:
+  - first, its reads in the current story;
+  - then, in whatever slots remain, its reads made for a **still-open** candidate in another story within
+    the last 24 h, marked `earlier_story` with their time `at`.
+
+  Staging, 2026-09-26: after candidate a2788678 failed QA, the Builder re-read the same test, templates and
+  `main.py` at 15:00Z and again at 16:00Z. It ran out of turns each time and could not resubmit.
+
+  Carried reads never displace the current story's reads. The following are not carried:
+  - reads made before the agent's own last `SUBMIT_CODE_CANDIDATE` for that candidate, since the worktree
+    has changed since then;
+  - repeats of the same request (only the newest is kept);
+  - reads for a closed candidate, reads without a candidate, and other agents' reads.
+
+  No budget or cap changes.
+- **A read the context cannot show whole says so.** Each `repo_reads` entry holds at most `TXT_READ`
+  (6000) characters of the read's data. A file's text beyond that is cut at whole **lines**:
+  - the entry is marked `truncated`;
+  - its data carries `context_cut` (`shown_lines`, `total_lines`) and the `next_line` to continue from with
+    `READ_REPO_RANGE`.
+
+  Search hits are kept whole, with `hits_shown` out of `hits_total`.
+
+  A partial read never becomes a whole-file edit. The prompt says to use `replacements` instead, and the
+  scripted Builder refuses to rewrite a file it has only partly in view.
+
+  Staging, 2026-09-26 18:00Z: `repo_intel` returned `main.py` whole (8.6 KB), then the context cut each read's
+  JSON mid-content. The Builder saw about 177 of 231 lines of `main.py` and 146 of 273 lines of the failing
+  acceptance test, and was told nothing was truncated. It re-read the same files for its six turns.
+- **A spec's rules are never truncated.** In the `candidates` block, a candidate spec shows its structural
+  fields whole: `files_allowed`, `acceptance_tests`, `kind`, `must_compile` and `signal`. The schema already
+  bounds them. Only the prose is truncated: `description` and `expected_effect`. `READ_CANDIDATE_STATE` also
+  returns `files_allowed`, `acceptance_tests` and `kind`.
+
+  Staging, 2026-09-26 20:00Z to 01:00Z: the whole spec was one JSON string cut at 2000 characters. With
+  sorted keys, the Architect's long description came before `files_allowed`, so the list was cut off. Every
+  hour the Builder stopped work on its candidate because "the spec's files_allowed is truncated and
+  unverified".
+- **A Builder may decline.** A candidate the Builder cannot finish within its spec is not stuck forever. The
+  Builder responsible for it may `DECLINE_CODE_CANDIDATE` with a structured reason:
+  - `spec_outside_files_allowed`: the fix needs `blocking_paths` outside `files_allowed`. The paths must be
+    canonical and repo-relative (no `.`, `..` or empty segments), and every one must be outside the list; a
+    path inside it means the change can still be made within the spec.
+  - `acceptance_unsatisfiable`: the acceptance tests cannot pass within the spec. Only after a QA failure:
+    a fresh candidate is built and judged first.
+
+  `detail` is required (20 to 1000 characters). Only these candidates can be declined:
+  - its status is `requested` or `qa_failed`; `building`, `built`, the QA and Security states, `ready` and
+    every terminal status are refused;
+  - it has no promotion;
+  - its recorded Builder is the declining agent, or it has none yet and the agent holds the `builder` role.
+
+  A decline moves the candidate to `rejected`, the ordinary recorded failure. The spec and QA report are
+  kept, and the reason and detail are persisted on the row and in the intent. It emits
+  `code_candidate.rejected` with `declined: true`, the reason, the blocking paths and the unchanged
+  `files_allowed`. That wakes the Scout, the Governor and the Builder, and the normal Scout → Governor →
+  Architect path designs the next candidate: `files_allowed` is never widened in place. A proposal whose
+  attempts all failed is concluded with outcome `failed` (see `signal_coverage` below), so the Scout may
+  propose it again under the same title, and the Governor reviews it again. A proposal with work in flight is still a
+  duplicate. After two such failed proposals under one title within 24 hours, a third is refused until the
+  approach and evidence change, so an attempt that fails at once cannot loop until the daily candidate
+  budget is spent. The implementation task is closed only when the declining Builder is its callee, which is the
+  authority `FAIL_TASK` already gives it. It is closed through `task_service.fail_task_with_refund`, and that
+  runs last, so the rejection, its event and the refund land in one commit. The escrow is released exactly
+  once, and no wallet is written here. The operator abandon is ordered the same way, so the two exits cannot
+  interleave. A task linked for anyone else is left to its own parties and the timeout worker. A repeat decline
+  returns `duplicate`, with no second event and no second refund. The intent is MEDIUM and needs
+  `SOCIETY_AUTONOMOUS_CODE_ENABLED`; no risk class, QA, Security, fitness, budget, merge or production rule
+  changes. Abandon stays operator-only.
+
+  Staging, 2026-09-27 03:00Z: once it saw the whole spec, the Builder judged that candidate a2788678 (QA
+  failed once) needed `base.html`, outside its `files_allowed`, and stopped. Nothing could close the
+  candidate: the Builder cannot widen its own spec, the Architect's same-spec request is a duplicate while
+  the candidate is open, and a new submission would fail QA on the same test. This was the third
+  stranded candidate. Operators abandoned the first two.
 - Security review is required when the spec flags it, when any file matches the risky-path pattern, when
   `kind == "code"`, or when the static scan produced findings; final verdict = reviewer verdict AND no
   static findings.
@@ -216,7 +336,98 @@ run's `WRITE_MEMORY` recorded *"improvement raised"*. That memory came from a re
 never expired, and three later runs declined the same signal citing it — each writing another note
 corroborating the first.
 
-Correcting such a belief is **refutation**, not deletion:
+### Execution-grounded memory (graduation hardening, 2026-09-26)
+
+The same failure recurred live during graduation. At 06:02Z a Scout's `CREATE_IMPROVEMENT` for a
+critical public-surface regression was refused (*"portfolio full"*). The same decision's
+`WRITE_MEMORY` recorded *"new proposal raised"*. At 07:19Z the Scout declined the next anomaly as a
+*"duplicate of 06:02 proposal"*, although that proposal never existed. An operator had to refute both
+memories. Refutation repairs a belief after the fact. The invariant below keeps the belief from
+forming (`society/memory_grounding.py`):
+
+> **A model-authored memory is admitted only if every side-effecting intent of the same decision
+> reached `EXECUTED`.**
+
+- **Why decisions, not wording.** The model authors a decision's intents together, before any of
+  them executes. A memory in that decision can therefore only state an *expected* outcome. The rule
+  is execution-semantic. There is no phrase matching, and there is no payload field a model could set
+  to opt out.
+- **What blocks a memory.** A side-effecting sibling that is `failed`, `denied`,
+  `awaiting_approval`, `approved`-but-not-resumed, `rejected`, `skipped` or still `pending`. The
+  memory intent then **fails** with the trusted reason (`memory not grounded: … seq 0
+  CREATE_IMPROVEMENT is failed`). No `memory_items` row is written. The refusal itself reaches the
+  agent through `recent_refusals`.
+- **Ordering.** Memory intents run after every other intent of their run, so the outcome is known.
+  The check lives in the executor, so a memory resumed through the approval path is held to it too.
+- **What counts as a side effect.** Read-only repository intelligence, `SLEEP` and other memories
+  are not side effects. Every other type is, including an unknown or invalid type the model emitted,
+  so the rule fails closed.
+- **What still works.** Observation and hypothesis memories are unaffected in a decision with no
+  side effect, or when every side effect executed.
+- **Approval path.** The approval resume queue orders a decision's memories after its other intents.
+  A memory approved before its side effect is refused while that side effect still awaits approval.
+- **Known edges.**
+  - `EXECUTED` means the executor completed the intent. For an idempotent duplicate (a proposal title
+    that is already open, or a suppressed duplicate message) that completion is a no-op, which is
+    still consistent with the row that exists.
+  - An honest observation memory written in an approval-gated decision is also refused.
+- **`recent_refusals` fix.** For an intent that policy *allowed* but execution *failed*, the reason
+  shown is now the execution error. Before, it was the policy reason, *"allowed by grant"*, which hid
+  *"portfolio full"* from the live Scout.
+- **`signal_coverage` (trusted, world signals only).** The same incident had a second, cross-run
+  form. After the refused proposal, triage-only Scout runs kept writing *"duplicate of the 06:02
+  proposal"*, at 08:09Z and again at 09:07Z on the hardened code. Those decisions had no side
+  effect, so their memories are admitted. Each later run believed its own note, and operator
+  refutation did not stop it. The context never answered the one question the Scout was deciding.
+  It now does, from durable rows:
+  - `open_proposals`: every proposal still pursuing the signal, created by an **executed**
+    `CREATE_IMPROVEMENT` whose evidence named this signal type. There is no time window, so an old
+    proposal is not forgotten. Each entry carries its portfolio state (`active` or `shelved`, from
+    `company.portfolio_accounting`). An empty list means no such proposal exists, whatever a memory
+    says.
+  - `concluded_proposals`: the same, for proposals whose work ended, each with its `outcome`
+    (`company.proposal_states`, the one rule shared by the portfolio cap, the context and the
+    executor's same-title check). Newest first; the live proposals are listed before the cap.
+    - `failed`: every attempt was rejected, declined or abandoned, its promotion was refused, or its
+      task failed. It covers nothing. If the signal persists, a new proposal carrying the lesson is how
+      the work resumes (not a repeat; the same title is allowed, within the retry limit), and the
+      Governor reviews it again.
+    - `delivered`: its change merged or its task completed. A persisting signal may be waiting for a
+      deploy, so only a different change backed by new evidence justifies a new proposal; the same
+      title is still a duplicate.
+
+    The `proposals` block carries the same `portfolio_state` and `outcome` for each proposal it shows,
+    including the one a `code_candidate.rejected` event names, whoever proposed it.
+
+    Staging, 2026-09-27: the Builder declined candidate a2788678 at 05:00Z. Woken by the
+    rejection, the Scout and the Governor saw proposal ea350455 only as `CONVERTED_TO_TASK` and
+    judged the work still in hand. At 05:04Z the next critical `public.surface.anomaly` reached the
+    Scout with ea350455 listed among the *open* proposals, so *"no new proposal is warranted"*.
+    Nothing woke the Architect.
+  - `attempts`: the last few `CREATE_IMPROVEMENT` intents for the signal, from any agent, within 7
+    days. Each shows its outcome, whether it was yours (`by_you`), the proposal it produced and
+    whether that was an idempotent `duplicate`. The reason is shown only for your own attempts, so no
+    text crosses between agents.
+  - `portfolio`: whether company mode has room. This entry is present only when company mode is on.
+  - Coverage is per signal **type**. Whether an open proposal addresses *this* event (for example,
+    which task failed) remains the agent's judgement; the prompt says so.
+- **Trusted reasons carry no model or operator text.** A reason shown in `recent_refusals` or
+  `signal_coverage` comes from platform code only:
+  - A payload that fails validation is summarized structurally
+    (`intents.safe_error_summary`). The summary keeps the error type, the path through declared
+    field names, and schema limits. It never keeps the rejected value, a key the model invented, or a
+    custom validator's message. The approval-resume re-validation uses the same summary.
+  - An operator's decision reaches agents as its outcome only (*"rejected by an operator"*).
+    `approvals.py` records the operator's email and text on the intent, and those stay there.
+- **`recent_activity[].outcomes`.** The model's own `decision_summary` (for example *"raised
+  proposal X"*) is written before its intents run. It now travels with the run's trusted outcome
+  (`executed` count, `not_executed: ["CREATE_IMPROVEMENT:failed", ...]`), so the same false claim cannot
+  come back through the activity feed instead of memory.
+- **Tests.** `tests/society/test_memory_grounding.py` pins the status matrix, the exact live failure,
+  and a later run that is not falsely suppressed.
+
+Correcting a belief that predates this rule, or one that is wrong for other reasons, is
+**refutation**, not deletion:
 
 ```
 POST /v1/society/memory/{memory_id}/refute   {"reason": "..."}

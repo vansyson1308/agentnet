@@ -25,9 +25,9 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import or_
+from sqlalchemy import String, cast, func, or_
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -61,7 +61,7 @@ from .engineering.docs_contract import (
     DOCS_REQUIRED_SECTIONS,
     conventions_line as _docs_conventions_line,
 )
-from .intents import ALLOWED_INTENT_TYPES, REPO_READ_INTENT_TYPES
+from .intents import ALLOWED_INTENT_TYPES, REPO_READ_INTENT_TYPES, IntentType
 from .policy import risk_of, runs_last_hour, spend_today_usd
 
 TXT_SHORT = 240
@@ -141,13 +141,18 @@ class AgentContext:
     society_agents: List[Dict[str, Any]] = field(default_factory=list)
     run_id: Optional[str] = None
     # Phase 3: bounded repository-read results from THIS agent's earlier turns
-    # in the correlation (untrusted data), engineering bounds, promotions.
+    # in the correlation, then its reads for a still-open candidate from other
+    # stories (untrusted data; see _repo_reads), engineering bounds, promotions.
     repo_reads: List[Dict[str, Any]] = field(default_factory=list)
     engineering: Dict[str, Any] = field(default_factory=dict)
     promotions: List[Dict[str, Any]] = field(default_factory=list)
     # Phase 8: the federation catalog as IDS + untrusted descriptive data. No
     # URL beyond the host, no credential, no sealed token, no raw card.
     federation: Dict[str, Any] = field(default_factory=dict)
+    # Graduation hardening: the TRUSTED answer to "is this world signal already
+    # being worked on?" -- derived from durable intent/proposal rows, never
+    # from what an agent remembers (_signal_coverage).
+    signal_coverage: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -309,7 +314,19 @@ def _messages(db: Session, agent: Agent) -> List[Dict[str, Any]]:
     return out
 
 
-def _proposals(db: Session, agent: Agent, event: SocietyEvent) -> List[Dict[str, Any]]:
+def _proposals(db: Session, agent: Agent, event: SocietyEvent, settings: SocietySettings, now: datetime) -> List[Dict[str, Any]]:
+    """Open proposals, plus the one the event is about.
+
+    Each carries its ``portfolio_state`` from the company's own accounting
+    (company.portfolio_accounting). Staging, 2026-09-27 05:00Z: after the
+    Builder declined candidate a2788678, the Scout and the Governor were woken
+    by ``code_candidate.rejected`` and saw proposal ea350455 only as
+    "CONVERTED_TO_TASK". Both concluded that the work was still in hand ("a
+    spec-scoping defect in the already-open proposal", "remains approved but
+    unimplemented"), so nobody raised the next proposal and nothing woke the
+    Architect. "concluded" says what is true: every attempt ended and nothing
+    more is built for it unless a new proposal is approved. ``outcome`` says how
+    it ended: "failed" or "delivered" (company.proposal_states)."""
     q = db.query(ImprovementProposal).filter(
         ImprovementProposal.status.in_([ProposalStatus.PROPOSED, ProposalStatus.UNDER_REVIEW, ProposalStatus.APPROVED])
     )
@@ -322,14 +339,20 @@ def _proposals(db: Session, agent: Agent, event: SocietyEvent) -> List[Dict[str,
             extra = None
         if extra is not None and all(r.id != extra.id for r in rows):
             rows = [extra] + rows
+    rows = rows[:LIMIT_PROPOSALS]
+    from .company import proposal_states  # noqa: PLC0415 - company imports this module
+
+    states = proposal_states(db, settings, [r.id for r in rows], now)
     out = []
-    for p in rows[:LIMIT_PROPOSALS]:
+    for p in rows:
         out.append(
             untrusted(
                 {
                     "id": str(p.id),
                     "title": _t(p.title, TXT_SHORT),
                     "status": _ev(p.status),
+                    "portfolio_state": (states.get(str(p.id)) or {}).get("portfolio_state"),
+                    "outcome": (states.get(str(p.id)) or {}).get("outcome"),
                     "source": _ev(p.source),
                     "importance": p.importance,
                     "target_scope": _ev(p.target_scope),
@@ -346,18 +369,49 @@ def _proposals(db: Session, agent: Agent, event: SocietyEvent) -> List[Dict[str,
     return out
 
 
+#: A candidate still being engineered (it can take more turns of work).
+OPEN_CANDIDATE_STATUSES = (
+    CodeCandidateStatus.REQUESTED,
+    CodeCandidateStatus.BUILDING,
+    CodeCandidateStatus.BUILT,
+    CodeCandidateStatus.QA_RUNNING,
+    CodeCandidateStatus.QA_FAILED,
+    CodeCandidateStatus.SECURITY_REVIEW,
+)
+
+
+#: Spec fields that are rules, not prose: bounded by CodeChangeSpec itself and
+#: always shown whole.
+SPEC_STRUCTURAL_FIELDS = ("files_allowed", "acceptance_tests", "kind", "must_compile", "signal")
+
+
+def _spec_view(spec: Any) -> Dict[str, Any]:
+    """A candidate spec as the model sees it: the rules whole, the prose bounded.
+
+    Staging 2026-09-26 20:00Z-01:00Z: the Builder stopped working candidate
+    a2788678 every hour, citing "the spec's files_allowed is truncated and
+    unverified". The spec was rendered as one JSON document cut at TXT_LONG,
+    and with sorted keys the Architect's long ``description`` comes before
+    ``files_allowed`` -- the hard allow-list the workspace enforces was the
+    part that fell off.
+    """
+    if not isinstance(spec, dict):
+        return _bounded_json(spec if spec is not None else {}, TXT_LONG)
+    view: Dict[str, Any] = {k: spec[k] for k in SPEC_STRUCTURAL_FIELDS if k in spec}
+    if "description" in spec:
+        view["description"] = _t(spec.get("description"), TXT_LONG)
+    if "expected_effect" in spec:
+        view["expected_effect"] = _t(spec.get("expected_effect"), TXT_MED)
+    rest = {k: v for k, v in spec.items() if k not in view}
+    if rest:  # a spec written before CodeChangeSpec was strict
+        view["other"] = _bounded_json(rest, TXT_SHORT)
+    return view
+
+
 def _candidates(db: Session, event: SocietyEvent) -> List[Dict[str, Any]]:
-    open_statuses = [
-        CodeCandidateStatus.REQUESTED,
-        CodeCandidateStatus.BUILDING,
-        CodeCandidateStatus.BUILT,
-        CodeCandidateStatus.QA_RUNNING,
-        CodeCandidateStatus.QA_FAILED,
-        CodeCandidateStatus.SECURITY_REVIEW,
-    ]
     rows = (
         db.query(CodeCandidate)
-        .filter(CodeCandidate.status.in_(open_statuses))
+        .filter(CodeCandidate.status.in_(list(OPEN_CANDIDATE_STATUSES)))
         .order_by(CodeCandidate.created_at.desc())
         .limit(LIMIT_CANDIDATES)
         .all()
@@ -382,7 +436,7 @@ def _candidates(db: Session, event: SocietyEvent) -> List[Dict[str, Any]]:
                 "proposal_id": str(c.proposal_id) if c.proposal_id else None,
                 "task_id": str(c.task_id) if c.task_id else None,
                 "requires_security_review": bool(c.requires_security_review),
-                "spec": untrusted(_bounded_json(c.spec or {}, TXT_LONG), source="architect_spec"),
+                "spec": untrusted(_spec_view(c.spec or {}), source="architect_spec"),
                 "changed_files": list(c.changed_files or [])[:20],
                 "diff_stat": _t(c.diff_stat, TXT_MED),
                 "qa": {
@@ -497,6 +551,23 @@ def _recent_activity(db: Session, agent: Agent, exclude_run_id: Optional[uuid.UU
     if exclude_run_id is not None:
         q = q.filter(AgentRun.id != exclude_run_id)
     rows = q.order_by(AgentRun.created_at.desc()).limit(LIMIT_RECENT_RUNS).all()
+    # ``decision`` is the model's own summary, written BEFORE its intents ran
+    # ("raised proposal X"). ``outcomes`` is what trusted execution recorded for
+    # that run, so a summary claiming work that was refused is contradicted
+    # where it is read (execution-grounded evidence; memory_grounding.py).
+    outcomes: Dict[str, Dict[str, Any]] = {str(r.id): {"executed": 0, "not_executed": []} for r, _ in rows}
+    if rows:
+        for run_id, itype, status in (
+            db.query(AgentIntent.run_id, AgentIntent.intent_type, AgentIntent.execution_status)
+            .filter(AgentIntent.run_id.in_([r.id for r, _ in rows]))
+            .order_by(AgentIntent.run_id, AgentIntent.seq)
+            .all()
+        ):
+            o = outcomes[str(run_id)]
+            if _ev(status) == IntentExecutionStatus.EXECUTED.value:
+                o["executed"] += 1
+            elif len(o["not_executed"]) < 6:
+                o["not_executed"].append(f"{itype}:{_ev(status)}")
     return [
         {
             "run_id": str(r.id),
@@ -504,10 +575,35 @@ def _recent_activity(db: Session, agent: Agent, exclude_run_id: Optional[uuid.UU
             "status": _ev(r.status),
             "decision": _t(r.decision_summary, TXT_SHORT),
             "intents": r.intents_count,
+            "outcomes": outcomes[str(r.id)],
             "at": _iso(r.completed_at or r.started_at or r.created_at),
         }
         for r, et in rows
     ]
+
+
+def _refusal_reason(r: AgentIntent) -> Optional[str]:
+    """Why an intent did not execute, as an AGENT may see it. Execution errors
+    and policy text come from trusted code (validation errors never echo the
+    rejected value: intents.py uses include_input=False). An operator's
+    decision is reduced to its outcome: approvals.py records the operator's
+    email and free text on the row, and neither belongs in model context."""
+    status = _ev(r.execution_status)
+    if status == IntentExecutionStatus.EXECUTED.value:
+        return None
+    fixed = {
+        IntentExecutionStatus.REJECTED.value: "rejected by an operator",
+        IntentExecutionStatus.APPROVED.value: "approved by an operator; not executed yet",
+        IntentExecutionStatus.AWAITING_APPROVAL.value: "awaiting operator approval",
+    }.get(status)
+    if fixed:
+        return fixed
+    if status == IntentExecutionStatus.FAILED.value:
+        # never fall back to policy_reason here: after an approval it holds the
+        # operator's email and text, and the executor always records the error
+        return _t(r.error, TXT_SHORT) if r.error else "failed while executing"
+    text = r.policy_reason or r.error
+    return _t(text, TXT_SHORT) if text else None
 
 
 def _recent_refusals(db: Session, agent: Agent, now: datetime) -> List[Dict[str, Any]]:
@@ -549,11 +645,119 @@ def _recent_refusals(db: Session, agent: Agent, now: datetime) -> List[Dict[str,
             "intent_type": r.intent_type,
             "outcome": _ev(r.execution_status),
             "policy": _ev(r.policy_decision),
-            "reason": _t(r.policy_reason or r.error, TXT_SHORT),
+            # A FAILED intent was ALLOWED by policy ("allowed by grant") and then
+            # refused while executing; the execution error is the reason. Showing
+            # the policy reason hid e.g. "portfolio full" from the live Scout.
+            "reason": _refusal_reason(r),
             "at": _iso(r.created_at),
         }
         for r in rows
     ]
+
+
+#: How far back signal coverage looks for CREATE_IMPROVEMENT attempts, and how many it lists.
+SIGNAL_COVERAGE_DAYS = 7
+LIMIT_SIGNAL_ATTEMPTS = 5
+LIMIT_SIGNAL_PROPOSALS = 10
+LIMIT_SIGNAL_CONCLUDED = 5
+#: Proposals read per signal before the open/concluded split (newest first).
+LIMIT_SIGNAL_SCAN = 50
+
+
+def _signal_coverage(db: Session, agent: Agent, event: SocietyEvent, settings: SocietySettings, now: datetime) -> Dict[str, Any]:
+    """Whether an open proposal covers this world signal, from durable rows.
+
+    Observed live on staging (2026-09-26): a Scout's CREATE_IMPROVEMENT for a
+    critical public-surface anomaly was refused, and every later Scout run
+    declined the re-raised signal as a "duplicate of the 06:02 proposal" --
+    a proposal that never existed -- each run writing another triage memory
+    that said so. Operator refutation did not stop it, because the belief
+    lived in the model's own chain of notes and the context had no trusted
+    answer to the one question the Scout was deciding. This is that answer:
+
+    * ``open_proposals`` -- every proposal still pursuing the signal (no time
+      window): created by an EXECUTED CREATE_IMPROVEMENT whose evidence named
+      this signal TYPE, with its portfolio state (active / shelved;
+      company.py). Empty means no such proposal exists, whatever a memory item
+      says.
+    * ``concluded_proposals`` -- the same, for proposals whose work ended, each
+      with its ``outcome`` (company.proposal_states): "failed" (every attempt
+      rejected, declined or abandoned, its promotion refused, or its task
+      failed) covers nothing; "delivered" (merged, or its task completed) may
+      be awaiting a deploy. Staging, 2026-09-27 05:04Z: listed among the
+      "open" ones, the failed ea350455 made the Scout call a persisting
+      critical anomaly covered ("no new proposal is warranted") an hour after
+      its only candidate was declined.
+    * ``attempts`` -- the most recent CREATE_IMPROVEMENT intents for the signal
+      (any agent, bounded), with their execution outcome. The reason is shown
+      only for this agent's own attempts, so no text crosses between agents.
+    * ``portfolio`` -- whether company mode has room for a new hypothesis.
+
+    Coverage is per signal type: whether an open proposal addresses THIS
+    event (e.g. which task failed) remains the agent's judgement. Trusted
+    facts only; no title or payload text is repeated here."""
+    from .company import portfolio_accounting, proposal_states  # noqa: PLC0415 - company imports this module
+    from .executor import _OPEN_PROPOSAL_STATUSES, WORLD_SIGNAL_EVENTS  # noqa: PLC0415 - executor pulls in the whole runtime
+
+    if event.event_type not in WORLD_SIGNAL_EVENTS:
+        return {}
+    signal = event.event_type
+    for_signal = (
+        AgentIntent.intent_type == "CREATE_IMPROVEMENT",
+        AgentIntent.payload["evidence"]["signal"].astext == signal,
+    )
+    rows = (
+        db.query(AgentIntent)
+        .filter(*for_signal, AgentIntent.created_at >= now - timedelta(days=SIGNAL_COVERAGE_DAYS))
+        .order_by(AgentIntent.created_at.desc())
+        .limit(LIMIT_SIGNAL_ATTEMPTS)
+        .all()
+    )
+    attempts = []
+    for r in rows:
+        status = _ev(r.execution_status)
+        res = ((r.result or {}).get("result") or {}) if status == IntentExecutionStatus.EXECUTED.value else {}
+        attempts.append({
+            "at": _iso(r.created_at),
+            "outcome": status,
+            "by_you": r.agent_id == agent.id,
+            "reason": _refusal_reason(r) if r.agent_id == agent.id else None,
+            "proposal_id": res.get("proposal_id"),
+            "duplicate": bool(res.get("duplicate")),
+        })
+    # every open proposal an executed attempt created for this signal, however old
+    # newest first, split, THEN bounded: concluded rows accumulate per signal and
+    # must never push the live proposal out of the list
+    proposals = (
+        db.query(ImprovementProposal.id, ImprovementProposal.status, ImprovementProposal.created_at)
+        .join(AgentIntent, AgentIntent.result["result"]["proposal_id"].astext == cast(ImprovementProposal.id, String))
+        .filter(*for_signal, AgentIntent.execution_status == IntentExecutionStatus.EXECUTED, ImprovementProposal.status.in_(list(_OPEN_PROPOSAL_STATUSES)))
+        .distinct()
+        .order_by(ImprovementProposal.created_at.desc(), ImprovementProposal.id)
+        .limit(LIMIT_SIGNAL_SCAN)
+        .all()
+    )
+    states = proposal_states(db, settings, [pid for pid, _st, _at in proposals], now)
+    open_rows: List[Dict[str, Any]] = []
+    concluded: List[Dict[str, Any]] = []
+    for pid, st, _at in proposals:
+        state = states.get(str(pid)) or {}
+        if state.get("portfolio_state") == "concluded":
+            concluded.append({"id": str(pid), "status": _ev(st), "portfolio_state": "concluded", "outcome": state.get("outcome")})
+        else:
+            open_rows.append({"id": str(pid), "status": _ev(st), "portfolio_state": state.get("portfolio_state")})
+    out: Dict[str, Any] = {
+        "signal": signal,
+        "open_proposals": open_rows[:LIMIT_SIGNAL_PROPOSALS],
+        "concluded_proposals": concluded[:LIMIT_SIGNAL_CONCLUDED],
+        "attempts": attempts,
+    }
+    if settings.company_cycle_enabled:
+        accounting = portfolio_accounting(db, settings, now)
+        active = len(accounting["active"])
+        cap = settings.company_max_active_hypotheses
+        out["portfolio"] = {"active": active, "max": cap, "full": active >= cap}
+    return out
 
 
 def _society_agents(db: Session, agent: Agent) -> List[Dict[str, Any]]:
@@ -568,35 +772,173 @@ def _society_agents(db: Session, agent: Agent) -> List[Dict[str, Any]]:
     return [{"name": n, "role": r} for n, r in rows]
 
 
-def _repo_reads(db: Session, agent: Agent, run: Optional[AgentRun], event: SocietyEvent) -> List[Dict[str, Any]]:
-    """This agent's executed repository reads in the correlation (newest last)."""
-    rows = (
-        db.query(AgentIntent)
+#: How long an agent's reads for a still-open candidate stay in its context
+#: across stories.
+CANDIDATE_READS_WINDOW_HOURS = 24
+
+
+def _json_len(obj: Any) -> int:
+    return len(json.dumps(obj, sort_keys=True, default=str, ensure_ascii=False))
+
+
+def _read_view(op: Optional[str], data: Any, budget: int = TXT_READ) -> Tuple[Any, bool]:
+    """What the model sees of one read's ``data`` within ``budget`` chars, and
+    whether that view is only part of it.
+
+    Staging 2026-09-26 18:00Z: the Builder re-read ``main.py`` and the failing
+    acceptance test six turns in a row. Each read's JSON was cut at TXT_READ
+    mid-content -- the model saw ~177 of main.py's 231 lines and ~146 of the
+    test's 273 -- while the entry said ``truncated: false`` and gave no line to
+    resume from, so the only move left was to read the same file again.
+    repo_intel already says how to continue its OWN byte cut (``next_line``);
+    this cut is the context's, and it must say the same. A file's text is
+    therefore cut at whole LINES, the view states which lines it shows and the
+    line to continue from with READ_REPO_RANGE; search hits are kept whole.
+    """
+    if not isinstance(data, dict):
+        return _bounded_json(data if data is not None else {}, budget), False
+    if _json_len(data) <= budget:
+        return json.loads(json.dumps(data, sort_keys=True, default=str, ensure_ascii=False)), False
+    key = next((k for k in ("content", "diff") if isinstance(data.get(k), str)), None)
+    if key is not None:
+        lines = data[key].splitlines(keepends=True)
+        try:
+            first = max(1, int(data.get("start") or 1)) if op == "read_range" else 1
+        except (TypeError, ValueError):
+            first = 1
+        # the repo's whole-file count when it has one; otherwise counted like
+        # shown_lines and READ_REPO_RANGE (splitlines), never from "lines"
+        total = data.get("total_lines") or (first - 1 + len(lines))
+        view = {k: v for k, v in data.items() if k not in (key, "next_line")}
+        cut: Dict[str, Any] = {"shown_lines": [first, first - 1 + len(lines)], "total_lines": total}
+        extra = {"next_line": first + len(lines)} if key == "content" else {}
+        room = budget - _json_len({**view, key: "", "context_cut": cut, **extra})
+        shown, used = [], 0
+        for ln in lines:
+            cost = _json_len(ln) - 2  # the quotes are already counted
+            if used + cost > room:
+                break
+            shown.append(ln)
+            used += cost
+        cut["shown_lines"] = [first, first - 1 + len(shown)]
+        view[key] = "".join(shown)
+        view["context_cut"] = cut
+        if key == "content":
+            view["next_line"] = first + len(shown)
+        # a single line longer than the whole budget cannot be shown whole; a
+        # view of zero lines would point back at itself, so it falls through
+        if shown and _json_len(view) <= budget:
+            return view, True
+    hits = data.get("hits")
+    if isinstance(hits, list):
+        view = {k: v for k, v in data.items() if k != "hits"}
+        view["context_cut"] = {"hits_shown": len(hits), "hits_total": len(hits)}
+        kept: List[Any] = []
+        for h in hits:
+            if _json_len({**view, "hits": kept + [h]}) > budget:
+                break
+            kept.append(h)
+        view["hits"] = kept
+        view["context_cut"]["hits_shown"] = len(kept)
+        if _json_len(view) <= budget:
+            return view, True
+    fallback = _bounded_json(data, budget)
+    if key == "content" and isinstance(fallback, dict):
+        # not even one whole line fits (a minified file): READ_REPO_RANGE caps
+        # each line, so it can show the line this view could not
+        fallback["next_line"] = first
+    return fallback, True
+
+
+def _repo_reads(db: Session, agent: Agent, run: Optional[AgentRun], event: SocietyEvent, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """This agent's executed repository reads (newest last, at most
+    LIMIT_REPO_READS): first those of THIS correlation, then -- in the slots
+    left -- those it made for a still-OPEN candidate in another story within
+    CANDIDATE_READS_WINDOW_HOURS.
+
+    Why the second part (staging, 2026-09-26): work on a candidate outlives
+    any one story. The Builder resumes an open candidate on the hourly
+    heartbeat, and every heartbeat is a new correlation, while engineering
+    turns are bounded per correlation (SOCIETY_MAX_ENGINEERING_TURNS). With
+    per-correlation reads only, each heartbeat started from an empty context:
+    after candidate a2788678 failed QA, the Builder re-read the same failing
+    test, templates and main.py at 15:00Z and again at 16:00Z, ran out of
+    turns each time and could never resubmit.
+
+    Carried reads never displace this story's reads. They are marked
+    ``earlier_story`` (another correlation) with their time ``at``. A read
+    made before the agent's own last SUBMIT_CODE_CANDIDATE for that
+    candidate is not carried, because the worktree changed after it. Repeats
+    of the same request keep only the newest. Same agent, same bounds; no
+    budget or cap changes."""
+    now = now or datetime.now(timezone.utc)
+    read_types = [t.value for t in REPO_READ_INTENT_TYPES]
+    base = (
+        db.query(AgentIntent, AgentRun.correlation_id)
         .join(AgentRun, AgentRun.id == AgentIntent.run_id)
         .filter(
             AgentIntent.agent_id == agent.id,
-            AgentRun.correlation_id == event.correlation_id,
-            AgentIntent.intent_type.in_([t.value for t in REPO_READ_INTENT_TYPES]),
+            AgentIntent.intent_type.in_(read_types),
             AgentIntent.execution_status == IntentExecutionStatus.EXECUTED,
         )
-        .order_by(AgentIntent.executed_at.desc())
-        .limit(LIMIT_REPO_READS)
-        .all()
     )
+    rows = base.filter(AgentRun.correlation_id == event.correlation_id).order_by(AgentIntent.executed_at.desc()).limit(LIMIT_REPO_READS).all()
+    free = LIMIT_REPO_READS - len(rows)
+    if free > 0:
+        open_ids = db.query(cast(CodeCandidate.id, String)).filter(CodeCandidate.status.in_(list(OPEN_CANDIDATE_STATUSES))).subquery()
+        cand_key = AgentIntent.payload["candidate_id"].astext
+        pool = (
+            base.filter(
+                AgentRun.correlation_id != event.correlation_id,
+                cand_key.in_(db.query(open_ids)),
+                AgentIntent.executed_at >= now - timedelta(hours=CANDIDATE_READS_WINDOW_HOURS),
+            )
+            .order_by(AgentIntent.executed_at.desc())
+            .limit(LIMIT_REPO_READS * 4)
+            .all()
+        )
+        # the agent's own last submission per candidate: reads before it are stale
+        submitted: Dict[str, datetime] = {
+            str(cid): at
+            for cid, at in db.query(AgentIntent.payload["candidate_id"].astext, func.max(AgentIntent.executed_at))
+            .filter(
+                AgentIntent.agent_id == agent.id,
+                AgentIntent.intent_type == IntentType.SUBMIT_CODE_CANDIDATE.value,
+                AgentIntent.execution_status == IntentExecutionStatus.EXECUTED,
+            )
+            .group_by(AgentIntent.payload["candidate_id"].astext)
+            .all()
+        }
+        seen = set()
+        for r, corr in pool:
+            if len(rows) >= LIMIT_REPO_READS:
+                break
+            cid = str((r.payload or {}).get("candidate_id"))
+            if submitted.get(cid) and r.executed_at and r.executed_at < submitted[cid]:
+                continue
+            key = (r.intent_type, json.dumps(r.payload or {}, sort_keys=True, default=str))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append((r, corr))
     out = []
-    for r in reversed(rows):
+    for r, corr in sorted(rows, key=lambda rc: rc[0].executed_at or now):
         res = (r.result or {}).get("result") or {}
         data = res.get("data") if isinstance(res, dict) else None
+        op = res.get("op") if isinstance(res, dict) else r.intent_type
+        view, cut = _read_view(op, data or {})
         out.append(
             untrusted(
                 {
                     "intent_id": str(r.id),
-                    "op": res.get("op") if isinstance(res, dict) else r.intent_type,
+                    "op": op,
                     "path": res.get("path") if isinstance(res, dict) else None,
-                    "truncated": bool(res.get("truncated")) if isinstance(res, dict) else False,
+                    "truncated": cut or (bool(res.get("truncated")) if isinstance(res, dict) else False),
                     "duplicate": bool(res.get("duplicate")) if isinstance(res, dict) else False,
                     "request": _bounded_json(r.payload or {}, TXT_SHORT),
-                    "data": _bounded_json(data or {}, TXT_READ),
+                    "data": view,
+                    "at": _iso(r.executed_at),
+                    "earlier_story": corr != event.correlation_id,
                 },
                 source=f"repo:{res.get('op') if isinstance(res, dict) else 'read'}",
             )
@@ -619,6 +961,7 @@ def engineering_conventions(settings: SocietySettings) -> Dict[str, Any]:
     return {
         "files_allowed": "hard allow-list of repository-relative paths; the Builder may only create/modify those",
         "acceptance_tests": "existing pytest paths (file or file::test) that QA runs inside the worktree; the Builder must not modify them and cannot invent them",
+        "edits": "each FileEdit is EITHER {path, content} (the whole new file) OR {path, replacements:[{old, new}]} (exact-text edits of an existing file; each 'old' must occur exactly once, so copy it verbatim from READ_REPO_FILE with enough lines to be unique). Output is limited: for an existing file larger than a few KB send replacements, never the whole file",
         "docs_candidate": _docs_conventions_line(),
         "code_candidate": "kind=code: small change to existing source with existing tests covering the touched module as acceptance_tests; a new regression test file may be added when listed in files_allowed",
         "never": "auth, payment, wallets, migrations, secrets, deploy, workflows, dependencies, Dockerfiles, the society runtime",
@@ -776,7 +1119,7 @@ def build_context(
         goals=_goals(db, agent),
         memory=_memory(db, agent),
         messages=_messages(db, agent),
-        proposals=_proposals(db, agent, event),
+        proposals=_proposals(db, agent, event, settings, now),
         candidates=_candidates(db, event),
         tasks=_tasks(db, agent),
         budget=_budget(db, agent, grant, settings, now),
@@ -786,9 +1129,10 @@ def build_context(
         recent_refusals=_recent_refusals(db, agent, now),
         society_agents=_society_agents(db, agent),
         run_id=str(run.id) if run else None,
-        repo_reads=_repo_reads(db, agent, run, event),
+        repo_reads=_repo_reads(db, agent, run, event, now),
         engineering=_engineering(db, agent, event, settings, role),
         promotions=_promotions(db, event),
         federation=_federation(db, grant),
+        signal_coverage=_signal_coverage(db, agent, event, settings, now),
     )
     return ctx

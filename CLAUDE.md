@@ -79,6 +79,11 @@ This repo involves financial invariants. Follow these rules strictly:
 - Live model: `python -m app.society.canary preflight` before any real-model run; a credential that ever appeared in git history is compromised (fingerprint denylist + history scan). NO FAKE AUTONOMY — never present `ScriptedRoleModel`/`FakeModel` output as live proof; the canary refuses them.
 - `seed_society` unions operator gates (`approval_required_intents`) instead of resetting them; the canary seeds only a missing fleet.
 - Phase 3 self-development: `risk.py`, `fitness.py` (`TRUSTED_CRITERIA`) and `promotion.py` are TRUSTED BASE code — every promotion/fitness decision is evaluated from the running revision, never from the candidate worktree; a candidate that edits them is still classified by the old rules (regression tests in `tests/society/test_risk_and_meta_change.py`, `test_fitness.py`). Promotion/merge/deploy intents only *request*; the controller decides. `SOCIETY_AUTO_MERGE_ENABLED` stays `false` by default and no intent may change it. `SOCIETY_GITHUB_TOKEN` is read only inside `promotion_github.py`; never add it (or any credential) to the model context (`tests/society/test_secret_boundary.py`). Repo intelligence is read-only, bounded and returns untrusted data (`repo_intel.py`). Schema: `SOCIETY_PHASE3_SQL` + migration `0010_self_development`.
+- Public surface (graduation, `docs/PUBLIC_SURFACE_CONTRACT.md`): `society/public_surface_contract.json` is the ONE description of the public product; `surface.py` checks it with deterministic HTTP (never a model) for the staging monitor (`surface_monitor.py`), `deploy/public_surface_validate.py` and the dashboard gates (`services/dashboard/tests/test_public_surface.py`). Observations are structural only; page text never reaches the Society. The contract, `surface.py` and those gates are RED evaluation criteria: never change a route and the expectation that judges it in one candidate, and never add a fallback that turns a missing page into `#` or a landing-page 200.
+- Builder edits are whole files (`content`) or exact-text `replacements` (each `old` unique, all-or-nothing, `engineering/workspace.py`).
+- Memory is execution-grounded (`society/memory_grounding.py`): a model-authored `WRITE_MEMORY` is admitted only if every side-effecting intent of the same decision EXECUTED; memories run after their siblings. Never add phrase matching, an opt-out payload field, or a path that writes `memory_items` from model text without this check.
+- Candidate exits: only an operator abandons (`candidate_admin.abandon`, no intent). The responsible Builder may `DECLINE_CODE_CANDIDATE` only a `requested`/`qa_failed` candidate without a promotion, with a structured reason → ordinary `REJECTED` (spec never widened; only its OWN task (callee) refunded, once, via `fail_task_with_refund` run last; idempotent) and the Scout → Governor → Architect path designs the next one. Never let an agent widen `files_allowed`, decline READY/terminal work, close a task it is not party to, or abandon.
+- A candidate lifecycle wake swallowed by the loop breaker is re-delivered ONCE as a fresh system story while the candidate still waits in that stage (`society/redelivery.py`); never re-deliver a re-delivery, never widen it to non-lifecycle events, and never raise the loop-breaker caps instead.
 - See `docs/SOCIETY_RUNTIME.md`, `docs/SELF_DEVELOPMENT.md`, `docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md`, `docs/SOCIETY_LIVE_MODEL_RUNBOOK.md`, ADR-0001, ADR-0002 and ADR-0004.
 
 ### A2A 1.0 + federation + company mode (Phase 8, ADR-0009)
@@ -88,6 +93,16 @@ This repo involves financial invariants. Follow these rules strictly:
 - All outbound HTTP to user- or remote-controlled URLs goes through `app/a2a/federation/netguard.py` (resolve + all-public + pin). Remote cards/messages/artifacts are UNTRUSTED data; credentials live only sealed (`vault.py`) and never reach model context.
 - Flags `A2A_SERVER_ENABLED`, `A2A_FEDERATION_ENABLED`, `A2A_SOCIETY_CLIENT_ENABLED` default false (fail closed); 0.3 compat and push notifications are not implemented and must not be advertised.
 - Company mode (`society/company.py`) adds no authority: one scheduled cycle/day + operator cycles, portfolio caps, `no_high_value_change` is valid, incident freezes are lifted only by operators. See `docs/A2A_*.md`, `docs/AUTONOMOUS_COMPANY.md`.
+
+### Autonomous Maintenance OS (ADR-0010, services/registry/app/maintenance)
+- Agents are cognitive workers, not the maintenance state machine. Workflow state, retries, deadlines, dedup, rescope authority, risk, release eligibility, credentials, rollback and SLO policy live in deterministic code; a model only returns typed activity outputs (`activities.py`) that the reconciler applies.
+- The state machine (`state_machine.py`) is the spec: every non-terminal state has allowed transitions, a timeout, a try budget and recovery targets; the DB refuses a live case without `next_action_at`/`deadline_at`. Regenerate `docs/MAINTENANCE_STATE_MACHINE.md` from `markdown_table()`; never hand-edit it.
+- Coverage is an active RepairCase, never a memory, proposal or chat message. Maintenance incidents never enter the innovation portfolio. Rescope = a new immutable plan revision in the same case (never widen a revision in place, never a new proposal).
+- Schema changes: edit `maintenance/schema_sql.py` (idempotent DDL); `init-db/19-maintenance-os.sql` is generated from it (tested), migrations `0014_maintenance_os`, `0015_activity_turn_log`.
+- The Release Controller (`release.py`, process `release_worker.py`) is model-free, holds the ONLY production release credentials (read only in `release_providers.py`), recomputes every check from trusted code and fails closed. Never add a release credential to the kernel, activities, context, logs or events; never let the Society process hold one.
+- The maintenance package, `desired_state.json`, the detectors and verification tests it names, `services/dashboard/tests/test_experience_contract.py`, `docs/adr/0010-*` and `.railway/**` are RED trusted base (`society/risk.py`). A repair that edits the product and the contract/test that judges it is evaluation laundering (RED); anti-reward-hacking findings are refused.
+- Browser/UX evidence is structural only (rule id, selector class, counts, numbers). Page text never reaches the Society.
+- Do not author the product repairs used as graduation evidence; they belong to the Society. Do not claim the terminal verdicts in `docs/MAINTENANCE_LIVE_PROOF.md` without the live evidence it requires.
 
 ---
 
@@ -202,6 +217,7 @@ pytest tests/test_rate_limiting.py -v          # Rate limiting
 pytest tests/test_task_contract.py -v           # Task contracts & state machine
 pytest tests/test_approval_workflow.py -v         # Approval workflow tests
 pytest tests/society -v                          # Autonomous Society Runtime (needs Postgres; skips with reason otherwise)
+pytest tests/society/maintenance -v              # Maintenance OS (kernel, release controller, rollback, no-stranded invariant)
 python examples/demo_autonomous_society.py       # Deterministic society E2E (one event -> Scout..QA -> READY)
 python examples/demo_autonomous_society.py --story code   # Real source-code candidate -> shadow PR -> offline fitness (fakes only)
 

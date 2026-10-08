@@ -21,8 +21,9 @@ def test_init_db_18_is_byte_identical_to_the_schema_module():
 
 def test_bundle_order_puts_a2a_after_the_tables_it_references():
     names = sorted(p.name for p in (REGISTRY / "init-db").glob("*.sql"))
-    assert names[-1] == "18-a2a-federation.sql"
     assert names.index("01-init.sql") < names.index("18-a2a-federation.sql")
+    # Later bundles (19-maintenance-os.sql) may follow; A2A only needs its referents first.
+    assert names.index("17-app-tables.sql") < names.index("18-a2a-federation.sql")
 
 
 def test_migration_0013_embeds_both_blocks_and_chains_from_0012():

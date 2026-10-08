@@ -525,3 +525,18 @@ def test_abandon_readers_are_read_only():
         lowered = inspect.getsource(fn).lower()
         for forbidden in ("update ", "insert ", "delete ", "drop "):
             assert forbidden not in lowered, f"{fn.__name__} must stay read-only: {forbidden!r}"
+
+
+# ── Graduation: the operator's read-only public-surface watcher (deploy/railway/surface_watch.py) ──
+
+WATCH = REPO / "deploy/railway/surface_watch.py"
+
+
+def test_surface_watch_is_read_only_scrubbed_and_never_prints_the_token():
+    text = WATCH.read_text(encoding="utf-8")
+    calls = re.findall(r'vs\.http\("([A-Z]+)"', text)
+    assert calls and set(calls) == {"GET"}, f"the watcher only reads: {calls}"
+    assert "db_connect" not in text and "UPDATE" not in text.replace("ensure_user", ""), "no SQL of its own (ensure_user is the staging practice)"
+    prints = re.findall(r"print\((.+)\)", text)
+    assert prints and all("token" not in p.lower() and "secret" not in p.lower() for p in prints), prints
+    assert "scrub(body)" in text, "every printed body goes through the phase5_live scrubber"
