@@ -9,7 +9,7 @@ from typing import Optional, Union
 import ed25519
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+import jwt
 from passlib.context import CryptContext
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -52,7 +52,7 @@ def verify_token(token: str) -> TokenData:
             raise credentials_exception
 
         return token_data
-    except (JWTError, ValidationError):
+    except (jwt.PyJWTError, ValidationError):
         raise credentials_exception
 
 

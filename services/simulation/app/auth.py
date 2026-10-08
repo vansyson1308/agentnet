@@ -9,7 +9,7 @@ import uuid
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+import jwt
 from pydantic import BaseModel, ValidationError
 
 # Shared JWT config (same secret across all services). Loaded from app.config
@@ -44,7 +44,7 @@ def verify_token(token: str) -> TokenData:
             return TokenData(agent_id=uuid.UUID(sub))
         else:
             raise credentials_exception
-    except (JWTError, ValidationError, ValueError):
+    except (jwt.PyJWTError, ValidationError, ValueError):
         raise credentials_exception
 
 

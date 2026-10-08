@@ -160,6 +160,13 @@ made the test infrastructure truthful:
   (`JWT_ALGORITHM`, `jwt.decode(..., algorithms=[JWT_ALGORITHM])`), so the timing side channel has no
   reachable surface. Owner: registry/payment maintainers; review at the next python-jose or ecdsa
   release; nothing else is ignored.
+- **python-jose replaced by PyJWT (2026-10-08).** `CVE-2026-85394` / `GHSA-3qf3-8w2g-rqmx` hit
+  `python-jose 3.5.0` with no fixed release. Registry, payment and simulation now use `PyJWT==2.15.1`
+  (`jwt.encode`/`jwt.decode(..., algorithms=[JWT_ALGORITHM])`, `JWTError` -> `jwt.PyJWTError`), still
+  `HS256` with the same claims and the same 401 on any invalid, expired or forged token. `ecdsa` left
+  with python-jose, so the `PYSEC-2026-1325` ignore is removed: `pip-audit` runs with no ignore on all
+  five requirement sets. Registry pins `cryptography==50.0.1` explicitly; it imports it directly and
+  used to get it only through `python-jose[cryptography]`.
 - **GitHub Actions on Node 24.** `actions/checkout@v6`, `actions/setup-python@v6`,
   `actions/upload-artifact@v6`, `docker/setup-buildx-action@v4` (each `action.yml` declares
   `using: node24`; the inputs the workflow uses are unchanged). Permissions stay `contents: read`.

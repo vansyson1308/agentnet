@@ -3,7 +3,10 @@ uvicorn==0.52.4
 sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
 redis==5.0.1
-python-jose[cryptography]==3.5.0
+PyJWT==2.15.1
+# imported directly (a2a/federation/vault.py, society/github_credentials.py); it used to arrive
+# only through python-jose[cryptography], so it is pinned explicitly at the version that resolved then
+cryptography==50.0.1
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.0
 python-multipart==0.0.32
