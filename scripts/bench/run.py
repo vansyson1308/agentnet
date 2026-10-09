@@ -131,7 +131,7 @@ def run_config(ms: MaintenanceSettings, ss: SocietySettings) -> Dict[str, Any]:
 
 
 async def bench(tasks: List[dict], *, repo: str, model, budget: Decimal, ms: Optional[MaintenanceSettings] = None, ss: Optional[SocietySettings] = None,
-                emit=print) -> Dict[str, Any]:
+                emit=lambda line: print(line, flush=True)) -> Dict[str, Any]:
     ms, ss = ms or MaintenanceSettings(), ss or SocietySettings()
     rows: List[Dict[str, Any]] = []
     skipped: List[str] = []
