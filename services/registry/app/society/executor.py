@@ -64,7 +64,7 @@ from ..models import (
     TaskSession,
     TaskStatus,
 )
-from . import memory_grounding, repo_intel
+from . import candidate_health, memory_grounding, repo_intel
 from .config import SocietySettings
 from .engineering import workspace as ws_mod
 from .engineering.qa import RISKY_PATH_RE, evaluate_candidate, static_security_scan
@@ -789,6 +789,9 @@ def _submit_code_candidate(ctx: ExecContext) -> ExecOutcome:
     if cand.requested_by_agent_id == ctx.agent.id:
         raise ExecutionError("the requesting agent cannot also build the candidate")
     spec = cand.spec or {}
+    # A verdict belongs to the head it judged (candidate_health): a candidate
+    # that already has one is being RE-submitted.
+    resubmitted = bool((cand.qa_report or {}).get("verdict"))
     cand.status = CodeCandidateStatus.BUILDING
     cand.builder_agent_id = ctx.agent.id
     cand.builder_run_id = ctx.run.id
@@ -848,14 +851,22 @@ def _submit_code_candidate(ctx: ExecContext) -> ExecOutcome:
     cand.diff_hash = diff_hash
     cand.diff_lines = diff_lines
     cand.error = None
-    ev = _emit(
-        ctx,
-        EventType.CODE_CANDIDATE_BUILT,
-        {"candidate_id": str(cand.id), "title": cand.title, "head_sha": head, "branch_name": ws.branch, "changed_files": changed, "requires_security_review": bool(cand.requires_security_review)},
-        subject_type="code_candidate",
-        subject_id=cand.id,
-        key_suffix=head[:12],
-    )
+    if resubmitted:
+        # Live 2026-09-29..10-09: the re-submitted head kept the previous head's
+        # verdict=fail, every role read it as failed and nobody asked QA again.
+        # Clear it (attempts stay: the QA cap holds) and request QA for this head
+        # in a fresh story the original story's loop breaker cannot swallow.
+        cand.qa_report = candidate_health.reset_qa_report(cand.qa_report, new_head=head)
+        ev = candidate_health.emit_qa_request(ctx.db, cand, reason="resubmitted", source_intent_id=ctx.intent_row.id)
+    else:
+        ev = _emit(
+            ctx,
+            EventType.CODE_CANDIDATE_BUILT,
+            {"candidate_id": str(cand.id), "title": cand.title, "head_sha": head, "branch_name": ws.branch, "changed_files": changed, "requires_security_review": bool(cand.requires_security_review)},
+            subject_type="code_candidate",
+            subject_id=cand.id,
+            key_suffix=head[:12],
+        )
     return ExecOutcome(result={"candidate_id": str(cand.id), "branch": ws.branch, "head_sha": head, "written": written, "changed_files": changed}, events=[str(ev.id)])
 
 

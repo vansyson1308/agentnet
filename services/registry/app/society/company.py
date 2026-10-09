@@ -57,6 +57,7 @@ from ..models import (
     TaskStatus,
     User,
 )
+from . import candidate_health
 from .config import SocietySettings
 from .context import TXT_LONG
 from .events import emit_event, utcnow
@@ -171,6 +172,10 @@ def portfolio_accounting(db: Session, settings: SocietySettings, now: Optional[d
     * **shelved** -- APPROVED and untouched for
       ``SOCIETY_COMPANY_HYPOTHESIS_SHELF_HOURS``; converting it later makes it
       active again;
+    * **stalled** -- CONVERTED_TO_TASK whose open candidates all went
+      ``SOCIETY_CANDIDATE_STALL_HOURS`` without lifecycle progress (the rest
+      ended): surfaced to the operator queue (candidate_health), never
+      abandoned automatically; progress makes it active again;
     * **active** -- everything else (PROPOSED, UNDER_REVIEW, fresh APPROVED,
       work in flight, a conversion with no linked work found).
 
@@ -185,7 +190,7 @@ def portfolio_accounting(db: Session, settings: SocietySettings, now: Optional[d
         .limit(_PORTFOLIO_SCAN)
         .all()
     )
-    out: Dict[str, list] = {"active": [], "concluded": [], "shelved": []}
+    out: Dict[str, list] = {"active": [], "concluded": [], "shelved": [], "stalled": []}
     for pid, (bucket, _outcome) in _classify(db, rows, settings, now).items():
         out[bucket].append(pid)
     return out
@@ -206,6 +211,7 @@ def _classify(db: Session, rows: list, settings: SocietySettings, now: datetime)
     cands: Dict[uuid.UUID, list] = {}
     latest_promo: Dict[uuid.UUID, str] = {}
     tasks: Dict[uuid.UUID, str] = {}
+    stalled: set = set()
     if converted:
         for cid, pid, st in db.query(CodeCandidate.id, CodeCandidate.proposal_id, CodeCandidate.status).filter(CodeCandidate.proposal_id.in_(converted)).all():
             cands.setdefault(pid, []).append((cid, _status_value(st)))
@@ -219,6 +225,8 @@ def _classify(db: Session, rows: list, settings: SocietySettings, now: datetime)
                 .all()
             ):
                 latest_promo[cid] = _status_value(st)
+        open_ids = [c for lst in cands.values() for c, st in lst if st not in _CANDIDATE_ENDED]
+        stalled = candidate_health.stalled_ids(db, settings, open_ids, now)
         task_ids = [r.converted_task_id for r in rows if r.converted_task_id is not None]
         if task_ids:
             tasks = {tid: _status_value(st) for tid, st in db.query(TaskSession.id, TaskSession.status).filter(TaskSession.id.in_(task_ids)).all()}
@@ -242,6 +250,8 @@ def _classify(db: Session, rows: list, settings: SocietySettings, now: datetime)
                 if all(ended(c, s) for c, s in linked):
                     bucket = "concluded"
                     outcome = OUTCOME_DELIVERED if any(merged(c, s) for c, s in linked) else OUTCOME_FAILED
+                elif all(ended(c, s) or c in stalled for c, s in linked):
+                    bucket = "stalled"
             elif task_status in _TASK_ENDED:
                 bucket = "concluded"
                 outcome = OUTCOME_DELIVERED if task_status == TaskStatus.COMPLETED.value else OUTCOME_FAILED
