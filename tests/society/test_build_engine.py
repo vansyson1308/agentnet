@@ -54,7 +54,7 @@ def _candidate(db, report, *, kind="code"):
 def _build(db, SessionLocal, settings, cand, script, *, intent=None, then_scripted_roles=False):
     """One Builder decision on a test event; with ``then_scripted_roles`` the
     rest of the society (QA, Security, ...) runs its ordinary scripted rules."""
-    ev = emit_event(db, event_type="t.build", payload={}, correlation_id=cand.correlation_id, idempotency_key=f"t-build-{uuid.uuid4()}")
+    emit_event(db, event_type="t.build", payload={}, correlation_id=cand.correlation_id, idempotency_key=f"t-build-{uuid.uuid4()}")
     db.commit()
     first = [{"decision_summary": "build it", "intents": [intent or {"type": "BUILD_CODE_CANDIDATE", "payload": {"candidate_id": str(cand.id)}}], "sleep_for_seconds": 1}]
 
