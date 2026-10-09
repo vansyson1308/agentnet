@@ -167,12 +167,12 @@ def main(argv=None, *, model=None) -> int:
     ap.add_argument("--json-out")
     ap.add_argument("--allow-scripted", action="store_true", help="bench self-tests only: the report says live=false")
     args = ap.parse_args(argv)
-    for k in [k for k in os.environ if k.startswith(("POSTGRES", "REDIS", "DATABASE_URL"))]:
-        os.environ.pop(k)  # the bench never touches a database, and neither do the tests it runs
     model = model or act.get_activity_model()
     if model is None or (not getattr(model, "live", False) and not args.allow_scripted):
         print("BENCH REFUSED: no live model configured (SOCIETY_MODEL_PROVIDER=openai_compatible + key + base URL); scripted output is never a bench result")
         return 2
+    for k in [k for k in os.environ if k.startswith(("POSTGRES", "REDIS", "DATABASE_URL"))]:
+        os.environ.pop(k)  # the bench never touches a database, and neither do the tests it runs
     summary = asyncio.run(bench(load_tasks(args.only), repo=args.repo, model=model, budget=Decimal(os.getenv("BENCH_BUDGET_USD", "1"))))
     if args.json_out:
         pathlib.Path(args.json_out).write_text(json.dumps(summary, indent=2, sort_keys=True))

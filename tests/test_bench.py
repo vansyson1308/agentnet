@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import subprocess
 from decimal import Decimal
@@ -81,5 +82,7 @@ def test_failures_are_classified_and_never_scored(tmp_path):
 
 def test_only_a_live_model_produces_a_bench_result(tmp_path, monkeypatch):
     monkeypatch.setenv("SOCIETY_MODEL_PROVIDER", "scripted")
+    monkeypatch.setenv("POSTGRES_HOST", "db.example")
     assert bench.main(["--repo", str(tmp_path)]) == 2
     assert bench.main(["--repo", str(tmp_path)], model=ScriptedActivityModel([])) == 2, "scripted output is refused without --allow-scripted"
+    assert os.environ["POSTGRES_HOST"] == "db.example", "a refused run leaves the caller's environment alone"
