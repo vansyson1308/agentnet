@@ -83,6 +83,11 @@ budgets, `MAINTENANCE_MAX_CASE_COST_USD` per build); without one the build is re
 With a live Society model, whole-file `SUBMIT_CODE_CANDIDATE` edits are refused for code candidates;
 the scripted provider keeps them as a mechanics fixture (never live evidence).
 `scripts/bench/run.py --path society` scores this exact function on the bench tasks.
+Each build (and each maintenance AuthorPatch try) is best-of-`MAINTENANCE_BUILDER_SAMPLES` (default 3,
+`harness.author_patch`): every sample starts from the base at temperature 0.1 / 0.5 / 0.8, sampling stops
+at the first sample the harness's own acceptance gate delivers (never judge-picked), and the samples share
+one cost cap. Each model turn gets `MAINTENANCE_BUILDER_MAX_OUTPUT_TOKENS` (default 2500). Bench holdout
+tasks (`scripts/bench/holdout*`) are refused by every read, search and reference tool.
 
 ## Risk model
 

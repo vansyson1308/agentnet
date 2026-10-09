@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -27,7 +27,6 @@ from ...maintenance import activities as act
 from ...maintenance import harness as h
 from ...maintenance.config import MaintenanceSettings
 from ...maintenance.patchset import reset_to_base
-from ...maintenance.taxonomy import ActivityKind
 from ..config import SocietySettings
 from . import workspace as ws_mod
 
@@ -39,6 +38,7 @@ PATCH_PROTOCOL = ("apply_patch args: {files: [{path, operations: [{op: replace_e
 class BuildOutcome:
     result: act.ActivityResult
     state: h.AttemptState
+    samples: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def delivered(self) -> bool:
@@ -51,7 +51,7 @@ class BuildOutcome:
                 "patches": self.state.patches_applied, "tokens_in": r.tokens_in, "tokens_out": r.tokens_out, "cost_usd": str(r.cost_usd),
                 "auto_submitted": bool(out.get("auto_submitted")), "tests_unverified": bool(out.get("tests_unverified")),
                 "rescope": ({"reason": r.rescope.get("reason"), "required_files": list(r.rescope.get("required_files") or [])[:12]} if r.rescope else None),
-                "actions": [str(t.get("refused") and f"submit!{t['refused']}" or t.get("action")) for t in r.turn_log][:40]}
+                "samples": self.samples, "actions": [str(t.get("refused") and f"submit!{t['refused']}" or t.get("action")) for t in r.turn_log][:60]}
 
 
 def spec_input(spec: Dict[str, Any], *, title: str, ws: ws_mod.Workspace, ms: MaintenanceSettings, feedback: Sequence[str] = ()) -> Dict[str, Any]:
@@ -72,15 +72,14 @@ def spec_input(spec: Dict[str, Any], *, title: str, ws: ws_mod.Workspace, ms: Ma
 
 async def build(ws: ws_mod.Workspace, spec: Dict[str, Any], *, title: str, model: act.ActivityModel, ms: MaintenanceSettings, ss: SocietySettings,
                 cost_cap: Decimal, feedback: Sequence[str] = (), wrap_tools: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None) -> BuildOutcome:
-    """One AuthorPatch try on ``ws`` (reset to its base first). The worktree is left as the try ended; nothing is committed here."""
+    """Best-of-N AuthorPatch (``harness.author_patch``) on ``ws``, each sample
+    from its base. The worktree is left as the delivered (else last) sample
+    ended; nothing is committed here."""
     reset_to_base(ws)
-    state = h.AttemptState(ws=ws, files_allowed=list(spec.get("files_allowed") or []), test_targets=list(spec.get("acceptance_tests") or []),
-                           max_test_runs=ms.max_test_runs_per_attempt, test_timeout=ss.qa_test_timeout_seconds, page_bytes=ms.read_page_bytes)
-    tools = h.builder_tools(state)
-    res = await act.run_activity(act.SPECS[ActivityKind.AUTHOR_PATCH], spec_input(spec, title=title, ws=ws, ms=ms, feedback=feedback), model=model,
-                                 tools=wrap_tools(tools) if wrap_tools else tools, max_turns=ms.builder_max_turns, cost_cap=cost_cap,
-                                 timeout_seconds=float(ms.activity_timeout_seconds), max_read_calls=ms.builder_max_read_calls, submit_check=h.submit_check(state))
-    return BuildOutcome(h.submit_if_green(state)(res), state)
+    files, tests = list(spec.get("files_allowed") or []), list(spec.get("acceptance_tests") or [])
+    run = await h.author_patch(ws, spec_input(spec, title=title, ws=ws, ms=ms, feedback=feedback), files_allowed=files, tests=tests, model=model,
+                               settings=ms, test_timeout=ss.qa_test_timeout_seconds, cost_cap=cost_cap, wrap_tools=wrap_tools)
+    return BuildOutcome(run.result, run.state, run.samples)
 
 
 def run_blocking(coro, *, heartbeat: Callable[[], None], every: float) -> Any:

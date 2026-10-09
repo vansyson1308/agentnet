@@ -17,7 +17,9 @@ Each task runs ``--repeat`` times (default 3). A run is *delivered* only when
 the model SUBMITTED and the judge scored the worktree: a correct worktree left
 behind by a run that hit its turn budget is not a delivery. pass@1 is the
 delivered rate over all runs; pass@k counts a task once any of its k runs
-delivered.
+delivered. One run is best-of-``MAINTENANCE_BUILDER_SAMPLES`` (harness.author_patch):
+samples stop at the first one the harness's own acceptance gate delivers --
+never picked by this judge.
 
 Only a LIVE model is accepted (``--allow-scripted`` exists for the bench's own
 tests and marks the report ``live: false``). The run stops at
@@ -46,7 +48,6 @@ from scripts.bench.score import score  # noqa: E402
 from services.registry.app.maintenance import activities as act  # noqa: E402
 from services.registry.app.maintenance import harness as h  # noqa: E402
 from services.registry.app.maintenance.config import MaintenanceSettings  # noqa: E402
-from services.registry.app.maintenance.taxonomy import ActivityKind  # noqa: E402
 from services.registry.app.society.config import SocietySettings  # noqa: E402
 from services.registry.app.society.engineering import build_engine  # noqa: E402
 from services.registry.app.society.engineering import workspace as ws_mod  # noqa: E402
@@ -119,18 +120,15 @@ async def run_task(task: dict, *, repo: str, root: str, rep: int = 0, model, ms:
     if path == "society":
         out = await build_engine.build(ws, society_spec(task), title=task["id"], model=model, ms=ms, ss=ss, cost_cap=cost_cap,
                                        wrap_tools=lambda tools: _recording(tools, codes))
-        res, state = out.result, out.state
-    else:
-        state = h.AttemptState(ws=ws, files_allowed=list(task["files_allowed"]), test_targets=list(task["failing_tests"]),
-                               max_test_runs=ms.max_test_runs_per_attempt, test_timeout=ss.qa_test_timeout_seconds, page_bytes=ms.read_page_bytes)
-        res = await act.run_activity(act.SPECS[ActivityKind.AUTHOR_PATCH], task_input(task, ws, ms), model=model, tools=_recording(h.builder_tools(state), codes),
-                                     max_turns=ms.builder_max_turns, cost_cap=cost_cap, timeout_seconds=float(ms.activity_timeout_seconds),
-                                     max_read_calls=ms.builder_max_read_calls, submit_check=h.submit_check(state))
-        res = h.submit_if_green(state)(res)  # as the reconciler does
+        res, state, samples = out.result, out.state, out.samples
+    else:  # as the reconciler does
+        run = await h.author_patch(ws, task_input(task, ws, ms), files_allowed=task["files_allowed"], tests=task["failing_tests"], model=model, settings=ms,
+                                   test_timeout=ss.qa_test_timeout_seconds, cost_cap=cost_cap, wrap_tools=lambda tools: _recording(tools, codes))
+        res, state, samples = run.result, run.state, run.samples
     scored = score(str(ws.path), task)
     return {"id": task["id"], "rep": rep, "result": classify(res, codes, scored), "submitted": res.ok, "scored": scored["passed"],
             "auto_submitted": bool((res.output or {}).get("auto_submitted")), "tests_unverified": bool((res.output or {}).get("tests_unverified")), "error_class": res.error_class,
-            "turns": res.turns, "test_runs": state.test_runs, "patches": state.patches_applied, "cost_usd": str(res.cost_usd),
+            "turns": res.turns, "test_runs": state.test_runs, "samples": len(samples), "sample_results": [s["error_class"] or ("pass" if s["delivered"] else "rescope") for s in samples], "patches": state.patches_applied, "cost_usd": str(res.cost_usd),
             "tokens_in": res.tokens_in, "tokens_out": res.tokens_out, "tool_codes": codes[-10:],
             "actions": [str(t.get("refused") and f"submit!{t['refused']}" or t.get("action")) for t in res.turn_log]}
 
@@ -159,11 +157,13 @@ def summarize(rows: List[Dict[str, Any]], *, live: bool, model_name: str, config
 
 
 def run_config(ms: MaintenanceSettings, ss: SocietySettings, repeat: int = 1, path: str = "maintenance") -> Dict[str, Any]:
-    # The AuthorPatch spec's max_tokens is what each model turn actually gets;
-    # SOCIETY_MODEL_MAX_OUTPUT_TOKENS does not reach this activity.
+    # MAINTENANCE_BUILDER_MAX_OUTPUT_TOKENS is what each AuthorPatch model turn
+    # actually gets; SOCIETY_MODEL_MAX_OUTPUT_TOKENS does not reach it. A run is
+    # best-of-builder_samples, delivered by the harness's own gate.
     return {"builder_max_turns": ms.builder_max_turns, "builder_max_read_calls": ms.builder_max_read_calls, "max_test_runs": ms.max_test_runs_per_attempt,
             "activity_timeout_s": ms.activity_timeout_seconds, "model_timeout_s": ss.model_timeout_seconds, "thinking": ss.model_thinking_mode,
-            "effective_max_tokens_per_turn": act.SPECS[ActivityKind.AUTHOR_PATCH].max_tokens, "repeat": repeat, "path": path}
+            "effective_max_tokens_per_turn": ms.builder_max_output_tokens, "builder_samples": ms.builder_samples,
+            "sample_temperatures": list(h.SAMPLE_TEMPERATURES[:ms.builder_samples]), "repeat": repeat, "path": path}
 
 
 async def bench(tasks: List[dict], *, repo: str, model, budget: Decimal, ms: Optional[MaintenanceSettings] = None, ss: Optional[SocietySettings] = None,

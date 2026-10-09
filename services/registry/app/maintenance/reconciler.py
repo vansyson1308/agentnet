@@ -562,8 +562,6 @@ class MaintenanceKernel:
             return
         ws = h.open_attempt_workspace(self.society, case.id, attempt.attempt, fresh=True)  # replay-safe: always from base
         attempt.base_sha = ws.base_sha
-        state = h.AttemptState(ws=ws, files_allowed=list(plan.files_allowed or []), test_targets=list(plan.acceptance_tests or []),
-                               max_test_runs=self.settings.max_test_runs_per_attempt, test_timeout=self.society.qa_test_timeout_seconds, page_bytes=self.settings.read_page_bytes)
         payload = {
             **self._incident_input(db, case, incident),
             "plan": {"revision": plan.revision, "root_cause": {"trust": "model_hypothesis", "text": plan.root_cause}, "approach": plan.approach,
@@ -577,9 +575,16 @@ class MaintenanceKernel:
         files = h.target_file_context(ws.path, list(plan.files_allowed or []), cites, tests=list(plan.acceptance_tests or []))
         payload["target_files"] = {"trust": "untrusted_repository_data", "files": files}
         payload["read_budget"] = f"at most {self.settings.builder_max_read_calls} read-tool calls this try; the target files are above"
-        res = self._run_activity_sync(db, case, ActivityKind.AUTHOR_PATCH, payload, tools=h.builder_tools(state), model=self.model(), plan_revision=plan.revision, attempt=attempt.attempt,
-                                      max_turns=self.settings.builder_max_turns, max_read_calls=self.settings.builder_max_read_calls, submit_check=h.submit_check(state),
-                                      finish=h.submit_if_green(state))
+        model, ran = self.model(), {}
+
+        async def best_of(cost_cap, timeout_seconds):  # best-of-N samples, each from the base (harness.author_patch)
+            run = await h.author_patch(ws, payload, files_allowed=list(plan.files_allowed or []), tests=list(plan.acceptance_tests or []), model=model,
+                                       settings=self.settings, test_timeout=self.society.qa_test_timeout_seconds, cost_cap=cost_cap, timeout_seconds=timeout_seconds)
+            ran["state"] = run.state
+            return run.result
+
+        res = self._run_activity_sync(db, case, ActivityKind.AUTHOR_PATCH, payload, tools={}, model=model, plan_revision=plan.revision, attempt=attempt.attempt, runner=best_of)
+        state = ran.get("state") or h.AttemptState(ws, list(plan.files_allowed or []), [], 0, 1, self.settings.read_page_bytes)
         attempt.turns = int(attempt.turns or 0) + (res.turns if res else 0)
         attempt.test_runs = int(attempt.test_runs or 0) + state.test_runs
         if res is None:
@@ -997,7 +1002,7 @@ class MaintenanceKernel:
         return db.query(RepairActivity).filter(RepairActivity.case_id == case.id, RepairActivity.kind == kind.value, RepairActivity.plan_revision == rev, RepairActivity.attempt == attempt).count()
 
     def _run_activity_sync(self, db, case, kind: ActivityKind, payload: Dict[str, Any], *, tools, model, plan_revision: int = 0, attempt: int = 0, max_turns: Optional[int] = None,
-                           max_read_calls: Optional[int] = None, submit_check=None, finish=None) -> Optional[act.ActivityResult]:
+                           max_read_calls: Optional[int] = None, submit_check=None, finish=None, runner=None) -> Optional[act.ActivityResult]:
         """Record the try (committed), run the model loop outside any open
         transaction, then fence and record the outcome. Returns None when the
         lease was lost meanwhile."""
@@ -1018,10 +1023,13 @@ class MaintenanceKernel:
         case_id, row_id = case.id, row.id
         db.commit()  # the try is durable before the model is called
         remaining = max(Decimal("0.0001"), self.settings.max_case_cost_usd * (2 if case.priority in pol.URGENT else 1) - Decimal(str(case.model_cost_usd or 0)))
+        timeout = float(self._activity_timeout or self.settings.activity_timeout_seconds)
         try:
-            res = asyncio.run(act.run_activity(spec, payload, model=model, tools=tools, max_turns=max_turns, cost_cap=remaining,
-                                               timeout_seconds=float(self._activity_timeout or self.settings.activity_timeout_seconds),
-                                               max_read_calls=max_read_calls, submit_check=submit_check))
+            if runner is not None:  # e.g. best-of-N AuthorPatch: one recorded activity try
+                res = asyncio.run(runner(remaining, timeout))
+            else:
+                res = asyncio.run(act.run_activity(spec, payload, model=model, tools=tools, max_turns=max_turns, cost_cap=remaining,
+                                                   timeout_seconds=timeout, max_read_calls=max_read_calls, submit_check=submit_check))
             res = finish(res) if finish else res
         except Exception as exc:  # noqa: BLE001
             res = act.ActivityResult(ok=False, kind=kind, error_class="harness_error", error=type(exc).__name__)

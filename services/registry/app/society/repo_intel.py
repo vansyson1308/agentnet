@@ -35,6 +35,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
 
+from ..maintenance.repo_tools import is_holdout
 from .risk import is_never_readable
 
 MAX_PATTERN_LEN = 200
@@ -86,7 +87,7 @@ def normalize_rel_path(rel: str) -> str:
     norm = "/".join(parts)
     if norm == ".git" or norm.startswith(".git/") or "/.git/" in norm:
         raise RepoReadError("git internals are not readable")
-    if is_never_readable(norm):
+    if is_never_readable(norm) or is_holdout(norm):
         raise RepoReadError(f"path is on the read deny-list: {norm!r}")
     return norm
 
@@ -150,7 +151,7 @@ def list_tree(root: pathlib.Path, rel: str = "", *, depth: int = 2, max_entries:
             if child.name in _SKIP_DIRS or child.is_symlink():
                 continue
             relp = child.relative_to(root_r).as_posix()
-            if is_never_readable(relp):
+            if is_never_readable(relp) or is_holdout(relp):
                 continue
             if child.is_dir():
                 entries.append({"path": relp, "type": "dir"})
@@ -177,7 +178,7 @@ def _iter_files(root: pathlib.Path, glob: Optional[str]) -> List[pathlib.Path]:
             if p.is_symlink():
                 continue
             relp = p.relative_to(root_r).as_posix()
-            if is_never_readable(relp):
+            if is_never_readable(relp) or is_holdout(relp):
                 continue
             if glob and not (fnmatch.fnmatchcase(relp, glob) or fnmatch.fnmatchcase(name, glob)):
                 continue

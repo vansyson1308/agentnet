@@ -483,6 +483,62 @@ def submit_if_green(state: AttemptState):
     return finish
 
 
+#: AuthorPatch sample i runs at SAMPLE_TEMPERATURES[min(i, len - 1)]
+SAMPLE_TEMPERATURES = (0.1, 0.5, 0.8)
+
+
+@dataclass
+class PatchRun:
+    result: Any  # activities.ActivityResult: the delivered sample's, else the last one's; tokens/cost/turns summed
+    state: AttemptState  # the state of the sample ``result`` came from
+    samples: List[Dict[str, Any]] = field(default_factory=list)
+
+
+async def author_patch(ws, payload: Dict[str, Any], *, files_allowed: Sequence[str], tests: Sequence[str], model, settings: MaintenanceSettings,
+                       test_timeout: int, cost_cap, timeout_seconds: Optional[float] = None, wrap_tools=None) -> PatchRun:
+    """Best-of-N AuthorPatch: up to ``settings.builder_samples`` independent
+    tries, each on a worktree reset to its base, at a rising temperature,
+    stopping at the first DELIVERED one (submitted on a green worktree, by
+    the model or by ``submit_if_green``). Never judge-picked: the harness's
+    own acceptance gate decides, in sample order. The samples share
+    ``cost_cap``. When none delivers, a rescope answer (if any) is returned,
+    else the last sample."""
+    from . import activities as act  # noqa: PLC0415
+    from .taxonomy import ActivityKind  # noqa: PLC0415
+
+    spec = act.SPECS[ActivityKind.AUTHOR_PATCH]
+    runs: List[tuple] = []
+    samples: List[Dict[str, Any]] = []
+    spent = type(cost_cap)(0)
+    for i in range(settings.builder_samples):
+        if spent >= cost_cap:
+            break
+        reset_to_base(ws)
+        state = AttemptState(ws=ws, files_allowed=list(files_allowed), test_targets=list(tests), max_test_runs=settings.max_test_runs_per_attempt,
+                             test_timeout=test_timeout, page_bytes=settings.read_page_bytes)
+        tools = builder_tools(state)
+        temp = SAMPLE_TEMPERATURES[min(i, len(SAMPLE_TEMPERATURES) - 1)]
+        res = await act.run_activity(spec, payload, model=model, tools=wrap_tools(tools) if wrap_tools else tools, max_turns=settings.builder_max_turns,
+                                     cost_cap=cost_cap - spent, timeout_seconds=float(timeout_seconds or settings.activity_timeout_seconds),
+                                     max_read_calls=settings.builder_max_read_calls, submit_check=submit_check(state),
+                                     max_tokens=settings.builder_max_output_tokens, temperature=temp)
+        res = submit_if_green(state)(res)
+        spent += res.cost_usd
+        delivered = bool(res.ok and res.rescope is None)
+        samples.append({"sample": i + 1, "temperature": temp, "delivered": delivered, "error_class": res.error_class, "rescope": res.rescope is not None,
+                        "turns": res.turns, "test_runs": state.test_runs, "cost_usd": str(res.cost_usd)})
+        runs.append((res, state))
+        if delivered:
+            break
+    pick = next(((r, s) for r, s in runs if r.ok and r.rescope is None), None) or next(((r, s) for r, s in runs if r.rescope is not None), None) or runs[-1]
+    res, state = pick  # a delivered sample is the last one run, so the worktree is its worktree
+    if len(runs) > 1:
+        res.turns, res.tokens_in, res.tokens_out = sum(r.turns for r, _ in runs), sum(r.tokens_in for r, _ in runs), sum(r.tokens_out for r, _ in runs)
+        res.cost_usd = sum((r.cost_usd for r, _ in runs), type(cost_cap)(0))
+        res.turn_log = [t for k, (r, _) in enumerate(runs) for t in ([{"turn": 0, "action": f"sample:{k + 1}"}] if k else []) + list(r.turn_log)]
+    return PatchRun(res, state, samples)
+
+
 def read_tools(root, *, page_bytes: int) -> Dict[str, Any]:
     """Read-only tools over a checkout (diagnosis / design / review)."""
     repo = RepoTools(root, page_bytes=page_bytes)
@@ -555,6 +611,9 @@ __all__ = [
     "submit_check",
     "target_file_context",
     "submit_if_green",
+    "author_patch",
+    "PatchRun",
+    "SAMPLE_TEMPERATURES",
     "worktree_digest",
     "read_tools",
     "finalize_attempt",

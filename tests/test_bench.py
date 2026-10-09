@@ -12,11 +12,19 @@ import re
 import subprocess
 from decimal import Decimal
 
+import pytest
+
 from scripts.bench import run as bench
 from services.registry.app.maintenance.activities import ScriptedActivityModel
 
 BUGGY, FIXED = "def double(x):\n    return x + x + 1\n", "def double(x):\n    return x + x\n"
 TEST = "from pkg.mod import double\n\n\ndef test_double():\n    assert double(2) == 4\n\n\ndef test_zero():\n    assert double(0) == 0\n"
+
+
+@pytest.fixture(autouse=True)
+def _one_sample(monkeypatch):
+    """The single-try semantics below; best-of-N has its own test."""
+    monkeypatch.setenv("MAINTENANCE_BUILDER_SAMPLES", "1")
 
 
 def _git(cwd, *args):
@@ -73,7 +81,7 @@ def test_a_fixed_task_scores_and_the_report_is_marked_not_live(tmp_path):
     summary, rows = _bench(tmp_path, [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), {"action": "run_tests", "args": {}}, SUBMIT])
     assert rows[0]["result"] == "pass" and rows[0]["test_runs"] == 1 and rows[0]["patches"] == 1
     assert summary["live"] is False and summary["pass_at_1"] == 1.0 and summary["result_classes"] == {"pass": 1}
-    assert summary["config"]["effective_max_tokens_per_turn"] == bench.act.SPECS[bench.ActivityKind.AUTHOR_PATCH].max_tokens
+    assert summary["config"]["effective_max_tokens_per_turn"] == 2500 and summary["config"]["builder_samples"] == 1
 
 
 def test_a_correct_worktree_that_was_never_submitted_is_not_delivered(tmp_path):
@@ -126,6 +134,23 @@ def test_the_society_path_drives_the_same_harness_and_scores_the_same(tmp_path):
         keys = ("result", "submitted", "scored", "test_runs", "patches", "actions")
         assert {k: s[0][k] for k in keys} == {k: m[0][k] for k in keys}
         assert summary["config"]["path"] == "society"
+
+
+def test_a_run_is_best_of_n_delivered_by_the_harness_gate_never_picked_by_the_judge(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAINTENANCE_BUILDER_SAMPLES", "3")
+    monkeypatch.setenv("MAINTENANCE_BUILDER_MAX_OUTPUT_TOKENS", "16000")
+    red = [_patch("pkg/mod.py", "return x + x + 1", "return x + x + 2"), RUN] + [SUBMIT] * 8  # sample 1: all 10 turns, never green
+    good = [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), RUN, SUBMIT]  # sample 2 starts from the base again
+    model = ScriptedActivityModel(red + good + [RESCOPE])
+    repo, task = _repo(tmp_path)
+    lines = []
+    summary = asyncio.run(bench.bench([task], repo=str(repo), model=model, budget=Decimal("1"), emit=lines.append))
+    row = json.loads(lines[0].split(" ", 2)[2])
+    assert row["result"] == "pass" and row["samples"] == 2 and row["sample_results"] == ["tests_failing", "pass"], "stops at the first green sample"
+    assert row["turns"] == 13 and row["cost_usd"] == str(Decimal("0.0002") * 13), "turns and cost add up over the samples"
+    assert sorted(set(model.temperatures)) == [0.1, 0.5] and model.temperatures[-1] == 0.5 and len(model.calls) == 13
+    assert summary["config"]["builder_samples"] == 3 and summary["config"]["sample_temperatures"] == [0.1, 0.5, 0.8]
+    assert summary["config"]["effective_max_tokens_per_turn"] == 16000
 
 
 def test_only_a_live_model_produces_a_bench_result(tmp_path, monkeypatch):
