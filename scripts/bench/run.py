@@ -109,8 +109,10 @@ async def run_task(task: dict, *, repo: str, root: str, rep: int = 0, model, ms:
     res = await act.run_activity(act.SPECS[ActivityKind.AUTHOR_PATCH], task_input(task, ws, ms), model=model, tools=_recording(h.builder_tools(state), codes),
                                  max_turns=ms.builder_max_turns, cost_cap=cost_cap, timeout_seconds=float(ms.activity_timeout_seconds),
                                  max_read_calls=ms.builder_max_read_calls, submit_check=h.submit_check(state))
+    res = h.submit_if_green(state)(res)  # as the reconciler does
     scored = score(str(ws.path), task)
-    return {"id": task["id"], "rep": rep, "result": classify(res, codes, scored), "submitted": res.ok, "scored": scored["passed"], "error_class": res.error_class,
+    return {"id": task["id"], "rep": rep, "result": classify(res, codes, scored), "submitted": res.ok, "scored": scored["passed"],
+            "auto_submitted": bool((res.output or {}).get("auto_submitted")), "tests_unverified": bool((res.output or {}).get("tests_unverified")), "error_class": res.error_class,
             "turns": res.turns, "test_runs": state.test_runs, "patches": state.patches_applied, "cost_usd": str(res.cost_usd),
             "tokens_in": res.tokens_in, "tokens_out": res.tokens_out, "tool_codes": codes[-10:]}
 

@@ -46,6 +46,8 @@ def amber_patch(messages, n):
             {"path": PAGE, "operations": [{"op": "replace_exact", "old": "{'name': 'echo', 'price': 1}", "new": "echo"}]},
             {"path": MAIN, "operations": [{"op": "insert_after", "anchor": 'return "page.html"\n', "text": "\n\ndef marketplace_badges():\n    return ['echo']\n"}]},
         ]}}
+    if turns == 1:
+        return {"action": "run_tests", "args": {}}
     return {"action": "submit", "result": {"summary": "render names; expose badges"}}
 
 
@@ -134,6 +136,8 @@ def test_red_repair_is_prepared_and_never_released(db, SessionLocal, mset, sset,
                 {"path": PAGE, "operations": [{"op": "replace_exact", "old": "{'name': 'echo', 'price': 1}", "new": "echo"}]},
                 {"path": "services/payment/app/wallet.py", "operations": [{"op": "replace_exact", "old": "BALANCE = 0", "new": "BALANCE = 0  # unchanged semantics"}]},
             ]}}
+        if turns == 1:
+            return {"action": "run_tests", "args": {}}
         return {"action": "submit", "result": {"summary": "s" * 10}}
 
     k = kernel_factory(base_script({"DesignRepair": design, "AuthorPatch": patch}))
@@ -200,9 +204,11 @@ def test_qa_failure_is_repair_input_for_the_next_attempt(db, mset, kernel_factor
 
     def patch(messages, n):
         turns = sum(1 for m in messages if m["role"] == "assistant")
-        if n == 1:
+        if seen.setdefault("first_input", messages[1]["content"]) == messages[1]["content"]:  # the first attempt's try
             if turns == 0:
                 return {"action": "apply_patch", "args": {"files": [{"path": PAGE, "operations": [{"op": "replace_exact", "old": "{'name': 'echo', 'price': 1}", "new": "{'name': 'echo'}"}]}]}}
+            if not any('"test_runs_left": 0' in m["content"] for m in messages[-2:]):  # red each time: submit is refused until the test budget is spent
+                return {"action": "run_tests", "args": {}}
             return {"action": "submit", "result": {"summary": "partial fix"}}
         seen["feedback"] = messages[1]["content"]
         return green_repair_script()(messages)

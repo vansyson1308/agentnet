@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import ast
 import difflib
+import hashlib
 import re
 import subprocess
 import sys
@@ -303,6 +304,24 @@ class AttemptState:
     test_runs: int = 0
     last_test: Optional[TargetedTestRun] = None
     patch_digests: List[str] = field(default_factory=list)
+    tested_digest: Optional[str] = None  # the worktree the last test run judged
+    tested_full: bool = False  # ... and whether it ran every acceptance test
+
+
+def worktree_digest(ws) -> str:
+    """Identity of the attempt's current worktree (tracked diff + untracked files)."""
+    status = ws_mod._git(["status", "--porcelain", "--untracked-files=all"], cwd=ws.path)
+    h = hashlib.sha256(status.encode() + b"\0" + ws_mod._git(["diff", ws.base_sha], cwd=ws.path).encode())
+    for ln in status.splitlines():
+        if ln.startswith("??"):
+            path = ws_mod.contained_path(ws.path, ln[3:].strip())
+            h.update(path.read_bytes() if path.is_file() else b"")
+    return h.hexdigest()
+
+
+def _green(state: "AttemptState") -> bool:
+    t = state.last_test
+    return bool(t and t.passed and state.tested_full and state.tested_digest == worktree_digest(state.ws))
 
 
 def builder_tools(state: AttemptState) -> Dict[str, Any]:
@@ -346,7 +365,8 @@ def builder_tools(state: AttemptState) -> Dict[str, Any]:
             return {"error": f"test-run budget ({state.max_test_runs}) for this attempt is used up; submit or answer needs_rescope"}
         state.test_runs += 1
         state.last_test = run_targeted_tests(state.ws, targets, timeout=state.test_timeout)
-        return state.last_test.as_dict()
+        state.tested_digest, state.tested_full = worktree_digest(state.ws), set(state.test_targets) <= set(targets)
+        return {**state.last_test.as_dict(), "test_runs_left": state.max_test_runs - state.test_runs}
 
     def read_diff(args: Dict[str, Any]) -> Dict[str, Any]:
         diff = ws_mod._git(["diff", state.ws.base_sha], cwd=state.ws.path)
@@ -399,10 +419,12 @@ def _restore(ws, rel: str, text: Optional[str]) -> None:
 
 def submit_check(state: AttemptState):
     """Checked when the Builder submits, INSIDE the try: a no-op or
-    whitespace-only worktree, or Python that does not parse, is refused with a
-    structural error the model sees (not discovered after the try ended)."""
+    whitespace-only worktree, Python that does not parse, or a worktree whose
+    acceptance tests did not all pass on it (failing ids named) is refused
+    with a structural error the model sees. Only once the test-run budget is
+    spent may an unverified worktree be submitted, flagged ``tests_unverified``."""
 
-    def check(_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def check(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         status = ws_mod._git(["status", "--porcelain", "--untracked-files=all"], cwd=state.ws.path)
         paths = [ln[3:].strip() for ln in status.splitlines() if ln.strip()]
         if not paths:
@@ -414,9 +436,37 @@ def submit_check(state: AttemptState):
         errs = _python_errors(state.ws, paths)
         if errs:
             return {"error": "Python in the attempt does not parse", "code": "syntax_error", "syntax_errors": errs[:5]}
-        return None
+        if _green(state):
+            return None
+        if state.test_runs >= state.max_test_runs:
+            result["tests_unverified"] = True
+            return None
+        t = state.last_test
+        if t is None or not state.tested_full or state.tested_digest != worktree_digest(state.ws):
+            return {"error": "run_tests (all acceptance tests) on the current worktree before submitting", "code": "tests_not_run",
+                    "test_runs_left": state.max_test_runs - state.test_runs}
+        return {"error": "acceptance tests fail on the current worktree: fix them, then submit", "code": "tests_failing",
+                "failing": [f["test"] for f in t.failures][:10] or state.test_targets[:10], "test_runs_left": state.max_test_runs - state.test_runs}
 
     return check
+
+
+def submit_if_green(state: AttemptState):
+    """After the try: one that ran out of turns while its last test run -- all
+    acceptance tests, on this exact worktree -- was green is submitted
+    deterministically (no model call). Anything else is left as it ended."""
+    check = submit_check(state)
+
+    def finish(res):
+        if res.ok or res.error_class != "turn_budget" or res.rescope is not None or not _green(state) or check({}) is not None:
+            return res
+        res.ok, res.error_class, res.error = True, None, None
+        res.output = {"summary": f"submitted by the harness: the turn budget ran out with all acceptance tests passing on this worktree ({len(state.test_targets)} tests)",
+                      "auto_submitted": True}
+        res.turn_log.append({"turn": res.turns, "action": "auto_submit"})
+        return res
+
+    return finish
 
 
 def read_tools(root, *, page_bytes: int) -> Dict[str, Any]:
@@ -490,6 +540,8 @@ __all__ = [
     "builder_tools",
     "submit_check",
     "target_file_context",
+    "submit_if_green",
+    "worktree_digest",
     "read_tools",
     "finalize_attempt",
     "verify",

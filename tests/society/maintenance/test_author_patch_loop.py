@@ -98,7 +98,10 @@ def test_submit_check_refuses_empty_and_whitespace_only_attempts(tmp_path):
     (tmp_path / "app/x.py").write_text("A = (\n", encoding="utf-8")
     assert check({})["code"] == "syntax_error"
     (tmp_path / "app/x.py").write_text("A = 2\n", encoding="utf-8")
-    assert check({}) is None
+    assert check({})["code"] == "tests_not_run", "a real change is submitted only once its acceptance tests ran green on it"
+    state.test_runs = state.max_test_runs
+    result = {}
+    assert check(result) is None and result["tests_unverified"] is True, "budget spent: allowed, flagged"
 
 
 def test_target_file_context_is_whole_windowed_bounded_and_contained(tmp_path):

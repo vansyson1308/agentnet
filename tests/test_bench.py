@@ -47,6 +47,8 @@ def _patch(path, old, new):
 
 
 SUBMIT = {"action": "submit", "result": {"summary": "double returns 2x"}}
+RUN = {"action": "run_tests", "args": {}}
+RESCOPE = {"action": "needs_rescope", "result": {"reason": "file_outside_scope", "required_files": ["pkg/other.py"], "evidence": "the bug is elsewhere"}}
 
 
 def _bench(tmp_path, script, task=None, repeat=1):
@@ -75,25 +77,39 @@ def test_a_fixed_task_scores_and_the_report_is_marked_not_live(tmp_path):
 
 
 def test_a_correct_worktree_that_was_never_submitted_is_not_delivered(tmp_path):
-    summary, rows = _bench(tmp_path, [_patch("pkg/mod.py", "return x + x + 1", "return x + x")] + [{"action": "run_tests", "args": {}}] * 30)
+    summary, rows = _bench(tmp_path, [_patch("pkg/mod.py", "return x + x + 1", "return x + x")] + [{"action": "read_diff", "args": {}}] * 30)
     assert rows[0]["scored"] is True and rows[0]["submitted"] is False and rows[0]["result"] == "turn_budget"
     assert summary["delivered"] == 0 and summary["pass_at_1"] == 0.0 and summary["undelivered_correct"] == 1
 
 
+def test_a_turn_budget_try_whose_last_full_test_run_is_green_on_this_worktree_is_submitted_by_the_harness(tmp_path):
+    summary, rows = _bench(tmp_path, [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), RUN] + [{"action": "read_diff", "args": {}}] * 30)
+    assert rows[0]["auto_submitted"] is True and rows[0]["submitted"] is True and rows[0]["result"] == "pass" and summary["delivered"] == 1
+    # green on an EARLIER worktree is not enough: the change after the run was never tested
+    _, rows = _bench(tmp_path / "b", [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), RUN, _patch("pkg/mod.py", "return x + x", "return 2 * x")]
+                     + [{"action": "read_diff", "args": {}}] * 30)
+    assert rows[0]["auto_submitted"] is False and rows[0]["result"] == "turn_budget"
+
+
+def test_a_submit_is_refused_until_the_acceptance_tests_ran_green_on_the_current_worktree(tmp_path):
+    script = [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), SUBMIT, RUN, _patch("pkg/mod.py", "return x + x", "return 2 * x"), SUBMIT, RUN, SUBMIT]
+    summary, rows = _bench(tmp_path, script)
+    assert rows[0]["result"] == "pass" and rows[0]["test_runs"] == 2 and rows[0]["tests_unverified"] is False
+
+
 def test_repeats_give_a_per_task_matrix_pass_at_1_and_pass_at_k(tmp_path):
-    good = [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), SUBMIT]
-    bad = [_patch("pkg/mod.py", "return x + x + 1", "return x + x + 2"), SUBMIT]
-    summary, rows = _bench(tmp_path, bad + good + bad, repeat=3)
+    good = [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), RUN, SUBMIT]
+    summary, rows = _bench(tmp_path, [RESCOPE] + good + [RESCOPE], repeat=3)
     assert [r["rep"] for r in rows] == [0, 1, 2]
-    assert summary["per_task"] == {"double": {"delivered": 1, "runs": ["tests_fail", "pass", "tests_fail"]}}
+    assert summary["per_task"] == {"double": {"delivered": 1, "runs": ["wrong_file", "pass", "wrong_file"]}}
     assert summary["runs"] == 3 and summary["tasks_run"] == 1 and summary["pass_at_1"] == 0.333 and summary["pass_at_k"] == 1.0
 
 
 def test_failures_are_classified_and_never_scored(tmp_path):
     _, rows = _bench(tmp_path, [_patch("pkg/other.py", "X = 1", "X = 2")] + [SUBMIT] * 12)
     assert rows[0]["result"] == "wrong_file" and "out_of_scope" in rows[0]["tool_codes"]
-    _, rows = _bench(tmp_path / "b", [_patch("pkg/mod.py", "return x + x + 1", "return x + x + 2"), SUBMIT])
-    assert rows[0]["result"] == "tests_fail" and rows[0]["submitted"] is True
+    _, rows = _bench(tmp_path / "b", [_patch("pkg/mod.py", "return x + x + 1", "return x + x + 2"), RUN] + [SUBMIT] * 12)
+    assert rows[0]["result"] == "tests_failing" and rows[0]["submitted"] is False, "a red worktree is never submitted while test runs are left"
 
 
 def test_only_a_live_model_produces_a_bench_result(tmp_path, monkeypatch):
