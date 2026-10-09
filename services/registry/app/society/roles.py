@@ -175,6 +175,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         ),
         subscriptions=(
             EventType.COMPANY_CYCLE,
+            EventType.BACKLOG_ITEM,
             EventType.A2A_AGENT_REFRESHED,
             EventType.PLATFORM_METRIC_ANOMALY,
             EventType.PUBLIC_SURFACE_ANOMALY,

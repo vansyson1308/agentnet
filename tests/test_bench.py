@@ -67,9 +67,10 @@ def _bench(tmp_path, script, task=None, repeat=1, path="maintenance"):
 
 
 def test_the_task_list_is_a_judge_of_real_commits():
-    doc = json.loads(bench.TASKS.read_text(encoding="utf-8"))
-    tasks = doc["tasks"]
-    assert 12 <= len(tasks) <= 20 and len({t["id"] for t in tasks}) == len(tasks)
+    tasks = bench.load_tasks(split="all")
+    dev, holdout = bench.load_tasks(split="dev"), bench.load_tasks(split="holdout")
+    assert 12 <= len(tasks) <= 40 and len({t["id"] for t in tasks}) == len(tasks) and len(dev) + len(holdout) == len(tasks)
+    assert len(holdout) >= 4 and {t["split"] for t in holdout} == {"holdout"} and not any(t["id"] in bench.TASKS.read_text() for t in holdout)
     for t in tasks:
         assert re.fullmatch(r"[0-9a-f]{40}", t["fix_sha"]) and t["failing_tests"] and 1 <= len(t["files_allowed"]) <= 5
         assert all(n.split("::")[0] in t["test_files"] for n in t["failing_tests"]), t["id"]
@@ -114,7 +115,7 @@ def test_repeats_give_a_per_task_matrix_pass_at_1_and_pass_at_k(tmp_path):
     good = [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), RUN, SUBMIT]
     summary, rows = _bench(tmp_path, [RESCOPE] + good + [RESCOPE], repeat=3)
     assert [r["rep"] for r in rows] == [0, 1, 2]
-    assert summary["per_task"] == {"double": {"delivered": 1, "runs": ["wrong_file", "pass", "wrong_file"]}}
+    assert summary["per_task"] == {"double": {"delivered": 1, "runs": ["wrong_file", "pass", "wrong_file"], "split": "dev"}}
     assert summary["runs"] == 3 and summary["tasks_run"] == 1 and summary["pass_at_1"] == 0.333 and summary["pass_at_k"] == 1.0
 
 
@@ -151,6 +152,41 @@ def test_a_run_is_best_of_n_delivered_by_the_harness_gate_never_picked_by_the_ju
     assert sorted(set(model.temperatures)) == [0.1, 0.5] and model.temperatures[-1] == 0.5 and len(model.calls) == 13
     assert summary["config"]["builder_samples"] == 3 and summary["config"]["sample_temperatures"] == [0.1, 0.5, 0.8]
     assert summary["config"]["effective_max_tokens_per_turn"] == 16000
+
+
+def test_scores_per_split_the_aggregate_report_row_and_the_harness_merge_rule(tmp_path):
+    repo, task = _repo(tmp_path)
+    good = [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), RUN, SUBMIT]
+    tasks = [task, {**task, "id": "double-h", "split": "holdout"}]
+    base = asyncio.run(bench.bench(tasks, repo=str(repo), model=ScriptedActivityModel(good + [RESCOPE]), budget=Decimal("1"), emit=lambda _: None))
+    assert base["splits"] == {"dev": {"tasks": 1, "pass_at_1": 1.0, "pass_at_k": 1.0}, "holdout": {"tasks": 1, "pass_at_1": 0.0, "pass_at_k": 0.0}}
+    row = bench.report_row(base, revision="r1", judge_revision="r1")
+    assert row["per_task"]["double-h"] == {"split": "holdout", "delivered": 0, "runs": ["wrong_file"]} and task["task"] not in json.dumps(row)
+    better = {**base, "splits": {**base["splits"], "holdout": {"pass_at_1": 0.5}}}
+    assert bench.harness_verdict(base, better)["mergeable"] is True
+    lost = {**better, "per_task": {**base["per_task"], "double": {"delivered": 0, "runs": ["wrong_file"] * 3}}}
+    v = bench.harness_verdict({**base, "per_task": {**base["per_task"], "double": {"delivered": 3, "runs": ["pass"] * 3}}}, lost)
+    assert v["regressed_3_to_0"] == ["double"] and v["mergeable"] is False
+    assert bench.harness_verdict(base, base)["mergeable"] is False, "no holdout improvement, no merge"
+
+
+def test_the_miner_turns_a_merged_fix_with_a_new_failing_test_into_a_candidate(tmp_path):
+    from scripts.bench import mine
+
+    repo, task = _repo(tmp_path)  # HEAD = "fix double" (fix + test) on top of base
+    _git(repo, "checkout", "-qb", "fix", "HEAD")
+    _git(repo, "checkout", "-q", "HEAD~1")
+    _git(repo, "checkout", "-qB", "main")
+    msg = "double(x) returned 2x+1: the arithmetic helper must return exactly twice its input for every integer, zero included"
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-qm", "unrelated")
+    _git(repo, "checkout", "-q", "fix")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--amend", "-qm", msg)
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "--no-ff", "-qm", "Merge pull request #1 from fix", "fix")
+    cands = mine.mine(str(repo), "main~1", set(), ref="main")
+    assert len(cands) == 1 and cands[0]["fix_sha"] == _git(repo, "rev-parse", "HEAD") and cands[0]["files_allowed"] == ["pkg/mod.py"]
+    assert cands[0]["failing_tests"] == ["tests/test_mod.py::test_double", "tests/test_mod.py::test_zero"] and cands[0]["task"] == msg
+    assert cands[0]["split"] in ("dev", "holdout") and mine.mine(str(repo), "main~1", {cands[0]["fix_sha"]}, ref="main") == []
 
 
 def test_only_a_live_model_produces_a_bench_result(tmp_path, monkeypatch):

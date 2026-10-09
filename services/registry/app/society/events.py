@@ -87,6 +87,11 @@ class EventType:
     LOOP_BREAKER_TRIPPED = "loop_breaker.tripped"
     # Phase 8 — A2A federation + autonomous company mode (ADR-0009)
     COMPANY_CYCLE = "company.cycle"
+    # The self-improvement loop's work queue (backlog.py): system-authored,
+    # structural (bench task id / issue number, failure class, counts).
+    BACKLOG_ITEM = "backlog.item"
+    # an idle heartbeat bucket (no subscriber: marks the bucket, calls no model)
+    SOCIETY_HEARTBEAT_IDLE = "society.heartbeat.idle"
     # Graduation: the trusted synthetic monitor of the PUBLIC product surface
     # (surface_monitor.py). System-authored, structural payloads only.
     PUBLIC_SURFACE_ANOMALY = "public.surface.anomaly"

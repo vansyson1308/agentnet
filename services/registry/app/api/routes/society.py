@@ -63,6 +63,7 @@ from ...models import (
     WalletOwnerType,
 )
 from ...society import approvals as approvals_mod
+from ...society import backlog as backlog_mod
 from ...society import candidate_admin as candidate_admin_mod
 from ...society import candidate_health as candidate_health_mod
 from ...society import memory_validation as memory_validation_mod
@@ -274,6 +275,27 @@ def society_status(db: Session = Depends(get_db)):
         "intents_awaiting_approval": db.query(func.count(AgentIntent.id)).filter(AgentIntent.execution_status == IntentExecutionStatus.AWAITING_APPROVAL).scalar() or 0,
         "candidates_by_status": {_ev(s): n for s, n in db.query(CodeCandidate.status, func.count(CodeCandidate.id)).group_by(CodeCandidate.status).all()},
         "last_run_completed_at": _iso(last_run_at),
+        "loop": _loop_status(db, settings, now),
+    }
+
+
+def _loop_status(db: Session, settings, now) -> Dict[str, Any]:
+    """The self-improvement loop, structurally: the running revision's bench
+    (overall + dev split; holdout scores stay with the controller), the
+    backlog size, and this week's READY candidates, merged PRs and $ per PR."""
+    week = now - timedelta(days=7)
+    rev = backlog_mod.running_revision(settings)
+    rep = backlog_mod.latest_report(db, rev)
+    s = (rep or {}).get("summary") or {}
+    merged = db.query(func.count(CodePromotion.id)).filter(CodePromotion.merged_sha.isnot(None), CodePromotion.updated_at >= week).scalar() or 0
+    spend = db.query(func.coalesce(func.sum(AgentRun.cost_usd), 0)).filter(AgentRun.created_at >= week).scalar() or 0
+    return {
+        "bench": {"revision": str(rep["revision"])[:12], "running_revision": rev[:12], "stale": rep["stale"], "at": _iso(rep["created_at"]), "path": rep["path"],
+                  "pass_at_1": s.get("pass_at_1"), "pass_at_k": s.get("pass_at_k"), "repeat": rep["repeat"], "dev": (s.get("splits") or {}).get("dev")} if rep else None,
+        "backlog": len(backlog_mod.bench_items(rep)),
+        "candidates_ready_7d": db.query(func.count(CodeCandidate.id)).filter(CodeCandidate.status == CodeCandidateStatus.READY, CodeCandidate.updated_at >= week).scalar() or 0,
+        "prs_merged_7d": merged,
+        "usd_per_merged_pr_7d": str(round(spend / merged, 4)) if merged else None,
     }
 
 

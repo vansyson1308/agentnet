@@ -21,12 +21,13 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import exists, or_
 from sqlalchemy.orm import Session
 
 from ..models import SocietyEvent, TaskSession, TaskStatus
+from . import backlog
 from .config import SocietySettings
 from .events import EventType, emit_event, utcnow
 
@@ -84,15 +85,22 @@ def ingest_task_outcomes(db: Session, *, lookback_seconds: int = 3600, limit: in
     return created
 
 
-def emit_heartbeat(db: Session, settings: SocietySettings, *, now: Optional[datetime] = None) -> bool:
-    """Emit ``society.heartbeat`` once per interval. Commits. Returns True when a new one was created."""
+def emit_heartbeat(db: Session, settings: SocietySettings, *, now: Optional[datetime] = None, provider: Any = None) -> bool:
+    """Once per interval: publish new ``backlog.py`` items, then emit ``society.heartbeat`` --
+    unless idle (empty backlog, no open candidate: no model call). Commits; True if emitted."""
     interval = int(settings.heartbeat_interval_seconds)
     if interval <= 0:
         return False
     now = now or utcnow()
     bucket = int(now.timestamp()) // interval
     key = f"heartbeat:{bucket}"
-    if db.query(SocietyEvent.id).filter(SocietyEvent.idempotency_key == key).first() is not None:
+    if db.query(SocietyEvent.id).filter(SocietyEvent.idempotency_key.in_([key, f"heartbeat-idle:{bucket}"])).first() is not None:
+        return False
+    items = backlog.collect(db, settings, provider)
+    backlog.publish(db, settings, items)
+    if not items and backlog.open_candidates(db) == 0:
+        emit_event(db, event_type=EventType.SOCIETY_HEARTBEAT_IDLE, payload={"bucket": bucket, "at": now.isoformat()}, actor_type="system", idempotency_key=f"heartbeat-idle:{bucket}")
+        db.commit()
         return False
     emit_event(
         db,

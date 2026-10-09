@@ -89,6 +89,17 @@ at the first sample the harness's own acceptance gate delivers (never judge-pick
 one cost cap. Each model turn gets `MAINTENANCE_BUILDER_MAX_OUTPUT_TOKENS` (default 2500). Bench holdout
 tasks (`scripts/bench/holdout*`) are refused by every read, search and reference tool.
 
+### The loop feeds itself (bench -> backlog -> Scout)
+
+Bench tasks are split into **dev** (`scripts/bench/tasks.json`, Society-visible) and **holdout**
+(`holdout.json`: no model tool reads it; only trusted code scores it). `bench_live.py` stores one aggregate
+row per run in `society_bench_reports`; `scripts/bench/mine.py` proposes candidate tasks from merged PRs
+(they land only through an owner-merged PR). Each heartbeat, `society/backlog.py` publishes once each a
+structural `backlog.item` for the Scout: dev tasks failed on ≥2/3 runs and owner-labelled `agent-ok` issues.
+Empty backlog + no open candidate = idle heartbeat: no run, no model call. `BENCH_HARNESS_REF=<branch>`
+benches a harness change with the running revision's judge (`BENCH VERDICT`: holdout pass@1 must improve,
+no task 3/3 -> 0/3). `/v1/society/status` reports this under `loop`.
+
 ## Risk model
 
 | Class | Intents | Handling |

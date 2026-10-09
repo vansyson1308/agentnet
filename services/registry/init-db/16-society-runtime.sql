@@ -413,3 +413,18 @@ CREATE TABLE IF NOT EXISTS society_incident_freezes (
     lift_reason         VARCHAR(255)
 );
 CREATE INDEX IF NOT EXISTS idx_society_incident_freezes_open ON society_incident_freezes (opened_at DESC) WHERE lifted_at IS NULL;
+
+-- Builder bench reports (bench_live.py): one AGGREGATE row per run -- per split
+-- pass@1/pass@k, per task split/delivered/result classes; never task or model text.
+CREATE TABLE IF NOT EXISTS society_bench_reports (
+    id              UUID PRIMARY KEY,
+    revision        VARCHAR(64) NOT NULL,
+    judge_revision  VARCHAR(64) NOT NULL,
+    path            VARCHAR(16) NOT NULL DEFAULT 'maintenance',
+    model           VARCHAR(128),
+    repeat          INTEGER NOT NULL DEFAULT 1,
+    summary         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    per_task        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_society_bench_reports_revision ON society_bench_reports (revision, created_at DESC);

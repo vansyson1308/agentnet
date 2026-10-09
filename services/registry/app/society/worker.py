@@ -248,7 +248,7 @@ class SocietyWorker:
             try:
                 if self.settings.ingest_task_outcomes:
                     ingest_task_outcomes(db, lookback_seconds=self.settings.ingest_lookback_seconds)
-                emit_heartbeat(db, self.settings)
+                emit_heartbeat(db, self.settings, provider=self.promotion_provider)
                 if self.telemetry_enabled:
                     n = telemetry_mod.produce_anomalies(db, self.settings)
                     if stats is not None:
