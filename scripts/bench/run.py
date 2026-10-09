@@ -114,7 +114,8 @@ async def run_task(task: dict, *, repo: str, root: str, rep: int = 0, model, ms:
     return {"id": task["id"], "rep": rep, "result": classify(res, codes, scored), "submitted": res.ok, "scored": scored["passed"],
             "auto_submitted": bool((res.output or {}).get("auto_submitted")), "tests_unverified": bool((res.output or {}).get("tests_unverified")), "error_class": res.error_class,
             "turns": res.turns, "test_runs": state.test_runs, "patches": state.patches_applied, "cost_usd": str(res.cost_usd),
-            "tokens_in": res.tokens_in, "tokens_out": res.tokens_out, "tool_codes": codes[-10:]}
+            "tokens_in": res.tokens_in, "tokens_out": res.tokens_out, "tool_codes": codes[-10:],
+            "actions": [str(t.get("refused") and f"submit!{t['refused']}" or t.get("action")) for t in res.turn_log]}
 
 
 def summarize(rows: List[Dict[str, Any]], *, live: bool, model_name: str, config: Dict[str, Any], skipped: List[str]) -> Dict[str, Any]:
