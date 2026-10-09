@@ -98,7 +98,8 @@ def test_submit_check_refuses_empty_and_whitespace_only_attempts(tmp_path):
     (tmp_path / "app/x.py").write_text("A = (\n", encoding="utf-8")
     assert check({})["code"] == "syntax_error"
     (tmp_path / "app/x.py").write_text("A = 2\n", encoding="utf-8")
-    assert check({}) is None
+    result = {}
+    assert check(result) is None and result["tests_unverified"] is True, "no acceptance tests to run: allowed, flagged for QA"
 
 
 def test_target_file_context_is_whole_windowed_bounded_and_contained(tmp_path):
@@ -111,7 +112,7 @@ def test_target_file_context_is_whole_windowed_bounded_and_contained(tmp_path):
     by = {e["path"]: e for e in ctx}
     assert set(by) == {"app/small.py", "app/big.py"} and by["app/small.py"]["content"] == "A = 1\n"
     (win,) = by["app/big.py"]["windows"]
-    assert by["app/big.py"]["mode"] == "windows" and win["start_line"] == 960 and "line_1000 = 1000" in win["text"]
+    assert by["app/big.py"]["mode"] == "outline+windows" and win["start_line"] == 960 and "1000| line_1000 = 1000" in win["text"]
     tight = h.target_file_context(tmp_path, ["app/big.py", "app/small.py"], [], whole_file_bytes=10, total_bytes=200)
     assert [e["mode"] for e in tight] == ["omitted", "whole"]
 

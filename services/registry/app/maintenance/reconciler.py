@@ -574,10 +574,12 @@ class MaintenanceKernel:
         # front-loaded: the target files (or the cited windows) are in the input, so reads are the exception
         diag = self._latest_artifact(db, case, "diagnosis")
         cites = [plan.root_cause or "", plan.approach or ""] + [str(x) for x in (((diag.content or {}) if diag else {}).get("evidence") or [])]
-        payload["target_files"] = {"trust": "untrusted_repository_data", "files": h.target_file_context(ws.path, list(plan.files_allowed or []), cites)}
+        files = h.target_file_context(ws.path, list(plan.files_allowed or []), cites, tests=list(plan.acceptance_tests or []))
+        payload["target_files"] = {"trust": "untrusted_repository_data", "files": files}
         payload["read_budget"] = f"at most {self.settings.builder_max_read_calls} read-tool calls this try; the target files are above"
         res = self._run_activity_sync(db, case, ActivityKind.AUTHOR_PATCH, payload, tools=h.builder_tools(state), model=self.model(), plan_revision=plan.revision, attempt=attempt.attempt,
-                                      max_turns=self.settings.builder_max_turns, max_read_calls=self.settings.builder_max_read_calls, submit_check=h.submit_check(state))
+                                      max_turns=self.settings.builder_max_turns, max_read_calls=self.settings.builder_max_read_calls, submit_check=h.submit_check(state),
+                                      finish=h.submit_if_green(state))
         attempt.turns = int(attempt.turns or 0) + (res.turns if res else 0)
         attempt.test_runs = int(attempt.test_runs or 0) + state.test_runs
         if res is None:
@@ -995,7 +997,7 @@ class MaintenanceKernel:
         return db.query(RepairActivity).filter(RepairActivity.case_id == case.id, RepairActivity.kind == kind.value, RepairActivity.plan_revision == rev, RepairActivity.attempt == attempt).count()
 
     def _run_activity_sync(self, db, case, kind: ActivityKind, payload: Dict[str, Any], *, tools, model, plan_revision: int = 0, attempt: int = 0, max_turns: Optional[int] = None,
-                           max_read_calls: Optional[int] = None, submit_check=None) -> Optional[act.ActivityResult]:
+                           max_read_calls: Optional[int] = None, submit_check=None, finish=None) -> Optional[act.ActivityResult]:
         """Record the try (committed), run the model loop outside any open
         transaction, then fence and record the outcome. Returns None when the
         lease was lost meanwhile."""
@@ -1020,6 +1022,7 @@ class MaintenanceKernel:
             res = asyncio.run(act.run_activity(spec, payload, model=model, tools=tools, max_turns=max_turns, cost_cap=remaining,
                                                timeout_seconds=float(self._activity_timeout or self.settings.activity_timeout_seconds),
                                                max_read_calls=max_read_calls, submit_check=submit_check))
+            res = finish(res) if finish else res
         except Exception as exc:  # noqa: BLE001
             res = act.ActivityResult(ok=False, kind=kind, error_class="harness_error", error=type(exc).__name__)
         case = self._fence(db, case_id)

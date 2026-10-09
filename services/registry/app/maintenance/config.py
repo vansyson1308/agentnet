@@ -51,7 +51,7 @@ class MaintenanceSettings:
     max_case_cost_usd: Decimal = field(default_factory=lambda: _decimal("MAINTENANCE_MAX_CASE_COST_USD", "0.50"))
     builder_max_turns: int = field(default_factory=lambda: _int("MAINTENANCE_BUILDER_MAX_TURNS", 10, minimum=1))
     builder_max_read_calls: int = field(default_factory=lambda: _int("MAINTENANCE_BUILDER_MAX_READ_CALLS", 3, minimum=0))
-    max_test_runs_per_attempt: int = field(default_factory=lambda: _int("MAINTENANCE_MAX_TEST_RUNS_PER_ATTEMPT", 4, minimum=1))
+    max_test_runs_per_attempt: int = field(default_factory=lambda: _int("MAINTENANCE_MAX_TEST_RUNS_PER_ATTEMPT", 8, minimum=1))
     activity_max_tries: int = field(default_factory=lambda: _int("MAINTENANCE_ACTIVITY_MAX_TRIES", 3, minimum=1))
     activity_timeout_seconds: int = field(default_factory=lambda: _int("MAINTENANCE_ACTIVITY_TIMEOUT_SECONDS", 180, minimum=10))
     read_page_bytes: int = field(default_factory=lambda: _int("MAINTENANCE_READ_PAGE_BYTES", 12000, minimum=1000))

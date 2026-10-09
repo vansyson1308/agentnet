@@ -196,7 +196,7 @@ def green_repair_script(*, review="pass", security="pass", files=None):
             if turns == 0:
                 return {"action": "apply_patch", "args": {"files": [{"path": PAGE, "operations": [{"op": "replace_exact", "old": "{'name': 'echo', 'price': 1}", "new": "echo"}]}]}}
             if turns == 1:
-                return {"action": "run_tests", "args": {"targets": [VERIFY]}}
+                return {"action": "run_tests", "args": {}}
             return {"action": "submit", "result": {"summary": "render the capability name"}}
         if "ReviewPatch" in system:
             return {"action": "submit", "result": {"verdict": review, "findings": [], "summary": "fixes the cause"}}
