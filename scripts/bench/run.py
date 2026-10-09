@@ -6,7 +6,13 @@ maintenance AuthorPatch loop (harness.builder_tools + activities.run_activity,
 exactly as the kernel runs it) works the task with the configured model;
 scripts/bench/score.py then judges the worktree.
 
-    python scripts/bench/run.py --repo <checkout with the task commits> [--only id,id] [--json-out f]
+    python scripts/bench/run.py --repo <checkout with the task commits> [--only id,id] [--repeat 3] [--json-out f]
+
+Each task runs ``--repeat`` times (default 3). A run is *delivered* only when
+the model SUBMITTED and the judge scored the worktree: a correct worktree left
+behind by a run that hit its turn budget is not a delivery. pass@1 is the
+delivered rate over all runs; pass@k counts a task once any of its k runs
+delivered.
 
 Only a LIVE model is accepted (``--allow-scripted`` exists for the bench's own
 tests and marks the report ``live: false``). The run stops at
@@ -80,7 +86,7 @@ def _recording(tools: Dict[str, Any], codes: List[str]) -> Dict[str, Any]:
 
 
 def classify(res: act.ActivityResult, codes: List[str], scored: dict) -> str:
-    if scored["passed"]:
+    if scored["passed"] and res.ok:
         return "pass"
     if res.error_class in ("timeout", "turn_budget"):
         return res.error_class
@@ -95,8 +101,8 @@ def classify(res: act.ActivityResult, codes: List[str], scored: dict) -> str:
     return res.error_class or "no_answer"
 
 
-async def run_task(task: dict, *, repo: str, root: str, model, ms: MaintenanceSettings, ss: SocietySettings, cost_cap: Decimal) -> Dict[str, Any]:
-    ws = prepare(repo, task, root)
+async def run_task(task: dict, *, repo: str, root: str, rep: int = 0, model, ms: MaintenanceSettings, ss: SocietySettings, cost_cap: Decimal) -> Dict[str, Any]:
+    ws = prepare(repo, task, os.path.join(root, f"r{rep}"))
     state = h.AttemptState(ws=ws, files_allowed=list(task["files_allowed"]), test_targets=list(task["failing_tests"]),
                            max_test_runs=ms.max_test_runs_per_attempt, test_timeout=ss.qa_test_timeout_seconds, page_bytes=ms.read_page_bytes)
     codes: List[str] = []
@@ -104,7 +110,7 @@ async def run_task(task: dict, *, repo: str, root: str, model, ms: MaintenanceSe
                                  max_turns=ms.builder_max_turns, cost_cap=cost_cap, timeout_seconds=float(ms.activity_timeout_seconds),
                                  max_read_calls=ms.builder_max_read_calls, submit_check=h.submit_check(state))
     scored = score(str(ws.path), task)
-    return {"id": task["id"], "result": classify(res, codes, scored), "submitted": res.ok, "error_class": res.error_class,
+    return {"id": task["id"], "rep": rep, "result": classify(res, codes, scored), "submitted": res.ok, "scored": scored["passed"], "error_class": res.error_class,
             "turns": res.turns, "test_runs": state.test_runs, "patches": state.patches_applied, "cost_usd": str(res.cost_usd),
             "tokens_in": res.tokens_in, "tokens_out": res.tokens_out, "tool_codes": codes[-10:]}
 
@@ -113,43 +119,53 @@ def summarize(rows: List[Dict[str, Any]], *, live: bool, model_name: str, config
     ran = [r for r in rows if r["result"] != "setup_error"]
     n = len(ran) or 1
     classes: Dict[str, int] = {}
+    matrix: Dict[str, List[str]] = {}
     for r in ran:
         classes[r["result"]] = classes.get(r["result"], 0) + 1
+        matrix.setdefault(r["id"], []).append(r["result"])
+    delivered = classes.get("pass", 0)
     return {
-        "live": live, "model": model_name, "config": config,
-        "tasks_run": len(ran), "tasks_not_run_budget": skipped, "setup_errors": [r["id"] for r in rows if r["result"] == "setup_error"], "passed": classes.get("pass", 0),
-        "pass_at_1": round(classes.get("pass", 0) / n, 3),
+        "live": live, "model": model_name, "config": config, "repeat": config.get("repeat", 1),
+        "tasks_run": len(matrix), "runs": len(ran), "tasks_not_run_budget": sorted(set(skipped)),
+        "setup_errors": sorted({r["id"] for r in rows if r["result"] == "setup_error"}),
+        "delivered": delivered, "pass_at_1": round(delivered / n, 3),
+        "pass_at_k": round(sum("pass" in v for v in matrix.values()) / (len(matrix) or 1), 3),
+        "undelivered_correct": sum(1 for r in ran if r.get("scored") and r["result"] != "pass"),
         "mean_turns": round(sum(r["turns"] for r in ran) / n, 2), "mean_test_runs": round(sum(r["test_runs"] for r in ran) / n, 2),
-        "cost_usd": str(sum((Decimal(r["cost_usd"]) for r in ran), Decimal("0"))), "result_classes": classes,
+        "cost_usd": str(sum((Decimal(r["cost_usd"]) for r in ran), Decimal("0"))),
+        "cost_per_task_usd": str(round(sum((Decimal(r["cost_usd"]) for r in ran), Decimal("0")) / n, 4)),
+        "result_classes": classes, "per_task": {k: {"delivered": v.count("pass"), "runs": v} for k, v in sorted(matrix.items())},
     }
 
 
-def run_config(ms: MaintenanceSettings, ss: SocietySettings) -> Dict[str, Any]:
+def run_config(ms: MaintenanceSettings, ss: SocietySettings, repeat: int = 1) -> Dict[str, Any]:
+    # The AuthorPatch spec's max_tokens is what each model turn actually gets;
+    # SOCIETY_MODEL_MAX_OUTPUT_TOKENS does not reach this activity.
     return {"builder_max_turns": ms.builder_max_turns, "builder_max_read_calls": ms.builder_max_read_calls, "max_test_runs": ms.max_test_runs_per_attempt,
             "activity_timeout_s": ms.activity_timeout_seconds, "model_timeout_s": ss.model_timeout_seconds, "thinking": ss.model_thinking_mode,
-            "max_output_tokens": ss.model_max_output_tokens}
+            "effective_max_tokens_per_turn": act.SPECS[ActivityKind.AUTHOR_PATCH].max_tokens, "repeat": repeat}
 
 
 async def bench(tasks: List[dict], *, repo: str, model, budget: Decimal, ms: Optional[MaintenanceSettings] = None, ss: Optional[SocietySettings] = None,
-                emit=lambda line: print(line, flush=True)) -> Dict[str, Any]:
+                repeat: int = 1, emit=lambda line: print(line, flush=True)) -> Dict[str, Any]:
     ms, ss = ms or MaintenanceSettings(), ss or SocietySettings()
     rows: List[Dict[str, Any]] = []
     skipped: List[str] = []
     spent = Decimal("0")
     with tempfile.TemporaryDirectory(prefix="agentnet-bench-") as root:
-        for task in tasks:
+        for rep, task in [(rep, task) for rep in range(repeat) for task in tasks]:
             if spent >= budget:
                 skipped.append(task["id"])
                 continue
             try:
-                row = await run_task(task, repo=repo, root=root, model=model, ms=ms, ss=ss, cost_cap=budget - spent)
+                row = await run_task(task, repo=repo, root=root, rep=rep, model=model, ms=ms, ss=ss, cost_cap=budget - spent)
             except subprocess.CalledProcessError as exc:  # the task could not be set up: not a model result
-                row = {"id": task["id"], "result": "setup_error", "detail": " ".join(map(str, exc.cmd))[:200], "turns": 0, "test_runs": 0, "cost_usd": "0"}
+                row = {"id": task["id"], "rep": rep, "result": "setup_error", "detail": " ".join(map(str, exc.cmd))[:200], "turns": 0, "test_runs": 0, "cost_usd": "0"}
             spent += Decimal(row["cost_usd"])
             rows.append(row)
             emit("BENCH TASK " + json.dumps(row, sort_keys=True))
         subprocess.run(["git", "worktree", "prune"], cwd=repo, check=False, capture_output=True)
-    summary = summarize(rows, live=bool(getattr(model, "live", False)), model_name=getattr(model, "model_name", "?"), config=run_config(ms, ss), skipped=skipped)
+    summary = summarize(rows, live=bool(getattr(model, "live", False)), model_name=getattr(model, "model_name", "?"), config=run_config(ms, ss, repeat), skipped=skipped)
     emit("BENCH SUMMARY " + json.dumps(summary, sort_keys=True))
     return summary
 
@@ -164,6 +180,7 @@ def main(argv=None, *, model=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--repo", default=str(ROOT))
     ap.add_argument("--only", default="")
+    ap.add_argument("--repeat", type=int, default=3, help="runs per task (pass@k over these)")
     ap.add_argument("--json-out")
     ap.add_argument("--allow-scripted", action="store_true", help="bench self-tests only: the report says live=false")
     args = ap.parse_args(argv)
@@ -173,7 +190,8 @@ def main(argv=None, *, model=None) -> int:
         return 2
     for k in [k for k in os.environ if k.startswith(("POSTGRES", "REDIS", "DATABASE_URL"))]:
         os.environ.pop(k)  # the bench never touches a database, and neither do the tests it runs
-    summary = asyncio.run(bench(load_tasks(args.only), repo=args.repo, model=model, budget=Decimal(os.getenv("BENCH_BUDGET_USD", "1"))))
+    summary = asyncio.run(bench(load_tasks(args.only), repo=args.repo, model=model, budget=Decimal(os.getenv("BENCH_BUDGET_USD", "1")),
+                                repeat=max(1, args.repeat)))
     if args.json_out:
         pathlib.Path(args.json_out).write_text(json.dumps(summary, indent=2, sort_keys=True))
     return 0

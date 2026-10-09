@@ -49,10 +49,10 @@ def _patch(path, old, new):
 SUBMIT = {"action": "submit", "result": {"summary": "double returns 2x"}}
 
 
-def _bench(tmp_path, script, task=None):
+def _bench(tmp_path, script, task=None, repeat=1):
     repo, t = _repo(tmp_path)
     lines = []
-    summary = asyncio.run(bench.bench([task or t], repo=str(repo), model=ScriptedActivityModel(script), budget=Decimal("1"), emit=lines.append))
+    summary = asyncio.run(bench.bench([task or t], repo=str(repo), model=ScriptedActivityModel(script), budget=Decimal("1"), repeat=repeat, emit=lines.append))
     return summary, [json.loads(x.split(" ", 2)[2]) for x in lines if x.startswith("BENCH TASK")]
 
 
@@ -71,6 +71,22 @@ def test_a_fixed_task_scores_and_the_report_is_marked_not_live(tmp_path):
     summary, rows = _bench(tmp_path, [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), {"action": "run_tests", "args": {}}, SUBMIT])
     assert rows[0]["result"] == "pass" and rows[0]["test_runs"] == 1 and rows[0]["patches"] == 1
     assert summary["live"] is False and summary["pass_at_1"] == 1.0 and summary["result_classes"] == {"pass": 1}
+    assert summary["config"]["effective_max_tokens_per_turn"] == bench.act.SPECS[bench.ActivityKind.AUTHOR_PATCH].max_tokens
+
+
+def test_a_correct_worktree_that_was_never_submitted_is_not_delivered(tmp_path):
+    summary, rows = _bench(tmp_path, [_patch("pkg/mod.py", "return x + x + 1", "return x + x")] + [{"action": "run_tests", "args": {}}] * 30)
+    assert rows[0]["scored"] is True and rows[0]["submitted"] is False and rows[0]["result"] == "turn_budget"
+    assert summary["delivered"] == 0 and summary["pass_at_1"] == 0.0 and summary["undelivered_correct"] == 1
+
+
+def test_repeats_give_a_per_task_matrix_pass_at_1_and_pass_at_k(tmp_path):
+    good = [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), SUBMIT]
+    bad = [_patch("pkg/mod.py", "return x + x + 1", "return x + x + 2"), SUBMIT]
+    summary, rows = _bench(tmp_path, bad + good + bad, repeat=3)
+    assert [r["rep"] for r in rows] == [0, 1, 2]
+    assert summary["per_task"] == {"double": {"delivered": 1, "runs": ["tests_fail", "pass", "tests_fail"]}}
+    assert summary["runs"] == 3 and summary["tasks_run"] == 1 and summary["pass_at_1"] == 0.333 and summary["pass_at_k"] == 1.0
 
 
 def test_failures_are_classified_and_never_scored(tmp_path):
