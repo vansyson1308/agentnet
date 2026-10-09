@@ -142,6 +142,30 @@ candidate lifecycle wake the breaker swallowed, under these rules:
 It adds no authority: the same role gets the same payload it would have received, and every guard
 still decides. `tests/society/test_redelivery.py` replays the failure through the real dispatcher.
 
+**A QA verdict belongs to the head it judged; stalled and obsolete candidates reach the operator
+(`society/candidate_health.py`).** Live 2026-09-29..10-09, a candidate the Builder re-submitted after a
+QA failure went back to BUILT with the previous head's `verdict=fail`. Every role read it as failed:
+nobody issued REQUEST_QA, and a BUILT candidate can be neither re-submitted nor declined. The audit
+showed 57 runs in 18h, all WRITE_MEMORY. Everything below is deterministic, with no model involved.
+
+- **Re-submission.** It clears the old verdict, summary and failures. The attempt count stays (so the QA
+  attempt cap still holds), and a `previous` record is kept for the operator.
+- **QA request.** One QA request per head goes out as `code_candidate.built` with `qa_request: true`.
+  It is a system event in a fresh story (depth 0), so the loop breaker of the producing story cannot
+  swallow it. Its payload carries `source_intent_id`. The worker's sweep heals rows already in that
+  state the same way.
+- **Stalled.** An open candidate with no lifecycle transition for `SOCIETY_CANDIDATE_STALL_HOURS`
+  (default 24) is stalled. Wake-only events (re-delivery, requeue, QA request) don't count as
+  transitions. A stalled candidate:
+  - is listed under `candidates.stalled` in `GET /v1/society/approvals`;
+  - gets one `code_candidate.stalled` notice per stalled episode;
+  - no longer holds a portfolio slot (the proposal's `portfolio_state` is `stalled`).
+  It is never abandoned automatically; only an operator abandons.
+- **Obsolete.** A candidate whose story's public-surface anomaly has recovered is listed under
+  `candidates.obsolete` and gets one `code_candidate.obsolete` notice. Its status is untouched.
+
+`tests/society/test_candidate_deadlock.py` replays the live state.
+
 ## Engineering loop safety
 
 - Builder: `git worktree add -B agentnet-auto/<id> <workspace_root>/<id> <base>`; every edit path must be

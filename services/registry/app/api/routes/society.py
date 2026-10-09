@@ -64,6 +64,7 @@ from ...models import (
 )
 from ...society import approvals as approvals_mod
 from ...society import candidate_admin as candidate_admin_mod
+from ...society import candidate_health as candidate_health_mod
 from ...society import memory_validation as memory_validation_mod
 from ...society.config import get_settings
 from ...society.events import EventType, emit_event
@@ -486,6 +487,10 @@ def list_approvals(db: Session = Depends(get_db), operator: User = Depends(requi
             if _ev(i.execution_status) == IntentExecutionStatus.APPROVED.value
         ],
     }
+    # Candidates only an operator can move on: stalled (no lifecycle progress for
+    # SOCIETY_CANDIDATE_STALL_HOURS) and obsolete (target recovered). Never
+    # abandoned automatically -- POST /candidates/{id}/abandon is the operator act.
+    out["candidates"] = candidate_health_mod.operator_queue(db, get_settings())
     if include_decided:
         out["decided"] = [_approval_out(a) for a in db.query(IntentApproval).order_by(IntentApproval.decided_at.desc()).limit(limit).all()]
     return out

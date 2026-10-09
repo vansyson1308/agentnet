@@ -282,6 +282,10 @@ class SocietySettings:
     # stays APPROVED and visible, but no longer holds a portfolio slot
     # (company.portfolio_accounting). The cap itself is unchanged.
     company_hypothesis_shelf_hours: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_HYPOTHESIS_SHELF_HOURS", 72, minimum=24))
+    # An open candidate with no lifecycle progress this long is STALLED: it is
+    # surfaced to the operator queue and no longer holds a portfolio slot. It is
+    # never abandoned automatically (society/candidate_health.py).
+    candidate_stall_hours: int = field(default_factory=lambda: _int("SOCIETY_CANDIDATE_STALL_HOURS", 24, minimum=1))
     # ── public-surface synthetic monitor (surface_monitor.py) ──
     # Deterministic anonymous HTTP against the PUBLIC product; the model is
     # used only after a durable anomaly. OFF unless enabled (staging worker).

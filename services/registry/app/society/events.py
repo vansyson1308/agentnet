@@ -68,6 +68,10 @@ class EventType:
     CODE_CANDIDATE_REJECTED = "code_candidate.rejected"
     # Operator closed a candidate that could not progress (society/candidate_admin.py).
     CODE_CANDIDATE_ABANDONED = "code_candidate.abandoned"
+    # Operator notices (society/candidate_health.py): no role subscribes, the
+    # candidate's status is untouched; only an operator abandons.
+    CODE_CANDIDATE_STALLED = "code_candidate.stalled"
+    CODE_CANDIDATE_OBSOLETE = "code_candidate.obsolete"
     STAGING_DEPLOY_REQUESTED = "staging_deploy.requested"
     INTENT_DENIED = "intent.denied"
     INTENT_APPROVAL_REQUIRED = "intent.approval_required"

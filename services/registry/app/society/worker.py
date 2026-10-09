@@ -47,6 +47,7 @@ from ..models import (
     Span,
     SpanStatus,
 )
+from . import candidate_health as candidate_health_mod
 from . import deployment as dep_mod
 from . import fitness as fitness_mod
 from . import memory_grounding
@@ -259,6 +260,9 @@ class SocietyWorker:
                 # A candidate wake the loop breaker swallowed is re-sent once, in a
                 # fresh story, while the candidate still waits for it (redelivery.py).
                 redelivery_mod.redeliver_swallowed_wakes(db, self.settings)
+                # Stale QA verdicts are cleared and QA re-requested; stalled and
+                # obsolete candidates are surfaced to the operator (candidate_health.py).
+                candidate_health_mod.sweep(db, self.settings)
             except Exception:  # noqa: BLE001 — world ingestion must never block dispatch
                 db.rollback()
                 logger.exception("society world ingestion failed")
