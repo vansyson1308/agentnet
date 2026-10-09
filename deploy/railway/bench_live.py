@@ -45,8 +45,10 @@ def main() -> int:
         print("BENCH RESULT: REFUSED", flush=True)
         return 2
     tasks = bench.load_tasks(os.getenv("BENCH_ONLY", ""))
-    for sha in sorted({t["fix_sha"] for t in tasks}):  # the validator clone is shallow
-        subprocess.run(["git", "-C", REPO, "fetch", "-q", "--depth=2", "origin", sha], check=True, timeout=300)
+    # the validator clone is shallow; the tasks are commits of main and need their parents
+    subprocess.run(["git", "-C", REPO, "fetch", "-q", "--unshallow", "origin", "+refs/heads/main:refs/remotes/origin/main"], check=True, timeout=600)
+    missing = [t["id"] for t in tasks if subprocess.run(["git", "-C", REPO, "cat-file", "-e", t["fix_sha"] + "^"], capture_output=True).returncode]
+    print(f"BENCH-REPO tasks={len(tasks)} missing_commits={missing}", flush=True)
     rc = bench.main(["--repo", REPO] + (["--only", os.environ["BENCH_ONLY"]] if os.getenv("BENCH_ONLY") else []))
     print(f"BENCH RESULT: {'OK' if rc == 0 else 'REFUSED'}", flush=True)
     return rc

@@ -110,14 +110,14 @@ async def run_task(task: dict, *, repo: str, root: str, model, ms: MaintenanceSe
 
 
 def summarize(rows: List[Dict[str, Any]], *, live: bool, model_name: str, config: Dict[str, Any], skipped: List[str]) -> Dict[str, Any]:
-    ran = rows
+    ran = [r for r in rows if r["result"] != "setup_error"]
     n = len(ran) or 1
     classes: Dict[str, int] = {}
     for r in ran:
         classes[r["result"]] = classes.get(r["result"], 0) + 1
     return {
         "live": live, "model": model_name, "config": config,
-        "tasks_run": len(ran), "tasks_not_run_budget": skipped, "passed": classes.get("pass", 0),
+        "tasks_run": len(ran), "tasks_not_run_budget": skipped, "setup_errors": [r["id"] for r in rows if r["result"] == "setup_error"], "passed": classes.get("pass", 0),
         "pass_at_1": round(classes.get("pass", 0) / n, 3),
         "mean_turns": round(sum(r["turns"] for r in ran) / n, 2), "mean_test_runs": round(sum(r["test_runs"] for r in ran) / n, 2),
         "cost_usd": str(sum((Decimal(r["cost_usd"]) for r in ran), Decimal("0"))), "result_classes": classes,
@@ -141,7 +141,10 @@ async def bench(tasks: List[dict], *, repo: str, model, budget: Decimal, ms: Opt
             if spent >= budget:
                 skipped.append(task["id"])
                 continue
-            row = await run_task(task, repo=repo, root=root, model=model, ms=ms, ss=ss, cost_cap=budget - spent)
+            try:
+                row = await run_task(task, repo=repo, root=root, model=model, ms=ms, ss=ss, cost_cap=budget - spent)
+            except subprocess.CalledProcessError as exc:  # the task could not be set up: not a model result
+                row = {"id": task["id"], "result": "setup_error", "detail": " ".join(map(str, exc.cmd))[:200], "turns": 0, "test_runs": 0, "cost_usd": "0"}
             spent += Decimal(row["cost_usd"])
             rows.append(row)
             emit("BENCH TASK " + json.dumps(row, sort_keys=True))
