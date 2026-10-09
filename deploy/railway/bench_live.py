@@ -33,6 +33,9 @@ sys.path.insert(0, REPO)
 def main() -> int:
     for k in [k for k in os.environ if k.startswith(("POSTGRES", "REDIS", "DATABASE_URL"))]:
         os.environ.pop(k)
+    # Offline tool: no database, no auth, no tokens. The registry config would
+    # otherwise demand production secrets just to import the models.
+    os.environ["ENVIRONMENT"] = "development"
     from scripts.bench import run as bench  # noqa: PLC0415
     from services.registry.app.society import canary  # noqa: PLC0415
 
