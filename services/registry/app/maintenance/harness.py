@@ -324,6 +324,19 @@ def _green(state: "AttemptState") -> bool:
     return bool(t and t.passed and state.tested_full and state.tested_digest == worktree_digest(state.ws))
 
 
+def _verify_now(state: "AttemptState") -> bool:
+    """Green on the current worktree -- running every acceptance test now
+    (one test run, no model call) when the last run did not judge it."""
+    if state.last_test and state.tested_full and state.tested_digest == worktree_digest(state.ws):
+        return state.last_test.passed  # this worktree was already judged
+    if state.test_runs >= state.max_test_runs or not state.test_targets:
+        return False
+    state.test_runs += 1
+    state.last_test = run_targeted_tests(state.ws, state.test_targets, timeout=state.test_timeout)
+    state.tested_digest, state.tested_full = worktree_digest(state.ws), True
+    return state.last_test.passed
+
+
 def builder_tools(state: AttemptState) -> Dict[str, Any]:
     """Tools bound to one attempt's worktree. Read tools see the worktree
     (including the Builder's own uncommitted edits)."""
@@ -420,9 +433,11 @@ def _restore(ws, rel: str, text: Optional[str]) -> None:
 def submit_check(state: AttemptState):
     """Checked when the Builder submits, INSIDE the try: a no-op or
     whitespace-only worktree, Python that does not parse, or a worktree whose
-    acceptance tests did not all pass on it (failing ids named) is refused
-    with a structural error the model sees. Only once the test-run budget is
-    spent may an unverified worktree be submitted, flagged ``tests_unverified``."""
+    acceptance tests do not all pass on it (failing ids named) is refused
+    with a structural error the model sees. A worktree the last test run did
+    not judge is tested here first (no model turn). Only once the test-run
+    budget is spent may an unverified worktree be submitted, flagged
+    ``tests_unverified``."""
 
     def check(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         status = ws_mod._git(["status", "--porcelain", "--untracked-files=all"], cwd=state.ws.path)
@@ -436,29 +451,28 @@ def submit_check(state: AttemptState):
         errs = _python_errors(state.ws, paths)
         if errs:
             return {"error": "Python in the attempt does not parse", "code": "syntax_error", "syntax_errors": errs[:5]}
-        if _green(state):
+        if _verify_now(state):
             return None
-        if state.test_runs >= state.max_test_runs:
-            result["tests_unverified"] = True
+        if state.test_runs >= state.max_test_runs or not state.test_targets:
+            result["tests_unverified"] = True  # no run left (or nothing to run): QA decides
             return None
         t = state.last_test
-        if t is None or not state.tested_full or state.tested_digest != worktree_digest(state.ws):
-            return {"error": "run_tests (all acceptance tests) on the current worktree before submitting", "code": "tests_not_run",
-                    "test_runs_left": state.max_test_runs - state.test_runs}
         return {"error": "acceptance tests fail on the current worktree: fix them, then submit", "code": "tests_failing",
-                "failing": [f["test"] for f in t.failures][:10] or state.test_targets[:10], "test_runs_left": state.max_test_runs - state.test_runs}
+                "failing": [f["test"] for f in t.failures][:10] or state.test_targets[:10], "failures": t.failures[:10], "tail": t.tail[-1500:],
+                "test_runs_left": state.max_test_runs - state.test_runs}
 
     return check
 
 
 def submit_if_green(state: AttemptState):
-    """After the try: one that ran out of turns while its last test run -- all
-    acceptance tests, on this exact worktree -- was green is submitted
-    deterministically (no model call). Anything else is left as it ended."""
+    """After the try: one that ran out of turns with a changed worktree whose
+    acceptance tests all pass on it (the last run, or one run now) is
+    submitted deterministically (no model call). Anything else is left as it
+    ended."""
     check = submit_check(state)
 
     def finish(res):
-        if res.ok or res.error_class != "turn_budget" or res.rescope is not None or not _green(state) or check({}) is not None:
+        if res.ok or res.error_class != "turn_budget" or res.rescope is not None or check({}) is not None or not _green(state):
             return res
         res.ok, res.error_class, res.error = True, None, None
         res.output = {"summary": f"submitted by the harness: the turn budget ran out with all acceptance tests passing on this worktree ({len(state.test_targets)} tests)",

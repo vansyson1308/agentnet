@@ -77,24 +77,29 @@ def test_a_fixed_task_scores_and_the_report_is_marked_not_live(tmp_path):
 
 
 def test_a_correct_worktree_that_was_never_submitted_is_not_delivered(tmp_path):
-    summary, rows = _bench(tmp_path, [_patch("pkg/mod.py", "return x + x + 1", "return x + x")] + [{"action": "read_diff", "args": {}}] * 30)
-    assert rows[0]["scored"] is True and rows[0]["submitted"] is False and rows[0]["result"] == "turn_budget"
+    summary, rows = _bench(tmp_path, [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), "not json", "not json"])
+    assert rows[0]["scored"] is True and rows[0]["submitted"] is False and rows[0]["result"] == "invalid_json"
     assert summary["delivered"] == 0 and summary["pass_at_1"] == 0.0 and summary["undelivered_correct"] == 1
 
 
-def test_a_turn_budget_try_whose_last_full_test_run_is_green_on_this_worktree_is_submitted_by_the_harness(tmp_path):
-    summary, rows = _bench(tmp_path, [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), RUN] + [{"action": "read_diff", "args": {}}] * 30)
-    assert rows[0]["auto_submitted"] is True and rows[0]["submitted"] is True and rows[0]["result"] == "pass" and summary["delivered"] == 1
-    # green on an EARLIER worktree is not enough: the change after the run was never tested
-    _, rows = _bench(tmp_path / "b", [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), RUN, _patch("pkg/mod.py", "return x + x", "return 2 * x")]
-                     + [{"action": "read_diff", "args": {}}] * 30)
-    assert rows[0]["auto_submitted"] is False and rows[0]["result"] == "turn_budget"
+def test_a_turn_budget_try_with_green_acceptance_tests_on_its_worktree_is_submitted_by_the_harness(tmp_path):
+    read_diff = [{"action": "read_diff", "args": {}}] * 30
+    summary, rows = _bench(tmp_path, [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), RUN] + read_diff)
+    assert rows[0]["auto_submitted"] is True and rows[0]["submitted"] is True and rows[0]["result"] == "pass" and rows[0]["test_runs"] == 1
+    # never tested by the model: the harness runs the acceptance tests once itself (no model call)
+    _, rows = _bench(tmp_path / "b", [_patch("pkg/mod.py", "return x + x + 1", "return 2 * x")] + read_diff)
+    assert rows[0]["auto_submitted"] is True and rows[0]["result"] == "pass" and rows[0]["test_runs"] == 1
+    # green on an EARLIER worktree is not enough: the changed worktree is red, so nothing is submitted
+    _, rows = _bench(tmp_path / "c", [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), RUN, _patch("pkg/mod.py", "return x + x", "return x - x")] + read_diff)
+    assert rows[0]["auto_submitted"] is False and rows[0]["result"] == "turn_budget" and rows[0]["test_runs"] == 2
 
 
-def test_a_submit_is_refused_until_the_acceptance_tests_ran_green_on_the_current_worktree(tmp_path):
-    script = [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), SUBMIT, RUN, _patch("pkg/mod.py", "return x + x", "return 2 * x"), SUBMIT, RUN, SUBMIT]
+def test_a_red_worktree_is_refused_with_its_failing_tests_and_a_green_one_is_accepted(tmp_path):
+    script = [_patch("pkg/mod.py", "return x + x + 1", "return x + x + 2"), SUBMIT, SUBMIT, _patch("pkg/mod.py", "return x + x + 2", "return x + x"), SUBMIT]
     summary, rows = _bench(tmp_path, script)
-    assert rows[0]["result"] == "pass" and rows[0]["test_runs"] == 2 and rows[0]["tests_unverified"] is False
+    assert rows[0]["actions"] == ["apply_patch", "submit!tests_failing", "submit!tests_failing", "apply_patch", "submit"]
+    assert rows[0]["result"] == "pass" and rows[0]["test_runs"] == 2, "the harness tested each new worktree once, never the same one twice"
+    assert rows[0]["tests_unverified"] is False
 
 
 def test_repeats_give_a_per_task_matrix_pass_at_1_and_pass_at_k(tmp_path):
