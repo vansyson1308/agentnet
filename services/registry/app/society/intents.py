@@ -58,6 +58,7 @@ class IntentType(str, enum.Enum):
     # ── engineering loop (MEDIUM) ──
     REQUEST_CODE_CHANGE = "REQUEST_CODE_CHANGE"
     SUBMIT_CODE_CANDIDATE = "SUBMIT_CODE_CANDIDATE"
+    BUILD_CODE_CANDIDATE = "BUILD_CODE_CANDIDATE"
     REQUEST_QA = "REQUEST_QA"
     DECLINE_CODE_CANDIDATE = "DECLINE_CODE_CANDIDATE"
     EVALUATE_CODE_CANDIDATE = "EVALUATE_CODE_CANDIDATE"
@@ -515,6 +516,7 @@ PAYLOAD_MODELS: Dict[IntentType, type] = {
     IntentType.FAIL_TASK: FailTaskPayload,
     IntentType.REQUEST_CODE_CHANGE: RequestCodeChangePayload,
     IntentType.SUBMIT_CODE_CANDIDATE: SubmitCodeCandidatePayload,
+    IntentType.BUILD_CODE_CANDIDATE: CandidateRefPayload,
     IntentType.REQUEST_QA: CandidateRefPayload,
     IntentType.DECLINE_CODE_CANDIDATE: DeclineCodeCandidatePayload,
     IntentType.EVALUATE_CODE_CANDIDATE: CandidateRefPayload,

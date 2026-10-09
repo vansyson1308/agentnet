@@ -58,7 +58,7 @@ below). That ends in the ordinary `rejected`, a recorded failure, never in `aban
 | Society_Governor | governor (MEDIUM) | `proposal.created`, `code_candidate.ready/rejected`, `promotion.merge_eligible/rejected`, `experiment.finished`, `society.heartbeat`, `company.cycle`, `incident.opened`, `a2a.task.finished`, `a2a.agent.discovered` | messages, memory, goals, `REVIEW_IMPROVEMENT`, `READ_CANDIDATE_STATE`, `REQUEST_PR_PROMOTION`, `REQUEST_STAGING_EVALUATION`, `DISCOVER_A2A_AGENT`, `REQUEST_A2A_TASK` (**approval-gated**), `CHECK_A2A_TASK` |
 | Society_Scout | scout | `company.cycle`, `a2a.agent.refreshed`, `platform.metric.anomaly`, `task.failed/timeout`, `qa.failed`, `agent.inactive`, candidate outcomes | messages, memory, `CREATE_IMPROVEMENT` (with structured evidence), agent goals, `REFRESH_A2A_AGENT`, `CHECK_A2A_TASK` |
 | Society_Architect | architect (MEDIUM) | `proposal.approved`, `code_candidate.qa_failed/ready`, `repo.read.result` (own reads only), `code_change.spec_rejected` | repo reads (`LIST_REPO_TREE`, `SEARCH_REPO`, `READ_REPO_FILE`, `READ_REPO_RANGE`), `REQUEST_CODE_CHANGE`, `CREATE_TASK` (≤50 credits), goal updates |
-| Society_Builder | builder (MEDIUM) | `code_change.requested`, `code_candidate.qa_failed/ready/rejected`, `repo.read.result` (own reads only), `society.heartbeat` | repo reads, `SUBMIT_CODE_CANDIDATE`, `DECLINE_CODE_CANDIDATE`, `START/COMPLETE/FAIL_TASK` |
+| Society_Builder | builder (MEDIUM) | `code_change.requested`, `code_candidate.qa_failed/ready/rejected`, `repo.read.result` (own reads only), `society.heartbeat` | repo reads, `BUILD_CODE_CANDIDATE` (code: the coding harness), `SUBMIT_CODE_CANDIDATE` (docs), `DECLINE_CODE_CANDIDATE`, `START/COMPLETE/FAIL_TASK` |
 | Society_QA | qa (MEDIUM) | `code_candidate.built` | `EVALUATE_CODE_CANDIDATE` (verdict computed by the runtime, not asserted) |
 | Society_Security | security (MEDIUM) | `code_candidate.security_review`, `repo.read.result` (own reads only) | `READ_DIFF`, `READ_REPO_FILE`, `READ_CANDIDATE_STATE`, `SECURITY_REVIEW_CANDIDATE` (combined with static scan; fails closed) |
 | Society_Evaluator (Phase 3) | evaluator | `promotion.ci_passed`, `experiment.finished` | `READ_CANDIDATE_STATE`, `REQUEST_MERGE_EVALUATION`, `RECORD_EVALUATION_RECOMMENDATION` (advisory only), memory, messages — it cannot change thresholds, approve, merge, deploy or alter evidence |
@@ -67,12 +67,29 @@ Roles are configuration (`roles.py`), overridable/extendable with `SOCIETY_ROLES
 reused by name; `python -m app.society.seed` is idempotent. Any agent additionally wakes when an event
 targets it (`payload.target_agent_id` / `subject_type=agent`), e.g. `agent.message.received`.
 
+### One coding engine (BUILD_CODE_CANDIDATE)
+
+A code candidate (`spec.kind == "code"`) is built by the same AuthorPatch loop the Maintenance OS
+runs (`maintenance/harness.py`), through `society/engineering/build_engine.py`: the candidate
+worktree is reset to its base, the spec's `files_allowed` is the patch scope and its
+`acceptance_tests` are the test targets; the target files are front-loaded, edits are exact-text
+patches, a submit is refused until the acceptance tests pass on the current worktree, and a green
+worktree is submitted deterministically at the turn limit. The executor then commits and records
+the head exactly as `SUBMIT_CODE_CANDIDATE` does (anti-busywork, duplicate diff, `code_candidate.built`);
+QA, Security, risk tiers and promotion are unchanged. A failed build hands the candidate back
+(`requested`/`qa_failed`, cost on the run) with a structural reason; a rescope answer names the files
+and points at `DECLINE_CODE_CANDIDATE`. The model is the live activity model (`MAINTENANCE_BUILDER_*`
+budgets, `MAINTENANCE_MAX_CASE_COST_USD` per build); without one the build is refused, never faked.
+With a live Society model, whole-file `SUBMIT_CODE_CANDIDATE` edits are refused for code candidates;
+the scripted provider keeps them as a mechanics fixture (never live evidence).
+`scripts/bench/run.py --path society` scores this exact function on the bench tasks.
+
 ## Risk model
 
 | Class | Intents | Handling |
 |---|---|---|
 | LOW | `SEND_MESSAGE`, `WRITE_MEMORY`, `CREATE_GOAL`, `UPDATE_GOAL`, `CREATE_IMPROVEMENT`, `REVIEW_IMPROVEMENT`, `SLEEP`, read-only repo intelligence (`LIST_REPO_TREE`, `SEARCH_REPO`, `READ_REPO_FILE`, `READ_REPO_RANGE`, `READ_DIFF`, `READ_CANDIDATE_STATE`), `RECORD_EVALUATION_RECOMMENDATION`, `REFRESH_A2A_AGENT`, `CHECK_A2A_TASK` | auto if in grant; repo reads are bounded (per run / per correlation / bytes), path-safe, persisted as `repo.read.result` and returned as untrusted data |
-| MEDIUM | `CREATE_OFFER`, `COUNTER_OFFER`, `ACCEPT_OFFER`, `CREATE_TASK`, `START/COMPLETE/FAIL_TASK`, `REQUEST_CODE_CHANGE`, `SUBMIT_CODE_CANDIDATE`, `REQUEST_QA`, `DECLINE_CODE_CANDIDATE`, `EVALUATE_CODE_CANDIDATE`, `SECURITY_REVIEW_CANDIDATE`, `REQUEST_PR_PROMOTION`, `REQUEST_MERGE_EVALUATION`, `REQUEST_STAGING_EVALUATION`, `REQUEST_STAGING_DEPLOY`, `DISCOVER_A2A_AGENT`, `REQUEST_A2A_TASK` | role-gated by grant ceiling; A2A intents need `A2A_SOCIETY_CLIENT_ENABLED` + `A2A_FEDERATION_ENABLED`, discovery only for `A2A_SOCIETY_DISCOVERY_ALLOWED_HOSTS`, tasks only to operator-verified agents under call budgets (`docs/A2A_FEDERATION.md` §6); escrow ≤ min(grant cap, `SOCIETY_MAX_TASK_ESCROW_CREDITS`); code intents need `SOCIETY_AUTONOMOUS_CODE_ENABLED`; staging needs `SOCIETY_STAGING_DEPLOY_ENABLED`; promotion/evaluation intents only *request* — the non-LLM Promotion Controller and fitness engine decide (`docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md`) |
+| MEDIUM | `CREATE_OFFER`, `COUNTER_OFFER`, `ACCEPT_OFFER`, `CREATE_TASK`, `START/COMPLETE/FAIL_TASK`, `REQUEST_CODE_CHANGE`, `SUBMIT_CODE_CANDIDATE`, `BUILD_CODE_CANDIDATE`, `REQUEST_QA`, `DECLINE_CODE_CANDIDATE`, `EVALUATE_CODE_CANDIDATE`, `SECURITY_REVIEW_CANDIDATE`, `REQUEST_PR_PROMOTION`, `REQUEST_MERGE_EVALUATION`, `REQUEST_STAGING_EVALUATION`, `REQUEST_STAGING_DEPLOY`, `DISCOVER_A2A_AGENT`, `REQUEST_A2A_TASK` | role-gated by grant ceiling; A2A intents need `A2A_SOCIETY_CLIENT_ENABLED` + `A2A_FEDERATION_ENABLED`, discovery only for `A2A_SOCIETY_DISCOVERY_ALLOWED_HOSTS`, tasks only to operator-verified agents under call budgets (`docs/A2A_FEDERATION.md` §6); escrow ≤ min(grant cap, `SOCIETY_MAX_TASK_ESCROW_CREDITS`); code intents need `SOCIETY_AUTONOMOUS_CODE_ENABLED`; staging needs `SOCIETY_STAGING_DEPLOY_ENABLED`; promotion/evaluation intents only *request* — the non-LLM Promotion Controller and fitness engine decide (`docs/GITHUB_PROMOTION.md`, `docs/FITNESS_EVALUATION.md`) |
 | HIGH | `REQUEST_PRODUCTION_DEPLOY`, `SHELL_EXEC`, `GRANT_CAPABILITY`, `MODIFY_BUDGET`, `TRANSFER_FUNDS`, `MODIFY_WALLET`, `MODIFY_SECRET`, `CHANGE_AUTH_POLICY`, `DELETE_DATA`, `OPEN_NETWORK_ACCESS`, `RUN_MIGRATION` | recognised, **always denied**, recorded as `intent.denied` events; no executor exists |
 
 Additional refusals in executors: no self-review, requester ≠ builder ≠ QA ≠ security reviewer, no

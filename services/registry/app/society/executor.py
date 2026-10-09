@@ -28,6 +28,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -66,6 +67,9 @@ from ..models import (
 )
 from . import candidate_health, memory_grounding, repo_intel
 from .config import SocietySettings
+from ..maintenance import activities
+from ..maintenance.config import MaintenanceSettings
+from .engineering import build_engine
 from .engineering import workspace as ws_mod
 from .engineering.qa import RISKY_PATH_RE, evaluate_candidate, static_security_scan
 from .events import REHEARSAL_MEMORY_TTL_SECONDS, EventType, emit_event, is_rehearsal_correlation, utcnow
@@ -110,6 +114,7 @@ class ExecContext:
     heartbeat: Callable[[], None] = lambda: None
     now: datetime = field(default_factory=utcnow)
     deployment_provider: Any = None   # test injection; production resolves from settings
+    builder_model: Any = None   # test injection; production uses the live activity model
 
 
 @dataclass
@@ -778,9 +783,9 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
     return ExecOutcome(result={"candidate_id": str(cand.id), "requires_security_review": requires_sec}, events=[str(ev.id)])
 
 
-def _submit_code_candidate(ctx: ExecContext) -> ExecOutcome:
-    p = ctx.validated.payload
-    cand = _get_candidate(ctx, p.candidate_id)
+def _claim_for_build(ctx: ExecContext, cand: CodeCandidate) -> tuple:
+    """Shared Builder preconditions; marks the candidate BUILDING. Returns
+    (status before, whether this is a RE-submission)."""
     status = _ev(cand.status)
     if status not in (CodeCandidateStatus.REQUESTED.value, CodeCandidateStatus.QA_FAILED.value, CodeCandidateStatus.BUILDING.value):
         raise ExecutionError(f"candidate is {status}; cannot submit")
@@ -788,7 +793,6 @@ def _submit_code_candidate(ctx: ExecContext) -> ExecOutcome:
         raise ExecutionError("candidate is owned by another builder")
     if cand.requested_by_agent_id == ctx.agent.id:
         raise ExecutionError("the requesting agent cannot also build the candidate")
-    spec = cand.spec or {}
     # A verdict belongs to the head it judged (candidate_health): a candidate
     # that already has one is being RE-submitted.
     resubmitted = bool((cand.qa_report or {}).get("verdict"))
@@ -796,21 +800,88 @@ def _submit_code_candidate(ctx: ExecContext) -> ExecOutcome:
     cand.builder_agent_id = ctx.agent.id
     cand.builder_run_id = ctx.run.id
     ctx.db.flush()
+    return status, resubmitted
+
+
+def _release_build(ctx: ExecContext, cand: CodeCandidate, status: str, error: str) -> None:
+    # The lease heartbeat may already have committed status=BUILDING; persist
+    # the reset explicitly so the worker's rollback cannot leave the candidate
+    # stuck in BUILDING.
+    cand.status = CodeCandidateStatus.QA_FAILED if status == CodeCandidateStatus.QA_FAILED.value else CodeCandidateStatus.REQUESTED
+    cand.error = error[:2000]
+    ctx.db.commit()
+
+
+def _submit_code_candidate(ctx: ExecContext) -> ExecOutcome:
+    p = ctx.validated.payload
+    cand = _get_candidate(ctx, p.candidate_id)
+    spec = cand.spec or {}
+    if spec.get("kind") == "code" and ctx.settings.model_provider != "scripted":
+        # One engine: a live Builder codes through the harness (exact-text
+        # patches, targeted tests, submit refused until green). The scripted
+        # provider keeps this path as a mechanics fixture -- never live evidence.
+        raise ExecutionError("code candidates are built with BUILD_CODE_CANDIDATE (the coding harness); SUBMIT_CODE_CANDIDATE edits are for docs candidates")
+    status, resubmitted = _claim_for_build(ctx, cand)
     try:
         ws = ws_mod.ensure_workspace(ctx.settings, cand.id)
         ctx.heartbeat()
         written = ws_mod.apply_edits(ws, p.edits, allowed=spec.get("files_allowed") or [])
         head = ws_mod.commit_all(ws, f"society: {cand.title} (candidate {cand.id})\n\n{p.summary}")
-        changed = ws_mod.changed_files(ws)
-        stat = ws_mod.diff_stat(ws)
     except ws_mod.WorkspaceError as exc:
-        # The lease heartbeat may already have committed status=BUILDING;
-        # persist the reset explicitly so the worker's rollback cannot leave
-        # the candidate stuck in BUILDING.
-        cand.status = CodeCandidateStatus.REQUESTED if status != CodeCandidateStatus.QA_FAILED.value else CodeCandidateStatus.QA_FAILED
-        cand.error = str(exc)[:2000]
-        ctx.db.commit()
+        _release_build(ctx, cand, status, str(exc))
         raise ExecutionError(f"workspace refused: {exc}") from exc
+    return _record_build(ctx, cand, ws, head, summary=p.summary, resubmitted=resubmitted, result={"written": written})
+
+
+def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
+    """The Builder builds a code candidate through the coding harness
+    (``engineering/build_engine.py``): the same AuthorPatch loop the
+    Maintenance OS and the bench run, on the candidate worktree, scoped to
+    the spec. The model only edits through bounded tools; the commit, the
+    anti-busywork gates and QA are deterministic and unchanged."""
+    p = ctx.validated.payload
+    cand = _get_candidate(ctx, p.candidate_id)
+    spec = cand.spec or {}
+    if spec.get("kind") != "code":
+        raise ExecutionError("BUILD_CODE_CANDIDATE builds code candidates; a docs candidate is written with SUBMIT_CODE_CANDIDATE")
+    model = ctx.builder_model or activities.get_activity_model(ctx.settings)
+    if model is None:
+        raise ExecutionError("no live builder model is configured (SOCIETY_MODEL_PROVIDER=openai_compatible + key + base URL)")
+    feedback = build_engine.qa_feedback(cand.qa_report)
+    status, resubmitted = _claim_for_build(ctx, cand)
+    ms = MaintenanceSettings()
+    try:
+        ws = ws_mod.ensure_workspace(ctx.settings, cand.id)
+        ctx.heartbeat()
+        coro = build_engine.build(ws, spec, title=cand.title, model=model, ms=ms, ss=ctx.settings, cost_cap=ms.max_case_cost_usd, feedback=feedback)
+        out = build_engine.run_blocking(coro, heartbeat=ctx.heartbeat, every=ctx.settings.run_lease_seconds / 3)
+    except ws_mod.WorkspaceError as exc:
+        _release_build(ctx, cand, status, str(exc))
+        raise ExecutionError(f"workspace refused: {exc}") from exc
+    stats = out.stats()
+    ctx.run.tokens_in = int(ctx.run.tokens_in or 0) + out.result.tokens_in
+    ctx.run.tokens_out = int(ctx.run.tokens_out or 0) + out.result.tokens_out
+    ctx.run.cost_usd = Decimal(str(ctx.run.cost_usd or 0)) + out.result.cost_usd
+    if not out.delivered:
+        if out.result.rescope:
+            why = f"the harness needs files outside files_allowed {stats['rescope']['required_files']} ({stats['rescope']['reason']}): DECLINE_CODE_CANDIDATE if the spec cannot be met"
+        else:
+            why = f"no green worktree ({out.result.error_class}: {(out.result.error or '')[:200]}); BUILD again or DECLINE_CODE_CANDIDATE"
+        _release_build(ctx, cand, status, f"build failed: {why}")  # commits the cost too
+        raise ExecutionError(f"build failed after {stats['turns']} turns, {stats['test_runs']} test runs: {why}")
+    summary = str((out.result.output or {}).get("summary") or "built by the coding harness")
+    try:
+        head = ws_mod.commit_all(ws, f"society: {cand.title} (candidate {cand.id})\n\n{summary}")
+    except ws_mod.WorkspaceError as exc:
+        _release_build(ctx, cand, status, str(exc))
+        raise ExecutionError(f"workspace refused: {exc}") from exc
+    return _record_build(ctx, cand, ws, head, summary=summary, resubmitted=resubmitted, result={"engine": stats})
+
+
+def _record_build(ctx: ExecContext, cand: CodeCandidate, ws, head: str, *, summary: str, resubmitted: bool, result: Dict[str, Any]) -> ExecOutcome:
+    """A committed Builder head: anti-busywork gates, then BUILT (or a QA re-request)."""
+    changed = ws_mod.changed_files(ws)
+    stat = ws_mod.diff_stat(ws)
     diff_hash, diff_lines = ws_mod.diff_identity(ws)
     busywork = None
     if not changed or diff_lines == 0:
@@ -847,7 +918,7 @@ def _submit_code_candidate(ctx: ExecContext) -> ExecOutcome:
     cand.head_sha = head
     cand.diff_stat = stat
     cand.changed_files = changed
-    cand.patch_summary = p.summary
+    cand.patch_summary = summary
     cand.diff_hash = diff_hash
     cand.diff_lines = diff_lines
     cand.error = None
@@ -867,7 +938,7 @@ def _submit_code_candidate(ctx: ExecContext) -> ExecOutcome:
             subject_id=cand.id,
             key_suffix=head[:12],
         )
-    return ExecOutcome(result={"candidate_id": str(cand.id), "branch": ws.branch, "head_sha": head, "written": written, "changed_files": changed}, events=[str(ev.id)])
+    return ExecOutcome(result={"candidate_id": str(cand.id), "branch": ws.branch, "head_sha": head, "changed_files": changed, **result}, events=[str(ev.id)])
 
 
 def _request_qa(ctx: ExecContext) -> ExecOutcome:
@@ -1575,6 +1646,7 @@ HANDLERS: Dict[IntentType, Callable[[ExecContext], ExecOutcome]] = {
     IntentType.FAIL_TASK: _fail_task,
     IntentType.REQUEST_CODE_CHANGE: _request_code_change,
     IntentType.SUBMIT_CODE_CANDIDATE: _submit_code_candidate,
+    IntentType.BUILD_CODE_CANDIDATE: _build_code_candidate,
     IntentType.REQUEST_QA: _request_qa,
     IntentType.DECLINE_CODE_CANDIDATE: _decline_code_candidate,
     IntentType.EVALUATE_CODE_CANDIDATE: _evaluate_code_candidate,

@@ -17,7 +17,8 @@ credential, an unreachable provider) refuses the run.
     BENCH SUMMARY {...}     pass@1, mean turns, mean test runs, cost, result classes
     BENCH RESULT: OK | REFUSED
 
-Env: BENCH_BUDGET_USD (default 1), BENCH_ONLY (comma-separated task ids).
+Env: BENCH_BUDGET_USD (default 1), BENCH_ONLY (comma-separated task ids),
+BENCH_PATH (maintenance | society; default maintenance), BENCH_REPEAT (default 3).
 """
 
 from __future__ import annotations
@@ -49,7 +50,8 @@ def main() -> int:
     subprocess.run(["git", "-C", REPO, "fetch", "-q", "--unshallow", "origin", "+refs/heads/main:refs/remotes/origin/main"], check=True, timeout=600)
     missing = [t["id"] for t in tasks if subprocess.run(["git", "-C", REPO, "cat-file", "-e", t["fix_sha"] + "^"], capture_output=True).returncode]
     print(f"BENCH-REPO tasks={len(tasks)} missing_commits={missing}", flush=True)
-    rc = bench.main(["--repo", REPO] + (["--only", os.environ["BENCH_ONLY"]] if os.getenv("BENCH_ONLY") else []))
+    argv = ["--repo", REPO, "--path", os.getenv("BENCH_PATH", "maintenance"), "--repeat", os.getenv("BENCH_REPEAT", "3")]
+    rc = bench.main(argv + (["--only", os.environ["BENCH_ONLY"]] if os.getenv("BENCH_ONLY") else []))
     print(f"BENCH RESULT: {'OK' if rc == 0 else 'REFUSED'}", flush=True)
     return rc
 

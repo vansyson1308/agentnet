@@ -51,10 +51,10 @@ RUN = {"action": "run_tests", "args": {}}
 RESCOPE = {"action": "needs_rescope", "result": {"reason": "file_outside_scope", "required_files": ["pkg/other.py"], "evidence": "the bug is elsewhere"}}
 
 
-def _bench(tmp_path, script, task=None, repeat=1):
+def _bench(tmp_path, script, task=None, repeat=1, path="maintenance"):
     repo, t = _repo(tmp_path)
     lines = []
-    summary = asyncio.run(bench.bench([task or t], repo=str(repo), model=ScriptedActivityModel(script), budget=Decimal("1"), repeat=repeat, emit=lines.append))
+    summary = asyncio.run(bench.bench([task or t], repo=str(repo), model=ScriptedActivityModel(script), budget=Decimal("1"), repeat=repeat, path=path, emit=lines.append))
     return summary, [json.loads(x.split(" ", 2)[2]) for x in lines if x.startswith("BENCH TASK")]
 
 
@@ -115,6 +115,17 @@ def test_failures_are_classified_and_never_scored(tmp_path):
     assert rows[0]["result"] == "wrong_file" and "out_of_scope" in rows[0]["tool_codes"]
     _, rows = _bench(tmp_path / "b", [_patch("pkg/mod.py", "return x + x + 1", "return x + x + 2"), RUN] + [SUBMIT] * 12)
     assert rows[0]["result"] == "tests_failing" and rows[0]["submitted"] is False, "a red worktree is never submitted while test runs are left"
+
+
+def test_the_society_path_drives_the_same_harness_and_scores_the_same(tmp_path):
+    good = [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), RUN, SUBMIT]
+    red = [_patch("pkg/mod.py", "return x + x + 1", "return x + x + 2"), RUN] + [SUBMIT] * 12
+    for i, script in enumerate([good, red, [RESCOPE]]):
+        _, m = _bench(tmp_path / f"m{i}", list(script))
+        summary, s = _bench(tmp_path / f"s{i}", list(script), path="society")
+        keys = ("result", "submitted", "scored", "test_runs", "patches", "actions")
+        assert {k: s[0][k] for k in keys} == {k: m[0][k] for k in keys}
+        assert summary["config"]["path"] == "society"
 
 
 def test_only_a_live_model_produces_a_bench_result(tmp_path, monkeypatch):

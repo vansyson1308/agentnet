@@ -6,7 +6,12 @@ maintenance AuthorPatch loop (harness.builder_tools + activities.run_activity,
 exactly as the kernel runs it) works the task with the configured model;
 scripts/bench/score.py then judges the worktree.
 
-    python scripts/bench/run.py --repo <checkout with the task commits> [--only id,id] [--repeat 3] [--json-out f]
+    python scripts/bench/run.py --repo <checkout with the task commits> [--only id,id] [--repeat 3] [--path maintenance|society] [--json-out f]
+
+``--path maintenance`` (default) feeds the task as a repair plan, as the
+maintenance kernel does; ``--path society`` feeds it as a Society candidate
+spec through ``society/engineering/build_engine.build`` -- the function the
+Society Builder's BUILD_CODE_CANDIDATE runs. Both drive the same harness.
 
 Each task runs ``--repeat`` times (default 3). A run is *delivered* only when
 the model SUBMITTED and the judge scored the worktree: a correct worktree left
@@ -43,11 +48,12 @@ from services.registry.app.maintenance import harness as h  # noqa: E402
 from services.registry.app.maintenance.config import MaintenanceSettings  # noqa: E402
 from services.registry.app.maintenance.taxonomy import ActivityKind  # noqa: E402
 from services.registry.app.society.config import SocietySettings  # noqa: E402
+from services.registry.app.society.engineering import build_engine  # noqa: E402
 from services.registry.app.society.engineering import workspace as ws_mod  # noqa: E402
 
 TASKS = pathlib.Path(__file__).with_name("tasks.json")
-PATCH_PROTOCOL = ("apply_patch args: {files: [{path, operations: [{op: replace_exact|insert_after|insert_before|create|delete, "
-                  "old/new | anchor/text | text}]}]} -- exact text, each old/anchor unique")
+PATCH_PROTOCOL = build_engine.PATCH_PROTOCOL
+PATHS = ("maintenance", "society")
 WRONG_FILE = ("out_of_scope", "protected", "path")
 
 
@@ -101,15 +107,26 @@ def classify(res: act.ActivityResult, codes: List[str], scored: dict) -> str:
     return res.error_class or "no_answer"
 
 
-async def run_task(task: dict, *, repo: str, root: str, rep: int = 0, model, ms: MaintenanceSettings, ss: SocietySettings, cost_cap: Decimal) -> Dict[str, Any]:
+def society_spec(task: dict) -> Dict[str, Any]:
+    """The task as the Architect would hand it to the Society Builder."""
+    return {"kind": "code", "description": task["task"], "files_allowed": list(task["files_allowed"]), "acceptance_tests": list(task["failing_tests"])}
+
+
+async def run_task(task: dict, *, repo: str, root: str, rep: int = 0, model, ms: MaintenanceSettings, ss: SocietySettings, cost_cap: Decimal,
+                   path: str = "maintenance") -> Dict[str, Any]:
     ws = prepare(repo, task, os.path.join(root, f"r{rep}"))
-    state = h.AttemptState(ws=ws, files_allowed=list(task["files_allowed"]), test_targets=list(task["failing_tests"]),
-                           max_test_runs=ms.max_test_runs_per_attempt, test_timeout=ss.qa_test_timeout_seconds, page_bytes=ms.read_page_bytes)
     codes: List[str] = []
-    res = await act.run_activity(act.SPECS[ActivityKind.AUTHOR_PATCH], task_input(task, ws, ms), model=model, tools=_recording(h.builder_tools(state), codes),
-                                 max_turns=ms.builder_max_turns, cost_cap=cost_cap, timeout_seconds=float(ms.activity_timeout_seconds),
-                                 max_read_calls=ms.builder_max_read_calls, submit_check=h.submit_check(state))
-    res = h.submit_if_green(state)(res)  # as the reconciler does
+    if path == "society":
+        out = await build_engine.build(ws, society_spec(task), title=task["id"], model=model, ms=ms, ss=ss, cost_cap=cost_cap,
+                                       wrap_tools=lambda tools: _recording(tools, codes))
+        res, state = out.result, out.state
+    else:
+        state = h.AttemptState(ws=ws, files_allowed=list(task["files_allowed"]), test_targets=list(task["failing_tests"]),
+                               max_test_runs=ms.max_test_runs_per_attempt, test_timeout=ss.qa_test_timeout_seconds, page_bytes=ms.read_page_bytes)
+        res = await act.run_activity(act.SPECS[ActivityKind.AUTHOR_PATCH], task_input(task, ws, ms), model=model, tools=_recording(h.builder_tools(state), codes),
+                                     max_turns=ms.builder_max_turns, cost_cap=cost_cap, timeout_seconds=float(ms.activity_timeout_seconds),
+                                     max_read_calls=ms.builder_max_read_calls, submit_check=h.submit_check(state))
+        res = h.submit_if_green(state)(res)  # as the reconciler does
     scored = score(str(ws.path), task)
     return {"id": task["id"], "rep": rep, "result": classify(res, codes, scored), "submitted": res.ok, "scored": scored["passed"],
             "auto_submitted": bool((res.output or {}).get("auto_submitted")), "tests_unverified": bool((res.output or {}).get("tests_unverified")), "error_class": res.error_class,
@@ -141,16 +158,16 @@ def summarize(rows: List[Dict[str, Any]], *, live: bool, model_name: str, config
     }
 
 
-def run_config(ms: MaintenanceSettings, ss: SocietySettings, repeat: int = 1) -> Dict[str, Any]:
+def run_config(ms: MaintenanceSettings, ss: SocietySettings, repeat: int = 1, path: str = "maintenance") -> Dict[str, Any]:
     # The AuthorPatch spec's max_tokens is what each model turn actually gets;
     # SOCIETY_MODEL_MAX_OUTPUT_TOKENS does not reach this activity.
     return {"builder_max_turns": ms.builder_max_turns, "builder_max_read_calls": ms.builder_max_read_calls, "max_test_runs": ms.max_test_runs_per_attempt,
             "activity_timeout_s": ms.activity_timeout_seconds, "model_timeout_s": ss.model_timeout_seconds, "thinking": ss.model_thinking_mode,
-            "effective_max_tokens_per_turn": act.SPECS[ActivityKind.AUTHOR_PATCH].max_tokens, "repeat": repeat}
+            "effective_max_tokens_per_turn": act.SPECS[ActivityKind.AUTHOR_PATCH].max_tokens, "repeat": repeat, "path": path}
 
 
 async def bench(tasks: List[dict], *, repo: str, model, budget: Decimal, ms: Optional[MaintenanceSettings] = None, ss: Optional[SocietySettings] = None,
-                repeat: int = 1, emit=lambda line: print(line, flush=True)) -> Dict[str, Any]:
+                repeat: int = 1, path: str = "maintenance", emit=lambda line: print(line, flush=True)) -> Dict[str, Any]:
     ms, ss = ms or MaintenanceSettings(), ss or SocietySettings()
     rows: List[Dict[str, Any]] = []
     skipped: List[str] = []
@@ -161,14 +178,14 @@ async def bench(tasks: List[dict], *, repo: str, model, budget: Decimal, ms: Opt
                 skipped.append(task["id"])
                 continue
             try:
-                row = await run_task(task, repo=repo, root=root, rep=rep, model=model, ms=ms, ss=ss, cost_cap=budget - spent)
+                row = await run_task(task, repo=repo, root=root, rep=rep, model=model, ms=ms, ss=ss, cost_cap=budget - spent, path=path)
             except subprocess.CalledProcessError as exc:  # the task could not be set up: not a model result
                 row = {"id": task["id"], "rep": rep, "result": "setup_error", "detail": " ".join(map(str, exc.cmd))[:200], "turns": 0, "test_runs": 0, "cost_usd": "0"}
             spent += Decimal(row["cost_usd"])
             rows.append(row)
             emit("BENCH TASK " + json.dumps(row, sort_keys=True))
         subprocess.run(["git", "worktree", "prune"], cwd=repo, check=False, capture_output=True)
-    summary = summarize(rows, live=bool(getattr(model, "live", False)), model_name=getattr(model, "model_name", "?"), config=run_config(ms, ss, repeat), skipped=skipped)
+    summary = summarize(rows, live=bool(getattr(model, "live", False)), model_name=getattr(model, "model_name", "?"), config=run_config(ms, ss, repeat, path), skipped=skipped)
     emit("BENCH SUMMARY " + json.dumps(summary, sort_keys=True))
     return summary
 
@@ -184,6 +201,7 @@ def main(argv=None, *, model=None) -> int:
     ap.add_argument("--repo", default=str(ROOT))
     ap.add_argument("--only", default="")
     ap.add_argument("--repeat", type=int, default=3, help="runs per task (pass@k over these)")
+    ap.add_argument("--path", choices=PATHS, default="maintenance", help="which builder entry point drives the harness")
     ap.add_argument("--json-out")
     ap.add_argument("--allow-scripted", action="store_true", help="bench self-tests only: the report says live=false")
     args = ap.parse_args(argv)
@@ -194,7 +212,7 @@ def main(argv=None, *, model=None) -> int:
     for k in [k for k in os.environ if k.startswith(("POSTGRES", "REDIS", "DATABASE_URL"))]:
         os.environ.pop(k)  # the bench never touches a database, and neither do the tests it runs
     summary = asyncio.run(bench(load_tasks(args.only), repo=args.repo, model=model, budget=Decimal(os.getenv("BENCH_BUDGET_USD", "1")),
-                                repeat=max(1, args.repeat)))
+                                repeat=max(1, args.repeat), path=args.path))
     if args.json_out:
         pathlib.Path(args.json_out).write_text(json.dumps(summary, indent=2, sort_keys=True))
     return 0
