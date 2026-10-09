@@ -22,6 +22,7 @@ they can fail a patch, never pass one the deterministic gates failed.
 from __future__ import annotations
 
 import ast
+import difflib
 import re
 import subprocess
 import sys
@@ -92,8 +93,36 @@ def _python_errors(ws, paths: Sequence[str]) -> List[str]:
         except ws_mod.WorkspaceError:
             continue
         except SyntaxError as exc:
-            errs.append(f"{rel}:{exc.lineno}: {exc.msg}")
+            errs.append(f"{rel}:{exc.lineno}: {exc.msg}\n" + _numbered(path.read_text(encoding="utf-8"), int(exc.lineno or 1), 3))
     return errs
+
+
+def _numbered(text: str, line: int, around: int) -> str:
+    lines = text.splitlines()
+    lo, hi = max(1, line - around), min(len(lines), line + around)
+    return "\n".join(f"{n:>5}| {lines[n - 1]}" for n in range(lo, hi + 1))
+
+
+def _nearest(ws, patch: PatchSet) -> List[Dict[str, Any]]:
+    """For each exact-text operation whose text is not in its file: the file's
+    lines most like the text's first line, numbered (live bench: flash models
+    re-sent the same wrong text after a bare no_match)."""
+    out: List[Dict[str, Any]] = []
+    for fp in patch.files:
+        snap = _snapshot(ws, fp.path)
+        if snap is None:
+            continue
+        lines = snap.splitlines()
+        for i, op in enumerate(fp.operations):
+            needle = op.old if op.op == "replace_exact" else op.anchor
+            if not needle or needle in snap:
+                continue
+            first = next((ln.strip() for ln in needle.splitlines() if ln.strip()), "")
+            ratios = [difflib.SequenceMatcher(None, first, ln.strip()).ratio() for ln in lines]
+            if ratios:
+                best = max(range(len(lines)), key=ratios.__getitem__)
+                out.append({"path": fp.path, "operation": i, "nearest_line": best + 1, "file_text": _numbered(snap, best + 1, 4)})
+    return out[:3]
 
 
 def attempt_workspace_id(case_id, attempt: int) -> uuid.UUID:
@@ -157,12 +186,16 @@ def builder_tools(state: AttemptState) -> Dict[str, Any]:
     def apply_patch(args: Dict[str, Any]) -> Dict[str, Any]:
         raw = dict(args)
         raw.setdefault("base_sha", state.ws.base_sha)
+        patch = None
         try:
             patch = PatchSet.model_validate(raw)
             before = {f.path: _snapshot(state.ws, f.path) for f in patch.files}
             applied = apply_patchset(state.ws, patch, files_allowed=state.files_allowed)
         except PatchError as exc:
-            return {"error": str(exc), "code": exc.code, "applied": False}
+            out = {"error": str(exc), "code": exc.code, "applied": False}
+            if exc.code == "no_match" and patch is not None:
+                out["nearest"] = _nearest(state.ws, patch)
+            return out
         except ValueError as exc:  # pydantic ValidationError is a ValueError
             return {"error": str(exc)[:600], "code": "invalid_patch", "applied": False}
         errs = _python_errors(state.ws, applied.written)
