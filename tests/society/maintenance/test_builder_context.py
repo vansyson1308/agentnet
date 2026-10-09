@@ -87,6 +87,7 @@ def test_a_syntax_refusal_shows_the_would_be_lines_around_the_error(tmp_path):
     assert "_render_bound(f) for f in fields]" in (tmp_path / "app/big.py").read_text(), "refused patch left the file unchanged"
 
 
-def test_the_builder_read_budget_default_is_twelve(monkeypatch):
+def test_the_builder_read_budget_default_stays_three(monkeypatch):
+    # live bench x3: 12 reads per try fell to pass@1 0.361 (turns spent reading); 3 with this context: 0.778
     monkeypatch.delenv("MAINTENANCE_BUILDER_MAX_READ_CALLS", raising=False)
-    assert MaintenanceSettings().builder_max_read_calls == 12
+    assert MaintenanceSettings().builder_max_read_calls == 3
