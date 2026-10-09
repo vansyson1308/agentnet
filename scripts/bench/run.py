@@ -69,7 +69,7 @@ def task_input(task: dict, ws: ws_mod.Workspace, ms: MaintenanceSettings) -> Dic
         "task": {"trust": "bench_task", "text": task["task"]},
         "plan": {"files_allowed": task["files_allowed"], "acceptance_tests": task["failing_tests"], "base_sha": ws.base_sha},
         "patch_protocol": PATCH_PROTOCOL,
-        "target_files": {"trust": "untrusted_repository_data", "files": h.target_file_context(ws.path, task["files_allowed"], [task["task"]])},
+        "target_files": {"trust": "untrusted_repository_data", "files": h.target_file_context(ws.path, task["files_allowed"], [task["task"]], tests=task["failing_tests"])},
         "read_budget": f"at most {ms.builder_max_read_calls} read-tool calls this try; the target files are above",
     }
 

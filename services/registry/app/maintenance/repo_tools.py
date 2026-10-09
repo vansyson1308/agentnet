@@ -57,9 +57,10 @@ class Page:
         return asdict(self)
 
 
-def page_text(path: str, text: str, *, start_line: int = 1, max_bytes: int = 12000) -> Page:
+def page_text(path: str, text: str, *, start_line: int = 1, max_bytes: int = 12000, numbered: bool = False) -> Page:
     """Whole lines from ``start_line`` until ``max_bytes``. Never cuts a line
-    in half (a single line longer than the page is shown alone and marked)."""
+    in half (a single line longer than the page is shown alone and marked).
+    ``numbered`` prefixes each shown line with ``N| `` (counted in the page)."""
     lines = text.splitlines(keepends=True)
     total = len(lines)
     start = max(1, int(start_line))
@@ -69,10 +70,11 @@ def page_text(path: str, text: str, *, start_line: int = 1, max_bytes: int = 120
     size = 0
     i = start - 1
     while i < total:
-        b = len(lines[i].encode("utf-8"))
+        line = f"{i + 1}| {lines[i]}" if numbered else lines[i]
+        b = len(line.encode("utf-8"))
         if out and size + b > max_bytes:
             break
-        out.append(lines[i])
+        out.append(line)
         size += b
         i += 1
         if size >= max_bytes:
@@ -123,12 +125,15 @@ class RepoTools:
         return p.relative_to(self.root).as_posix()
 
     # ── tools ───────────────────────────────────────────────────────────
-    def read_range(self, path: str, start_line: int = 1, max_bytes: Optional[int] = None) -> dict:
+    def read_range(self, path: str, start_line: int = 1, max_bytes: Optional[int] = None, *, numbered: bool = False) -> dict:
         p = self._resolve(path)
         if not p.is_file():
             raise RepoToolError(f"{path} does not exist")
         text = p.read_text(encoding="utf-8", errors="replace")
-        return page_text(path, text, start_line=start_line, max_bytes=min(max_bytes or self.page_bytes, self.page_bytes)).as_dict()
+        page = page_text(path, text, start_line=start_line, max_bytes=min(max_bytes or self.page_bytes, self.page_bytes), numbered=numbered).as_dict()
+        if numbered:
+            page["note"] = "each line starts with its line number and '| '; that prefix is NOT file text (never put it in old/anchor)"
+        return page
 
     def list_definitions(self, path: str) -> dict:
         p = self._resolve(path)

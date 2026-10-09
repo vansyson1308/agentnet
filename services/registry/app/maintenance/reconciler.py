@@ -574,7 +574,8 @@ class MaintenanceKernel:
         # front-loaded: the target files (or the cited windows) are in the input, so reads are the exception
         diag = self._latest_artifact(db, case, "diagnosis")
         cites = [plan.root_cause or "", plan.approach or ""] + [str(x) for x in (((diag.content or {}) if diag else {}).get("evidence") or [])]
-        payload["target_files"] = {"trust": "untrusted_repository_data", "files": h.target_file_context(ws.path, list(plan.files_allowed or []), cites)}
+        files = h.target_file_context(ws.path, list(plan.files_allowed or []), cites, tests=list(plan.acceptance_tests or []))
+        payload["target_files"] = {"trust": "untrusted_repository_data", "files": files}
         payload["read_budget"] = f"at most {self.settings.builder_max_read_calls} read-tool calls this try; the target files are above"
         res = self._run_activity_sync(db, case, ActivityKind.AUTHOR_PATCH, payload, tools=h.builder_tools(state), model=self.model(), plan_revision=plan.revision, attempt=attempt.attempt,
                                       max_turns=self.settings.builder_max_turns, max_read_calls=self.settings.builder_max_read_calls, submit_check=h.submit_check(state))

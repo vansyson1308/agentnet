@@ -22,6 +22,7 @@ they can fail a patch, never pass one the deterministic gates failed.
 from __future__ import annotations
 
 import ast
+import difflib
 import re
 import subprocess
 import sys
@@ -41,15 +42,127 @@ _NS = uuid.UUID("5f2d3c1e-8a4b-4c7d-9e10-6b7a8c9d0e1f")
 _FAILED_RE = re.compile(r"^(FAILED|ERROR) (\S+)(?: - (.*))?$")
 _CITE_RE = re.compile(r"([\w./-]+\.\w+):(\d+)(?:-(\d+))?")
 CONTEXT_WHOLE_FILE_BYTES = 14_000
-CONTEXT_TOTAL_BYTES = 30_000
+CONTEXT_TOTAL_BYTES = 40_000
 CONTEXT_WINDOW_LINES = 40
+CONTEXT_HIT_LINES = 12
+CONTEXT_MAX_HITS_PER_TERM = 20
+CONTEXT_OUTLINE_BYTES = 6_000
+CONTEXT_TESTS_BYTES = 8_000
+NUMBERED_NOTE = "each line starts with its line number and '| '; that prefix is NOT file text (never put it in old/anchor)"
+_TERM_RE = re.compile(r"`([^`\n]{3,80})`|(?<![A-Za-z])'([^'\n]{3,80})'(?![A-Za-z])|\"([^\"\n]{3,80})\"|([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+|[A-Za-z_]*[a-z0-9]_[A-Za-z0-9_]*|[A-Z][A-Z0-9_]{3,}|[a-z]+[A-Z][A-Za-z0-9]*|[A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*)")
+
+
+def numbered(lines: Sequence[str], start: int, end: int) -> str:
+    """Lines ``start..end`` (1-based, inclusive), each prefixed ``N| ``."""
+    return "\n".join(f"{n}| {lines[n - 1]}" for n in range(max(1, start), min(len(lines), end) + 1))
+
+
+def _terms(texts: Sequence[str]) -> List[str]:
+    """Identifiers and quoted strings named by the task/plan (code-shaped words only)."""
+    out: List[str] = []
+    for text in texts:
+        for m in _TERM_RE.finditer(str(text)):
+            quoted = m.group(1) or m.group(2) or m.group(3)
+            cands = [m.group(4)] if m.group(4) else [quoted, *re.findall(r"[A-Za-z_][\w.]*[:(]|[A-Za-z_]\w*_\w+", quoted)]
+            out += [c for c in dict.fromkeys(cands) if c and len(c.strip()) >= 4 and c not in out]
+    return out[:40]
+
+
+def _named_defs(text: str, names: set, *, depth: int = 2) -> List[tuple]:
+    """Line spans of the definitions ``names`` refer to, then of the same-file
+    definitions those use (``depth`` levels): where a test's behaviour is decided."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    defs = {n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+    order, seen, level = [], set(), names & set(defs)
+    for _ in range(depth + 1):
+        level = sorted(level - seen, key=lambda n: defs[n].lineno)
+        order += level
+        seen |= set(level)
+        level = {getattr(x, "id", None) or getattr(x, "attr", None) for n in level for x in ast.walk(defs[n])} & set(defs)
+    return [(defs[n].lineno, min(defs[n].end_lineno, defs[n].lineno + 80)) for n in order]
+
+
+def _refs(node) -> set:
+    return {getattr(x, "id", None) or getattr(x, "attr", None) for x in ast.walk(node)} - {None}
+
+
+def _outline(rel: str, text: str) -> str:
+    """Top-level and class-level definitions (Python) or headings (Markdown), with line ranges."""
+    rows: List[str] = []
+    if rel.endswith(".py"):
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            return ""
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                rows.append(f"{node.lineno}-{node.end_lineno} {'class' if isinstance(node, ast.ClassDef) else 'def'} {node.name}")
+                if isinstance(node, ast.ClassDef):
+                    rows += [f"{s.lineno}-{s.end_lineno}   def {node.name}.{s.name}" for s in node.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))]
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.end_lineno - node.lineno >= 3:
+                names = [t.id for t in (node.targets if isinstance(node, ast.Assign) else [node.target]) if isinstance(t, ast.Name)]
+                rows += [f"{node.lineno}-{node.end_lineno} {n} =" for n in names]
+    else:
+        rows = [f"{i} {ln}" for i, ln in enumerate(text.splitlines(), 1) if ln.startswith("#")]
+    out = "\n".join(rows)
+    return out if len(out) <= CONTEXT_OUTLINE_BYTES else out[:CONTEXT_OUTLINE_BYTES].rsplit("\n", 1)[0] + "\n... (outline cut)"
+
+
+def _merge(spans: List[tuple]) -> List[tuple]:
+    out: List[tuple] = []
+    for a, b in spans:
+        if out and a <= out[-1][1] + 1:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
+        else:
+            out.append((a, b))
+    return out
+
+
+def _test_sources(root, tests: Sequence[str]) -> tuple:
+    """The named acceptance tests' own source (read-only context; tests are
+    never in scope), and the names they use -- with the names used by the
+    test-module helpers they call."""
+    import pathlib  # noqa: PLC0415
+
+    root = pathlib.Path(root).resolve()
+    out: List[Dict[str, Any]] = []
+    names: set = set()
+    used = 0
+    for node_id in tests:
+        rel, _, name = node_id.partition("::")
+        target = (root / rel).resolve()
+        if not name or not rel.endswith(".py") or not target.is_file() or root not in target.parents:
+            continue
+        text = target.read_text(encoding="utf-8", errors="replace")
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        funcs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        leaf = name.split("::")[-1].split("[")[0]
+        node = funcs.get(leaf) or next((n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == leaf), None)
+        if node is None:
+            continue
+        refs = _refs(node)
+        names |= refs | set().union(*(_refs(funcs[h]) for h in refs & set(funcs)))
+        src = "\n".join(text.splitlines()[node.lineno - 1:node.end_lineno])
+        if used + len(src) <= CONTEXT_TESTS_BYTES:
+            used += len(src)
+            out.append({"test": node_id, "start_line": node.lineno, "source": src})
+    return out, names
 
 
 def target_file_context(root, files_allowed: Sequence[str], citations: Sequence[str], *, whole_file_bytes: int = CONTEXT_WHOLE_FILE_BYTES,
-                        total_bytes: int = CONTEXT_TOTAL_BYTES) -> List[Dict[str, Any]]:
-    """Front-loaded AuthorPatch context: each non-test target file whole when it
-    is small, else the line windows the diagnosis/plan cited (``path:line``),
-    else its first page. Bounded; files outside the worktree are skipped."""
+                        total_bytes: int = CONTEXT_TOTAL_BYTES, tests: Sequence[str] = ()) -> List[Dict[str, Any]]:
+    """Front-loaded AuthorPatch context. Each non-test target file whole when it
+    is small; a larger one as its outline plus line-numbered windows: the lines
+    the diagnosis/plan cited (``path:line``) and the lines where identifiers or
+    quoted strings named in the task/plan occur (rarest first), else its first
+    page. Then the named acceptance tests' source. Bounded; files outside the
+    worktree are skipped."""
     import pathlib  # noqa: PLC0415
 
     root = pathlib.Path(root).resolve()
@@ -58,26 +171,41 @@ def target_file_context(root, files_allowed: Sequence[str], citations: Sequence[
         for m in _CITE_RE.finditer(str(text)):
             a = int(m.group(2))
             cites.setdefault(m.group(1).lstrip("./"), []).append((a, int(m.group(3) or a)))
+    terms = _terms(citations)
+    srcs, called = _test_sources(root, tests)
+    targets = [r for r in files_allowed if "/tests/" not in f"/{r}" and (root / r).resolve().is_file() and root in (root / r).resolve().parents]
+    per_file = max(8_000, total_bytes // max(1, len(targets)))
     out: List[Dict[str, Any]] = []
     used = 0
-    for rel in files_allowed:
-        target = (root / rel).resolve()
-        if "/tests/" in f"/{rel}" or not target.is_file() or root not in target.parents:
-            continue
-        text = target.read_text(encoding="utf-8", errors="replace")
+    for rel in targets:
+        text = (root / rel).resolve().read_text(encoding="utf-8", errors="replace")
         lines = text.splitlines()
         if len(text.encode("utf-8")) <= whole_file_bytes:
-            entry = {"path": rel, "mode": "whole", "lines": len(lines), "content": text}
+            entry: Dict[str, Any] = {"path": rel, "mode": "whole", "lines": len(lines), "content": text}
         else:
-            spans = [(max(1, a - CONTEXT_WINDOW_LINES), min(len(lines), b + CONTEXT_WINDOW_LINES)) for a, b in cites.get(rel, [])] or [(1, 120)]
-            windows = [{"start_line": a, "text": "\n".join(lines[a - 1:b])} for a, b in sorted(set(spans))[:4]]
-            entry = {"path": rel, "mode": "windows", "lines": len(lines), "windows": windows}
+            spans = [(max(1, a - CONTEXT_WINDOW_LINES), min(len(lines), b + CONTEXT_WINDOW_LINES)) for a, b in cites.get(rel, [])]
+            # the target-file definitions the acceptance tests name
+            spans += _named_defs(text, called) if rel.endswith(".py") else []
+            hits = [(t, [i for i, ln in enumerate(lines, 1) if t in ln]) for t in terms]
+            for _t, rows in sorted((h for h in hits if 0 < len(h[1]) <= CONTEXT_MAX_HITS_PER_TERM), key=lambda h: len(h[1])):
+                spans += [(max(1, i - CONTEXT_HIT_LINES), min(len(lines), i + CONTEXT_HIT_LINES)) for i in rows]
+            entry = {"path": rel, "mode": "outline+windows", "lines": len(lines), "note": NUMBERED_NOTE, "outline": _outline(rel, text), "windows": []}
+            budget = min(per_file, total_bytes - used) - len(entry["outline"]) - 200
+            for a, b in _merge(sorted(set(spans))) or [(1, 120)]:
+                chunk = numbered(lines, a, b)
+                if len(chunk) > budget:
+                    continue
+                budget -= len(chunk)
+                entry["windows"].append({"start_line": a, "end_line": min(b, len(lines)), "text": chunk})
+            entry["windows"].sort(key=lambda w: w["start_line"])
         size = len(str(entry).encode("utf-8"))
         if used + size > total_bytes:
-            out.append({"path": rel, "mode": "omitted", "lines": len(lines), "note": "context budget reached: read_range it"})
+            out.append({"path": rel, "mode": "omitted", "lines": len(lines), "outline": _outline(rel, text), "note": "context budget reached: read_range it"})
             continue
         used += size
         out.append(entry)
+    if srcs:
+        out.append({"mode": "acceptance_tests", "note": "read-only: these tests judge the repair and are not in scope", "tests": srcs})
     return out
 
 
@@ -92,8 +220,36 @@ def _python_errors(ws, paths: Sequence[str]) -> List[str]:
         except ws_mod.WorkspaceError:
             continue
         except SyntaxError as exc:
-            errs.append(f"{rel}:{exc.lineno}: {exc.msg}")
+            line = int(exc.lineno or 1)
+            errs.append(f"{rel}:{line}: {exc.msg}\n" + numbered(path.read_text(encoding="utf-8").splitlines(), line - 5, line + 5))
     return errs
+
+
+def _closest(text: str, needle: str, *, max_lines: int = 30) -> Dict[str, Any]:
+    """The file region most like ``needle`` (difflib over same-height windows), numbered."""
+    lines, want = text.splitlines(), needle.strip("\n").splitlines() or [""]
+    height = min(len(want), max_lines)
+    probe = "\n".join(ln.strip() for ln in want[:height])
+    firsts = difflib.get_close_matches(want[0].strip(), [ln.strip() for ln in lines], n=8, cutoff=0.3)
+    starts = {i for i, ln in enumerate(lines) if ln.strip() in firsts} or set(range(0, len(lines), max(1, height // 2)))
+    best = max(sorted(starts), key=lambda i: difflib.SequenceMatcher(None, probe, "\n".join(ln.strip() for ln in lines[i:i + height])).ratio(), default=0)
+    pad = max(0, (max_lines - height) // 2)
+    lo, hi = best + 1 - min(pad, 3), best + height + min(pad, 3)
+    return {"start_line": max(1, lo), "text": numbered(lines, lo, hi), "note": NUMBERED_NOTE}
+
+
+def _nearest(ws, patch: PatchSet) -> List[Dict[str, Any]]:
+    """For each exact-text operation whose text is not in its file: the closest
+    region of the file (live bench: a bare no_match made the model re-send the
+    same wrong text)."""
+    out: List[Dict[str, Any]] = []
+    for fp in patch.files:
+        snap = _snapshot(ws, fp.path)
+        for i, op in enumerate(fp.operations):
+            needle = op.old if op.op == "replace_exact" else op.anchor
+            if snap and needle and needle not in snap:
+                out.append({"path": fp.path, "operation": i, **_closest(snap, needle)})
+    return out[:3]
 
 
 def attempt_workspace_id(case_id, attempt: int) -> uuid.UUID:
@@ -157,12 +313,16 @@ def builder_tools(state: AttemptState) -> Dict[str, Any]:
     def apply_patch(args: Dict[str, Any]) -> Dict[str, Any]:
         raw = dict(args)
         raw.setdefault("base_sha", state.ws.base_sha)
+        patch = None
         try:
             patch = PatchSet.model_validate(raw)
             before = {f.path: _snapshot(state.ws, f.path) for f in patch.files}
             applied = apply_patchset(state.ws, patch, files_allowed=state.files_allowed)
         except PatchError as exc:
-            return {"error": str(exc), "code": exc.code, "applied": False}
+            out = {"error": str(exc), "code": exc.code, "applied": False}
+            if exc.code == "no_match" and patch is not None:
+                out["closest"] = _nearest(state.ws, patch)
+            return out
         except ValueError as exc:  # pydantic ValidationError is a ValueError
             return {"error": str(exc)[:600], "code": "invalid_patch", "applied": False}
         errs = _python_errors(state.ws, applied.written)
@@ -206,7 +366,7 @@ def builder_tools(state: AttemptState) -> Dict[str, Any]:
         return inner
 
     return {
-        "read_range": _wrap(lambda a: repo.read_range(str(a.get("path", "")), int(a.get("start_line") or 1))),
+        "read_range": _wrap(lambda a: repo.read_range(str(a.get("path", "")), int(a.get("start_line") or 1), numbered=True)),
         "find_symbol": _wrap(lambda a: repo.find_symbol(str(a.get("name", "")))),
         "list_definitions": _wrap(lambda a: repo.list_definitions(str(a.get("path", "")))),
         "list_references": _wrap(lambda a: repo.list_references(str(a.get("name", "")))),
