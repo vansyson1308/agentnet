@@ -540,3 +540,14 @@ def test_surface_watch_is_read_only_scrubbed_and_never_prints_the_token():
     prints = re.findall(r"print\((.+)\)", text)
     assert prints and all("token" not in p.lower() and "secret" not in p.lower() for p in prints), prints
     assert "scrub(body)" in text, "every printed body goes through the phase5_live scrubber"
+
+
+def test_plan_grammar_accepts_company_owner_actions_and_rejects_junk():
+    p5 = _driver()
+    assert p5.parse_plan("company") == [("company", [])]
+    assert p5.parse_plan("company:activate:O3,company:cycle,company:approve:latest") == [
+        ("company", ["activate", "O3"]), ("company", ["cycle"]), ("company", ["approve", "latest"])]
+    assert p5.parse_plan("company:reject:b5cba482-1b16-422a-9bc2-8055fbaa1403") == [("company", ["reject", "b5cba482-1b16-422a-9bc2-8055fbaa1403"])]
+    for bad in ("company:activate:O9", "company:approve", "company:approve:x;drop", "company:merge:latest", "company:activate"):
+        with pytest.raises(ValueError):
+            p5.parse_plan(bad)
