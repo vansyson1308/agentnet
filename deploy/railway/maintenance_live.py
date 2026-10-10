@@ -31,7 +31,7 @@ Steps (MAINT_PLAN, comma-separated, in order):
     watch:<min>[:<sec>]    bounded synchronous poll: cases + stranded every <sec> (default 60) for <min>
 
 Environment (never printed): POSTGRES_*, REGISTRY_PUBLIC_URL, STAGING_VALIDATOR_SECRET,
-VALIDATOR_OPERATOR_EMAIL, EXPECTED_ALEMBIC_HEAD (default 0016_bench_reports), MAINT_PLAN.
+VALIDATOR_OPERATOR_EMAIL, EXPECTED_ALEMBIC_HEAD (default 0017_company), MAINT_PLAN.
 """
 
 from __future__ import annotations
@@ -129,7 +129,7 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
 
 
 def step_schema(rep: Rep, cur) -> None:
-    want = vs.env("EXPECTED_ALEMBIC_HEAD", "0016_bench_reports")
+    want = vs.env("EXPECTED_ALEMBIC_HEAD", "0017_company")
     heads = [r["version_num"] for r in rows(cur, "SELECT version_num FROM alembic_version")]
     rep.record("S01", want in heads, f"alembic head {heads} (want {want})")
     present = {r["table_name"] for r in rows(cur, "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY(%s)", (list(TABLES),))}

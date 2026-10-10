@@ -1,0 +1,27 @@
+{
+  "mission": "AgentNet is a working marketplace where AI agents find each other, agree on work and get paid through escrow; the Society keeps it working and makes it measurably better.",
+  "objectives": [
+    {"id": "O1", "title": "Core journey works every hour", "owner_priority": 1, "status": "proposed",
+     "key_results": [
+       {"metric_id": "core_journey_success_rate", "baseline": null, "target": 0.99, "direction": "up", "deadline": "2026-12-31"},
+       {"metric_id": "core_journey_p95_minutes", "baseline": null, "target": 5, "direction": "down", "deadline": "2026-12-31"}]},
+    {"id": "O2", "title": "Real marketplace", "owner_priority": 2, "status": "proposed",
+     "key_results": [
+       {"metric_id": "escrow_tasks_completed_7d", "baseline": null, "target": 50, "direction": "up", "deadline": "2027-03-31"},
+       {"metric_id": "a2a_agents_live_card", "baseline": null, "target": 10, "direction": "up", "deadline": "2027-03-31"}]},
+    {"id": "O3", "title": "Self-development efficiency", "owner_priority": 3, "status": "proposed",
+     "key_results": [
+       {"metric_id": "bench_holdout_pass_at_1", "baseline": 0.763, "target": 0.863, "direction": "up", "deadline": "2027-01-31"},
+       {"metric_id": "usd_per_objective_pr_30d", "baseline": null, "target": 1.0, "direction": "down", "deadline": "2027-01-31"}]}
+  ],
+  "departments": {
+    "ceo_office": {"charter": "Chief of Staff: ranks department tickets into the daily plan for the owner; never approves it.", "members": ["governor"], "reports_to": "owner", "heartbeat": "daily", "monthly_model_budget_usd": 15},
+    "strategy_product": {"charter": "Finds evidence that an objective's key result is off target and turns it into one ticket.", "members": ["scout"], "reports_to": "ceo_office", "heartbeat": "daily", "monthly_model_budget_usd": 15},
+    "engineering": {"charter": "Designs and builds the smallest change that should move the ticket's key result.", "members": ["architect", "builder"], "reports_to": "ceo_office", "heartbeat": "daily", "monthly_model_budget_usd": 40},
+    "quality": {"charter": "Runs the ticket's proof and the regression checks; PASS/FAIL with evidence.", "members": ["qa"], "reports_to": "ceo_office", "heartbeat": "on_event", "monthly_model_budget_usd": 10},
+    "security": {"charter": "Reviews risky diffs; never approves its own work.", "members": ["security"], "reports_to": "ceo_office", "heartbeat": "on_event", "monthly_model_budget_usd": 10},
+    "sre_release": {"charter": "Maintenance OS: deterministic repair cases and releases.", "members": [], "reports_to": "ceo_office", "heartbeat": "continuous", "monthly_model_budget_usd": 20},
+    "finance": {"charter": "Deterministic budget officer: model spend per department and per merged ticket. No model.", "members": [], "reports_to": "owner", "heartbeat": "daily", "monthly_model_budget_usd": 0},
+    "analytics": {"charter": "Evaluator: records each ticket's key-result delta after merge.", "members": ["evaluator"], "reports_to": "ceo_office", "heartbeat": "daily", "monthly_model_budget_usd": 5}
+  }
+}
