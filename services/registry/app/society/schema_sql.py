@@ -475,4 +475,42 @@ CREATE TABLE IF NOT EXISTS society_bench_reports (
 CREATE INDEX IF NOT EXISTS idx_society_bench_reports_revision ON society_bench_reports (revision, created_at DESC);
 """
 
-SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL
+SOCIETY_COMPANY_SQL = r"""
+-- Company mode (company_charter.json): operator objective status overrides; tickets.
+CREATE TABLE IF NOT EXISTS society_objective_status (
+    objective_id    VARCHAR(16) PRIMARY KEY,
+    status          VARCHAR(16) NOT NULL CHECK (status IN ('proposed', 'active', 'paused', 'done')),
+    set_by_user_id  UUID REFERENCES users(id) ON DELETE SET NULL,
+    set_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS society_tickets (
+    id               UUID PRIMARY KEY,
+    proposal_id      UUID UNIQUE REFERENCES improvement_proposals(id) ON DELETE CASCADE,
+    title            VARCHAR(255) NOT NULL,
+    objective_id     VARCHAR(16),
+    metric_id        VARCHAR(64),
+    expected_effect  NUMERIC(14, 4),
+    direction        VARCHAR(8) CHECK (direction IN ('up', 'down')),
+    proof            JSONB NOT NULL DEFAULT '[]'::jsonb,
+    files            JSONB NOT NULL DEFAULT '[]'::jsonb,
+    source           VARCHAR(16) NOT NULL CHECK (source IN ('owner', 'scout', 'incident', 'backlog', 'department')),
+    priority         INTEGER NOT NULL DEFAULT 3 CHECK (priority BETWEEN 0 AND 5),
+    department       VARCHAR(32),
+    status           VARCHAR(24) NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'planned', 'approved', 'refused',
+                         'already_satisfied', 'building', 'ready', 'merged', 'closed')),
+    reason           VARCHAR(500),
+    plan_id          UUID,
+    candidate_id     UUID REFERENCES code_candidates(id) ON DELETE SET NULL,
+    cost_usd         NUMERIC(12, 6) NOT NULL DEFAULT 0,
+    merged_at        TIMESTAMPTZ,
+    metric_at_merge  NUMERIC(14, 4),
+    metric_24h       NUMERIC(14, 4),
+    metric_7d        NUMERIC(14, 4),
+    outcome          VARCHAR(16) CHECK (outcome IN ('moved', 'no_effect', 'regressed')),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_society_tickets_status ON society_tickets (status, created_at DESC);
+"""
+
+SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL

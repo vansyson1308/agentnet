@@ -220,6 +220,17 @@ class ProposalEvidence(_Strict):
     prior_open_proposals: List[str] = Field(default_factory=list, max_length=10)
 
 
+class TicketFields(_Strict):
+    """Company mode (tickets.py): why the work exists. The objective must be
+    ACTIVE in the owner's charter and the metric one of its key results."""
+
+    objective_id: str = Field(..., min_length=1, max_length=16)
+    metric_id: str = Field(..., min_length=1, max_length=64)
+    expected_effect: float = Field(..., allow_inf_nan=False)
+    direction: Literal["up", "down"]
+    proof: List[str] = Field(default_factory=list, max_length=10)
+
+
 class CreateImprovementPayload(_Strict):
     title: str = Field(..., min_length=1, max_length=MAX_TITLE)
     problem: str = Field(..., min_length=1, max_length=MAX_TEXT)
@@ -231,6 +242,7 @@ class CreateImprovementPayload(_Strict):
     target_scope: Literal["agent", "platform"] = "platform"
     source_task_id: Optional[uuid.UUID] = None
     evidence: Optional[ProposalEvidence] = None
+    ticket: Optional[TicketFields] = None
 
 
 class ReviewImprovementPayload(_Strict):

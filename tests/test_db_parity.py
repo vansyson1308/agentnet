@@ -123,6 +123,8 @@ NO_ORM_TABLES = {
     "daily_spending": "written only by the check_spending_cap / update_daily_spending triggers",
     "alembic_version": "alembic bookkeeping",
     "society_bench_reports": "written only by deploy/railway/bench_live.py, read with SQL by society/backlog.py",
+    "society_objective_status": "operator overrides of company_charter.json, read with SQL by society/charter.py",
+    "society_tickets": "company tickets, written with SQL by society/tickets.py",
 }
 # agent_connection_strength (05-social-graph.sql) is a MATERIALIZED VIEW, not a base table.
 
@@ -606,7 +608,7 @@ MAINTENANCE_TABLES = {
     "maintenance_known_good", "maintenance_release_freezes", "maintenance_toil_events", "maintenance_heartbeats",
     "maintenance_knowledge",
 }
-POST_0008_TABLES = APP_TABLES | PHASE3_TABLES | PHASE6_TABLES | PHASE8_TABLES | MAINTENANCE_TABLES | {"society_bench_reports"}
+POST_0008_TABLES = APP_TABLES | PHASE3_TABLES | PHASE6_TABLES | PHASE8_TABLES | MAINTENANCE_TABLES | {"society_bench_reports", "society_objective_status", "society_tickets"}
 
 
 def test_downgrade_0008_then_upgrade_head_round_trips(upgrade_db):

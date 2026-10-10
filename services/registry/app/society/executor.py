@@ -65,11 +65,12 @@ from ..models import (
     TaskSession,
     TaskStatus,
 )
-from . import candidate_health, memory_grounding, repo_intel
+from . import candidate_health, memory_grounding, repo_intel, tickets
 from .config import SocietySettings
 from ..maintenance import activities
 from ..maintenance.config import MaintenanceSettings
 from .engineering import build_engine
+from .engineering import qa as qa_mod
 from .engineering import workspace as ws_mod
 from .engineering.qa import RISKY_PATH_RE, evaluate_candidate, static_security_scan
 from .events import REHEARSAL_MEMORY_TTL_SECONDS, EventType, emit_event, is_rehearsal_correlation, utcnow
@@ -448,6 +449,10 @@ def _create_improvement(ctx: ExecContext) -> ExecOutcome:
     )
     ctx.db.add(proposal)
     ctx.db.flush()
+    ticket_id = None
+    if p.ticket is not None:
+        src = "backlog" if ctx.event.event_type == EventType.BACKLOG_ITEM else "scout" if ctx.grant.role == "scout" else "department"
+        ticket_id = tickets.create(ctx.db, proposal_id=proposal.id, title=p.title, fields=p.ticket.model_dump(), source=src, role=ctx.grant.role, importance=p.importance)
     ev = _emit(
         ctx,
         EventType.PROPOSAL_CREATED,
@@ -462,7 +467,7 @@ def _create_improvement(ctx: ExecContext) -> ExecOutcome:
         subject_type="proposal",
         subject_id=proposal.id,
     )
-    return ExecOutcome(result={"proposal_id": str(proposal.id)}, events=[str(ev.id)])
+    return ExecOutcome(result={"proposal_id": str(proposal.id), "ticket_id": str(ticket_id) if ticket_id else None}, events=[str(ev.id)])
 
 
 def _review_improvement(ctx: ExecContext) -> ExecOutcome:
@@ -736,6 +741,16 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
     # three steps later that it cannot produce a conforming diff.
     if spec.get("kind") == "docs":
         _enforce_docs_contract(ctx, spec, p)
+    ticket = None
+    if ctx.settings.company_cycle_enabled:
+        # The meaning gate (tickets.py): no candidate without an active
+        # objective, a resolvable key-result metric and a proof the spec runs.
+        try:
+            ticket = tickets.check(ctx.db, p.proposal_id, spec, ctx.now)
+        except tickets.GateRefused as exc:
+            ctx.db.commit()  # the refusal stays on the ticket
+            raise ExecutionError(str(exc)) from exc
+        spec["expected_effect"] = f"{tickets.link_text(ticket)} {spec.get('expected_effect') or ''}".strip()[:1000]
     prelim = assess_risk(list(spec["files_allowed"]), "", spec_kind=str(spec.get("kind") or ""))
     if _candidates_today(ctx) >= ctx.settings.max_autonomous_candidates_per_day:
         raise ExecutionError(f"change budget exhausted: {ctx.settings.max_autonomous_candidates_per_day} autonomous candidates today")
@@ -769,6 +784,8 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
     )
     ctx.db.add(cand)
     ctx.db.flush()
+    if ticket is not None:
+        tickets.set_status(ctx.db, ticket["id"], "building", candidate_id=cand.id)
     if p.proposal_id is not None:
         proposal = ctx.db.query(ImprovementProposal).filter(ImprovementProposal.id == p.proposal_id).first()
         if proposal is not None and _ev(proposal.status) == ProposalStatus.APPROVED.value:
@@ -853,6 +870,9 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
     try:
         ws = ws_mod.ensure_workspace(ctx.settings, cand.id)
         ctx.heartbeat()
+        fresh = _already_satisfied(ctx, cand, ws)
+        if fresh is not None:
+            return fresh
         coro = build_engine.build(ws, spec, title=cand.title, model=model, ms=ms, ss=ctx.settings, cost_cap=ms.max_case_cost_usd, feedback=feedback)
         out = build_engine.run_blocking(coro, heartbeat=ctx.heartbeat, every=ctx.settings.run_lease_seconds / 3)
     except ws_mod.WorkspaceError as exc:
@@ -862,6 +882,9 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
     ctx.run.tokens_in = int(ctx.run.tokens_in or 0) + out.result.tokens_in
     ctx.run.tokens_out = int(ctx.run.tokens_out or 0) + out.result.tokens_out
     ctx.run.cost_usd = Decimal(str(ctx.run.cost_usd or 0)) + out.result.cost_usd
+    ticket = tickets.for_proposal(ctx.db, cand.proposal_id)
+    if ticket is not None:
+        tickets.add_cost(ctx.db, ticket["id"], out.result.cost_usd)
     if not out.delivered:
         if out.result.rescope:
             why = f"the harness needs files outside files_allowed {stats['rescope']['required_files']} ({stats['rescope']['reason']}): DECLINE_CODE_CANDIDATE if the spec cannot be met"
@@ -876,6 +899,23 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
         _release_build(ctx, cand, status, str(exc))
         raise ExecutionError(f"workspace refused: {exc}") from exc
     return _record_build(ctx, cand, ws, head, summary=summary, resubmitted=resubmitted, result={"engine": stats})
+
+
+def _already_satisfied(ctx: ExecContext, cand: CodeCandidate, ws) -> Optional[ExecOutcome]:
+    """Freshness (tickets.py): before the FIRST build, run the ticket's proof on
+    the untouched base worktree. Already green -> nothing to build: the ticket
+    closes ``already_satisfied`` and the candidate is REJECTED, no model call."""
+    ticket = tickets.for_proposal(ctx.db, cand.proposal_id)
+    tests = tickets.proof_tests(ticket or {})
+    if not tests or ws_mod.changed_files(ws):
+        return None
+    if not qa_mod._run_acceptance(ws, tests, ctx.settings.qa_test_timeout_seconds).passed:
+        return None
+    cand.status = CodeCandidateStatus.REJECTED
+    cand.error = "already_satisfied: the ticket's proof passes on the base revision"
+    tickets.set_status(ctx.db, ticket["id"], "already_satisfied", cand.error)
+    ev = _emit(ctx, EventType.CODE_CANDIDATE_REJECTED, {"candidate_id": str(cand.id), "title": cand.title, "qa_summary": cand.error, "proposal_id": str(cand.proposal_id), "already_satisfied": True}, subject_type="code_candidate", subject_id=cand.id, key_suffix="already_satisfied")
+    return ExecOutcome(result={"candidate_id": str(cand.id), "status": CodeCandidateStatus.REJECTED.value, "already_satisfied": True}, events=[str(ev.id)])
 
 
 def _record_build(ctx: ExecContext, cand: CodeCandidate, ws, head: str, *, summary: str, resubmitted: bool, result: Dict[str, Any]) -> ExecOutcome:
@@ -1064,6 +1104,9 @@ def _decline_code_candidate(ctx: ExecContext) -> ExecOutcome:
 def _finish_candidate(ctx: ExecContext, cand: CodeCandidate, *, ready: bool, summary: str) -> List[str]:
     events = []
     cand.status = CodeCandidateStatus.READY if ready else CodeCandidateStatus.REJECTED
+    ticket = tickets.for_proposal(ctx.db, cand.proposal_id)
+    if ticket is not None and ticket["status"] == "building":
+        tickets.set_status(ctx.db, ticket["id"], "ready" if ready else "closed", None if ready else "candidate rejected by QA")
     payload = {"candidate_id": str(cand.id), "title": cand.title, "branch_name": cand.branch_name, "head_sha": cand.head_sha, "qa_summary": summary[:500], "proposal_id": str(cand.proposal_id) if cand.proposal_id else None}
     ev = _emit(ctx, EventType.CODE_CANDIDATE_READY if ready else EventType.CODE_CANDIDATE_REJECTED, payload, subject_type="code_candidate", subject_id=cand.id)
     events.append(str(ev.id))

@@ -999,7 +999,19 @@ def _engineering(db: Session, agent: Agent, event: SocietyEvent, settings: Socie
         "max_files_per_candidate": int(settings.max_files_per_candidate),
         "max_diff_lines": int(settings.max_diff_lines),
         "conventions": engineering_conventions(settings) if role in ENGINEERING_ROLES else {},
+        "company": _company(db) if settings.company_cycle_enabled else {},
     }
+
+
+def _company(db: Session) -> Dict[str, Any]:
+    from . import charter  # noqa: PLC0415 -- the owner's objectives (trusted config) and the ticket rule
+
+    objs = [{"id": o["id"], "title": o["title"], "status": o["status"], "owner_priority": o["owner_priority"],
+             "key_results": [{k: kr[k] for k in ("metric_id", "target", "direction")} for kr in o["key_results"]]} for o in charter.objectives(db)]
+    return {"objectives": objs, "ticket_rule": (
+        "CREATE_IMPROVEMENT carries ticket {objective_id: an ACTIVE objective, metric_id: one of its key_results, "
+        "expected_effect: number, direction: up|down, proof: [acceptance test node ids the code spec will run]}; "
+        "without it, or for a proof that already passes on main, no candidate is built.")}
 
 
 def _promotions(db: Session, event: SocietyEvent) -> List[Dict[str, Any]]:
