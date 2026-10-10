@@ -33,6 +33,7 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional
 
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -768,6 +769,45 @@ class SocietyWorker:
             self._surface_task = asyncio.ensure_future(asyncio.to_thread(self.surface_monitor.probe, self.settings))
         return None
 
+    async def probe_core_journey(self):
+        """The hourly core-journey probe (maintenance/journey_probe.py), in a thread:
+        deterministic HTTP against the staging API, one observation per run. A run in
+        the last interval (any worker, any restart) is not repeated. Never raises."""
+        from ..maintenance import journey_probe  # noqa: PLC0415
+
+        s = self.settings
+        if not s.core_journey_probe_enabled or journey_probe.refusal(s):
+            return None
+        now = utcnow()
+        last = getattr(self, "_journey_attempt_at", None)
+        if last is not None and (now - last).total_seconds() < s.core_journey_probe_interval_seconds:
+            return None  # one attempt per interval, even when an attempt crashed before observing
+        db = self.session_factory()
+        try:
+            recent = db.execute(sa_text("SELECT 1 FROM maintenance_observations WHERE sli = :s AND observed_at >= :t LIMIT 1"),
+                                {"s": journey_probe.SLI, "t": now - timedelta(seconds=s.core_journey_probe_interval_seconds)}).first()
+        finally:
+            db.close()
+        if recent:
+            return None
+        self._journey_attempt_at = now
+
+        def _run():
+            from ..maintenance.config import get_maintenance_settings  # noqa: PLC0415
+
+            sess = self.session_factory()
+            try:
+                res = journey_probe.run(journey_probe.urllib_http(s.core_journey_probe_api_origin), email=s.core_journey_probe_email,
+                                        secret=os.environ["CORE_JOURNEY_PROBE_SECRET"].strip(), verify=lambda e: journey_probe.mark_verified(sess, e))
+                return journey_probe.observe(sess, get_maintenance_settings(), res, target="staging")
+            finally:
+                sess.close()
+        try:
+            return await asyncio.to_thread(_run)
+        except Exception:  # noqa: BLE001
+            logger.exception("core-journey probe failed")
+            return None
+
     async def reconcile_maintenance(self):
         """One Maintenance Kernel cycle, in a thread (it runs tests and model
         activities). Never raises into the loop."""
@@ -804,6 +844,7 @@ class SocietyWorker:
                 self.process_approved_intents()
                 self.process_controllers()
                 await self.pump_federation()
+                await self.probe_core_journey()
                 await self.reconcile_maintenance()
             except Exception:  # noqa: BLE001
                 logger.exception("society worker loop error")

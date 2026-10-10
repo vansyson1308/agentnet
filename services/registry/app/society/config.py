@@ -305,6 +305,12 @@ class SocietySettings:
     public_surface_target_label: str = field(default_factory=lambda: (os.getenv("SOCIETY_PUBLIC_SURFACE_TARGET_LABEL") or "production").strip()[:32])
     public_product_ui_origin: str = field(default_factory=lambda: (os.getenv("PUBLIC_PRODUCT_UI_ORIGIN") or "https://agentnet.io.vn").strip().rstrip("/"))
     public_product_api_origin: str = field(default_factory=lambda: (os.getenv("PUBLIC_PRODUCT_API_ORIGIN") or "https://api.agentnet.io.vn").strip().rstrip("/"))
+    # ── hourly core-journey probe (maintenance/journey_probe.py): O1's metric. STAGING
+    # only, OFF unless enabled; the secret is read only inside the probe module.
+    core_journey_probe_enabled: bool = field(default_factory=lambda: _bool("CORE_JOURNEY_PROBE_ENABLED", False))
+    core_journey_probe_interval_seconds: int = field(default_factory=lambda: _int("CORE_JOURNEY_PROBE_INTERVAL_SECONDS", 3600, minimum=300))
+    core_journey_probe_api_origin: str = field(default_factory=lambda: (os.getenv("CORE_JOURNEY_PROBE_API_ORIGIN") or "").strip().rstrip("/"))
+    core_journey_probe_email: str = field(default_factory=lambda: (os.getenv("CORE_JOURNEY_PROBE_EMAIL") or "core-journey-probe@agentnet-staging.dev").strip())
 
     # ── identity ───────────────────────────────────────────────────────
     worker_id: str = field(
