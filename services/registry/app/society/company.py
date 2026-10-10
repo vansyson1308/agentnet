@@ -347,7 +347,8 @@ def _canonical_size(obj: Any) -> int:
     return len(json.dumps(obj, sort_keys=True, default=str, ensure_ascii=False))
 
 
-def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Optional[datetime] = None, operator_id: Optional[uuid.UUID] = None) -> Optional[CompanyCycle]:
+def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Optional[datetime] = None, operator_id: Optional[uuid.UUID] = None,
+                provider: Any = None) -> Optional[CompanyCycle]:
     """Create a cycle + its ``company.cycle`` event. A scheduled cycle is
     idempotent per UTC date (returns None when today's already exists)."""
     if trigger not in ("scheduled", "operator"):
@@ -373,11 +374,17 @@ def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Op
         idempotency_key=f"company.cycle:{cycle.id}",
     )
     cycle.event_id = event.id
+    # Observe: every open backlog item an objective owns becomes a proposed ticket
+    # (no model), so the settled plan never depends on a model choosing to file one.
+    from . import backlog  # noqa: PLC0415
+
+    supplied = tickets.supply(db, backlog.collect(db, settings, provider), now)
+    cycle.evidence = {**(cycle.evidence or {}), "tickets_supplied": len(supplied)}
     db.commit()
     return cycle
 
 
-def maybe_start_scheduled_cycle(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> Optional[CompanyCycle]:
+def maybe_start_scheduled_cycle(db: Session, settings: SocietySettings, now: Optional[datetime] = None, provider: Any = None) -> Optional[CompanyCycle]:
     now = now or utcnow()
     if not (settings.runtime_enabled and settings.company_cycle_enabled):
         return None
@@ -386,7 +393,7 @@ def maybe_start_scheduled_cycle(db: Session, settings: SocietySettings, now: Opt
     exists = db.query(CompanyCycle.id).filter(CompanyCycle.cycle_date == now.date(), CompanyCycle.trigger == "scheduled").first()
     if exists:
         return None
-    return start_cycle(db, settings, trigger="scheduled", now=now)
+    return start_cycle(db, settings, trigger="scheduled", now=now, provider=provider)
 
 
 def settle_cycles(db: Session, now: Optional[datetime] = None) -> int:
@@ -418,8 +425,7 @@ def settle_cycles(db: Session, now: Optional[datetime] = None) -> int:
         cycle.outcome_detail = {"runs": int(runs), "intents_executed": executed}
         # the Chief of Staff's daily plan: the cycle's tickets, ranked, awaiting the owner
         plan = tickets.build_plan(db, cycle.id, now)
-        if plan is not None:
-            cycle.outcome_detail = {**cycle.outcome_detail, "plan_id": plan["id"]}
+        cycle.outcome_detail = {**cycle.outcome_detail, **({"plan_id": plan["id"]} if plan["id"] else {"plan_empty_reason": plan["empty_reason"]})}
         settled += 1
     if settled:
         db.commit()
@@ -488,6 +494,7 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
     """Everything an operator needs in one view. No secrets, no payloads."""
     from ..a2a import config as a2a_config
     from ..a2a.orm import A2AOutboundCall
+    from . import backlog
     from .policy import spend_today_usd
 
     evidence = evidence_bundle(db)
@@ -515,6 +522,7 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
         "candidates_by_status": candidates,
         "release_ready_candidates": candidates.get("ready", 0),
         "promotions_by_status": promotions,
+        "bench_trend": backlog.trend(db, with_cost=True),
         "budgets": {
             "model_spend_today_usd": str(spend),
             "daily_model_budget_usd": str(settings.daily_model_budget_usd),

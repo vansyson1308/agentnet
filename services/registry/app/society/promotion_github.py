@@ -186,7 +186,8 @@ class GitHubPromotionProvider:
             events = self._request("GET", f"/repos/{self.repo}/issues/{int(issue['number'])}/events", params={"per_page": 100}) or []
             labelled = [e for e in events if e.get("event") == "labeled" and (e.get("label") or {}).get("name") == label]
             if labelled and ((labelled[-1].get("actor") or {}).get("login") or "").lower() == self.owner.lower():
-                out.append({"number": int(issue["number"]), "title": str(issue.get("title") or "")[:120], "updated_at": str(issue.get("updated_at") or "")})
+                out.append({"number": int(issue["number"]), "title": str(issue.get("title") or "")[:120], "updated_at": str(issue.get("updated_at") or ""),
+                            "labels": [str(lb.get("name")) for lb in issue.get("labels") or [] if isinstance(lb, dict)]})
         return out
 
     # ── git push through GIT_ASKPASS (no credential in URL/argv/config) ──

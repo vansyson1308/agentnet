@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import dataclasses
+import importlib.util
 import json
+import pathlib
 import uuid
 from datetime import datetime, timezone
 
@@ -23,7 +25,7 @@ PER_TASK = {"ok-task": {"split": "dev", "delivered": 3, "runs": ["pass"] * 3},
 
 def _report(db, revision="r-running"):
     db.execute(text("INSERT INTO society_bench_reports (id, revision, judge_revision, path, model, repeat, summary, per_task) VALUES (:i,:r,:r,'maintenance','m',3,:s,:p)"),
-               {"i": str(uuid.uuid4()), "r": revision, "s": json.dumps({"pass_at_1": 0.44, "pass_at_k": 0.67, "splits": {"dev": {"pass_at_1": 0.67}, "holdout": {"pass_at_1": 0.0}}}),
+               {"i": str(uuid.uuid4()), "r": revision, "s": json.dumps({"pass_at_1": 0.44, "pass_at_k": 0.67, "cost_usd": 0.12, "splits": {"dev": {"pass_at_1": 0.67}, "holdout": {"pass_at_1": 0.0}}}),
                 "p": json.dumps(PER_TASK)})
     db.commit()
 
@@ -62,8 +64,21 @@ def test_status_reports_the_loop_structurally(db, api_client, monkeypatch):
     _report(db)
     loop = api_client.get("/v1/society/status").json()["loop"]
     assert loop["bench"]["pass_at_1"] == 0.44 and loop["bench"]["dev"] == {"pass_at_1": 0.67} and loop["bench"]["stale"] is False
-    assert loop["backlog"] == 2 and loop["prs_merged_7d"] == 0 and loop["usd_per_merged_pr_7d"] is None
+    assert loop["backlog"] == 2 and loop["prs_merged_7d"] == 0 and "usd_per_merged_pr_7d" not in loop
     assert "holdout" not in json.dumps(loop) and "secret-holdout" not in json.dumps(loop)
+
+
+def test_the_public_status_passes_the_phase5_audit_p01_rule(db, api_client, monkeypatch):
+    """Staging 2026-10-10: audit P01 failed on loop.trend[].cost_usd. The same rule, here."""
+    spec = importlib.util.spec_from_file_location("phase5_live_p01", pathlib.Path(__file__).resolve().parents[2] / "deploy/railway/phase5_live.py")
+    p5 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(p5)
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "r-running")
+    _report(db)
+    body = api_client.get("/v1/society/status").json()
+    raw = json.dumps(body)
+    assert p5.private_keys_in(body) == [] and not p5.KEY_SHAPE.search(raw) and not p5.JWT_SHAPE.search(raw)
+    assert backlog.trend(db, with_cost=True)[0]["cost_usd"] == 0.12, "the operator view keeps the cost"
 
 
 def test_status_shows_the_last_seven_reports_as_a_trend(db, api_client, monkeypatch):
@@ -97,4 +112,4 @@ def test_open_incidents_without_a_live_repair_case_are_fuel_and_covered_ones_are
     covered, awaiting_owner = _incident(db, case_state="BUILDING"), _incident(db, case_state="SAFELY_ESCALATED", resumable=True)
     items = backlog.collect(db, society_settings)
     assert [i["incident_id"] for i in items if i["source"] == "maintenance_incident"] == [str(uncovered.id), str(escalated.id)]
-    assert str(covered.id) not in json.dumps(items) and str(awaiting_owner.id) not in json.dumps(items) and all(set(i) == {"source", "key", "incident_id", "failure_class", "priority", "target", "cases_so_far"} for i in items)
+    assert str(covered.id) not in json.dumps(items) and str(awaiting_owner.id) not in json.dumps(items) and all(set(i) == {"source", "key", "incident_id", "failure_class", "priority", "target", "cases_so_far", "sli_ref"} for i in items)

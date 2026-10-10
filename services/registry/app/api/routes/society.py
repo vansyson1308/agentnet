@@ -282,14 +282,13 @@ def society_status(db: Session = Depends(get_db)):
 def _loop_status(db: Session, settings, now) -> Dict[str, Any]:
     """The self-improvement loop, structurally: the running revision's bench
     (overall + dev split; holdout scores stay with the controller), the last 7
-    reports as a trend, the backlog size, and this week's READY candidates,
-    merged PRs and $ per PR."""
+    reports as a trend, the backlog size, and this week's READY candidates and
+    merged PRs. No cost: spend lives on the operator /company view."""
     week = now - timedelta(days=7)
     rev = backlog_mod.running_revision(settings)
     rep = backlog_mod.latest_report(db, rev)
     s = (rep or {}).get("summary") or {}
     merged = db.query(func.count(CodePromotion.id)).filter(CodePromotion.merged_sha.isnot(None), CodePromotion.updated_at >= week).scalar() or 0
-    spend = db.query(func.coalesce(func.sum(AgentRun.cost_usd), 0)).filter(AgentRun.created_at >= week).scalar() or 0
     return {
         "bench": {"revision": str(rep["revision"])[:12], "running_revision": rev[:12], "stale": rep["stale"], "at": _iso(rep["created_at"]), "path": rep["path"],
                   "pass_at_1": s.get("pass_at_1"), "pass_at_k": s.get("pass_at_k"), "repeat": rep["repeat"], "dev": (s.get("splits") or {}).get("dev")} if rep else None,
@@ -297,7 +296,6 @@ def _loop_status(db: Session, settings, now) -> Dict[str, Any]:
         "trend": backlog_mod.trend(db),
         "candidates_ready_7d": db.query(func.count(CodeCandidate.id)).filter(CodeCandidate.status == CodeCandidateStatus.READY, CodeCandidate.updated_at >= week).scalar() or 0,
         "prs_merged_7d": merged,
-        "usd_per_merged_pr_7d": str(round(spend / merged, 4)) if merged else None,
     }
 
 
@@ -705,7 +703,7 @@ def set_objective_status(objective_id: str, body: ObjectiveStatusBody, db: Sessi
 def list_plans(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
     from ...society import tickets
 
-    return {"plans": tickets.plans_view(db)}
+    return {"plans": tickets.plans_view(db), "empty_reason": tickets.last_empty_reason(db)}
 
 
 @router.post("/company/plans/{plan_id}/{decision}")
