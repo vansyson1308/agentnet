@@ -1,8 +1,14 @@
 """The self-improvement loop's work queue: structural Scout inputs (no model call).
 
-* bench: DEV tasks (tasks.json) the running revision's harness fails on >= 2 of 3
-  runs, from its latest ``society_bench_reports`` row (else the latest row).
-  Holdout tasks never enter the backlog.
+In this order:
+
+* bench: ACTIVE dev tasks (tasks.json) the running revision's harness fails on
+  >= 1 of its runs, from its latest ``society_bench_reports`` row (else the latest
+  row). A task the harness delivers on every run is never an item (that is the
+  regression set's job). Holdout tasks never enter the backlog or any context.
+  The item says the gap is the BUILDER HARNESS's (the task itself is solved).
+* incidents: open maintenance incidents with no live repair case (the kernel
+  has nothing running for them).
 * issues: open issues the repository owner labelled ``agent-ok``
   (``promotion_github.list_agent_ok_issues``; the credential stays there).
 
@@ -17,14 +23,19 @@ import subprocess
 from collections import Counter
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import text
+from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
+from ..maintenance.orm import MaintenanceIncident, RepairCase
+from ..maintenance.state_machine import NON_TERMINAL, CaseState
 from ..models import CodeCandidate, CodeCandidateStatus
 from .config import SocietySettings
 from .events import EventType, emit_event
 
-FAILS_OF_3 = 2
+FAILS_OF_3 = 1
+#: Where a bench gap is fixed: the builder harness the bench measures (never the task's files).
+HARNESS_PATHS = ("services/registry/app/maintenance/harness.py", "services/registry/app/maintenance/activities.py",
+                 "services/registry/app/maintenance/repo_tools.py", "services/registry/app/society/engineering/build_engine.py")
 _OPEN = (CodeCandidateStatus.READY, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED)
 
 
@@ -47,6 +58,19 @@ def latest_report(db: Session, revision: str = "") -> Optional[Dict[str, Any]]:
     return {**dict(row), "stale": stale} if row else None
 
 
+def trend(db: Session, n: int = 7) -> List[Dict[str, Any]]:
+    """The last ``n`` bench reports, latest first: overall and dev scores, cost (never holdout)."""
+    rows = db.execute(text("SELECT revision, judge_revision, path, repeat, summary, created_at FROM society_bench_reports ORDER BY created_at DESC LIMIT :n"), {"n": n}).mappings()
+    out = []
+    for r in rows:
+        s = r["summary"] or {}
+        out.append({"at": r["created_at"].isoformat() if r["created_at"] else None, "revision": str(r["revision"])[:12], "candidate": r["revision"] != r["judge_revision"],
+                    "path": r["path"], "repeat": r["repeat"], "samples": (s.get("config") or {}).get("builder_samples"), "pass_at_1": s.get("pass_at_1"),
+                    "pass_at_k": s.get("pass_at_k"), "dev_pass_at_1": ((s.get("splits") or {}).get("dev") or {}).get("pass_at_1"),
+                    "delivered": s.get("delivered"), "runs": s.get("runs"), "cost_usd": s.get("cost_usd")})
+    return out
+
+
 def bench_items(report: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     items = []
     for task_id, v in sorted(((report or {}).get("per_task") or {}).items()):
@@ -56,8 +80,20 @@ def bench_items(report: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
             continue
         cls = Counter(r for r in runs if r != "pass").most_common(1)[0][0]
         items.append({"source": "bench", "key": f"bench:{task_id}:{report['id']}", "task_id": task_id, "failure_class": cls,
-                      "delivered": len(runs) - fails, "runs": len(runs), "revision": str(report["revision"])[:12]})
+                      "delivered": len(runs) - fails, "runs": len(runs), "revision": str(report["revision"])[:12],
+                      "gap": "builder_harness", "harness_paths": list(HARNESS_PATHS)})
     return items
+
+
+def incident_items(db: Session) -> List[Dict[str, Any]]:
+    """Open maintenance incidents no live repair case covers (structural fields only). A
+    resumable escalation is live: it waits on the owner, not on the Society."""
+    live = db.query(RepairCase.incident_id).filter(or_(RepairCase.state.in_([s.value for s in NON_TERMINAL]),
+                                                       and_(RepairCase.state == CaseState.SAFELY_ESCALATED.value, RepairCase.resumable.is_(True))))
+    rows = (db.query(MaintenanceIncident).filter(MaintenanceIncident.status == "open", MaintenanceIncident.id.notin_(live))
+            .order_by(MaintenanceIncident.priority, MaintenanceIncident.opened_at).limit(10).all())
+    return [{"source": "maintenance_incident", "key": f"incident:{i.id}:{i.case_count}", "incident_id": str(i.id), "failure_class": i.incident_class,
+             "priority": i.priority, "target": i.target, "cases_so_far": int(i.case_count or 0)} for i in rows]
 
 
 def issue_items(provider: Any) -> List[Dict[str, Any]]:
@@ -73,7 +109,7 @@ def issue_items(provider: Any) -> List[Dict[str, Any]]:
 
 
 def collect(db: Session, settings: SocietySettings, provider: Any = None) -> List[Dict[str, Any]]:
-    return bench_items(latest_report(db, running_revision(settings))) + issue_items(provider)
+    return bench_items(latest_report(db, running_revision(settings))) + incident_items(db) + issue_items(provider)
 
 
 def open_candidates(db: Session) -> int:
