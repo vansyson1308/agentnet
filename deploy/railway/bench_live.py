@@ -16,7 +16,8 @@ credential, an unreachable provider) refuses the run.
     BENCH-PREFLIGHT <verdict> model=<name>
     BENCH TASK {...}        one line per task (structural; no model text)
     BENCH SUMMARY {...}     pass@1/pass@k overall and per split, cost, result classes
-    BENCH VERDICT {...}     (BENCH_HARNESS_REF only) the harness-change merge rule
+    BENCH SETS {...}        the regression set (3/3 best-of-3 on main's two latest reports)
+    BENCH VERDICT {...}     (BENCH_HARNESS_REF only) the harness-change merge rule over the active tasks
     BENCH RESULT: OK | REFUSED
 
 Env: BENCH_BUDGET_USD (default 1), BENCH_ONLY (comma-separated task ids),
@@ -61,6 +62,25 @@ def store(db: dict, row: dict) -> None:  # failing to store never fails the benc
         print(f"BENCH-STORE failed: {type(exc).__name__}", flush=True)
 
 
+def recent_reports(db: dict, limit: int = 10) -> list:
+    """The latest reports main ran on its own harness (revision == judge), latest first; [] without a database."""
+    if not db.get("POSTGRES_HOST"):
+        return []
+    try:
+        import psycopg2  # noqa: PLC0415
+
+        conn = psycopg2.connect(host=db["POSTGRES_HOST"], port=int(db.get("POSTGRES_PORT") or 5432), user=db.get("POSTGRES_USER"),
+                                password=db.get("POSTGRES_PASSWORD"), dbname=db.get("POSTGRES_DB"), connect_timeout=10)
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT summary, per_task FROM society_bench_reports WHERE revision = judge_revision AND path = 'maintenance' ORDER BY created_at DESC LIMIT %s", (limit,))
+            rows = [{"config": (s or {}).get("config") or {}, "per_task": p or {}} for s, p in cur.fetchall()]
+        conn.close()
+        return rows
+    except Exception as exc:  # noqa: BLE001 -- never print connection details
+        print(f"BENCH-SETS reports unavailable: {type(exc).__name__}", flush=True)
+        return []
+
+
 def _run(bench, argv: list, out: str, harness_root: str = "") -> dict:
     if harness_root:  # the candidate harness in its own process: this revision's judge, the candidate's services/
         env = {**os.environ, "BENCH_HARNESS_ROOT": harness_root, "PYTHONPATH": REPO}
@@ -93,11 +113,13 @@ def main() -> int:
     tasks = bench.load_tasks(os.getenv("BENCH_ONLY", ""), split)
     # the validator clone is shallow; the tasks are commits of main and need their parents
     subprocess.run(["git", "-C", REPO, "fetch", "-q", "--unshallow", "origin", "+refs/heads/main:refs/remotes/origin/main"], check=True, timeout=600)
-    missing = [t["id"] for t in tasks if subprocess.run(["git", "-C", REPO, "cat-file", "-e", t["fix_sha"] + "^"], capture_output=True).returncode]
+    missing = [t["id"] for t in tasks if "fix_sha" in t and subprocess.run(["git", "-C", REPO, "cat-file", "-e", t["fix_sha"] + "^"], capture_output=True).returncode]
     print(f"BENCH-REPO tasks={len(tasks)} split={split} missing_commits={missing}", flush=True)
     revision = _git("rev-parse", "HEAD")
     argv = ["--repo", REPO, "--path", os.getenv("BENCH_PATH", "maintenance"), "--repeat", os.getenv("BENCH_REPEAT", "3"), "--split", split]
     argv += ["--only", os.environ["BENCH_ONLY"]] if os.getenv("BENCH_ONLY") else []
+    sets = bench.partition(recent_reports(db))
+    print("BENCH SETS " + json.dumps(sets, sort_keys=True), flush=True)
     with tempfile.TemporaryDirectory(prefix="bench-live-") as tmp:
         try:
             base = _run(bench, argv, os.path.join(tmp, "base.json"))
@@ -108,7 +130,7 @@ def main() -> int:
                 _git("worktree", "add", "-q", "--detach", cand_root, f"origin/{cand_ref}")
                 cand = _run(bench, argv, os.path.join(tmp, "cand.json"), harness_root=cand_root)
                 store(db, bench.report_row(cand, revision=_git("-C", cand_root, "rev-parse", "HEAD"), judge_revision=revision))
-                print("BENCH VERDICT " + json.dumps({"candidate_ref": cand_ref, **bench.harness_verdict(base, cand)}, sort_keys=True), flush=True)
+                print("BENCH VERDICT " + json.dumps({"candidate_ref": cand_ref, **bench.harness_verdict(base, cand, sets["regression"])}, sort_keys=True), flush=True)
         except (RuntimeError, subprocess.CalledProcessError) as exc:
             print(f"BENCH RESULT: REFUSED ({type(exc).__name__}: {str(exc)[:200]})", flush=True)
             return 2

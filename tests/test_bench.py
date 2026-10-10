@@ -69,13 +69,46 @@ def _bench(tmp_path, script, task=None, repeat=1, path="maintenance"):
 def test_the_task_list_is_a_judge_of_real_commits():
     tasks = bench.load_tasks(split="all")
     dev, holdout = bench.load_tasks(split="dev"), bench.load_tasks(split="holdout")
-    assert 12 <= len(tasks) <= 40 and len({t["id"] for t in tasks}) == len(tasks) and len(dev) + len(holdout) == len(tasks)
-    assert len(holdout) >= 4 and {t["split"] for t in holdout} == {"holdout"} and not any(t["id"] in bench.TASKS.read_text() for t in holdout)
+    assert 40 <= len(tasks) <= 120 and len({t["id"] for t in tasks}) == len(tasks) and len(dev) + len(holdout) == len(tasks)
+    assert len(holdout) >= 20 and {t["split"] for t in holdout} == {"holdout"} and not any(t["id"] in bench.TASKS.read_text() for t in holdout)
+    external = [t for t in holdout if t.get("repo")]
+    assert external and all(t["repo"].startswith("https://github.com/") and re.fullmatch(r"[0-9a-f]{40}", t["base_sha"]) and t["test_patch"].startswith("diff --git")
+                            and all(re.fullmatch(r"[\w.-]+==[\w.]+", d) for d in t.get("deps", [])) for t in external)
     for t in tasks:
-        assert re.fullmatch(r"[0-9a-f]{40}", t["fix_sha"]) and t["failing_tests"] and 1 <= len(t["files_allowed"]) <= 5
+        assert re.fullmatch(r"[0-9a-f]{40}", t.get("fix_sha") or t.get("base_sha", "")) and t["failing_tests"] and 1 <= len(t["files_allowed"]) <= 5
         assert all(n.split("::")[0] in t["test_files"] for n in t["failing_tests"]), t["id"]
         assert not any("tests/" in p or p.split("/")[-1].startswith("test_") for p in t["files_allowed"]), t["id"]
-        assert "@@" not in t["task"] and "+++" not in t["task"] and 80 <= len(t["task"]) <= 900, t["id"]
+        assert "@@" not in t["task"] and "+++" not in t["task"] and 80 <= len(t["task"]) <= (4000 if t.get("repo") else 900), t["id"]
+
+
+def test_no_model_tool_can_read_any_holdout_file():
+    from services.registry.app.maintenance.repo_tools import is_holdout
+
+    assert is_holdout(str(bench.HOLDOUT.relative_to(bench.ROOT))) and is_holdout(str(bench.HOLDOUT_EXTERNAL.relative_to(bench.ROOT)))
+    assert not is_holdout(str(bench.TASKS.relative_to(bench.ROOT)))
+
+
+def _ext_repo(tmp_path):
+    """An 'external' repository: base commit with the bug; the task brings its own test patch."""
+    ext = tmp_path / "ext"
+    (ext / "pkg").mkdir(parents=True)
+    (ext / "pkg" / "__init__.py").write_text("")
+    (ext / "pkg" / "mod.py").write_text(BUGGY)
+    _git(ext, "init", "-q")
+    _git(ext, "add", "-A")
+    _git(ext, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base")
+    patch = "diff --git a/tests/test_mod.py b/tests/test_mod.py\nnew file mode 100644\n--- /dev/null\n+++ b/tests/test_mod.py\n@@ -0,0 +1,9 @@\n" + "".join("+" + ln + "\n" for ln in TEST.splitlines())
+    return {"id": "ext-double", "repo": ext.as_uri(), "base_sha": _git(ext, "rev-parse", "HEAD"), "test_patch": patch, "files_allowed": ["pkg/mod.py"],
+            "test_files": ["tests/test_mod.py"], "failing_tests": ["tests/test_mod.py::test_double", "tests/test_mod.py::test_zero"], "task": "double(x) must return 2x.", "split": "holdout"}
+
+
+def test_an_external_task_is_its_base_commit_plus_its_test_patch_and_is_judged_the_same(tmp_path, monkeypatch):
+    monkeypatch.setattr(bench, "EXTERNAL_CACHE", tmp_path / "cache")
+    task = _ext_repo(tmp_path)
+    _, rows = _bench(tmp_path, [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), RUN, SUBMIT], task=task)
+    assert rows[0]["result"] == "pass" and rows[0]["split"] == "holdout" and (tmp_path / "cache").is_dir()
+    _, rows = _bench(tmp_path / "b", [RESCOPE], task=task)
+    assert rows[0]["result"] == "wrong_file" and rows[0]["scored"] is False, "the test patch is there, the fix is not"
 
 
 def test_a_fixed_task_scores_and_the_report_is_marked_not_live(tmp_path):
@@ -162,12 +195,46 @@ def test_scores_per_split_the_aggregate_report_row_and_the_harness_merge_rule(tm
     assert base["splits"] == {"dev": {"tasks": 1, "pass_at_1": 1.0, "pass_at_k": 1.0}, "holdout": {"tasks": 1, "pass_at_1": 0.0, "pass_at_k": 0.0}}
     row = bench.report_row(base, revision="r1", judge_revision="r1")
     assert row["per_task"]["double-h"] == {"split": "holdout", "delivered": 0, "runs": ["wrong_file"]} and task["task"] not in json.dumps(row)
-    better = {**base, "splits": {**base["splits"], "holdout": {"pass_at_1": 0.5}}}
-    assert bench.harness_verdict(base, better)["mergeable"] is True
-    lost = {**better, "per_task": {**base["per_task"], "double": {"delivered": 0, "runs": ["wrong_file"] * 3}}}
-    v = bench.harness_verdict({**base, "per_task": {**base["per_task"], "double": {"delivered": 3, "runs": ["pass"] * 3}}}, lost)
-    assert v["regressed_3_to_0"] == ["double"] and v["mergeable"] is False
-    assert bench.harness_verdict(base, base)["mergeable"] is False, "no holdout improvement, no merge"
+
+
+
+def _report(per_task, cost="1"):
+    delivered = sum(v["delivered"] for v in per_task.values())
+    return {"per_task": per_task, "delivered": delivered, "cost_usd": cost}
+
+
+def _t(split, delivered, runs=3):
+    return {"split": split, "delivered": delivered, "runs": ["pass"] * delivered + ["tests_fail"] * (runs - delivered)}
+
+
+def test_the_harness_merge_rule_over_active_tasks():
+    base = _report({"h1": _t("holdout", 1), "h2": _t("holdout", 2), "h3": _t("holdout", 3), "d1": _t("dev", 0), "d2": _t("dev", 1), "d3": _t("dev", 3)})
+    two_more_dev = _report({**base["per_task"], "d1": _t("dev", 3), "d2": _t("dev", 3)})
+    v = bench.harness_verdict(base, two_more_dev)
+    assert v["verdict"] == "mergeable" and v["dev_tasks"] == {"baseline": 1.33, "candidate": 3.0} and v["holdout_tasks"]["candidate"] == v["holdout_tasks"]["baseline"]
+    assert bench.harness_verdict(base, base)["verdict"] == "not_mergeable", "no gain, same cost"
+    assert bench.harness_verdict(base, {**base, "cost_usd": "0.8"})["verdict"] == "mergeable", "20% cheaper per delivered task"
+    worse_holdout = _report({**two_more_dev["per_task"], "h1": _t("holdout", 0), "h2": _t("holdout", 1), "h3": _t("holdout", 1)})
+    assert bench.harness_verdict(base, worse_holdout)["verdict"] == "not_mergeable", "holdout lost more than one task"
+    fell = bench.harness_verdict(base, _report({**two_more_dev["per_task"], "d3": _t("dev", 0)}))
+    assert fell["regressed_3_to_0"] == ["d3"] and fell["verdict"] == "not_mergeable"
+    reg = bench.harness_verdict(base, _report({**two_more_dev["per_task"], "h3": _t("holdout", 1)}), regression=["h3"])
+    assert reg["regression_set_fell"] == ["h3"] and reg["verdict"] == "not_mergeable", "a regression-set task still must not regress"
+
+
+def test_a_saturated_holdout_never_yields_mergeable():
+    full = _report({"h1": _t("holdout", 3), "h2": _t("holdout", 3), "d1": _t("dev", 0)})
+    v = bench.harness_verdict(full, _report({**full["per_task"], "d1": _t("dev", 3)}))
+    assert v["verdict"] == "bench_saturated" and v["mergeable"] is False and "harder tasks" in v["note"]
+    # the same tasks moved to the regression set leave no active holdout to tell
+    assert bench.harness_verdict(full, full, regression=["h1", "h2"])["verdict"] == "bench_saturated"
+
+
+def test_tasks_delivered_3_of_3_best_of_3_on_two_consecutive_reports_become_the_regression_set():
+    r = lambda samples, per: {"config": {"builder_samples": samples}, "per_task": per}  # noqa: E731
+    latest, previous, single = r(3, {"a": _t("dev", 3), "b": _t("dev", 3), "c": _t("dev", 2)}), r(3, {"a": _t("dev", 3), "b": _t("dev", 2)}), r(1, {"b": _t("dev", 3)})
+    assert bench.partition([latest, single, previous]) == {"regression": ["a"], "reports": 2}, "one-sample reports do not count"
+    assert bench.partition([latest]) == {"regression": [], "reports": 1}
 
 
 def test_the_miner_turns_a_merged_fix_with_a_new_failing_test_into_a_candidate(tmp_path):
@@ -186,7 +253,18 @@ def test_the_miner_turns_a_merged_fix_with_a_new_failing_test_into_a_candidate(t
     cands = mine.mine(str(repo), "main~1", set(), ref="main")
     assert len(cands) == 1 and cands[0]["fix_sha"] == _git(repo, "rev-parse", "HEAD") and cands[0]["files_allowed"] == ["pkg/mod.py"]
     assert cands[0]["failing_tests"] == ["tests/test_mod.py::test_double", "tests/test_mod.py::test_zero"] and cands[0]["task"] == msg
-    assert cands[0]["split"] in ("dev", "holdout") and mine.mine(str(repo), "main~1", {cands[0]["fix_sha"]}, ref="main") == []
+    assert cands[0]["split"] in ("dev", "holdout")
+    assert mine.mine(str(repo), "main~1", {cands[0]["fix_sha"]}, ref="main", judged=set(cands[0]["failing_tests"])) == [], "its branch commit judges the same tests"
+
+
+def test_the_miner_also_walks_non_merge_commits(tmp_path):
+    from scripts.bench import mine
+
+    repo, _ = _repo(tmp_path)  # HEAD = a plain commit (fix + new test) on main
+    msg = "double(x) returned 2x+1 for every input: make the arithmetic helper return exactly twice its argument, zero included"
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--amend", "-qm", msg)
+    cands = mine.mine(str(repo), "HEAD~1", set(), ref="HEAD")
+    assert [c["fix_sha"] for c in cands] == [_git(repo, "rev-parse", "HEAD")] and cands[0]["task"] == msg
 
 
 def test_only_a_live_model_produces_a_bench_result(tmp_path, monkeypatch):
