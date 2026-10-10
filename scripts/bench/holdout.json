@@ -1,6 +1,6 @@
 {
  "version": 2,
- "about": "AgentNet builder bench HOLDOUT: same rules as tasks.json. Never in any model context (every repository read/search tool refuses scripts/bench/holdout*); only the controller reads its scores. Chosen deterministically: the 4 of the original 12 tasks with the smallest sha256(id).",
+ "about": "AgentNet builder bench HOLDOUT: same rules as tasks.json. Never in any model context (every repository read/search tool refuses scripts/bench/holdout*); only the controller reads its scores. Chosen deterministically: the 4 of the original 12 tasks with the smallest sha256(id), then the mined tasks whose sha256(id) starts with 0-3 (mine.py). External holdout tasks: holdout_external.json.",
  "tasks": [
   {"id": "surface-placeholder-healthy-sample",
    "fix_sha": "059b016637d81353e11e9800c2f289bd9d9a154e",
@@ -25,6 +25,24 @@
    "files_allowed": ["deploy/railway/phase5_live.py"],
    "test_files": ["tests/test_railway_validator.py"],
    "failing_tests": ["tests/test_railway_validator.py::test_memory_view_is_read_only_scrubbed_and_never_reads_contents", "tests/test_railway_validator.py::test_plan_grammar_accepts_a_memory_role_and_rejects_junk"],
-   "task": "The Phase 5 live driver cannot show the memory a role carries into its next run. Add a read-only 'memory:<role>' plan step that reports how many live memory rows the role carries and where they came from, scrubbed and without ever reading memory contents, and make the plan grammar accept a memory role and reject junk."}
+   "task": "The Phase 5 live driver cannot show the memory a role carries into its next run. Add a read-only 'memory:<role>' plan step that reports how many live memory rows the role carries and where they came from, scrubbed and without ever reading memory contents, and make the plan grammar accept a memory role and reject junk."},
+  {"id": "fix-worker-conditional-starlette-import",
+   "fix_sha": "0b61a2904bd43dc03c71f736071ad2b811cc78c2",
+   "files_allowed": ["services/payment/app/logging_config.py", "services/registry/app/logging_config.py", "services/simulation/app/logging_config.py", "services/worker/app/logging_config.py"],
+   "test_files": ["tests/test_phase_d.py"],
+   "failing_tests": ["tests/test_phase_d.py::test_worker_logging_config_no_hard_starlette_import"],
+   "task": "fix(worker): conditional starlette import so worker container starts Phase B's logging_config.py shipped four byte-identical copies, one per service. The file imported ``starlette.middleware.base.BaseHTTPMiddleware`` unconditionally for the RequestIDMiddleware. The registry / payment / simulation containers carry FastAPI (and therefore starlette as a transitive dep), but the worker image only installs sqlalchemy / redis / opentelemetry / prometheus-client / structlog \u2014 no starlette. Result on staging deploy: ``agentnet-staging-worker`` crash-looped with ``ModuleNotFoundError: No module named 'starlette'``. Fix: guard the starlette import behind a try/except at module top so ``setup_logging`` is callable in any service."},
+  {"id": "phase-5-closure-the-real-domain-driver-s",
+   "fix_sha": "7d3456f0104a0649a267cf6f9486b6644c7e2e4c",
+   "files_allowed": ["CURRENT_STATE.md", "deploy/railway/phase5_live.py", "docs/RAILWAY_STAGING.md", "docs/SOCIETY_LIVE_MODEL_RUNBOOK.md", "docs/SOCIETY_LIVE_PROOF.md"],
+   "test_files": ["tests/test_railway_validator.py"],
+   "failing_tests": ["tests/test_railway_validator.py::test_driver_paces_stories_past_the_fleet_cooldown", "tests/test_railway_validator.py::test_plan_grammar_accepts_taskfail_with_an_optional_escrow", "tests/test_railway_validator.py::test_taskfail_agent_registration_is_authenticated_and_staging_only", "tests/test_railway_validator.py::test_taskfail_reads_the_task_id_the_create_endpoint_actually_returns", "tests/test_railway_validator.py::test_taskfail_uses_the_ordinary_api_and_never_injects_the_event"],
+   "task": "Phase 5 closure: the real-domain driver step and what the live Society actually did (#23) * Phase 5 closure: prove multi-agent operation on a REAL domain signal A synthetic canary proves the runtime; only a real platform fact proves the product. Gate A runs 12/14/16 showed the live Scout declining a synthetic anomaly precisely because it carried no failure artifacts, task ids or logs \u2014 which is correct restraint, not a runtime defect."},
+  {"id": "maintenance-builder-keep-3-reads-per-try",
+   "fix_sha": "1c92c7870f256019638b94092bba818b39404988",
+   "files_allowed": ["services/registry/app/maintenance/config.py"],
+   "test_files": ["tests/society/maintenance/test_builder_context.py"],
+   "failing_tests": ["tests/society/maintenance/test_builder_context.py::test_the_builder_read_budget_default_stays_three"],
+   "task": "Maintenance builder: keep 3 reads per try (live bench: 12 spent the turns reading) Bench x3 on staging, same model: this context with 12 reads gave pass@1 0.361 (15/36 turn_budget); with 3 reads 0.778, pass@3 0.917."}
  ]
 }
