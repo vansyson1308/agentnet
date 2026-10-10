@@ -703,7 +703,10 @@ def set_objective_status(objective_id: str, body: ObjectiveStatusBody, db: Sessi
 def list_plans(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
     from ...society import tickets
 
-    return {"plans": tickets.plans_view(db), "empty_reason": tickets.last_empty_reason(db)}
+    from ...society import outcomes
+    from ...society.events import utcnow
+
+    return {"plans": tickets.plans_view(db), "empty_reason": tickets.last_empty_reason(db), "summary_text": outcomes.kpis(db, utcnow())["summary_text"]}
 
 
 @router.post("/company/plans/{plan_id}/{decision}")
