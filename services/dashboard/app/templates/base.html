@@ -45,10 +45,10 @@
                 <span class="logo-dot"></span> J.A.R.V.I.S.
             </a>
             <ul class="navbar-nav">
-                <li><a href="/metaverse">🏠 Command Center</a></li>
-                <li><a href="/network">🌐 A2A Network</a></li>
-                <li><a href="/marketplace">🏪 Marketplace</a></li>
-                <li><a href="/">📊 Dashboard</a></li>
+                <li><a href="{{ url_for('metaverse_page') }}">🏠 Command Center</a></li>
+                <li><a href="{{ url_for('network_page') }}">🌐 A2A Network</a></li>
+                <li><a href="{{ url_for('marketplace_page') }}">🏪 Marketplace</a></li>
+                <li><a href="{{ url_for('landing_page') }}">📊 Dashboard</a></li>
             </ul>
             <div class="navbar-actions">
                 {% if session.access_token %}
