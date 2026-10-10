@@ -92,6 +92,8 @@ class EventType:
     BACKLOG_ITEM = "backlog.item"
     # an idle heartbeat bucket (no subscriber: marks the bucket, calls no model)
     SOCIETY_HEARTBEAT_IDLE = "society.heartbeat.idle"
+    # the daily scheduled bench on main was started (bench_schedule.py; no subscriber)
+    BENCH_DAILY_STARTED = "bench.daily_started"
     # Graduation: the trusted synthetic monitor of the PUBLIC product surface
     # (surface_monitor.py). System-authored, structural payloads only.
     PUBLIC_SURFACE_ANOMALY = "public.surface.anomaly"

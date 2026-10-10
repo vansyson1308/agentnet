@@ -281,8 +281,9 @@ def society_status(db: Session = Depends(get_db)):
 
 def _loop_status(db: Session, settings, now) -> Dict[str, Any]:
     """The self-improvement loop, structurally: the running revision's bench
-    (overall + dev split; holdout scores stay with the controller), the
-    backlog size, and this week's READY candidates, merged PRs and $ per PR."""
+    (overall + dev split; holdout scores stay with the controller), the last 7
+    reports as a trend, the backlog size, and this week's READY candidates,
+    merged PRs and $ per PR."""
     week = now - timedelta(days=7)
     rev = backlog_mod.running_revision(settings)
     rep = backlog_mod.latest_report(db, rev)
@@ -292,7 +293,8 @@ def _loop_status(db: Session, settings, now) -> Dict[str, Any]:
     return {
         "bench": {"revision": str(rep["revision"])[:12], "running_revision": rev[:12], "stale": rep["stale"], "at": _iso(rep["created_at"]), "path": rep["path"],
                   "pass_at_1": s.get("pass_at_1"), "pass_at_k": s.get("pass_at_k"), "repeat": rep["repeat"], "dev": (s.get("splits") or {}).get("dev")} if rep else None,
-        "backlog": len(backlog_mod.bench_items(rep)),
+        "backlog": len(backlog_mod.bench_items(rep)) + len(backlog_mod.incident_items(db)),
+        "trend": backlog_mod.trend(db),
         "candidates_ready_7d": db.query(func.count(CodeCandidate.id)).filter(CodeCandidate.status == CodeCandidateStatus.READY, CodeCandidate.updated_at >= week).scalar() or 0,
         "prs_merged_7d": merged,
         "usd_per_merged_pr_7d": str(round(spend / merged, 4)) if merged else None,

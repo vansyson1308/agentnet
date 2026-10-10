@@ -189,6 +189,12 @@ class SocietySettings:
     )
     wake_poll_seconds: int = field(default_factory=lambda: _int("SOCIETY_WAKE_POLL_SECONDS", 5, minimum=1))
     heartbeat_interval_seconds: int = field(default_factory=lambda: _int("SOCIETY_HEARTBEAT_INTERVAL_SECONDS", 3600, minimum=0))
+    # daily scheduled bench on main (bench_schedule.py): off by default
+    bench_daily_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_BENCH_DAILY_ENABLED", False))
+    bench_daily_hour_utc: int = field(default_factory=lambda: min(23, _int("SOCIETY_BENCH_DAILY_HOUR_UTC", 3, minimum=0)))
+    bench_daily_samples: int = field(default_factory=lambda: _int("SOCIETY_BENCH_DAILY_SAMPLES", 3, minimum=1))
+    bench_daily_repeat: int = field(default_factory=lambda: _int("SOCIETY_BENCH_DAILY_REPEAT", 3, minimum=1))
+    bench_daily_budget_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_BENCH_DAILY_BUDGET_USD", "6"))
     ingest_task_outcomes: bool = field(default_factory=lambda: _bool("SOCIETY_INGEST_TASK_OUTCOMES", True))
     ingest_lookback_seconds: int = field(default_factory=lambda: _int("SOCIETY_INGEST_LOOKBACK_SECONDS", 3600, minimum=60))
     dispatch_batch_size: int = field(default_factory=lambda: _int("SOCIETY_DISPATCH_BATCH_SIZE", 50, minimum=1))

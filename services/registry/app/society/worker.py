@@ -47,6 +47,7 @@ from ..models import (
     Span,
     SpanStatus,
 )
+from . import bench_schedule
 from . import candidate_health as candidate_health_mod
 from . import deployment as dep_mod
 from . import fitness as fitness_mod
@@ -249,6 +250,7 @@ class SocietyWorker:
                 if self.settings.ingest_task_outcomes:
                     ingest_task_outcomes(db, lookback_seconds=self.settings.ingest_lookback_seconds)
                 emit_heartbeat(db, self.settings, provider=self.promotion_provider)
+                bench_schedule.maybe_start_daily_bench(db, self.settings)
                 if self.telemetry_enabled:
                     n = telemetry_mod.produce_anomalies(db, self.settings)
                     if stats is not None:
