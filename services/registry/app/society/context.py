@@ -1011,7 +1011,8 @@ def _company(db: Session) -> Dict[str, Any]:
     return {"objectives": objs, "ticket_rule": (
         "CREATE_IMPROVEMENT carries ticket {objective_id: an ACTIVE objective, metric_id: one of its key_results, "
         "expected_effect: number, direction: up|down, proof: [acceptance test node ids the code spec will run]}; "
-        "without it, or for a proof that already passes on main, no candidate is built.")}
+        "without it, or for a proof that already passes on main, no candidate is built. A ticket is designed (REQUEST_CODE_CHANGE) "
+        "only after the owner approves it (event company.ticket_approved); until then the request is refused.")}
 
 
 def _promotions(db: Session, event: SocietyEvent) -> List[Dict[str, Any]]:

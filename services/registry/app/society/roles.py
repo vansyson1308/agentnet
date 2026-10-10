@@ -212,6 +212,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         ),
         subscriptions=(
             EventType.PROPOSAL_APPROVED,
+            EventType.COMPANY_TICKET_APPROVED,
             EventType.REPO_READ_RESULT,
             EventType.CODE_CANDIDATE_QA_FAILED,
             EventType.CODE_CANDIDATE_READY,

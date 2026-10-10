@@ -513,4 +513,20 @@ CREATE TABLE IF NOT EXISTS society_tickets (
 CREATE INDEX IF NOT EXISTS idx_society_tickets_status ON society_tickets (status, created_at DESC);
 """
 
-SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL
+SOCIETY_COMPANY_PLAN_SQL = r"""
+-- The daily plan (tickets.build_plan): at most 3 ranked tickets awaiting the
+-- owner; nothing in it builds until an operator approves it.
+CREATE TABLE IF NOT EXISTS society_daily_plans (
+    id                  UUID PRIMARY KEY,
+    cycle_id            UUID,
+    plan_date           DATE NOT NULL,
+    status              VARCHAR(16) NOT NULL DEFAULT 'awaiting_owner' CHECK (status IN ('awaiting_owner', 'approved', 'rejected')),
+    ticket_ids          JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ranking             JSONB NOT NULL DEFAULT '[]'::jsonb,
+    decided_by_user_id  UUID REFERENCES users(id) ON DELETE SET NULL,
+    decided_at          TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""
+
+SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL + SOCIETY_COMPANY_PLAN_SQL
