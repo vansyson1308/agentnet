@@ -57,7 +57,7 @@ from ..models import (
     TaskStatus,
     User,
 )
-from . import candidate_health
+from . import candidate_health, tickets
 from .config import SocietySettings
 from .context import TXT_LONG
 from .events import emit_event, utcnow
@@ -416,6 +416,10 @@ def settle_cycles(db: Session, now: Optional[datetime] = None) -> int:
         changed = sum(v for k, v in executed.items() if k in _CHANGE_INTENTS)
         cycle.outcome = "changes_proposed" if changed else "no_high_value_change"
         cycle.outcome_detail = {"runs": int(runs), "intents_executed": executed}
+        # the Chief of Staff's daily plan: the cycle's tickets, ranked, awaiting the owner
+        plan = tickets.build_plan(db, cycle.id, now)
+        if plan is not None:
+            cycle.outcome_detail = {**cycle.outcome_detail, "plan_id": plan["id"]}
         settled += 1
     if settled:
         db.commit()

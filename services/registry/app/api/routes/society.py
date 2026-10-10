@@ -28,7 +28,7 @@ import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import Response, APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
@@ -673,6 +673,71 @@ def company_cycle_now(db: Session = Depends(get_db), operator: User = Depends(re
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="SOCIETY_RUNTIME_ENABLED is off (kill switch engaged)")
     cycle = company_mod.start_cycle(db, settings, trigger="operator", operator_id=operator.id)
     return company_mod.cycle_view(cycle)
+
+
+class ObjectiveStatusBody(BaseModel):
+    status: Literal["proposed", "active", "paused", "done"]
+
+
+class OwnerTicketBody(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    problem: str = Field(..., min_length=1, max_length=4000)
+    objective_id: str = Field(..., min_length=1, max_length=16)
+    metric_id: str = Field(..., min_length=1, max_length=64)
+    expected_effect: float = Field(..., allow_inf_nan=False)
+    direction: Literal["up", "down"]
+    proof: List[str] = Field(..., min_length=1, max_length=10)
+
+
+@router.post("/company/objectives/{objective_id}/status")
+def set_objective_status(objective_id: str, body: ObjectiveStatusBody, db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """Only an operator activates, pauses or closes a charter objective."""
+    from ...society import charter, tickets
+
+    try:
+        tickets.set_objective_status(db, objective_id, body.status, operator.id)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return {"objectives": [{"id": o["id"], "status": o["status"]} for o in charter.objectives(db)]}
+
+
+@router.get("/company/plans")
+def list_plans(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    from ...society import tickets
+
+    return {"plans": tickets.plans_view(db)}
+
+
+@router.post("/company/plans/{plan_id}/{decision}")
+def decide_plan(plan_id: uuid.UUID, decision: Literal["approve", "reject"], db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """The owner approves (or rejects) the Chief of Staff's daily plan; nothing in it builds before."""
+    from ...society import tickets
+
+    try:
+        plan = tickets.decide_plan(db, plan_id, approve=decision == "approve", user_id=operator.id)
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="plan not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    return {"id": str(plan["id"]), "status": plan["status"], "ranking": plan["ranking"]}
+
+
+@router.post("/company/tickets", status_code=status.HTTP_201_CREATED)
+def create_owner_ticket(body: OwnerTicketBody, db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """An owner task: approved at once (no plan), still checked by the meaning gate."""
+    from ...society import tickets
+
+    fields = body.model_dump(include={"objective_id", "metric_id", "expected_effect", "direction", "proof"})
+    return tickets.create_owner_ticket(db, user_id=operator.id, title=body.title, problem=body.problem, fields=fields)
+
+
+@router.get("/company/tickets")
+def list_tickets(db: Session = Depends(get_db), operator: User = Depends(require_operator), limit: int = Query(50, ge=1, le=200)):
+    from sqlalchemy import text
+
+    cols = "id, title, objective_id, metric_id, expected_effect, direction, source, department, status, reason, plan_id, candidate_id, cost_usd, created_at"
+    rows = db.execute(text(f"SELECT {cols} FROM society_tickets ORDER BY created_at DESC LIMIT :n"), {"n": limit}).mappings().all()  # noqa: S608
+    return {"tickets": [dict(r) for r in rows]}
 
 
 @router.get("/incidents")

@@ -87,6 +87,8 @@ class EventType:
     LOOP_BREAKER_TRIPPED = "loop_breaker.tripped"
     # Phase 8 — A2A federation + autonomous company mode (ADR-0009)
     COMPANY_CYCLE = "company.cycle"
+    # the owner approved a ticket (daily plan or owner task): the Architect designs it
+    COMPANY_TICKET_APPROVED = "company.ticket_approved"
     # The self-improvement loop's work queue (backlog.py): system-authored,
     # structural (bench task id / issue number, failure class, counts).
     BACKLOG_ITEM = "backlog.item"
