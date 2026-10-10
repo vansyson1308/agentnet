@@ -34,12 +34,19 @@ from ..society.risk import is_never_readable
 SOURCE_SUFFIXES = (".py", ".html", ".jinja", ".js", ".css", ".json", ".md", ".txt", ".toml", ".ini", ".yml", ".yaml")
 DEFAULT_ROOTS = ("services", "sdk", "examples", "tests", "docs", "scripts", "deploy")
 SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", ".pytest_cache", ".mypy_cache", "legacy"}
+#: Bench holdout tasks: scored only by the controller, never in any model's
+#: context -- no read, search or reference tool may return them.
+HOLDOUT_PREFIXES = ("scripts/bench/holdout",)
 MAX_FILES_SCANNED = 4000
 MAX_RESULTS = 60
 
 
 class RepoToolError(ValueError):
     pass
+
+
+def is_holdout(rel: str) -> bool:
+    return str(rel).lstrip("./").startswith(HOLDOUT_PREFIXES)
 
 
 @dataclass
@@ -94,8 +101,8 @@ class RepoTools:
     def _resolve(self, rel: str) -> pathlib.Path:
         if not rel or rel.startswith(("/", "~")) or "\\" in rel or "\0" in rel or ".." in rel.split("/"):
             raise RepoToolError(f"path not allowed: {rel!r}")
-        if is_never_readable(rel):
-            raise RepoToolError(f"{rel} is not readable (secret material / generated)")
+        if is_never_readable(rel) or is_holdout(rel):
+            raise RepoToolError(f"{rel} is not readable (secret material / generated / bench holdout)")
         p = (self.root / rel).resolve()
         if self.root not in p.parents and p != self.root:
             raise RepoToolError(f"path escapes the repository: {rel!r}")
@@ -114,7 +121,7 @@ class RepoTools:
                         continue
                     p = pathlib.Path(dirpath) / f
                     rel = p.relative_to(self.root).as_posix()
-                    if is_never_readable(rel):
+                    if is_never_readable(rel) or is_holdout(rel):
                         continue
                     n += 1
                     if n > MAX_FILES_SCANNED:

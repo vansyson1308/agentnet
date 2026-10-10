@@ -174,6 +174,21 @@ class GitHubPromotionProvider:
             raise ProviderRefused(f"GitHub error {status} for {method} {path}")
         return body
 
+    # ── backlog source (backlog.py): owner-approved work items ──
+    def list_agent_ok_issues(self, label: str = "agent-ok", limit: int = 10) -> List[Dict[str, Any]]:
+        """Open issues (not PRs) whose ``label`` was last applied by the
+        repository owner. Structural: number, title, updated_at."""
+        issues = self._request("GET", f"/repos/{self.repo}/issues", params={"labels": label, "state": "open", "per_page": 30}) or []
+        out: List[Dict[str, Any]] = []
+        for issue in issues:
+            if "pull_request" in issue or len(out) >= limit:
+                continue
+            events = self._request("GET", f"/repos/{self.repo}/issues/{int(issue['number'])}/events", params={"per_page": 100}) or []
+            labelled = [e for e in events if e.get("event") == "labeled" and (e.get("label") or {}).get("name") == label]
+            if labelled and ((labelled[-1].get("actor") or {}).get("login") or "").lower() == self.owner.lower():
+                out.append({"number": int(issue["number"]), "title": str(issue.get("title") or "")[:120], "updated_at": str(issue.get("updated_at") or "")})
+        return out
+
     # ── git push through GIT_ASKPASS (no credential in URL/argv/config) ──
     def _push(self, ws_path: str, branch: str) -> None:
         cred = self._credential()

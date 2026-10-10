@@ -51,6 +51,7 @@ RISK_BY_TYPE = {
     IntentType.FAIL_TASK: IntentRiskClass.MEDIUM,
     IntentType.REQUEST_CODE_CHANGE: IntentRiskClass.MEDIUM,
     IntentType.SUBMIT_CODE_CANDIDATE: IntentRiskClass.MEDIUM,
+    IntentType.BUILD_CODE_CANDIDATE: IntentRiskClass.MEDIUM,
     IntentType.REQUEST_QA: IntentRiskClass.MEDIUM,
     IntentType.DECLINE_CODE_CANDIDATE: IntentRiskClass.MEDIUM,
     IntentType.EVALUATE_CODE_CANDIDATE: IntentRiskClass.MEDIUM,
@@ -80,6 +81,7 @@ _RISK_ORDER = {IntentRiskClass.LOW: 0, IntentRiskClass.MEDIUM: 1, IntentRiskClas
 _CODE_INTENTS = {
     IntentType.REQUEST_CODE_CHANGE,
     IntentType.SUBMIT_CODE_CANDIDATE,
+    IntentType.BUILD_CODE_CANDIDATE,
     IntentType.REQUEST_QA,
     IntentType.DECLINE_CODE_CANDIDATE,
     IntentType.EVALUATE_CODE_CANDIDATE,

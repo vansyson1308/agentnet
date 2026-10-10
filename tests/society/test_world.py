@@ -64,7 +64,18 @@ def test_ingested_failure_wakes_scout_which_proposes(db, SessionLocal, make_agen
     assert len(props) == 1 and props[0].title == "Improve: summarise"
 
 
+def _work_in_backlog(db, monkeypatch):
+    """A failing dev bench task: the heartbeat is not idle (an idle one calls no model)."""
+    from sqlalchemy import text
+
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "r1")
+    db.execute(text("INSERT INTO society_bench_reports (id, revision, judge_revision, per_task) VALUES (gen_random_uuid(), 'r1', 'r1', :p)"),
+               {"p": '{"t": {"split": "dev", "delivered": 0, "runs": ["turn_budget", "turn_budget", "turn_budget"]}}'})
+    db.commit()
+
+
 def test_heartbeat_is_bounded_per_interval(db, monkeypatch, society_settings):
+    _work_in_backlog(db, monkeypatch)
     monkeypatch.setenv("SOCIETY_HEARTBEAT_INTERVAL_SECONDS", "3600")
     reset_settings_cache()
     settings = SocietySettings()
@@ -79,6 +90,7 @@ def test_heartbeat_is_bounded_per_interval(db, monkeypatch, society_settings):
 
 
 def test_heartbeat_wakes_governor_to_create_society_goal(db, SessionLocal, monkeypatch, society_settings, grants_with_no_cooldown):
+    _work_in_backlog(db, monkeypatch)
     monkeypatch.setenv("SOCIETY_HEARTBEAT_INTERVAL_SECONDS", "3600")
     reset_settings_cache()
     settings = SocietySettings()

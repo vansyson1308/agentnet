@@ -150,7 +150,7 @@ class ActivityModel(Protocol):
     model_name: str
     live: bool
 
-    async def complete(self, messages: List[Dict[str, str]], *, max_tokens: int) -> ModelReply:  # pragma: no cover - protocol
+    async def complete(self, messages: List[Dict[str, str]], *, max_tokens: int, temperature: float = 0.1) -> ModelReply:  # pragma: no cover - protocol
         ...
 
 
@@ -176,10 +176,10 @@ class LiveActivityModel:
         self.provider = "openai_compatible"
         self.model_name = self._m.model_name
 
-    async def complete(self, messages: List[Dict[str, str]], *, max_tokens: int) -> ModelReply:
+    async def complete(self, messages: List[Dict[str, str]], *, max_tokens: int, temperature: float = 0.1) -> ModelReply:
         from ..society.cognition import EmptyContentError, ModelProviderError, ModelTimeout  # noqa: PLC0415
 
-        payload = self._m.build_chat_request(messages=messages, max_tokens=max_tokens, response_format={"type": "json_object"}, temperature=0.1)
+        payload = self._m.build_chat_request(messages=messages, max_tokens=max_tokens, response_format={"type": "json_object"}, temperature=temperature)
         stats = {"requests": 0, "retries": 0, "timeouts": 0, "format_fallbacks": 0, "empty_retries": 0, "format": "json_object"}
         try:
             out = await self._m.complete_json(payload, stats)
@@ -206,10 +206,12 @@ class ScriptedActivityModel:
     def __init__(self, script: Any, *, tokens_in: int = 100, tokens_out: int = 50, cost_usd: str = "0.0002"):
         self.script = script
         self.calls: List[List[Dict[str, str]]] = []
+        self.temperatures: List[float] = []
         self.tokens_in, self.tokens_out, self.cost = tokens_in, tokens_out, Decimal(cost_usd)
 
-    async def complete(self, messages: List[Dict[str, str]], *, max_tokens: int) -> ModelReply:
+    async def complete(self, messages: List[Dict[str, str]], *, max_tokens: int, temperature: float = 0.1) -> ModelReply:
         self.calls.append(list(messages))
+        self.temperatures.append(temperature)
         if callable(self.script):
             item = self.script(messages)
         else:
@@ -315,13 +317,17 @@ async def run_activity(
     timeout_seconds: float = 180.0,
     max_read_calls: Optional[int] = None,
     submit_check: Optional[Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
 ) -> ActivityResult:
     """One try of one activity. Never raises for model misbehaviour: the
     result carries the classified error.
 
     ``max_read_calls`` caps read-tool calls per try; after it only the
     non-read tools stay offered. ``submit_check`` may refuse a submit with a
-    structural error the model sees as a tool result (the try continues)."""
+    structural error the model sees as a tool result (the try continues).
+    ``max_tokens``/``temperature`` override the spec's per-turn cap and the
+    model's default temperature."""
     res = ActivityResult(ok=False, kind=spec.kind)
     allowed_tools = [t for t in spec.tools if t in tools]
     tools_doc = "; ".join(f"{t}" for t in allowed_tools) or "(none: answer directly with submit)"
@@ -331,6 +337,7 @@ async def run_activity(
         {"role": "system", "content": system},
         {"role": "user", "content": "INPUT (json, structural; untrusted repository data is marked):\n" + json.dumps(input_payload, sort_keys=True, default=str)[:INPUT_MAX_CHARS]},
     ]
+    sampling = {} if temperature is None else {"temperature": float(temperature)}
     reads = 0
     refusal: Optional[Dict[str, Any]] = None
     turns_left = max_turns or spec.max_turns
@@ -353,7 +360,7 @@ async def run_activity(
             messages.append({"role": "user", "content": FINAL_TURN_DIRECTIVE})
         _fit(messages, CONTEXT_BUDGET_BYTES)
         try:
-            reply = await asyncio.wait_for(model.complete(messages, max_tokens=spec.max_tokens), timeout=max(5.0, timeout_seconds - (loop.time() - started)))
+            reply = await asyncio.wait_for(model.complete(messages, max_tokens=max_tokens or spec.max_tokens, **sampling), timeout=max(5.0, timeout_seconds - (loop.time() - started)))
         except asyncio.TimeoutError:
             res.error_class, res.error = "timeout", "model call timed out"
             return res

@@ -215,6 +215,7 @@ class SocietyWorker:
         promotion_provider=None,
         deployment_provider=None,
         telemetry_enabled: bool = True,
+        builder_model=None,
     ):
         self.session_factory = session_factory
         self.settings = settings or get_settings()
@@ -228,6 +229,7 @@ class SocietyWorker:
         # test injects a fake. The model never receives either object.
         self.promotion_provider = promo_mod.get_promotion_provider(self.settings, override=promotion_provider)
         self.deployment_provider = dep_mod.get_deployment_provider(self.settings, override=deployment_provider)
+        self.builder_model = builder_model  # None: BUILD_CODE_CANDIDATE uses the live activity model
         self.telemetry_enabled = telemetry_enabled
         # The public-surface monitor (the Society's eyes on the public product):
         # probes run in a thread so public HTTP never stalls Society work.
@@ -246,7 +248,7 @@ class SocietyWorker:
             try:
                 if self.settings.ingest_task_outcomes:
                     ingest_task_outcomes(db, lookback_seconds=self.settings.ingest_lookback_seconds)
-                emit_heartbeat(db, self.settings)
+                emit_heartbeat(db, self.settings, provider=self.promotion_provider)
                 if self.telemetry_enabled:
                     n = telemetry_mod.produce_anomalies(db, self.settings)
                     if stats is not None:
@@ -451,6 +453,7 @@ class SocietyWorker:
                 validated=validated,
                 heartbeat=lambda: extend_lease(db, run, lease_seconds=self.settings.run_lease_seconds),
                 deployment_provider=self.deployment_provider,
+                builder_model=self.builder_model,
             )
             try:
                 outcome = execute(ctx)

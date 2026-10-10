@@ -1,0 +1,30 @@
+{
+ "version": 2,
+ "about": "AgentNet builder bench HOLDOUT: same rules as tasks.json. Never in any model context (every repository read/search tool refuses scripts/bench/holdout*); only the controller reads its scores. Chosen deterministically: the 4 of the original 12 tasks with the smallest sha256(id).",
+ "tasks": [
+  {"id": "surface-placeholder-healthy-sample",
+   "fix_sha": "059b016637d81353e11e9800c2f289bd9d9a154e",
+   "files_allowed": ["services/registry/app/society/surface.py"],
+   "test_files": ["tests/society/maintenance/test_surface_placeholder_recovery.py"],
+   "failing_tests": ["tests/society/maintenance/test_surface_placeholder_recovery.py::test_a_clean_page_emits_an_ok_placeholder_observation_for_every_navigation_source"],
+   "task": "The public-surface monitor records a '<source>:placeholders' observation for a crawled navigation page only when the page has dead '#' or 'javascript:' links, so an incident opened for a page that later becomes clean never receives a healthy sample and can never recover. Make every crawled navigation source emit its '<source>:placeholders' observation: failing (PLACEHOLDER_LINK) when it has dead links, healthy otherwise. Do not change what counts as a dead link."},
+  {"id": "release-preview-baseline",
+   "fix_sha": "68b133d9a08179c29f589e2a557d3e2670ee422b",
+   "files_allowed": ["docs/MAINTENANCE_RELEASE.md", "services/registry/app/maintenance/release.py", "services/registry/app/maintenance/release_providers.py"],
+   "test_files": ["tests/society/maintenance/test_release_preview.py"],
+   "failing_tests": ["tests/society/maintenance/test_release_preview.py::test_a_public_surface_regression_fails_the_preview", "tests/society/maintenance/test_release_preview.py::test_another_defect_still_open_in_production_does_not_block_the_repair_of_this_one", "tests/society/maintenance/test_release_preview.py::test_the_repaired_item_must_be_healthy_on_the_preview"],
+   "task": "The maintenance release preview refuses a repair unless every monitored public-surface contract item passes on the preview, so any other defect still open in production blocks the first repair. Judge the preview like post-deploy verification: using the release's recorded production baseline probe, fail only when an item that was healthy in the baseline fails on the preview (an item unknown to the baseline counts as healthy), and separately require the repaired incident's own item to be healthy on the preview. Leave the other preview checks unchanged."},
+  {"id": "targeted-only-dispatch",
+   "fix_sha": "ddc8cbb47989d718c755006f5f41b30ad368f653",
+   "files_allowed": ["docs/SOCIETY_RUNTIME.md", "services/registry/app/society/runs.py"],
+   "test_files": ["tests/society/test_events_and_dispatch.py", "tests/society/test_repo_intel.py"],
+   "failing_tests": ["tests/society/test_events_and_dispatch.py::test_an_agent_targeted_event_is_never_also_broadcast_to_its_subscribers"],
+   "task": "Society dispatch wakes an event's targeted agent and also every role subscribed to the event type, so each repository read result wakes bystanders and burns the story's run budget. An event targeted at one agent must wake only that agent, never also the subscribers of its type."},
+  {"id": "driver-memory-step",
+   "fix_sha": "f3c78af0bb7f09e5155a8d8c7f155a86860bc1ea",
+   "files_allowed": ["deploy/railway/phase5_live.py"],
+   "test_files": ["tests/test_railway_validator.py"],
+   "failing_tests": ["tests/test_railway_validator.py::test_memory_view_is_read_only_scrubbed_and_never_reads_contents", "tests/test_railway_validator.py::test_plan_grammar_accepts_a_memory_role_and_rejects_junk"],
+   "task": "The Phase 5 live driver cannot show the memory a role carries into its next run. Add a read-only 'memory:<role>' plan step that reports how many live memory rows the role carries and where they came from, scrubbed and without ever reading memory contents, and make the plan grammar accept a memory role and reject junk."}
+ ]
+}

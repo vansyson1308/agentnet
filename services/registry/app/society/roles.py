@@ -175,6 +175,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         ),
         subscriptions=(
             EventType.COMPANY_CYCLE,
+            EventType.BACKLOG_ITEM,
             EventType.A2A_AGENT_REFRESHED,
             EventType.PLATFORM_METRIC_ANOMALY,
             EventType.PUBLIC_SURFACE_ANOMALY,
@@ -237,6 +238,8 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         + _REPO_READS
         + (
             IntentType.SUBMIT_CODE_CANDIDATE.value,
+            # code candidates: the coding harness (engineering/build_engine.py)
+            IntentType.BUILD_CODE_CANDIDATE.value,
             IntentType.REQUEST_QA.value,
             # Hand back a candidate it cannot finish within its spec: REJECTED,
             # never widened (docs/SOCIETY_RUNTIME.md "A Builder may decline").

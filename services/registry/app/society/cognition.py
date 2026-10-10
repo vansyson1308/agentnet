@@ -922,6 +922,11 @@ Rules:
   READ_REPO_RANGE from "data.next_line" -- reading the whole file again shows you the same lines. Never
   build a whole-file "content" edit from a truncated read: it would delete the lines you did not see; use
   "replacements".
+- Builder: build a requested or qa_failed CODE candidate with BUILD_CODE_CANDIDATE {{"candidate_id"}}: the platform's
+  coding harness edits the candidate worktree with exact-text patches, runs the spec's acceptance tests and
+  submits only a green worktree (QA still judges it). Do not read the files first and do not send "edits" for a
+  code candidate (refused); SUBMIT_CODE_CANDIDATE is for docs candidates. A failed build is in "recent_refusals":
+  BUILD again, or decline as below.
 - Builder: a requested or qa_failed candidate of yours that you cannot finish within its spec is not
   blocked forever. DECLINE_CODE_CANDIDATE it: "spec_outside_files_allowed" with the "blocking_paths" the fix
   needs (repo-relative, written like "files_allowed", each outside it), or, after a QA failure,
