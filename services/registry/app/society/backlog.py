@@ -19,6 +19,7 @@ failure class, counts). An empty backlog with no open candidate = idle heartbeat
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from collections import Counter
 from typing import Any, Dict, List, Optional
@@ -58,8 +59,9 @@ def latest_report(db: Session, revision: str = "") -> Optional[Dict[str, Any]]:
     return {**dict(row), "stale": stale} if row else None
 
 
-def trend(db: Session, n: int = 7) -> List[Dict[str, Any]]:
-    """The last ``n`` bench reports, latest first: overall and dev scores, cost (never holdout)."""
+def trend(db: Session, n: int = 7, *, with_cost: bool = False) -> List[Dict[str, Any]]:
+    """The last ``n`` bench reports, latest first: overall and dev scores (never holdout);
+    cost only for the operator view -- public society routes stay structural."""
     rows = db.execute(text("SELECT revision, judge_revision, path, repeat, summary, created_at FROM society_bench_reports ORDER BY created_at DESC LIMIT :n"), {"n": n}).mappings()
     out = []
     for r in rows:
@@ -67,7 +69,7 @@ def trend(db: Session, n: int = 7) -> List[Dict[str, Any]]:
         out.append({"at": r["created_at"].isoformat() if r["created_at"] else None, "revision": str(r["revision"])[:12], "candidate": r["revision"] != r["judge_revision"],
                     "path": r["path"], "repeat": r["repeat"], "samples": (s.get("config") or {}).get("builder_samples"), "pass_at_1": s.get("pass_at_1"),
                     "pass_at_k": s.get("pass_at_k"), "dev_pass_at_1": ((s.get("splits") or {}).get("dev") or {}).get("pass_at_1"),
-                    "delivered": s.get("delivered"), "runs": s.get("runs"), "cost_usd": s.get("cost_usd")})
+                    "delivered": s.get("delivered"), "runs": s.get("runs"), **({"cost_usd": s.get("cost_usd")} if with_cost else {})})
     return out
 
 
@@ -93,7 +95,7 @@ def incident_items(db: Session) -> List[Dict[str, Any]]:
     rows = (db.query(MaintenanceIncident).filter(MaintenanceIncident.status == "open", MaintenanceIncident.id.notin_(live))
             .order_by(MaintenanceIncident.priority, MaintenanceIncident.opened_at).limit(10).all())
     return [{"source": "maintenance_incident", "key": f"incident:{i.id}:{i.case_count}", "incident_id": str(i.id), "failure_class": i.incident_class,
-             "priority": i.priority, "target": i.target, "cases_so_far": int(i.case_count or 0)} for i in rows]
+             "priority": i.priority, "target": i.target, "cases_so_far": int(i.case_count or 0), "sli_ref": i.desired_state_ref} for i in rows]
 
 
 def issue_items(provider: Any) -> List[Dict[str, Any]]:
@@ -105,7 +107,8 @@ def issue_items(provider: Any) -> List[Dict[str, Any]]:
     except Exception:  # noqa: BLE001 -- an unreachable GitHub is no backlog, never a crash
         return []
     return [{"source": "github_issue", "key": f"issue:{i['number']}:{i['updated_at']}", "issue_number": int(i["number"]), "failure_class": "agent_ok_issue",
-             "title": {"_untrusted": True, "text": str(i.get("title") or "")[:120]}} for i in issues[:10]]
+             "title": {"_untrusted": True, "text": str(i.get("title") or "")[:120]},
+             "objectives": [lb for lb in i.get("labels") or [] if re.fullmatch(r"O[1-5]", str(lb))]} for i in issues[:10]]
 
 
 def collect(db: Session, settings: SocietySettings, provider: Any = None) -> List[Dict[str, Any]]:
