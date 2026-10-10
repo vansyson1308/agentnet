@@ -25,6 +25,14 @@ LIVE_STATUSES = ("approved", "building", "ready", "merged")
 #: Owner tasks (and incidents) skip the daily plan; they still pass the gate.
 BYPASS_SOURCES = ("owner", "incident")
 PLAN_MAX, PER_DEPARTMENT = 3, 2
+MODEL_TICKETS_PER_DEPARTMENT = 2
+#: Proofs that are not pytest node ids: a probe metric, a bench task, an owner issue.
+NON_TEST_PROOFS = ("probe:", "bench:", "issue:")
+#: Supplied tickets (``supply``): backlog source -> (charter department, KR metric). An issue maps to the objective its owner tagged.
+SUPPLY = {"bench": ("engineering", "bench_holdout_pass_at_1"), "maintenance_incident": ("sre_release", "core_journey_success_rate"),
+          "github_issue": ("strategy_product", None)}
+OPEN_TICKET = ("proposed", "planned", "approved", "building", "ready")
+_NS = uuid.UUID("6c1f0e3a-8a51-4c2e-9d0b-2f6a1c7e5b10")
 DEPARTMENT_BY_ROLE = {"governor": "ceo_office", "scout": "strategy_product", "architect": "engineering", "builder": "engineering", "qa": "quality", "security": "security", "evaluator": "analytics"}
 
 
@@ -41,6 +49,17 @@ def create(db: Session, *, proposal_id: uuid.UUID, title: str, fields: Dict[str,
          "d": fields["direction"], "proof": json.dumps(list(fields.get("proof") or [])), "s": source, "pr": max(0, min(5, importance // 20)),
          "dep": DEPARTMENT_BY_ROLE.get(role, "strategy_product")})
     return tid
+
+
+def model_ticket_refusal(db: Session, role: str, has_evidence: bool, now: datetime) -> Optional[str]:
+    if not has_evidence:
+        return "a ticket filed by a model must cite evidence (signal, baseline, observed, window, actionable_reason)"
+    dept = DEPARTMENT_BY_ROLE.get(role, "strategy_product")
+    n = db.execute(text("SELECT COUNT(*) FROM society_tickets WHERE department = :d AND source IN ('scout', 'department') AND created_at >= :t"),
+                   {"d": dept, "t": now.replace(hour=0, minute=0, second=0, microsecond=0)}).scalar() or 0
+    if n >= MODEL_TICKETS_PER_DEPARTMENT:
+        return f"{dept} already filed {n} ticket(s) today (at most {MODEL_TICKETS_PER_DEPARTMENT}); the backlog supplies the rest"
+    return None
 
 
 def for_proposal(db: Session, proposal_id: Optional[uuid.UUID]) -> Optional[Dict[str, Any]]:
@@ -61,7 +80,7 @@ def add_cost(db: Session, ticket_id: Any, usd: Any) -> None:
 
 
 def proof_tests(ticket: Dict[str, Any]) -> List[str]:
-    return [p for p in (ticket.get("proof") or []) if isinstance(p, str) and not p.startswith("probe:")]
+    return [p for p in (ticket.get("proof") or []) if isinstance(p, str) and not p.startswith(NON_TEST_PROOFS)]
 
 
 def check(db: Session, proposal_id: Optional[uuid.UUID], spec: Dict[str, Any], now: datetime) -> Dict[str, Any]:
@@ -137,7 +156,13 @@ def build_plan(db: Session, cycle_id: Optional[uuid.UUID], now: datetime) -> Opt
             chosen.append({"ticket_id": str(t["id"]), "title": t["title"], "objective_id": t["objective_id"], "metric_id": t["metric_id"],
                            "department": t["department"], "score": sc})
     if not chosen:
-        return None
+        if not active:
+            why = "no active objective (activate one: company:activate:O<n>)"
+        elif not ranked:
+            why = f"no active objective has evidence: no proposed ticket for {sorted(active)} (backlog empty or mapped elsewhere)"
+        else:
+            why = f"{len(ranked)} proposed ticket(s) scored 0 (key result already met or effect in the wrong direction)"
+        return {"id": None, "empty_reason": why}
     pid = uuid.uuid4()
     db.execute(text("INSERT INTO society_daily_plans (id, cycle_id, plan_date, ticket_ids, ranking) VALUES (:id, :c, :d, CAST(:t AS JSONB), CAST(:r AS JSONB))"),
                {"id": pid, "c": cycle_id, "d": now.date(), "t": json.dumps([c["ticket_id"] for c in chosen]), "r": json.dumps(chosen)})
@@ -194,6 +219,69 @@ def create_owner_ticket(db: Session, *, user_id: Any, title: str, problem: str, 
     return {"ticket_id": str(tid), "proposal_id": str(p.id)}
 
 
+def last_empty_reason(db: Session) -> Optional[str]:
+    """Why the latest settled cycle produced no plan (None when it produced one)."""
+    detail = db.execute(text("SELECT outcome_detail FROM society_company_cycles WHERE outcome IS NOT NULL ORDER BY created_at DESC LIMIT 1")).scalar()
+    return (detail or {}).get("plan_empty_reason")
+
+
 def plans_view(db: Session, limit: int = 14) -> List[Dict[str, Any]]:
     rows = db.execute(text("SELECT id, plan_date, status, ranking, decided_at, created_at FROM society_daily_plans ORDER BY created_at DESC LIMIT :n"), {"n": limit}).mappings().all()
     return [{k: (str(v) if isinstance(v, (uuid.UUID, date)) else v) for k, v in r.items()} for r in rows]
+
+
+def _subject(item: Dict[str, Any]) -> Optional[str]:
+    """The stable thing a backlog item is about (its key also carries the report/case/update)."""
+    src = item.get("source")
+    if src == "bench":
+        return f"bench:{item['task_id']}"
+    if src == "maintenance_incident" and "core_journey" in str(item.get("sli_ref") or ""):
+        return f"probe:core_journey_success_rate:{item['incident_id']}"
+    if src == "github_issue" and item.get("objectives"):
+        return f"issue:{item['issue_number']}"
+    return None  # not a ticket: no objective owns it
+
+
+def supply(db: Session, items: List[Dict[str, Any]], now: datetime) -> List[str]:
+    """Every open backlog item an objective owns becomes ONE proposed ticket (no model):
+    proof = the failing bench task / probe / issue, expected effect = the KR gap shared
+    by that KR's items, department from the charter. Idempotent per backlog key, and
+    never a second open ticket for the same subject. The caller commits."""
+    from ..models import ImprovementProposal  # noqa: PLC0415
+
+    objs = charter.objectives(db)
+    mapped = []
+    for item in items:
+        subject = _subject(item)
+        dept, metric = SUPPLY.get(str(item.get("source")), (None, None))
+        obj = next((o for o in objs if (metric and metric in [k["metric_id"] for k in o["key_results"]]) or o["id"] in (item.get("objectives") or [])), None)
+        if subject and obj:
+            kr = next(k for k in obj["key_results"] if k["metric_id"] == metric) if metric else obj["key_results"][0]
+            mapped.append((item, subject, dept, obj, kr))
+    created = []
+    for item, subject, dept, obj, kr in mapped:
+        tid = uuid.uuid5(_NS, f"ticket:{item['key']}")
+        proof = [subject.rsplit(":", 1)[0] if subject.startswith("probe:") else subject]
+        if db.execute(text("SELECT 1 FROM society_tickets WHERE id = :id OR (proof = CAST(:p AS JSONB) AND status IN :open)").bindparams(
+                bindparam("open", expanding=True)), {"id": tid, "p": json.dumps(proof), "open": list(OPEN_TICKET)}).first():
+            continue
+        current = metrics.read(db, kr["metric_id"], now)
+        start = current if current is not None else (kr.get("baseline") or 0)
+        share = sum(1 for m in mapped if m[4]["metric_id"] == kr["metric_id"])
+        effect = round(abs(float(kr["target"]) - float(start)) / share, 4)
+        if effect <= 0:
+            continue  # the key result is already met: nothing to buy
+        title = {"bench": f"Builder harness: deliver dev task {item.get('task_id')} ({item.get('delivered')}/{item.get('runs')} runs)",
+                 "maintenance_incident": f"Core journey: incident {str(item.get('incident_id'))[:8]} ({item.get('failure_class')})",
+                 "github_issue": f"Owner issue #{item.get('issue_number')}"}[item["source"]]
+        pid = uuid.uuid5(_NS, f"proposal:{item['key']}")
+        db.add(ImprovementProposal(id=pid, source="audit", title=title[:255], problem=f"backlog {item['key']} ({item.get('failure_class')})",
+                                   proposed_change=f"move {kr['metric_id']} {kr['direction']} by {effect:g}; proof {proof[0]}", status="PROPOSED",
+                                   target_scope="platform", importance=60))
+        db.flush()
+        db.execute(text("INSERT INTO society_tickets (id, proposal_id, title, objective_id, metric_id, expected_effect, direction, proof, source, priority, department) "
+                        "VALUES (:id, :p, :t, :o, :m, :e, :d, CAST(:proof AS JSONB), 'backlog', :pr, :dep)"),
+                   {"id": tid, "p": pid, "t": title[:255], "o": obj["id"], "m": kr["metric_id"], "e": effect, "d": kr["direction"],
+                    "proof": json.dumps(proof), "pr": 6 - int(obj["owner_priority"]), "dep": dept})
+        created.append(str(tid))
+    return created

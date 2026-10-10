@@ -451,6 +451,12 @@ def _create_improvement(ctx: ExecContext) -> ExecOutcome:
     ctx.db.flush()
     ticket_id = None
     if p.ticket is not None:
+        if ctx.settings.company_cycle_enabled:
+            # The backlog supplies tickets deterministically (tickets.supply); a model may
+            # only ADD, with evidence, at most MODEL_TICKETS_PER_DEPARTMENT a day per department.
+            refused = tickets.model_ticket_refusal(ctx.db, ctx.grant.role, p.evidence is not None, ctx.now)
+            if refused:
+                raise ExecutionError(refused)
         src = "backlog" if ctx.event.event_type == EventType.BACKLOG_ITEM else "scout" if ctx.grant.role == "scout" else "department"
         ticket_id = tickets.create(ctx.db, proposal_id=proposal.id, title=p.title, fields=p.ticket.model_dump(), source=src, role=ctx.grant.role, importance=p.importance)
     ev = _emit(
