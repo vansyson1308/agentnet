@@ -113,7 +113,7 @@ def main() -> int:
     tasks = bench.load_tasks(os.getenv("BENCH_ONLY", ""), split)
     # the validator clone is shallow; the tasks are commits of main and need their parents
     subprocess.run(["git", "-C", REPO, "fetch", "-q", "--unshallow", "origin", "+refs/heads/main:refs/remotes/origin/main"], check=True, timeout=600)
-    missing = [t["id"] for t in tasks if subprocess.run(["git", "-C", REPO, "cat-file", "-e", t["fix_sha"] + "^"], capture_output=True).returncode]
+    missing = [t["id"] for t in tasks if "fix_sha" in t and subprocess.run(["git", "-C", REPO, "cat-file", "-e", t["fix_sha"] + "^"], capture_output=True).returncode]
     print(f"BENCH-REPO tasks={len(tasks)} split={split} missing_commits={missing}", flush=True)
     revision = _git("rev-parse", "HEAD")
     argv = ["--repo", REPO, "--path", os.getenv("BENCH_PATH", "maintenance"), "--repeat", os.getenv("BENCH_REPEAT", "3"), "--split", split]
