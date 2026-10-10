@@ -30,15 +30,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib.metadata
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
 import uuid
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -60,6 +62,10 @@ from services.registry.app.society.engineering import workspace as ws_mod  # noq
 
 TASKS = pathlib.Path(__file__).with_name("tasks.json")
 HOLDOUT = pathlib.Path(__file__).with_name("holdout.json")
+# Holdout tasks from OTHER repositories (a pinned SWE-bench Verified subset):
+# base commit + the task's test patch is the attempt's base; never readable by a model tool.
+HOLDOUT_EXTERNAL = pathlib.Path(__file__).with_name("holdout_external.json")
+EXTERNAL_CACHE = pathlib.Path(os.environ.get("BENCH_EXTERNAL_CACHE") or pathlib.Path(tempfile.gettempdir()) / "agentnet-bench-ext")
 SPLITS = ("dev", "holdout", "all")
 PATCH_PROTOCOL = build_engine.PATCH_PROTOCOL
 PATHS = ("maintenance", "society")
@@ -70,11 +76,42 @@ def _git(args: List[str], cwd: str) -> str:
     return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
+def external_checkout(task: dict) -> str:
+    """A blobless clone of the task's repository (cached), holding its base commit."""
+    dest = EXTERNAL_CACHE / re.sub(r"[^A-Za-z0-9]+", "_", task["repo"].split("github.com/")[-1])
+    if not (dest / ".git").exists():
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "clone", "-q", "--filter=blob:none", "--no-checkout", task["repo"], str(dest)], check=True, capture_output=True, timeout=1800)
+    if subprocess.run(["git", "-C", str(dest), "cat-file", "-e", task["base_sha"] + "^{commit}"], capture_output=True).returncode:
+        _git(["fetch", "-q", "origin", task["base_sha"]], str(dest))
+    return str(dest)
+
+
+def ensure_deps(tasks: List[dict]) -> None:
+    """pip-install the pinned packages external tasks need (``name==version``), once."""
+    def have(spec: str) -> bool:
+        name, _, ver = spec.partition("==")
+        try:
+            return importlib.metadata.version(name) == ver
+        except importlib.metadata.PackageNotFoundError:
+            return False
+    missing = sorted({d for t in tasks for d in t.get("deps", []) if not have(d)})
+    if missing:
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", *missing], check=True, capture_output=True, timeout=900)
+
+
 def prepare(repo: str, task: dict, root: str) -> ws_mod.Workspace:
-    """Worktree at fix_sha with the fix reverted, committed as the attempt's base."""
+    """Worktree at fix_sha with the fix reverted (or, for an external task, at its
+    base commit with its test patch applied), committed as the attempt's base."""
     path = os.path.join(root, task["id"])
-    _git(["worktree", "add", "-q", "--detach", path, task["fix_sha"]], repo)
-    _git(["checkout", task["fix_sha"] + "^", "--", *task["files_allowed"]], path)
+    if task.get("repo"):
+        repo = external_checkout(task)
+        _git(["worktree", "add", "-q", "--detach", path, task["base_sha"]], repo)
+        subprocess.run(["git", "apply", "-"], cwd=path, input=task["test_patch"], text=True, check=True, capture_output=True)
+        _git(["add", "-A"], path)
+    else:
+        _git(["worktree", "add", "-q", "--detach", path, task["fix_sha"]], repo)
+        _git(["checkout", task["fix_sha"] + "^", "--", *task["files_allowed"]], path)
     _git(["-c", "user.name=bench", "-c", "user.email=bench@localhost", "commit", "-q", "--no-verify", "-m", f"bench base: {task['id']}"], path)
     return ws_mod.Workspace(uuid.uuid5(uuid.NAMESPACE_URL, "bench:" + task["id"]), pathlib.Path(path), "bench", _git(["rev-parse", "HEAD"], path), pathlib.Path(repo))
 
@@ -173,22 +210,53 @@ def _split_score(split: str, matrix: Dict[str, List[str]], splits: Dict[str, str
             "pass_at_k": round(sum("pass" in v for v in runs.values()) / (len(runs) or 1), 3)}
 
 
-def harness_verdict(baseline: Dict[str, Any], candidate: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge rule for a harness change (both reports judged by the RUNNING
-    revision): holdout delivered pass@1 must improve and no task may fall
-    from 3/3 to 0/3. Deterministic; the owner still merges."""
+def _units(report: Dict[str, Any], split: str, skip: frozenset = frozenset()) -> float:
+    """Delivered tasks of a split: sum of delivered/runs per task (a 2/3 task counts 0.67)."""
+    return sum(v["delivered"] / len(v["runs"]) for k, v in (report.get("per_task") or {}).items() if v["split"] == split and v["runs"] and k not in skip)
+
+
+def _cost_per_delivered(report: Dict[str, Any]) -> Optional[float]:
+    return float(report["cost_usd"]) / report["delivered"] if report.get("delivered") else None
+
+
+def partition(reports: List[Dict[str, Any]], *, min_samples: int = 3) -> Dict[str, List[str]]:
+    """Regression set: tasks the running revision delivered 3/3 with best-of-``min_samples``
+    on each of its two latest such reports (latest first). They still must not regress;
+    every other task is ACTIVE and feeds the backlog and the verdict."""
+    best = [r for r in reports if int((r.get("config") or {}).get("builder_samples") or 1) >= min_samples][:2]
+    if len(best) < 2:
+        return {"regression": [], "reports": len(best)}
+    full = [{k for k, v in (r.get("per_task") or {}).items() if len(v["runs"]) >= 3 and v["delivered"] == len(v["runs"])} for r in best]
+    return {"regression": sorted(full[0] & full[1]), "reports": 2}
+
+
+def harness_verdict(baseline: Dict[str, Any], candidate: Dict[str, Any], regression: Iterable[str] = ()) -> Dict[str, Any]:
+    """Merge rule for a harness change (both reports judged by the RUNNING revision),
+    over the ACTIVE tasks: holdout delivered not worse by more than 1 task AND (dev or
+    holdout improves by >= 2 tasks OR cost per delivered task drops >= 15%) AND no task
+    falls 3/3 -> 0/3 AND no regression-set task loses more than one run. A baseline whose
+    active holdout pass@1 >= 0.9 cannot tell: ``bench_saturated``. The owner still merges."""
+    reg = frozenset(regression)
     b, c = baseline.get("per_task") or {}, candidate.get("per_task") or {}
-    regressed = sorted(k for k, v in b.items() if v["delivered"] == len(v["runs"]) > 0 and k in c and c[k]["delivered"] == 0)
-    hb, hc = (r.get("splits", {}).get("holdout", {}).get("pass_at_1") for r in (baseline, candidate))
-    improves = hb is not None and hc is not None and hc > hb
-    return {"holdout_pass_at_1": {"baseline": hb, "candidate": hc}, "holdout_improves": improves, "regressed_3_to_0": regressed,
-            "dev_pass_at_1": {"baseline": baseline.get("splits", {}).get("dev", {}).get("pass_at_1"), "candidate": candidate.get("splits", {}).get("dev", {}).get("pass_at_1")},
-            "mergeable": improves and not regressed}
+    fell = sorted(k for k, v in b.items() if v["delivered"] == len(v["runs"]) > 0 and k in c and c[k]["delivered"] == 0)
+    reg_fell = sorted(k for k in reg if k in b and k in c and c[k]["delivered"] < b[k]["delivered"] - 1)
+    hb, hc, db_, dc = _units(baseline, "holdout", reg), _units(candidate, "holdout", reg), _units(baseline, "dev", reg), _units(candidate, "dev", reg)
+    runs = sum(len(v["runs"]) for k, v in b.items() if v["split"] == "holdout" and k not in reg)
+    hold_rate = round(sum(v["delivered"] for k, v in b.items() if v["split"] == "holdout" and k not in reg) / runs, 3) if runs else None
+    cb, cc = _cost_per_delivered(baseline), _cost_per_delivered(candidate)
+    cheaper = cb is not None and cc is not None and cc <= 0.85 * cb
+    improves = dc - db_ >= 2 or hc - hb >= 2
+    ok = hc >= hb - 1 and (improves or cheaper) and not fell and not reg_fell
+    verdict = "bench_saturated" if hold_rate is None or hold_rate >= 0.9 else ("mergeable" if ok else "not_mergeable")
+    return {"verdict": verdict, "mergeable": verdict == "mergeable", "active_holdout_pass_at_1_baseline": hold_rate,
+            "holdout_tasks": {"baseline": round(hb, 2), "candidate": round(hc, 2)}, "dev_tasks": {"baseline": round(db_, 2), "candidate": round(dc, 2)},
+            "cost_per_delivered_usd": {"baseline": cb and round(cb, 4), "candidate": cc and round(cc, 4)}, "regressed_3_to_0": fell, "regression_set_fell": reg_fell,
+            "regression_set": sorted(reg), "note": "bench saturated: add harder tasks" if verdict == "bench_saturated" else ""}
 
 
 def report_row(summary: Dict[str, Any], *, revision: str, judge_revision: str) -> Dict[str, Any]:
     """The society_bench_reports row: aggregates only (no task text, no model output)."""
-    keys = ("pass_at_1", "pass_at_k", "delivered", "runs", "tasks_run", "cost_usd", "cost_per_task_usd", "live", "splits", "result_classes")
+    keys = ("pass_at_1", "pass_at_k", "delivered", "runs", "tasks_run", "cost_usd", "cost_per_task_usd", "live", "splits", "result_classes", "config")
     return {"revision": revision, "judge_revision": judge_revision, "path": summary["config"].get("path", "maintenance"), "model": summary.get("model"),
             "repeat": int(summary.get("repeat") or 1), "summary": {k: summary.get(k) for k in keys},
             "per_task": {k: {"split": v["split"], "delivered": v["delivered"], "runs": v["runs"]} for k, v in summary["per_task"].items()}}
@@ -231,8 +299,8 @@ async def bench(tasks: List[dict], *, repo: str, model, budget: Decimal, ms: Opt
 def load_tasks(only: str = "", split: str = "dev") -> List[dict]:
     """``split``: dev (tasks.json), holdout (holdout.json) or all; each task is tagged with its split."""
     tasks = [{**t, "split": "dev"} for t in json.loads(TASKS.read_text(encoding="utf-8"))["tasks"]] if split in ("dev", "all") else []
-    if split in ("holdout", "all") and HOLDOUT.exists():
-        tasks += [{**t, "split": "holdout"} for t in json.loads(HOLDOUT.read_text(encoding="utf-8"))["tasks"]]
+    if split in ("holdout", "all"):
+        tasks += [{**t, "split": "holdout"} for f in (HOLDOUT, HOLDOUT_EXTERNAL) if f.exists() for t in json.loads(f.read_text(encoding="utf-8"))["tasks"]]
     wanted = {t for t in only.split(",") if t}
     return [t for t in tasks if not wanted or t["id"] in wanted]
 
@@ -253,7 +321,9 @@ def main(argv=None, *, model=None) -> int:
         return 2
     for k in [k for k in os.environ if k.startswith(("POSTGRES", "REDIS", "DATABASE_URL"))]:
         os.environ.pop(k)  # the bench never touches a database, and neither do the tests it runs
-    summary = asyncio.run(bench(load_tasks(args.only, args.split), repo=args.repo, model=model, budget=Decimal(os.getenv("BENCH_BUDGET_USD", "1")),
+    tasks = load_tasks(args.only, args.split)
+    ensure_deps(tasks)
+    summary = asyncio.run(bench(tasks, repo=args.repo, model=model, budget=Decimal(os.getenv("BENCH_BUDGET_USD", "1")),
                                 repeat=max(1, args.repeat), path=args.path))
     if args.json_out:
         pathlib.Path(args.json_out).write_text(json.dumps(summary, indent=2, sort_keys=True))
