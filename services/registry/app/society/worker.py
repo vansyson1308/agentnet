@@ -53,6 +53,7 @@ from . import candidate_health as candidate_health_mod
 from . import deployment as dep_mod
 from . import fitness as fitness_mod
 from . import memory_grounding
+from . import outcomes as outcomes_mod
 from . import promotion as promo_mod
 from . import redelivery as redelivery_mod
 from . import router as router_mod
@@ -673,6 +674,15 @@ class SocietyWorker:
         and fitness experiments. Returns how many items advanced."""
         p = promo_mod.process_promotions(self.session_factory, settings=self.settings, provider=self.promotion_provider, worker_id=self.worker_id)
         e = fitness_mod.process_experiments(self.session_factory, settings=self.settings, worker_id=self.worker_id)
+        db = self.session_factory()
+        try:  # outcomes.py: merged tickets' KR readings at merge, +24h, +7d (no model)
+            if outcomes_mod.record(db, utcnow()):
+                db.commit()
+        except Exception:  # noqa: BLE001 -- a reading failure never stops the loop
+            db.rollback()
+            logger.exception("ticket outcome recording failed")
+        finally:
+            db.close()
         advanced = sum(p.values()) + sum(e.values())
         if stats is not None:
             stats.promotions_advanced += sum(p.values())
