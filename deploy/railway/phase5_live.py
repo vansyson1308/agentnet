@@ -63,7 +63,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -140,10 +140,25 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("abandon takes exactly one candidate id")
         if name == "taskfail" and (len(args) > 1 or (args and not args[0].isdigit())):
             raise ValueError("taskfail[:<escrow-credits>]")
+        if name == "company" and not _company_args_ok(args):
+            raise ValueError("company[:view] | company:cycle | company:<activate|pause|propose|done>:<O1..O5> | company:<approve|reject>:<latest|plan-id>")
         plan.append((name, args))
     if not plan:
         raise ValueError("PHASE5_PLAN is empty")
     return plan
+
+
+COMPANY_OBJ_STATUS = {"activate": "active", "pause": "paused", "propose": "proposed", "done": "done"}
+
+
+def _company_args_ok(args: List[str]) -> bool:
+    if not args or args == ["view"] or args == ["cycle"]:
+        return True
+    if len(args) == 2 and args[0] in COMPANY_OBJ_STATUS:
+        return bool(re.fullmatch(r"O[1-5]", args[1]))
+    if len(args) == 2 and args[0] in ("approve", "reject"):
+        return args[1] == "latest" or bool(re.fullmatch(r"[0-9a-fA-F-]{32,36}", args[1]))
+    return False
 
 
 def json_lines(label: str, obj: Any, max_len: int = MAX_LINE) -> List[str]:
@@ -874,6 +889,37 @@ def step_abandon(out: Out, base: str, token: str, conn, candidate_id: str) -> No
     out.json("abandon", "events", evs)
 
 
+def step_company(out: Out, base: str, token: str, args: List[str]) -> None:
+    """Owner actions on company mode through the operator API (token in memory only):
+    view plans/tickets, start a cycle, set an objective status, approve/reject a plan."""
+    act = args[0] if args else "view"
+    if act == "cycle":
+        st, body = api("POST", f"{base}/v1/society/company/cycles", token)
+        out.check("company", "K01", st in (200, 201), f"start cycle HTTP {st}{'' if st in (200, 201) else ' ' + str(body)[:200]}")
+        out.json("company", "cycle", body)
+    elif act in COMPANY_OBJ_STATUS:
+        st, body = api("POST", f"{base}/v1/society/company/objectives/{args[1]}/status", token, {"status": COMPANY_OBJ_STATUS[act]})
+        out.check("company", "K02", st == 200, f"objective {args[1]} -> {COMPANY_OBJ_STATUS[act]} HTTP {st}{'' if st == 200 else ' ' + str(body)[:200]}")
+        out.json("company", "objectives", body)
+    elif act in ("approve", "reject"):
+        plan_id = args[1]
+        if plan_id == "latest":
+            st, body = api("GET", f"{base}/v1/society/company/plans", token)
+            waiting = [p for p in ((body or {}).get("plans") or []) if p.get("status") == "awaiting_owner"] if isinstance(body, dict) else []
+            if not out.check("company", "K03", bool(waiting), f"{len(waiting)} plan(s) awaiting the owner (HTTP {st})"):
+                return
+            plan_id = str(waiting[0]["id"])
+        st, body = api("POST", f"{base}/v1/society/company/plans/{plan_id}/{act}", token)
+        out.check("company", "K04", st == 200, f"{act} plan {plan_id[:8]} HTTP {st}{'' if st == 200 else ' ' + str(body)[:200]}")
+        out.json("company", "decision", body)
+    st, plans = api("GET", f"{base}/v1/society/company/plans", token)
+    out.check("company", "K05", st == 200, f"GET company/plans HTTP {st}")
+    out.json("company", "plans", plans)
+    st, tks = api("GET", f"{base}/v1/society/company/tickets?limit=20", token)
+    out.check("company", "K06", st == 200, f"GET company/tickets HTTP {st}")
+    out.json("company", "tickets", tks)
+
+
 def step_candidates(out: Out, conn, limit: int) -> None:
     """Read recent candidates and, crucially, WHY each one ended where it did.
 
@@ -1371,6 +1417,8 @@ def main() -> int:
                 step_taskfail(out, base, token, conn, int(args[0]) if args else 5, timeout)
             elif name == "abandon":
                 step_abandon(out, base, token, conn, args[0])
+            elif name == "company":
+                step_company(out, base, token, args)
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence
             if conn is not None:
                 try:
