@@ -59,7 +59,17 @@ REGRESSION_TESTS = ("tests/society/maintenance/test_author_patch_loop.py", "test
                     "tests/society/maintenance/test_builder_context.py", "tests/test_bench.py")
 BENCH_PROOF_RULE = "QA re-runs the task x3 with scripts/bench on the candidate harness (judged by the running revision): delivered >= 2/3 and more than the baseline"
 TASKS_REL = "scripts/bench/tasks.json"
-_TASKS = pathlib.Path(__file__).resolve().parents[4] / TASKS_REL
+
+
+def default_tasks_file(module: pathlib.Path = pathlib.Path(__file__)) -> pathlib.Path:
+    """tasks.json of the checkout this module runs from. The registry image has no
+    repository around /app/app/society/ (no scripts/): then a path that does not exist,
+    and dev_task() returns None -- never an import-time crash."""
+    parents = module.resolve().parents
+    return (parents[4] if len(parents) > 4 else parents[-1]) / TASKS_REL
+
+
+_TASKS = default_tasks_file()
 
 
 def bench_task(ticket: Optional[Dict[str, Any]]) -> Optional[str]:
