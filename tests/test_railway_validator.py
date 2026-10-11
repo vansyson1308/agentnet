@@ -551,3 +551,18 @@ def test_plan_grammar_accepts_company_owner_actions_and_rejects_junk():
     for bad in ("company:activate:O9", "company:approve", "company:approve:x;drop", "company:merge:latest", "company:activate"):
         with pytest.raises(ValueError):
             p5.parse_plan(bad)
+
+
+def test_the_journey_step_reports_core_journey_success_and_duration():
+    from datetime import datetime, timedelta, timezone
+
+    p5 = _driver()
+    assert p5.parse_plan("journey,journey:6") == [("journey", []), ("journey", ["6"])]
+    with pytest.raises(ValueError):
+        p5.parse_plan("journey:x")
+    t = datetime(2026, 10, 10, 18, tzinfo=timezone.utc)
+    rows = [(True, "4.1", "settled", t, "staging"), (False, "2.0", "escrow_task", t - timedelta(hours=1), "staging"), (True, "3.0", "settled", t - timedelta(hours=2), "staging")]
+    s = p5.journey_summary(rows)
+    assert s["observations"] == 3 and s["ok"] == 2 and s["success_rate"] == 0.6667 and s["failed_steps"] == ["escrow_task"]
+    assert s["duration_s"] == {"p50": 3.0, "p95": 4.1, "max": 4.1} and s["last_at"] == t.isoformat()
+    assert p5.journey_summary([])["success_rate"] is None
