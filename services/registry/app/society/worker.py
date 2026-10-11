@@ -54,6 +54,7 @@ from . import deployment as dep_mod
 from . import fitness as fitness_mod
 from . import memory_grounding
 from . import outcomes as outcomes_mod
+from . import tickets as tickets_mod
 from . import promotion as promo_mod
 from . import redelivery as redelivery_mod
 from . import router as router_mod
@@ -476,6 +477,7 @@ class SocietyWorker:
                 row.error = str(exc)[:2000]
                 row.executed_at = utcnow()
                 self._span(db, run, agent, f"society.intent.{row.intent_type}", SpanStatus.FAILED, started, {"intent_id": str(row.id), "error": str(exc)[:200]})
+                tickets_mod.note_intent_failure(db, self.settings, row)
                 db.commit()
                 M_INTENT_EXEC.labels(result="failed").inc()
                 if stats:
@@ -488,6 +490,7 @@ class SocietyWorker:
                 row.error = f"{type(exc).__name__}: {exc}"[:2000]
                 row.executed_at = utcnow()
                 self._span(db, run, agent, f"society.intent.{row.intent_type}", SpanStatus.FAILED, started, {"intent_id": str(row.id), "error": str(exc)[:200]})
+                tickets_mod.note_intent_failure(db, self.settings, row)
                 db.commit()
                 M_INTENT_EXEC.labels(result="error").inc()
                 if stats:
@@ -678,6 +681,8 @@ class SocietyWorker:
         try:  # outcomes.py: merged tickets' KR readings at merge, +24h, +7d (no model)
             if outcomes_mod.record(db, utcnow()):
                 db.commit()
+            if self.settings.company_cycle_enabled and tickets_mod.sweep_stale_designs(db, utcnow()):
+                db.commit()  # an approved ticket nobody designed is never silently stuck
         except Exception:  # noqa: BLE001 -- a reading failure never stops the loop
             db.rollback()
             logger.exception("ticket outcome recording failed")
