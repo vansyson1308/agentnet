@@ -999,8 +999,21 @@ def _engineering(db: Session, agent: Agent, event: SocietyEvent, settings: Socie
         "max_files_per_candidate": int(settings.max_files_per_candidate),
         "max_diff_lines": int(settings.max_diff_lines),
         "conventions": engineering_conventions(settings) if role in ENGINEERING_ROLES else {},
-        "company": _company(db) if settings.company_cycle_enabled else {},
+        "company": {**_company(db), **_design_ticket(db, event, settings)} if settings.company_cycle_enabled else {},
     }
+
+
+def _design_ticket(db: Session, event: SocietyEvent, settings: SocietySettings) -> Dict[str, Any]:
+    """The ticket this story designs and its work packet (work_packet.py: structural evidence,
+    the harness target and the proof) -- the Architect designs WHAT to change from it."""
+    from . import tickets, work_packet  # noqa: PLC0415
+
+    t = tickets.for_correlation(db, event.correlation_id)
+    if t is None:
+        return {}
+    view = {k: (str(t[k]) if isinstance(t[k], uuid.UUID) else t[k]) for k in ("id", "proposal_id", "title", "objective_id", "metric_id", "direction", "proof", "status", "reason")}
+    view["expected_effect"] = float(t["expected_effect"]) if t.get("expected_effect") is not None else None
+    return {"ticket": view, "work_packet": work_packet.for_ticket(db, t, getattr(settings, "repo_root", "") or "")}
 
 
 def _company(db: Session) -> Dict[str, Any]:
@@ -1014,7 +1027,10 @@ def _company(db: Session) -> Dict[str, Any]:
         "without it, or for a proof that already passes on main, no candidate is built. A ticket is designed (REQUEST_CODE_CHANGE) "
         "only after the owner approves it (event company.ticket_approved); until then the request is refused. Open backlog items "
         "already become tickets at each company cycle: file one only for NEW evidence (evidence required, <= 2 per department a day). "
-        "Proof bench:<task> = the builder harness must deliver that bench dev task; probe:<metric> = the deterministic probe.")}
+        "Proof bench:<task> = the builder harness must deliver that bench dev task: design a change to the HARNESS (work_packet.target names the "
+        "file and function the failure evidence implicates; files_allowed = harness files + tests only), acceptance_tests = "
+        "work_packet.regression_tests (pytest) -- the bench proof is added for you and QA re-runs the task x3 on the candidate harness. "
+        "probe:<metric> = the deterministic probe.")}
 
 
 def _promotions(db: Session, event: SocietyEvent) -> List[Dict[str, Any]]:

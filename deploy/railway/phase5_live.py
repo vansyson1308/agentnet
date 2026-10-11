@@ -31,6 +31,7 @@ never stops the plan so the evidence of the later steps is still recorded):
                                   follow the story until idle; `candidate` also asserts the engineering chain
     audit[:<hours>]               quality / loop / economics / secret / public-surface audit (default 24 h)
     intents:<correlation-id>      per-intent policy/validation reasons + decision summaries of one story (diagnosis)
+    journey[:<hours>]             the core-journey probe's maintenance_observations (sli=core_journey): count, success, duration (default 24 h)
 
 Environment (never printed):
     REGISTRY_PUBLIC_URL, POSTGRES_*, STAGING_VALIDATOR_SECRET, VALIDATOR_OPERATOR_EMAIL   as validate_staging.py
@@ -63,7 +64,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -140,6 +141,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("abandon takes exactly one candidate id")
         if name == "taskfail" and (len(args) > 1 or (args and not args[0].isdigit())):
             raise ValueError("taskfail[:<escrow-credits>]")
+        if name == "journey" and (len(args) > 1 or (args and not args[0].isdigit())):
+            raise ValueError("journey[:<hours>]")
         if name == "company" and not _company_args_ok(args):
             raise ValueError("company[:view] | company:cycle | company:<activate|pause|propose|done>:<O1..O5> | company:<approve|reject>:<latest|plan-id>")
         plan.append((name, args))
@@ -920,6 +923,31 @@ def step_company(out: Out, base: str, token: str, args: List[str]) -> None:
     out.json("company", "tickets", tks)
 
 
+def journey_summary(rows: Sequence[Tuple]) -> Dict[str, Any]:
+    """(ok, duration_s, step, observed_at, target) rows, newest first -> counts and duration percentiles."""
+    durs = sorted(float(r[1]) for r in rows if r[1] not in (None, ""))
+
+    def pct(q: float) -> Optional[float]:
+        return round(durs[min(len(durs) - 1, int(q * len(durs)))], 2) if durs else None
+
+    ok = sum(1 for r in rows if r[0])
+    return {"observations": len(rows), "ok": ok, "failed": len(rows) - ok, "success_rate": round(ok / len(rows), 4) if rows else None,
+            "duration_s": {"p50": pct(0.5), "p95": pct(0.95), "max": durs[-1] if durs else None},
+            "first_at": rows[-1][3].isoformat() if rows else None, "last_at": rows[0][3].isoformat() if rows else None,
+            "failed_steps": sorted({str(r[2]) for r in rows if not r[0]}),
+            "latest": [{"ok": bool(r[0]), "duration_s": r[1], "step": r[2], "at": r[3].isoformat(), "target": r[4]} for r in rows[:10]]}
+
+
+def step_journey(out: Out, conn, hours: int) -> None:
+    """The core-journey probe's evidence (maintenance/journey_probe.py): structural rows only."""
+    with conn.cursor() as cur:
+        rows = _rows(cur, "SELECT ok, payload ->> 'duration_s', payload ->> 'step', observed_at, target FROM maintenance_observations "
+                          "WHERE sli = 'core_journey' AND observed_at >= %s ORDER BY observed_at DESC", (_now() - timedelta(hours=hours),))
+    s = journey_summary(rows)
+    out.check("journey", "J01", s["observations"] > 0, f"{s['observations']} core_journey observation(s) in the last {hours}h, {s['ok']} ok, p50 {s['duration_s']['p50']}s")
+    out.json("journey", "summary", s)
+
+
 def step_candidates(out: Out, conn, limit: int) -> None:
     """Read recent candidates and, crucially, WHY each one ended where it did.
 
@@ -1387,7 +1415,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon") and conn is None:
+            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey") and conn is None:
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -1419,6 +1447,8 @@ def main() -> int:
                 step_abandon(out, base, token, conn, args[0])
             elif name == "company":
                 step_company(out, base, token, args)
+            elif name == "journey":
+                step_journey(out, conn, int(args[0]) if args else 24)
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence
             if conn is not None:
                 try:

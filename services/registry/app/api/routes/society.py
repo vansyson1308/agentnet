@@ -736,9 +736,18 @@ def create_owner_ticket(body: OwnerTicketBody, db: Session = Depends(get_db), op
 def list_tickets(db: Session = Depends(get_db), operator: User = Depends(require_operator), limit: int = Query(50, ge=1, le=200)):
     from sqlalchemy import text
 
-    cols = "id, title, objective_id, metric_id, expected_effect, direction, source, department, status, reason, plan_id, candidate_id, cost_usd, created_at"
+    from ...society import work_packet
+
+    cols = "id, title, objective_id, metric_id, expected_effect, direction, proof, source, department, status, reason, plan_id, candidate_id, cost_usd, created_at"
     rows = db.execute(text(f"SELECT {cols} FROM society_tickets ORDER BY created_at DESC LIMIT :n"), {"n": limit}).mappings().all()  # noqa: S608
-    return {"tickets": [dict(r) for r in rows]}
+    out = []
+    for r in rows:
+        t = dict(r)
+        packet = work_packet.for_ticket(db, t) if t["status"] not in ("merged", "closed", "already_satisfied") else None
+        if packet:  # the structural part only (failure evidence, target, proof rule)
+            t["work_packet"] = {k: packet[k] for k in ("evidence", "target", "proof")}
+        out.append(t)
+    return {"tickets": out}
 
 
 @router.get("/incidents")

@@ -31,6 +31,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .. import task_service
@@ -706,6 +707,30 @@ def _enforce_docs_contract(ctx: ExecContext, spec: Dict[str, Any], p) -> None:
     raise ExecutionError(f"docs candidate spec violates the engineering contract -> {detail}")
 
 
+def _bench_ticket_spec(ctx: ExecContext, proposal_id: Optional[uuid.UUID], spec: Dict[str, Any]) -> None:
+    """A bench ticket (proof ``bench:<task>``) is a builder-HARNESS change (work_packet.py):
+    files_allowed = harness files + tests, kind code, and the ticket's bench proof is
+    ALWAYS among the acceptance criteria (QA re-runs the task on the candidate harness).
+    Deterministic fills from the ticket; the design (files, description) stays the Architect's."""
+    from . import work_packet  # noqa: PLC0415
+
+    ticket = tickets.for_proposal(ctx.db, proposal_id)
+    if ticket is None and proposal_id is not None:
+        if ctx.db.execute(text("SELECT 1 FROM society_tickets WHERE id = :i"), {"i": proposal_id}).first():
+            raise ExecutionError("proposal_id is a TICKET id: pass the ticket's proposal_id (engineering.company.ticket.proposal_id)")
+    task_id = work_packet.bench_task(ticket)
+    if task_id is None:
+        return
+    refusal = work_packet.harness_scope_refusal(list(spec["files_allowed"]))
+    if refusal:
+        raise ExecutionError(refusal)
+    spec["kind"] = "code"
+    tests = [t for t in spec.get("acceptance_tests") or [] if not str(t).startswith("bench:")]
+    spec["acceptance_tests"] = (tests or list(work_packet.REGRESSION_TESTS)) + [f"bench:{task_id}"]
+    if not (spec.get("expected_effect") or "").strip():
+        spec["expected_effect"] = f"the builder harness delivers bench dev task {task_id} (>= 2/3 runs)"
+
+
 def _request_code_change(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
     spec = p.spec.model_dump()
@@ -728,6 +753,8 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
                 f"portfolio full: {open_red} open high-risk investigation(s) (SOCIETY_COMPANY_MAX_HIGH_RISK_INVESTIGATIONS="
                 f"{ctx.settings.company_max_high_risk_investigations}); finish it first"
             )
+    if ctx.settings.company_cycle_enabled:
+        _bench_ticket_spec(ctx, p.proposal_id, spec)
     # Anti-busywork: every autonomous engineering effort links signal -> proposal
     # -> expected effect -> acceptance criteria. Docs candidates need the
     # proposal link; code candidates additionally need an expected effect.
@@ -1119,6 +1146,26 @@ def _finish_candidate(ctx: ExecContext, cand: CodeCandidate, *, ready: bool, sum
     return events
 
 
+def _bench_runner(ctx: ExecContext, cand: CodeCandidate, ws) -> Callable[[str], Dict[str, Any]]:
+    """QA's ``bench:<task>`` proof (engineering/bench_proof.py) on THIS candidate's worktree; the
+    baseline is the task's latest main report; the model cost lands on the QA run and the ticket."""
+    from . import work_packet  # noqa: PLC0415
+    from .engineering import bench_proof  # noqa: PLC0415
+
+    def run(task_id: str) -> Dict[str, Any]:
+        report = work_packet.latest_task_report(ctx.db, task_id) or {}
+        baseline = int(((report.get("v") or {}).get("delivered")) or 0)
+        result = bench_proof.run_proof(ctx.settings, str(ws.path), task_id, baseline_delivered=baseline, heartbeat=ctx.heartbeat)
+        cost = Decimal(str(result.get("cost_usd") or "0"))
+        ctx.run.cost_usd = Decimal(str(ctx.run.cost_usd or 0)) + cost
+        ticket = tickets.for_proposal(ctx.db, cand.proposal_id)
+        if ticket is not None:
+            tickets.add_cost(ctx.db, ticket["id"], cost)
+        return result
+
+    return run
+
+
 def _evaluate_code_candidate(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
     cand = _get_candidate(ctx, p.candidate_id)
@@ -1137,7 +1184,8 @@ def _evaluate_code_candidate(ctx: ExecContext) -> ExecOutcome:
     ctx.heartbeat()
     try:
         ws = ws_mod.ensure_workspace(ctx.settings, cand.id)
-        report = evaluate_candidate(ctx.settings, ws, cand.spec or {}, list(cand.changed_files or []), attempts=prev_attempts + 1)
+        report = evaluate_candidate(ctx.settings, ws, cand.spec or {}, list(cand.changed_files or []), attempts=prev_attempts + 1,
+                                   bench_runner=_bench_runner(ctx, cand, ws))
     except ws_mod.WorkspaceError as exc:
         cand.status = CodeCandidateStatus.BUILT  # heartbeat committed QA_RUNNING; persist the reset
         cand.error = str(exc)[:2000]
@@ -1150,6 +1198,7 @@ def _evaluate_code_candidate(ctx: ExecContext) -> ExecOutcome:
     report_dict["evaluated_by"] = ctx.agent.name
     report_dict["run_id"] = str(ctx.run.id)
     report_dict["head_sha"] = cand.head_sha
+    report_dict["bench_proof"] = list(getattr(report, "bench_proof", []) or [])
     cand.qa_report = report_dict
     sec = dict(cand.security_report or {})
     sec["static_findings"] = findings

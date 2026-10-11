@@ -54,9 +54,15 @@ class BuildOutcome:
                 "samples": self.samples, "actions": [str(t.get("refused") and f"submit!{t['refused']}" or t.get("action")) for t in r.turn_log][:60]}
 
 
+def pytest_targets(spec: Dict[str, Any]) -> List[str]:
+    """The acceptance tests the harness runs while building: pytest targets only. A ``bench:<task>``
+    proof is QA's (engineering/bench_proof.py: the bench runner on the candidate harness)."""
+    return [t for t in spec.get("acceptance_tests") or [] if isinstance(t, str) and not t.startswith("bench:")]
+
+
 def spec_input(spec: Dict[str, Any], *, title: str, ws: ws_mod.Workspace, ms: MaintenanceSettings, feedback: Sequence[str] = ()) -> Dict[str, Any]:
     """The AuthorPatch input for a candidate spec (the Architect's text is a model artifact, marked untrusted)."""
-    files, tests = list(spec.get("files_allowed") or []), list(spec.get("acceptance_tests") or [])
+    files, tests = list(spec.get("files_allowed") or []), pytest_targets(spec)
     text = "\n".join(str(x) for x in (title, spec.get("description"), spec.get("expected_effect")) if x)
     out = {
         "task": {"trust": "untrusted_spec_text", "text": text[:6000]},
@@ -76,7 +82,7 @@ async def build(ws: ws_mod.Workspace, spec: Dict[str, Any], *, title: str, model
     from its base. The worktree is left as the delivered (else last) sample
     ended; nothing is committed here."""
     reset_to_base(ws)
-    files, tests = list(spec.get("files_allowed") or []), list(spec.get("acceptance_tests") or [])
+    files, tests = list(spec.get("files_allowed") or []), pytest_targets(spec)
     run = await h.author_patch(ws, spec_input(spec, title=title, ws=ws, ms=ms, feedback=feedback), files_allowed=files, tests=tests, model=model,
                                settings=ms, test_timeout=ss.qa_test_timeout_seconds, cost_cap=cost_cap, wrap_tools=wrap_tools)
     return BuildOutcome(run.result, run.state, run.samples)

@@ -69,6 +69,16 @@ def for_proposal(db: Session, proposal_id: Optional[uuid.UUID]) -> Optional[Dict
     return dict(row) if row else None
 
 
+def for_correlation(db: Session, correlation_id: Any) -> Optional[Dict[str, Any]]:
+    """The ticket a story designs: the one whose ``company.ticket_approved`` event opened it."""
+    tid = db.execute(text("SELECT payload ->> 'ticket_id' FROM society_events WHERE correlation_id = :c AND event_type = :t ORDER BY created_at LIMIT 1"),
+                     {"c": correlation_id, "t": EventType.COMPANY_TICKET_APPROVED}).scalar()
+    if not tid:
+        return None
+    row = db.execute(text("SELECT * FROM society_tickets WHERE id = CAST(:id AS UUID)"), {"id": tid}).mappings().first()
+    return dict(row) if row else None
+
+
 def set_status(db: Session, ticket_id: Any, status: str, reason: Optional[str] = None, **cols: Any) -> None:
     sets = "".join(f", {k} = :{k}" for k in cols)
     db.execute(text(f"UPDATE society_tickets SET status = :s, reason = COALESCE(:r, reason), updated_at = NOW(){sets} WHERE id = :id"),  # noqa: S608 -- column names are ours

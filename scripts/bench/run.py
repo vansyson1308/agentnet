@@ -178,15 +178,25 @@ async def run_task(task: dict, *, repo: str, root: str, rep: int = 0, model, ms:
             "actions": [str(t.get("refused") and f"submit!{t['refused']}" or t.get("action")) for t in res.turn_log]}
 
 
+#: Per-run structural fields a ticket's work packet reads (codes and counts; never model text).
+DETAIL_KEYS = ("result", "error_class", "turns", "test_runs", "patches", "samples", "sample_results", "tool_codes")
+
+
+def run_detail(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: row.get(k) for k in DETAIL_KEYS if k in row}
+
+
 def summarize(rows: List[Dict[str, Any]], *, live: bool, model_name: str, config: Dict[str, Any], skipped: List[str]) -> Dict[str, Any]:
     ran = [r for r in rows if r["result"] != "setup_error"]
     splits = {r["id"]: r.get("split", "dev") for r in rows}
     n = len(ran) or 1
     classes: Dict[str, int] = {}
     matrix: Dict[str, List[str]] = {}
+    details: Dict[str, List[Dict[str, Any]]] = {}
     for r in ran:
         classes[r["result"]] = classes.get(r["result"], 0) + 1
         matrix.setdefault(r["id"], []).append(r["result"])
+        details.setdefault(r["id"], []).append(run_detail(r))
     delivered = classes.get("pass", 0)
     return {
         "live": live, "model": model_name, "config": config, "repeat": config.get("repeat", 1),
@@ -198,7 +208,7 @@ def summarize(rows: List[Dict[str, Any]], *, live: bool, model_name: str, config
         "mean_turns": round(sum(r["turns"] for r in ran) / n, 2), "mean_test_runs": round(sum(r["test_runs"] for r in ran) / n, 2),
         "cost_usd": str(sum((Decimal(r["cost_usd"]) for r in ran), Decimal("0"))),
         "cost_per_task_usd": str(round(sum((Decimal(r["cost_usd"]) for r in ran), Decimal("0")) / n, 4)),
-        "result_classes": classes, "per_task": {k: {"delivered": v.count("pass"), "runs": v, "split": splits.get(k, "dev")} for k, v in sorted(matrix.items())},
+        "result_classes": classes, "per_task": {k: {"delivered": v.count("pass"), "runs": v, "split": splits.get(k, "dev"), "detail": details.get(k, [])} for k, v in sorted(matrix.items())},
         "splits": {sp: _split_score(sp, matrix, splits) for sp in sorted(set(splits.values()))},
     }
 
@@ -259,7 +269,9 @@ def report_row(summary: Dict[str, Any], *, revision: str, judge_revision: str) -
     keys = ("pass_at_1", "pass_at_k", "delivered", "runs", "tasks_run", "cost_usd", "cost_per_task_usd", "live", "splits", "result_classes", "config")
     return {"revision": revision, "judge_revision": judge_revision, "path": summary["config"].get("path", "maintenance"), "model": summary.get("model"),
             "repeat": int(summary.get("repeat") or 1), "summary": {k: summary.get(k) for k in keys},
-            "per_task": {k: {"split": v["split"], "delivered": v["delivered"], "runs": v["runs"]} for k, v in summary["per_task"].items()}}
+            "per_task": {k: {"split": v["split"], "delivered": v["delivered"], "runs": v["runs"],
+                             # dev only: the structural failure evidence a ticket's work packet carries (holdout stays scores)
+                             **({"detail": v.get("detail") or []} if v["split"] == "dev" else {})} for k, v in summary["per_task"].items()}}
 
 
 def run_config(ms: MaintenanceSettings, ss: SocietySettings, repeat: int = 1, path: str = "maintenance") -> Dict[str, Any]:

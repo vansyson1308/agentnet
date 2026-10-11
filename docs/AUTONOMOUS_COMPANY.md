@@ -105,3 +105,42 @@ Maintenance OS (`docs/MAINTENANCE_OS.md`): it never takes a portfolio slot, is n
 against proposals, and never waits for the 01:00 cycle. The company cycle keeps the innovation lane
 (features, experiments, strategy). An exhausted availability error budget or an active P0 repair
 freezes innovation promotion; maintenance and security repairs continue.
+
+## 9. From an approved ticket to a candidate
+
+A ticket (`society/tickets.py`) says why work exists: an active objective, a key-result metric and a
+proof. The owner approves the daily plan, `company.ticket_approved` opens one design story per
+ticket, and the Architect designs it with `REQUEST_CODE_CHANGE`.
+
+**Bench tickets.** A backlog bench ticket ("Builder harness: deliver dev task X (k/3 runs)") names
+what failed, not what to change. The change it needs is to the **builder harness**
+(`backlog.HARNESS_PATHS`), so that tasks like X are delivered. X itself is already solved on `main`.
+
+- **Work packet** (`society/work_packet.py`, deterministic). The Architect's context carries
+  `engineering.company.ticket` and `engineering.company.work_packet` for the story the approval
+  opened. The packet holds:
+  - the evidence from the latest main bench report that ran X: the result class of each run, plus
+    turns, test runs, patches and the last tool codes (`scripts/bench` stores these per run for dev
+    tasks only);
+  - the target: the harness file and function that the dominant failure class implicates, refined
+    by the last tool code (`TARGETS`, `CODE_TARGETS`);
+  - the proof rule and the regression tests.
+
+  `GET /v1/society/company/tickets` shows the structural part. Holdout tasks never get a packet.
+- **Spec rules** (executor, before the meaning gate):
+  - `files_allowed` holds at least one harness file, and anything else only under `tests/`;
+  - `kind` is `code`;
+  - the ticket's `bench:X` is always an acceptance criterion. The regression tests are filled in
+    when the spec names no pytest target.
+  - A ticket id passed as `proposal_id` is refused, with the fix in the error message.
+- **Proof** (`engineering/bench_proof.py`). After the pytest criteria pass, QA re-runs X three times
+  with `scripts/bench/run.py` on the candidate harness. This is the `BENCH_HARNESS_ROOT` path, with
+  the running revision's judge and task list.
+  - It passes when X is delivered on at least 2 of 3 runs **and** on more runs than in the baseline
+    (the latest main report).
+  - The child process runs model-authored code, so it never holds the model key. It reaches the
+    provider through a loopback relay that has a per-run token, accepts only `/chat/completions`
+    and caps the number of requests. It gets no database, GitHub or signing value.
+  - The run is bounded by `SOCIETY_BENCH_PROOF_BUDGET_USD` and `SOCIETY_BENCH_PROOF_TIMEOUT_SECONDS`.
+    Its cost is charged to the QA run and the ticket, and its numbers ride `qa_report.bench_proof`.
+  - The Builder runs only the pytest targets.
