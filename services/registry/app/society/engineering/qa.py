@@ -29,13 +29,14 @@ import re
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
-from typing import Dict, List, Sequence
+from typing import Callable, Dict, List, Optional, Sequence
 
 from ..config import SocietySettings
 from ..risk import assess as assess_risk
 from .workspace import Workspace, diff_text, is_protected
 
 logger = logging.getLogger(__name__)
+BENCH_PREFIX = "bench:"
 
 SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
@@ -163,17 +164,22 @@ def _run_acceptance(ws: Workspace, tests: Sequence[str], timeout: int) -> Check:
     return Check("acceptance_tests", ok, tail.strip()[-1500:])
 
 
-def evaluate_candidate(settings: SocietySettings, ws: Workspace, spec: Dict, changed: Sequence[str], *, attempts: int = 1) -> QAReport:
+def evaluate_candidate(settings: SocietySettings, ws: Workspace, spec: Dict, changed: Sequence[str], *, attempts: int = 1,
+                       bench_runner: Optional[Callable[[str], Dict]] = None) -> QAReport:
+    """``bench_runner(task_id)`` runs a ``bench:<task>`` proof (engineering/bench_proof.py) after the
+    pytest acceptance tests pass; without one a bench proof fails (never assumed)."""
     checks: List[Check] = []
     failures: List[str] = []
     allowed = {a.replace(os.sep, "/") for a in (spec.get("files_allowed") or [])}
-    tests = [t for t in (spec.get("acceptance_tests") or []) if isinstance(t, str) and t]
+    criteria = [t for t in (spec.get("acceptance_tests") or []) if isinstance(t, str) and t]
+    benches = [t[len(BENCH_PREFIX):] for t in criteria if t.startswith(BENCH_PREFIX)]
+    tests = [t for t in criteria if not t.startswith(BENCH_PREFIX)]
 
     # 1. criteria must exist
-    if not tests:
+    if not criteria:
         checks.append(Check("acceptance_criteria_present", False, "spec has no acceptance_tests; QA never fabricates criteria"))
     else:
-        checks.append(Check("acceptance_criteria_present", True, f"{len(tests)} acceptance test target(s)"))
+        checks.append(Check("acceptance_criteria_present", True, f"{len(tests)} acceptance test target(s), {len(benches)} bench proof(s)"))
 
     # 2. change must be non-empty and on the allow-list
     if not changed:
@@ -208,10 +214,20 @@ def evaluate_candidate(settings: SocietySettings, ws: Workspace, spec: Dict, cha
     # 6. run acceptance only if the gates above passed (avoid executing an off-list change)
     gates_ok = all(c.passed for c in checks)
     test_tail = ""
+    bench_results: List[Dict] = []
     if gates_ok:
-        acc = _run_acceptance(ws, tests, settings.qa_test_timeout_seconds)
-        checks.append(acc)
-        test_tail = acc.detail
+        if tests:
+            acc = _run_acceptance(ws, tests, settings.qa_test_timeout_seconds)
+            checks.append(acc)
+            test_tail = acc.detail
+        # 7. a bench proof runs only on a candidate whose pytest acceptance is green (it costs model calls)
+        for task_id in benches:
+            if not all(c.passed for c in checks):
+                checks.append(Check("bench_proof", False, f"bench:{task_id} skipped: acceptance tests failed"))
+                continue
+            result = bench_runner(task_id) if bench_runner else {"task_id": task_id, "passed": False, "error": "no bench runner in this process"}
+            bench_results.append(result)
+            checks.append(Check("bench_proof", bool(result.get("passed")), _bench_line(result)))
     else:
         checks.append(Check("acceptance_tests", False, "skipped: pre-flight gates failed"))
 
@@ -231,4 +247,11 @@ def evaluate_candidate(settings: SocietySettings, ws: Workspace, spec: Dict, cha
     report_dict["static_findings"] = findings
     report.__dict__["static_findings"] = findings  # exposed for the executor
     report.__dict__["risk_tier"] = risk.tier.value
+    report.__dict__["bench_proof"] = bench_results
     return report
+
+
+def _bench_line(r: Dict) -> str:
+    from .bench_proof import summary_line  # noqa: PLC0415
+
+    return summary_line(r)

@@ -148,7 +148,9 @@ def test_repeats_give_a_per_task_matrix_pass_at_1_and_pass_at_k(tmp_path):
     good = [_patch("pkg/mod.py", "return x + x + 1", "return x + x"), RUN, SUBMIT]
     summary, rows = _bench(tmp_path, [RESCOPE] + good + [RESCOPE], repeat=3)
     assert [r["rep"] for r in rows] == [0, 1, 2]
+    detail = summary["per_task"]["double"].pop("detail")
     assert summary["per_task"] == {"double": {"delivered": 1, "runs": ["wrong_file", "pass", "wrong_file"], "split": "dev"}}
+    assert [d["result"] for d in detail] == ["wrong_file", "pass", "wrong_file"] and detail[1]["test_runs"] >= 1
     assert summary["runs"] == 3 and summary["tasks_run"] == 1 and summary["pass_at_1"] == 0.333 and summary["pass_at_k"] == 1.0
 
 
@@ -195,6 +197,8 @@ def test_scores_per_split_the_aggregate_report_row_and_the_harness_merge_rule(tm
     assert base["splits"] == {"dev": {"tasks": 1, "pass_at_1": 1.0, "pass_at_k": 1.0}, "holdout": {"tasks": 1, "pass_at_1": 0.0, "pass_at_k": 0.0}}
     row = bench.report_row(base, revision="r1", judge_revision="r1")
     assert row["per_task"]["double-h"] == {"split": "holdout", "delivered": 0, "runs": ["wrong_file"]} and task["task"] not in json.dumps(row)
+    # dev tasks keep the per-run structural evidence a ticket's work packet reads (codes and counts, no model text)
+    assert [d["result"] for d in row["per_task"][task["id"]]["detail"]] == ["pass"] and set(row["per_task"][task["id"]]["detail"][0]) <= set(bench.DETAIL_KEYS)
 
 
 
