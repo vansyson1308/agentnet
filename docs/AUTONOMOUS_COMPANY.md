@@ -167,3 +167,14 @@ what failed, not what to change. The change it needs is to the **builder harness
 - Instead of guessing, the Architect may answer `TICKET_NEEDS_INFO {ticket_id, missing[], detail}`.
   It is a LOW intent, Architect only, and applies only to the ticket its own story designs. The
   ticket returns to `proposed` with `needs_info [...]: detail` for the owner.
+
+**RED tickets.** A bench ticket changes the builder harness, which is RED trusted base.
+- **Plan ranking.** The daily plan holds at most as many RED tickets as there are free high-risk
+  slots: `SOCIETY_COMPANY_MAX_HIGH_RISK_INVESTIGATIONS`, minus open RED candidates, minus approved
+  RED tickets still waiting for a design. Non-RED tickets fill the rest, so the plan stays
+  buildable. `ranking[].risk` says which is which, and an empty plan says why.
+- **PR body.** A RED candidate's PR body carries a `### Bench verdict` section: candidate x/3
+  against the main baseline y/3, the runs, the cost and the rule.
+- **Owner merge queue.** The PR is listed in `GET /v1/society/approvals` (under
+  `candidates.owner_merge`), in `GET /v1/society/company` (under `owner_merge_queue`) and in the
+  validator `company` step (K07). It is never auto-merged; the owner merges it.

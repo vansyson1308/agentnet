@@ -255,8 +255,33 @@ def obsolete_candidates(db: Session) -> List[Dict[str, Any]]:
 # ── operator surface ───────────────────────────────────────────────────────
 
 
+#: A promotion still in flight (its PR may wait on the owner).
+_PROMOTION_OPEN = ("requested", "validating", "branch_ready", "pr_open", "ci_pending", "ci_passed", "ci_failed", "awaiting_approval", "merge_eligible")
+
+
+def owner_merge_queue(db: Session) -> List[Dict[str, Any]]:
+    """RED candidates' open PRs: only the owner merges them. Each row carries the ticket's
+    objective link and the BENCH VERDICT numbers from the persisted QA report (structural)."""
+    from . import tickets  # noqa: PLC0415
+
+    rows = (db.query(CodePromotion, CodeCandidate).join(CodeCandidate, CodeCandidate.id == CodePromotion.candidate_id)
+            .filter(CodePromotion.risk_tier.in_(["red", "never"]), CodePromotion.status.in_(_PROMOTION_OPEN))
+            .order_by(CodePromotion.created_at.desc()).limit(50).all())
+    out = []
+    for promo, cand in rows:
+        t = tickets.for_proposal(db, cand.proposal_id)
+        out.append({
+            "candidate_id": str(cand.id), "promotion_id": str(promo.id), "title": cand.title, "risk_tier": _ev(promo.risk_tier), "status": _ev(promo.status),
+            "pr_number": promo.external_pr_number, "pr_url": promo.external_pr_url, "ci_state": promo.ci_state,
+            "ticket": tickets.link_text(t) if t else None,
+            "bench_verdict": [{k: b.get(k) for k in ("task_id", "passed", "delivered", "baseline_delivered", "repeat", "runs", "cost_usd")}
+                              for b in (cand.qa_report or {}).get("bench_proof") or [] if isinstance(b, dict)],
+        })
+    return out
+
+
 def operator_queue(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> Dict[str, List[Dict[str, Any]]]:
-    return {"stalled": stalled_candidates(db, settings, now), "obsolete": obsolete_candidates(db)}
+    return {"stalled": stalled_candidates(db, settings, now), "obsolete": obsolete_candidates(db), "owner_merge": owner_merge_queue(db)}
 
 
 def _notice(db: Session, event_type: str, row: Dict[str, Any], key: str) -> bool:
@@ -301,5 +326,6 @@ __all__ = [
     "stalled_ids",
     "obsolete_candidates",
     "operator_queue",
+    "owner_merge_queue",
     "sweep",
 ]

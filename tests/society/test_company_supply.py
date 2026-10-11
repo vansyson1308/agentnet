@@ -66,7 +66,8 @@ def test_a_cycle_with_an_active_objective_settles_into_a_non_empty_plan(db, soci
     assert company_mod.settle_cycles(db, now=utcnow() + timedelta(hours=1)) == 1
     db.refresh(cycle)
     plan = db.execute(text("SELECT * FROM society_daily_plans WHERE id = :i"), {"i": cycle.outcome_detail["plan_id"]}).mappings().one()
-    assert plan["status"] == "awaiting_owner" and len(plan["ticket_ids"]) == 2 and {r["department"] for r in plan["ranking"]} == {"engineering"}
+    # both supplied tickets are bench (harness = RED): the plan holds only the one free high-risk slot (tickets.red_slots)
+    assert plan["status"] == "awaiting_owner" and len(plan["ticket_ids"]) == 1 and [(r["department"], r["risk"]) for r in plan["ranking"]] == [("engineering", "RED")]
 
 
 def test_an_empty_plan_says_why_on_the_operator_view(db, society_settings, monkeypatch, api_client, user_token):
