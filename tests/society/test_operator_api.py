@@ -113,7 +113,7 @@ def test_public_surfaces_are_sanitised(api_client, db, SessionLocal, society_set
     assert story["candidates"][0]["status"] == "ready" and "title" not in story["candidates"][0]
     status = api_client.get("/v1/society/status").json()
     assert status["production_deploy_enabled"] is False and "model_name" not in status and "fleet" in status
-    assert all(set(f) == {"role", "enabled", "paused"} for f in status["fleet"])
+    assert all(set(f) == {"role", "enabled", "paused", "consecutive_dead"} for f in status["fleet"]) and status["dead_streak_roles"] == []
 
 
 def test_operator_detail_surfaces_expose_full_story(api_client, db, SessionLocal, society_settings, grants_with_no_cooldown, user_token):

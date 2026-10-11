@@ -32,7 +32,7 @@ def _tickets(db):
 
 def test_every_owned_backlog_item_becomes_one_proposed_ticket_and_supply_is_idempotent(db, society_settings, monkeypatch):
     monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "r-running")
-    _report(db)  # dev: hard-task 1/3, flaky-task 2/3; holdout pass@1 0.0
+    _report(db)  # dev: hard-task 1/3, flaky-task 2/3 (already delivered >= 2/3: no ticket); holdout pass@1 0.0
     core = _incident(db)
     db.query(type(core)).filter_by(id=core.id).update({"desired_state_ref": "slo:core_journey"})
     _incident(db)  # a public-surface incident: no objective owns it
@@ -43,12 +43,12 @@ def test_every_owned_backlog_item_becomes_one_proposed_ticket_and_supply_is_idem
     made = tickets.supply(db, items, utcnow())
     db.commit()
     rows = _tickets(db)
-    assert len(made) == 4 and {r["status"] for r in rows} == {"proposed"} and {r["source"] for r in rows} == {"backlog"}
+    assert len(made) == 3 and {r["status"] for r in rows} == {"proposed"} and {r["source"] for r in rows} == {"backlog"}
     by = {r["proof"][0]: r for r in rows}
-    assert set(by) == {"bench:hard-task", "bench:flaky-task", "probe:core_journey_success_rate", "issue:7"}, "untagged issue #8 is not a ticket"
+    assert set(by) == {"bench:hard-task", "probe:core_journey_success_rate", "issue:7"}, "untagged issue #8 is not a ticket"
     bench = by["bench:hard-task"]
     assert (bench["objective_id"], bench["metric_id"], bench["department"], bench["direction"]) == ("O3", "bench_holdout_pass_at_1", "engineering", "up")
-    assert float(bench["expected_effect"]) == round(0.863 / 2, 4), "the KR gap (target - current holdout 0.0) shared by its 2 items"
+    assert float(bench["expected_effect"]) == 0.863, "the KR gap (target - current holdout 0.0) shared by its items (one)"
     assert (by["probe:core_journey_success_rate"]["objective_id"], by["probe:core_journey_success_rate"]["department"]) == ("O1", "sre_release")
     assert by["issue:7"]["objective_id"] == "O2" and by["issue:7"]["proposal_id"] is not None
     assert tickets.supply(db, backlog.collect(db, society_settings, _Issues()), utcnow()) == [], "idempotent per backlog key and subject"
@@ -62,11 +62,11 @@ def test_a_cycle_with_an_active_objective_settles_into_a_non_empty_plan(db, soci
     db.execute(text("INSERT INTO society_objective_status (objective_id, status) VALUES ('O3', 'active')"))
     db.commit()
     cycle = company_mod.start_cycle(db, _settings(society_settings), trigger="operator")
-    assert cycle.evidence["tickets_supplied"] == 2
+    assert cycle.evidence["tickets_supplied"] == 1
     assert company_mod.settle_cycles(db, now=utcnow() + timedelta(hours=1)) == 1
     db.refresh(cycle)
     plan = db.execute(text("SELECT * FROM society_daily_plans WHERE id = :i"), {"i": cycle.outcome_detail["plan_id"]}).mappings().one()
-    # both supplied tickets are bench (harness = RED): the plan holds only the one free high-risk slot (tickets.red_slots)
+    # the supplied ticket is bench (harness = RED): it takes the one free high-risk slot (tickets.red_slots)
     assert plan["status"] == "awaiting_owner" and len(plan["ticket_ids"]) == 1 and [(r["department"], r["risk"]) for r in plan["ranking"]] == [("engineering", "RED")]
 
 

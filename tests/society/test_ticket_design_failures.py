@@ -45,7 +45,7 @@ def test_a_failed_design_is_on_the_ticket_and_the_second_returns_it_to_proposed(
     assert row.execution_status.value == "failed"
     db.expire_all()
     t = tickets.for_proposal(db, p.id)
-    assert t["status"] == "proposed" and t["plan_id"] is None and t["reason"].startswith("refused 2x by REQUEST_CODE_CHANGE, back to proposed:")
+    assert t["status"] == "proposed" and t["plan_id"] is None and t["reason"].startswith("design failed 2x, back to proposed:")
     assert _events(db, EventType.COMPANY_TICKET_DESIGN_FAILED, t["id"]) == 2 and _events(db, EventType.COMPANY_TICKET_RETURNED, t["id"]) == 1
     # the owner re-approves it in a NEW plan: a fresh wake and a fresh count
     t = _approve(db, p, plan_id=uuid.uuid4())

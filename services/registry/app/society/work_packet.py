@@ -88,10 +88,12 @@ def dev_task(task_id: str, tasks_file: pathlib.Path = _TASKS) -> Optional[Dict[s
     return next((t for t in tasks if t.get("id") == task_id), None)
 
 
-def latest_task_report(db: Session, task_id: str) -> Optional[Dict[str, Any]]:
-    """The newest report in which main's own harness ran this task (revision == judge)."""
+def latest_task_report(db: Session, task_id: str, revision: str = "") -> Optional[Dict[str, Any]]:
+    """The newest report in which main's own harness ran this task (revision == judge);
+    one of ``revision`` (the running one) first when it exists."""
     row = db.execute(text("SELECT id, revision, created_at, per_task -> :t AS v FROM society_bench_reports "
-                          "WHERE revision = judge_revision AND per_task ? :t ORDER BY created_at DESC LIMIT 1"), {"t": task_id}).mappings().first()
+                          "WHERE revision = judge_revision AND per_task ? :t ORDER BY (revision = :r) DESC, created_at DESC LIMIT 1"),
+                     {"t": task_id, "r": revision}).mappings().first()
     return dict(row) if row else None
 
 
