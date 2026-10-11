@@ -12,6 +12,9 @@ run() {
         -e ENVIRONMENT=development -e JAEGER_ENABLED=false -e POSTGRES_PASSWORD=smoke-only \
         "$svc" -c "$code"
 }
+# EVERY registry module, not just the entry points: work_packet's import-time
+# IndexError (staging 2026-10-10/11, 37 DEAD runs) passed the line below.
+run registry   "$(cat scripts/ci/import_all.py)"
 run registry   "import app.main, app.society.worker, app.db_bootstrap; from app.auth import pwd_context; assert pwd_context.verify('x', pwd_context.hash('x')); import websockets, sys; print('registry ok: python', sys.version.split()[0], 'websockets', websockets.__version__)"
 run payment    "import app.main; from app.auth import pwd_context; assert pwd_context.verify('x', pwd_context.hash('x')); import sys; print('payment ok: python', sys.version.split()[0])"
 run worker     "import app.worker, sys; print('worker ok: python', sys.version.split()[0])"

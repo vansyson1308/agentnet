@@ -22,6 +22,7 @@ Loop-storm guards applied at dispatch (cheap, before any run exists):
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -287,6 +288,39 @@ def _finalize_event_if_done(db: Session, event_id: uuid.UUID, now: datetime) -> 
             ev.processed_at = now
 
 
+#: A role whose runs went DEAD this many times in a row is an incident, not a log line.
+DEAD_STREAK_ALERT = 3
+_ERROR_CLASS = re.compile(r"\b([A-Z][A-Za-z]*(?:Error|Exception|Timeout))\b")
+
+
+def _run_health(db: Session, run: AgentRun, grant: Optional[AgentCapabilityGrant], *, dead: bool, now: datetime) -> None:
+    """Staging 2026-10-10/11: 37 runs went DEAD (``IndexError: 4``) for ~20h and nobody saw
+    it. A role with >= ``DEAD_STREAK_ALERT`` consecutive DEAD runs opens (or folds into) a
+    CONTROL_PLANE maintenance incident ``society_runs:<role>`` -- escalated to the owner,
+    never repaired autonomously (maintenance/reconciler.py) -- and each completed run of the
+    role grows its recovery streak. Structural only (role, count, error class). Never
+    breaks the run bookkeeping around it (savepoint, logged)."""
+    if grant is None or (dead and int(grant.consecutive_failures or 0) < DEAD_STREAK_ALERT):
+        return
+    from ..maintenance.config import get_maintenance_settings  # noqa: PLC0415
+    from ..maintenance.incidents import Violation, ingest_violation, observe_healthy  # noqa: PLC0415
+    from ..maintenance.taxonomy import IncidentClass, Priority, Severity, TrustClass  # noqa: PLC0415
+
+    ms, ref, src = get_maintenance_settings(), f"society_runs:{grant.role}", "society_run_health"
+    try:
+        with db.begin_nested():
+            if dead:
+                m = _ERROR_CLASS.search(run.error or "")
+                ingest_violation(db, ms, Violation(target=ms.target, incident_class=IncidentClass.CONTROL_PLANE, desired_state_ref=ref, failure="dead_streak",
+                                                   severity=Severity.MAJOR, base_priority=Priority.P1, source=src, collector_version="runs/1", sli="society_runs",
+                                                   trust_class=TrustClass.TRUSTED_DB, payload={"role": grant.role, "consecutive_dead": int(grant.consecutive_failures),
+                                                                                              "error_class": m.group(1) if m else "unknown"}), now=now)
+            else:
+                observe_healthy(db, ms, target=ms.target, desired_state_ref=ref, sli="society_runs", source=src, collector_version="runs/1", now=now, record=False)
+    except Exception:  # noqa: BLE001 -- the alert never decides a run's outcome
+        logger.exception("society run-health incident for %s failed", ref)
+
+
 def complete_run(db: Session, run: AgentRun, *, now: Optional[datetime] = None) -> None:
     now = now or utcnow()
     run.status = AgentRunStatus.COMPLETED
@@ -296,6 +330,7 @@ def complete_run(db: Session, run: AgentRun, *, now: Optional[datetime] = None) 
     grant = db.query(AgentCapabilityGrant).filter(AgentCapabilityGrant.agent_id == run.agent_id).first()
     if grant is not None and grant.consecutive_failures:
         grant.consecutive_failures = 0
+    _run_health(db, run, grant, dead=False, now=now)
     _finalize_event_if_done(db, run.event_id, now)
     db.commit()
 
@@ -376,6 +411,7 @@ def fail_run(
                 idempotency_key=f"circuit-breaker:{run.agent_id}:{grant.paused_until.isoformat()}",
                 notify=False,
             )
+    _run_health(db, run, grant, dead=True, now=now)
     emit_event(
         db,
         event_type=EventType.RUN_DEAD,
