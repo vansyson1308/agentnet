@@ -52,6 +52,7 @@ from ..models import (
     SpanStatus,
     User,
 )
+from . import tickets
 from .config import SocietySettings
 from .events import EventType, emit_event, utcnow
 from .executor import ExecContext, ExecutionError, execute
@@ -292,6 +293,7 @@ def execute_approved_intent(db: Session, intent: AgentIntent, *, settings: Socie
         intent = db.merge(intent)
         approval = db.merge(approval) if approval is not None else None
         _finish(db, intent, approval, status=IntentExecutionStatus.FAILED, error=str(exc))
+        tickets.note_intent_failure(db, settings, intent)
         db.commit()
         return IntentExecutionStatus.FAILED.value
     except Exception as exc:  # noqa: BLE001

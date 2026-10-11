@@ -89,6 +89,10 @@ class EventType:
     COMPANY_CYCLE = "company.cycle"
     # the owner approved a ticket (daily plan or owner task): the Architect designs it
     COMPANY_TICKET_APPROVED = "company.ticket_approved"
+    #: a design attempt for an approved ticket failed (tickets.record_design_failure; why on the ticket)
+    COMPANY_TICKET_DESIGN_FAILED = "company.ticket_design_failed"
+    #: refused twice: the ticket went back to proposed with the reason (the owner re-plans it)
+    COMPANY_TICKET_RETURNED = "company.ticket_returned"
     # The self-improvement loop's work queue (backlog.py): system-authored,
     # structural (bench task id / issue number, failure class, counts).
     BACKLOG_ITEM = "backlog.item"

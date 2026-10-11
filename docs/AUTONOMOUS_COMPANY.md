@@ -144,3 +144,17 @@ what failed, not what to change. The change it needs is to the **builder harness
   - The run is bounded by `SOCIETY_BENCH_PROOF_BUDGET_USD` and `SOCIETY_BENCH_PROOF_TIMEOUT_SECONDS`.
     Its cost is charged to the QA run and the ticket, and its numbers ride `qa_report.bench_proof`.
   - The Builder runs only the pytest targets.
+
+**Design failures** (`tickets.record_design_failure`).
+- **Reason on the ticket.** When a `REQUEST_CODE_CHANGE` fails, its error goes on the ticket's
+  `reason` as `design failed (n/2): <error>`. This covers live intents and intents resumed after an
+  operator approval. The reason shows in `GET /v1/society/company/tickets` and in the validator's
+  `company` step.
+- **Back to proposed.** The second failure since the ticket's latest approval returns it to
+  `proposed`: the plan is cleared and `company.ticket_returned` is emitted, so the owner can re-plan
+  it. Re-approving it in a new plan wakes the Architect again, with a fresh count.
+- **Stale design.** An approved ticket with no design activity for 6 h counts as one failed
+  attempt per quiet period. A ticket is never silently stuck in `approved`.
+- **Capacity refusals** (`portfolio full`, `change budget exhausted`) are recorded as `waiting: …`
+  and not counted.
+- **Meaning-gate refusals** close the ticket `refused`, as before.

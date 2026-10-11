@@ -10,6 +10,7 @@ already passes on the base revision closes it ``already_satisfied``.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session
 from . import charter, metrics
 from .events import EventType, emit_event
 
+logger = logging.getLogger(__name__)
 DUPLICATE_WINDOW_DAYS = 14
 LIVE_STATUSES = ("approved", "building", "ready", "merged")
 #: Owner tasks (and incidents) skip the daily plan; they still pass the gate.
@@ -183,10 +185,101 @@ def build_plan(db: Session, cycle_id: Optional[uuid.UUID], now: datetime) -> Opt
 
 def _approved(db: Session, t: Dict[str, Any], user_id: Any) -> None:
     set_status(db, t["id"], "approved")
+    # one wake per approval: a ticket that came back (record_design_failure) is approved again in a NEW plan
+    key = f"company.ticket_approved:{t['id']}" + (f":{t['plan_id']}" if t.get("plan_id") else "")
     emit_event(db, event_type=EventType.COMPANY_TICKET_APPROVED, actor_type="operator", actor_id=user_id, subject_type="proposal", subject_id=t["proposal_id"],
                payload={"ticket_id": str(t["id"]), "proposal_id": str(t["proposal_id"]), "title": t["title"], "objective_id": t["objective_id"],
                         "metric_id": t["metric_id"], "expected_effect": float(t["expected_effect"]), "direction": t["direction"], "proof": t["proof"]},
-               idempotency_key=f"company.ticket_approved:{t['id']}")
+               idempotency_key=key)
+
+
+#: Design attempts an approved ticket gets before it goes back to proposed (the owner re-plans it).
+DESIGN_FAILURES_TO_RETURN = 2
+#: An approved ticket nobody designed within this long counts as one failed design attempt.
+DESIGN_STALE_AFTER = timedelta(hours=6)
+#: Refusals about the company's capacity (executor portfolio cap, daily change budget), not the design.
+CAPACITY_REFUSALS = ("portfolio full", "change budget exhausted")
+
+
+def _ticket_ref(db: Session, ref: Any) -> Optional[Dict[str, Any]]:
+    """The ticket of a proposal id -- or of a ticket id a model passed as proposal_id."""
+    try:
+        rid = uuid.UUID(str(ref))
+    except (TypeError, ValueError):
+        return None
+    t = for_proposal(db, rid)
+    if t is None:
+        row = db.execute(text("SELECT * FROM society_tickets WHERE id = :id"), {"id": rid}).mappings().first()
+        t = dict(row) if row else None
+    return t
+
+
+def _approved_at(db: Session, ticket_id: Any) -> Optional[datetime]:
+    return db.execute(text("SELECT MAX(created_at) FROM society_events WHERE event_type = :t AND payload ->> 'ticket_id' = :id"),
+                      {"t": EventType.COMPANY_TICKET_APPROVED, "id": str(ticket_id)}).scalar()
+
+
+def record_design_failure(db: Session, ref: Any, why: str, *, key: str) -> Optional[str]:
+    """WHY a design attempt (REQUEST_CODE_CHANGE, or none in time) failed goes on the
+    approved ticket; the second failure since its latest approval returns it to
+    ``proposed`` (plan cleared) with the reason -- never silently stuck in approved.
+    Gate refusals already closed the ticket ``refused``; other states are untouched.
+    Idempotent per ``key``. Returns the ticket's new status (None: not applicable).
+    The caller commits."""
+    t = _ticket_ref(db, ref)
+    if t is None or t["status"] != "approved":
+        return None
+    why = " ".join(str(why or "unknown").split())[:300]
+    if why.startswith(CAPACITY_REFUSALS):  # the company's capacity, not the design: the ticket waits, uncounted
+        set_status(db, t["id"], "approved", f"waiting: {why}")
+        return "approved"
+    since = _approved_at(db, t["id"])
+    ev_key = f"company.ticket_design_failed:{t['id']}:{key}"[:160]
+    if db.execute(text("SELECT 1 FROM society_events WHERE idempotency_key = :k"), {"k": ev_key}).first() is not None:
+        return None  # this attempt is already counted
+    emit_event(db, event_type=EventType.COMPANY_TICKET_DESIGN_FAILED, actor_type="system", subject_type="proposal", subject_id=t["proposal_id"],
+               payload={"ticket_id": str(t["id"]), "proposal_id": str(t["proposal_id"]), "reason": why}, idempotency_key=ev_key)
+    n = db.execute(text("SELECT COUNT(*) FROM society_events WHERE event_type = :t AND payload ->> 'ticket_id' = :id AND created_at >= :since"),
+                   {"t": EventType.COMPANY_TICKET_DESIGN_FAILED, "id": str(t["id"]), "since": since or datetime(1970, 1, 1)}).scalar() or 0
+    if n < DESIGN_FAILURES_TO_RETURN:
+        set_status(db, t["id"], "approved", f"design failed ({n}/{DESIGN_FAILURES_TO_RETURN}): {why}")
+        return "approved"
+    reason = f"refused {n}x by REQUEST_CODE_CHANGE, back to proposed: {why}"
+    set_status(db, t["id"], "proposed", reason, plan_id=None)
+    emit_event(db, event_type=EventType.COMPANY_TICKET_RETURNED, actor_type="system", subject_type="proposal", subject_id=t["proposal_id"],
+               payload={"ticket_id": str(t["id"]), "proposal_id": str(t["proposal_id"]), "reason": reason[:300], "design_failures": int(n)},
+               idempotency_key=f"company.ticket_returned:{t['id']}:{since.isoformat() if since else 'never'}"[:160])
+    return "proposed"
+
+
+def note_intent_failure(db: Session, settings: Any, row: Any) -> None:
+    """A failed REQUEST_CODE_CHANGE (live or resumed after approval): its error goes on the
+    ticket. Bookkeeping never changes the intent's own outcome (savepoint, logged)."""
+    if getattr(row, "intent_type", None) != "REQUEST_CODE_CHANGE" or not settings.company_cycle_enabled:
+        return
+    try:
+        with db.begin_nested():
+            record_design_failure(db, (row.payload or {}).get("proposal_id"), row.error or "", key=f"intent:{row.id}")
+    except Exception:  # noqa: BLE001
+        logger.exception("recording the ticket design failure of intent %s failed", row.id)
+
+
+def sweep_stale_designs(db: Session, now: datetime) -> int:
+    """An approved ticket with no candidate and no design activity (run) in its design story
+    for ``DESIGN_STALE_AFTER`` counts one failed design attempt. The caller commits."""
+    rows = db.execute(text(
+        "SELECT DISTINCT ON (t.id) t.id, e.created_at AS approved_at, e.correlation_id AS corr FROM society_tickets t "
+        "JOIN society_events e ON e.event_type = :ev AND e.payload ->> 'ticket_id' = t.id::text "
+        "WHERE t.status = 'approved' AND t.candidate_id IS NULL ORDER BY t.id, e.created_at DESC"), {"ev": EventType.COMPANY_TICKET_APPROVED}).mappings().all()
+    n = 0
+    for r in rows:
+        last = db.execute(text("SELECT MAX(created_at) FROM agent_runs WHERE correlation_id = :c"), {"c": r["corr"]}).scalar()
+        quiet_since = max(x for x in (r["approved_at"], last) if x is not None)
+        periods = int((now - quiet_since) / DESIGN_STALE_AFTER)  # one failed attempt per quiet period
+        if periods >= 1:
+            n += bool(record_design_failure(db, r["id"], f"no REQUEST_CODE_CHANGE within {DESIGN_STALE_AFTER.total_seconds() / 3600 * periods:g}h of approval",
+                                            key=f"stale:{quiet_since.isoformat()}:{periods}"))
+    return n
 
 
 def decide_plan(db: Session, plan_id: uuid.UUID, *, approve: bool, user_id: Any) -> Dict[str, Any]:
