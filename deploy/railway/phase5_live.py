@@ -965,7 +965,7 @@ def step_candidates(out: Out, conn, limit: int) -> None:
             """
             SELECT c.id, c.status::text, c.title, c.error, c.changed_files, c.diff_stat,
                    c.branch_name, c.requires_security_review, c.risk_tier,
-                   c.qa_report, c.security_report, c.correlation_id, c.created_at
+                   c.qa_report, c.security_report, c.correlation_id, c.created_at, c.spec
             FROM code_candidates c
             ORDER BY c.created_at DESC
             LIMIT %s
@@ -976,6 +976,7 @@ def step_candidates(out: Out, conn, limit: int) -> None:
     for r in rows:
         qa = r[9] if isinstance(r[9], dict) else {}
         sec = r[10] if isinstance(r[10], dict) else {}
+        spec = r[13] if isinstance(r[13], dict) else {}
         view.append(
             {
                 "candidate": str(r[0])[:8],
@@ -983,6 +984,9 @@ def step_candidates(out: Out, conn, limit: int) -> None:
                 "title": scrub(str(r[2] or ""))[:120],
                 "error": scrub(str(r[3]))[:300] if r[3] else None,
                 "changed_files": r[4],
+                # the spec's rules (structural): what the Builder may touch and must turn green
+                "files_allowed": list(spec.get("files_allowed") or [])[:12],
+                "acceptance_tests": [scrub(str(t))[:160] for t in (spec.get("acceptance_tests") or [])][:12],
                 "diff_stat": r[5],
                 "branch": r[6],
                 "requires_security_review": r[7],
