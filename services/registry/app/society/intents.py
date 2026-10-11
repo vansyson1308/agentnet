@@ -61,6 +61,8 @@ class IntentType(str, enum.Enum):
     BUILD_CODE_CANDIDATE = "BUILD_CODE_CANDIDATE"
     REQUEST_QA = "REQUEST_QA"
     DECLINE_CODE_CANDIDATE = "DECLINE_CODE_CANDIDATE"
+    #: the Architect cannot design an approved ticket from what it has: it goes back to the owner (LOW)
+    TICKET_NEEDS_INFO = "TICKET_NEEDS_INFO"
     EVALUATE_CODE_CANDIDATE = "EVALUATE_CODE_CANDIDATE"
     SECURITY_REVIEW_CANDIDATE = "SECURITY_REVIEW_CANDIDATE"
     REQUEST_STAGING_DEPLOY = "REQUEST_STAGING_DEPLOY"
@@ -383,6 +385,15 @@ class CandidateRefPayload(_Strict):
     candidate_id: uuid.UUID
 
 
+class TicketNeedsInfoPayload(_Strict):
+    """The Architect cannot design the approved ticket its story opened (within the
+    ticket read budget): it returns to ``proposed`` with what is missing, for the owner."""
+
+    ticket_id: uuid.UUID
+    missing: List[Literal["failure_evidence", "target", "proof", "scope", "acceptance_tests", "other"]] = Field(..., min_length=1, max_length=6)
+    detail: str = Field(..., min_length=10, max_length=500)
+
+
 class DeclineCodeCandidatePayload(_Strict):
     """The responsible Builder declines an open candidate it cannot finish
     within its spec. The candidate becomes REJECTED -- never widened -- and
@@ -531,6 +542,7 @@ PAYLOAD_MODELS: Dict[IntentType, type] = {
     IntentType.BUILD_CODE_CANDIDATE: CandidateRefPayload,
     IntentType.REQUEST_QA: CandidateRefPayload,
     IntentType.DECLINE_CODE_CANDIDATE: DeclineCodeCandidatePayload,
+    IntentType.TICKET_NEEDS_INFO: TicketNeedsInfoPayload,
     IntentType.EVALUATE_CODE_CANDIDATE: CandidateRefPayload,
     IntentType.SECURITY_REVIEW_CANDIDATE: SecurityReviewPayload,
     IntentType.REQUEST_STAGING_DEPLOY: CandidateRefPayload,

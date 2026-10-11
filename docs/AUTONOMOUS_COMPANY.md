@@ -158,3 +158,12 @@ what failed, not what to change. The change it needs is to the **builder harness
 - **Capacity refusals** (`portfolio full`, `change budget exhausted`) are recorded as `waiting: …`
   and not counted.
 - **Meaning-gate refusals** close the ticket `refused`, as before.
+
+**Read budget.**
+- The Architect gets `SOCIETY_TICKET_READ_BUDGET` (default 6) repository reads per design story.
+  The context shows `engineering.company.ticket.read_budget` as `{used, max, left}`.
+- Past the budget, reads are refused and count as a failed design. A refused read wakes nobody, so
+  the story ends there and one ticket cannot burn the role's hourly run cap.
+- Instead of guessing, the Architect may answer `TICKET_NEEDS_INFO {ticket_id, missing[], detail}`.
+  It is a LOW intent, Architect only, and applies only to the ticket its own story designs. The
+  ticket returns to `proposed` with `needs_info [...]: detail` for the owner.

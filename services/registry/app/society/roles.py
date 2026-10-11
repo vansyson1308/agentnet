@@ -207,6 +207,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         + _REPO_READS
         + (
             IntentType.REQUEST_CODE_CHANGE.value,
+            IntentType.TICKET_NEEDS_INFO.value,
             IntentType.CREATE_TASK.value,
             IntentType.UPDATE_GOAL.value,
         ),

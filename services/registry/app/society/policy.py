@@ -54,6 +54,7 @@ RISK_BY_TYPE = {
     IntentType.BUILD_CODE_CANDIDATE: IntentRiskClass.MEDIUM,
     IntentType.REQUEST_QA: IntentRiskClass.MEDIUM,
     IntentType.DECLINE_CODE_CANDIDATE: IntentRiskClass.MEDIUM,
+    IntentType.TICKET_NEEDS_INFO: IntentRiskClass.LOW,
     IntentType.EVALUATE_CODE_CANDIDATE: IntentRiskClass.MEDIUM,
     IntentType.SECURITY_REVIEW_CANDIDATE: IntentRiskClass.MEDIUM,
     IntentType.REQUEST_STAGING_DEPLOY: IntentRiskClass.MEDIUM,

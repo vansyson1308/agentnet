@@ -197,6 +197,8 @@ class SocietySettings:
     bench_daily_budget_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_BENCH_DAILY_BUDGET_USD", "6"))
     # QA's bench proof for a bench ticket's harness candidate (engineering/bench_proof.py): the task x3 on the candidate harness
     bench_proof_budget_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_BENCH_PROOF_BUDGET_USD", "0.5"))
+    # reads the Architect gets per approved ticket's design story, then REQUEST_CODE_CHANGE or TICKET_NEEDS_INFO
+    ticket_read_budget: int = field(default_factory=lambda: _int("SOCIETY_TICKET_READ_BUDGET", 6, minimum=1))
     bench_proof_timeout_seconds: int = field(default_factory=lambda: _int("SOCIETY_BENCH_PROOF_TIMEOUT_SECONDS", 3600, minimum=60))
     ingest_task_outcomes: bool = field(default_factory=lambda: _bool("SOCIETY_INGEST_TASK_OUTCOMES", True))
     ingest_lookback_seconds: int = field(default_factory=lambda: _int("SOCIETY_INGEST_LOOKBACK_SECONDS", 3600, minimum=60))
