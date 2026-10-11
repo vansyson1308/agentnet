@@ -681,8 +681,8 @@ class SocietyWorker:
         try:  # outcomes.py: merged tickets' KR readings at merge, +24h, +7d (no model)
             if outcomes_mod.record(db, utcnow()):
                 db.commit()
-            if self.settings.company_cycle_enabled and tickets_mod.sweep_stale_designs(db, utcnow()):
-                db.commit()  # an approved ticket nobody designed is never silently stuck
+            if self.settings.company_cycle_enabled and tickets_mod.close_satisfied(db) + tickets_mod.sweep_stale_designs(db, utcnow()):
+                db.commit()  # a satisfied bench ticket closes; an approved ticket nobody designed is never silently stuck
         except Exception:  # noqa: BLE001 -- a reading failure never stops the loop
             db.rollback()
             logger.exception("ticket outcome recording failed")
