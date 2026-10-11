@@ -153,25 +153,50 @@ def score(t: Dict[str, Any], obj: Dict[str, Any]) -> float:
     return round((6 - int(obj["owner_priority"])) * impact / (1.0 + float(t["cost_usd"] or 0)), 6)
 
 
-def build_plan(db: Session, cycle_id: Optional[uuid.UUID], now: datetime) -> Optional[Dict[str, Any]]:
+def is_red(t: Dict[str, Any]) -> bool:
+    """A ticket whose change is RED before any design: a bench ticket changes the builder
+    harness (backlog.HARNESS_PATHS, RED trusted base). Others are judged from their diff."""
+    return any(isinstance(p, str) and p.startswith("bench:") for p in t.get("proof") or [])
+
+
+def red_slots(db: Session, red_cap: int) -> int:
+    """RED work the company can still take on: the high-risk cap minus open RED candidates
+    and approved RED tickets still waiting for their design."""
+    open_red = db.execute(text("SELECT COUNT(*) FROM code_candidates WHERE risk_tier IN ('red', 'never') "
+                               "AND status NOT IN ('ready', 'rejected', 'failed', 'abandoned')")).scalar() or 0
+    waiting = sum(1 for (proof,) in db.execute(text("SELECT proof FROM society_tickets WHERE status = 'approved' AND candidate_id IS NULL")).all()
+                  if is_red({"proof": proof}))
+    return max(0, int(red_cap) - int(open_red) - waiting)
+
+
+def build_plan(db: Session, cycle_id: Optional[uuid.UUID], now: datetime, *, red_cap: int = 1) -> Optional[Dict[str, Any]]:
     """Rank the proposed tickets of ACTIVE objectives (<= 2 per department) into
-    one plan of <= 3 that awaits the owner. Nothing in it builds until approved."""
+    one plan of <= 3 that awaits the owner. Nothing in it builds until approved.
+    A plan is buildable: it holds at most as many RED tickets as the company can
+    still investigate (``red_slots``); non-RED tickets fill the rest."""
     active = {o["id"]: o for o in charter.objectives(db) if o["status"] == "active"}
     rows = db.execute(text("SELECT * FROM society_tickets WHERE status = 'proposed' AND plan_id IS NULL AND source NOT IN :bypass "
                            "AND created_at >= :since ORDER BY created_at").bindparams(bindparam("bypass", expanding=True)),
                       {"bypass": list(BYPASS_SOURCES), "since": now - timedelta(days=7)}).mappings().all()
     ranked = sorted(((score(dict(r), active[r["objective_id"]]), dict(r)) for r in rows if r["objective_id"] in active), key=lambda x: -x[0])
-    chosen, per_dep = [], {}
+    chosen, per_dep, slots, red_skipped = [], {}, red_slots(db, red_cap), 0
     for sc, t in ranked:
         if sc > 0 and per_dep.get(t["department"], 0) < PER_DEPARTMENT and len(chosen) < PLAN_MAX:
+            red = is_red(t)
+            if red and slots <= 0:
+                red_skipped += 1
+                continue
+            slots -= int(red)
             per_dep[t["department"]] = per_dep.get(t["department"], 0) + 1
             chosen.append({"ticket_id": str(t["id"]), "title": t["title"], "objective_id": t["objective_id"], "metric_id": t["metric_id"],
-                           "department": t["department"], "score": sc})
+                           "department": t["department"], "score": sc, "risk": "RED" if red else "judged_from_diff"})
     if not chosen:
         if not active:
             why = "no active objective (activate one: company:activate:O<n>)"
         elif not ranked:
             why = f"no active objective has evidence: no proposed ticket for {sorted(active)} (backlog empty or mapped elsewhere)"
+        elif red_skipped:
+            why = f"{red_skipped} proposed RED ticket(s) wait: no high-risk slot is free (SOCIETY_COMPANY_MAX_HIGH_RISK_INVESTIGATIONS={red_cap})"
         else:
             why = f"{len(ranked)} proposed ticket(s) scored 0 (key result already met or effect in the wrong direction)"
         return {"id": None, "empty_reason": why}

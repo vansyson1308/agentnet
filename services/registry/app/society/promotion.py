@@ -802,6 +802,21 @@ def compute_eligibility(db: Session, settings: SocietySettings, promotion: CodeP
     return gates
 
 
+def bench_verdict_lines(qa: Dict[str, Any]) -> List[str]:
+    """The BENCH VERDICT of a builder-harness candidate (engineering/bench_proof.py), from the
+    persisted QA report: the ticket's task re-run x3 on the candidate harness vs main's baseline."""
+    proofs = [b for b in (qa.get("bench_proof") or []) if isinstance(b, dict)]
+    if not proofs:
+        return []
+    lines = ["### Bench verdict"]
+    for b in proofs:
+        rep = int(b.get("repeat") or 3)
+        lines.append(f"- `bench:{b.get('task_id')}`: **{'PASS' if b.get('passed') else 'FAIL'}** · candidate harness {int(b.get('delivered') or 0)}/{rep} "
+                     f"vs main baseline {int(b.get('baseline_delivered') or 0)}/{rep} · runs {b.get('runs') or []} · cost ${b.get('cost_usd') or '0'} "
+                     f"· rule: {b.get('rule') or 'n/a'} · judge: {b.get('judge') or 'running revision'}" + (f" · error: {b['error']}" if b.get("error") else ""))
+    return lines + ["- the full harness merge rule (holdout, regression set) is `deploy/railway/bench_live.py` with `BENCH_HARNESS_REF=<this branch>`", ""]
+
+
 def pr_body_from_facts(db: Session, promotion: CodePromotion, candidate: CodeCandidate) -> str:
     """PR description generated ONLY from durable records (never model prose)."""
     from ..models import ImprovementProposal
@@ -816,7 +831,8 @@ def pr_body_from_facts(db: Session, promotion: CodePromotion, candidate: CodeCan
         "",
         f"- candidate: `{candidate.id}` · correlation: `{candidate.correlation_id}` · promotion: `{promotion.id}`",
         f"- proposal: {('`' + str(prop.id) + '` — ' + prop.title) if prop else 'none'}",
-        f"- trusted risk tier: **{promotion.risk_tier}** (classified from the base revision)",
+        f"- trusted risk tier: **{promotion.risk_tier}** (classified from the base revision)"
+        + (" · **owner merge queue**: never auto-merged; the owner merges" if str(getattr(promotion.risk_tier, "value", promotion.risk_tier)).lower() in ("red", "never") else ""),
         f"- base `{(candidate.base_sha or '')[:12]}` → head `{(candidate.head_sha or '')[:12]}` · {len(candidate.changed_files or [])} file(s), {candidate.diff_lines or 0} diff line(s)",
         "",
         "### Files",
@@ -831,6 +847,7 @@ def pr_body_from_facts(db: Session, promotion: CodePromotion, candidate: CodeCan
         f"- verdict: **{qa.get('verdict', 'n/a')}** (attempts {qa.get('attempts', 'n/a')}, by {qa.get('evaluated_by', 'n/a')})",
         f"- summary: {qa.get('summary', 'n/a')}",
         "",
+        *bench_verdict_lines(qa),
         "### Security",
         f"- verdict: **{sec.get('verdict', 'not required')}** (by {sec.get('reviewed_by', 'n/a')})",
         f"- static findings: {len(sec.get('static_findings') or [])} · reviewer findings: {len(sec.get('findings') or [])}",
