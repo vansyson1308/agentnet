@@ -5,6 +5,7 @@ engineering/bench_proof.py). No model is called here."""
 from __future__ import annotations
 
 import json
+import pathlib
 import subprocess
 import threading
 import uuid
@@ -214,3 +215,11 @@ def test_ticket_approved_event_correlation_is_the_design_story(db, company):
         "SELECT correlation_id FROM society_events WHERE idempotency_key = :k"), {"k": f"company.ticket_approved:{tid}"}).scalar())
     db.commit()
     assert tickets.for_correlation(db, ev.correlation_id)["proposal_id"] == p.id and tickets.for_correlation(db, uuid.uuid4()) is None
+
+
+def test_the_module_imports_inside_the_registry_image_layout():
+    """Regression (staging 2026-10-11): /app/app/society/work_packet.py has 4 parents, so a
+    module-level parents[4] raised IndexError on import -- GET /company/tickets returned 500."""
+    image = work_packet.default_tasks_file(pathlib.Path("/app/app/society/work_packet.py"))
+    assert image == pathlib.Path("/") / work_packet.TASKS_REL and work_packet.dev_task(TASK, image) is None
+    assert work_packet.default_tasks_file().exists()  # a repository checkout finds the real list
