@@ -71,6 +71,7 @@ from ...society.config import get_settings
 from ...society.events import EventType, emit_event
 from ...society.operator_auth import assign_role, require_event_producer, require_operator, user_society_role
 from ...society.roles import load_role_definitions, role_as_dict
+from ...society.runs import DEAD_STREAK_ALERT
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/society", tags=["society"])
@@ -257,13 +258,16 @@ def society_status(db: Session = Depends(get_db)):
     now = _now()
     hour_ago = now - timedelta(hours=1)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    fleet = db.query(AgentCapabilityGrant.role, AgentCapabilityGrant.enabled, AgentCapabilityGrant.paused_until).all()
+    fleet = db.query(AgentCapabilityGrant.role, AgentCapabilityGrant.enabled, AgentCapabilityGrant.paused_until, AgentCapabilityGrant.consecutive_failures).all()
     active = db.query(func.count(AgentRun.id)).filter(AgentRun.status.in_([AgentRunStatus.CLAIMED, AgentRunStatus.RUNNING])).scalar() or 0
     last_run_at = db.query(func.max(AgentRun.completed_at)).scalar()
     return {
         **settings.public_flags(),
-        "fleet": [{"role": role, "enabled": bool(enabled), "paused": bool(paused and paused > now)} for role, enabled, paused in fleet],
+        "fleet": [{"role": role, "enabled": bool(enabled), "paused": bool(paused and paused > now), "consecutive_dead": int(dead or 0)}
+                  for role, enabled, paused, dead in fleet],
         "fleet_size": len(fleet),
+        # the alert flag: roles whose last >= 3 runs went DEAD (runs._run_health opens the incident)
+        "dead_streak_roles": sorted(role for role, _, _, dead in fleet if int(dead or 0) >= DEAD_STREAK_ALERT),
         "pending_events": db.query(func.count(SocietyEvent.id)).filter(SocietyEvent.status == SocietyEventStatus.PENDING).scalar() or 0,
         "queued_runs": db.query(func.count(AgentRun.id)).filter(AgentRun.status == AgentRunStatus.QUEUED).scalar() or 0,
         "active_runs": active,
