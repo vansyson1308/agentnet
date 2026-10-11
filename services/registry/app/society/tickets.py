@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -95,6 +96,38 @@ def proof_tests(ticket: Dict[str, Any]) -> List[str]:
     return [p for p in (ticket.get("proof") or []) if isinstance(p, str) and not p.startswith(NON_TEST_PROOFS)]
 
 
+def bench_met(delivered: Any, runs: Any) -> bool:
+    """The harness already delivers the task >= 2/3 of the time: the bench proof's own bar."""
+    return int(runs or 0) > 0 and 3 * int(delivered or 0) >= 2 * int(runs)
+
+
+def bench_satisfied(db: Session, t: Dict[str, Any]) -> Optional[str]:
+    """Freshness of a bench ticket: why its task needs no harness change, from the latest
+    report of the RUNNING revision (else main's newest -- what its work packet shows)."""
+    from . import work_packet  # noqa: PLC0415
+
+    task = work_packet.bench_task(t)
+    report = work_packet.latest_task_report(db, task, os.getenv("RAILWAY_GIT_COMMIT_SHA", "").strip()) if task else None
+    v = (report or {}).get("v") or {}
+    runs, done = len(v.get("runs") or []), int(v.get("delivered") or 0)
+    if not bench_met(done, runs):
+        return None
+    return f"bench:{task} already delivered {done}/{runs} (>= 2/3) on revision {str(report['revision'])[:12]} (report {str(report['id'])[:8]})"
+
+
+def close_satisfied(db: Session) -> int:
+    """Every bench ticket not yet built whose task is already delivered >= 2/3 closes
+    ``already_satisfied`` -- never planned, approved or designed. The caller commits."""
+    n = 0
+    for r in db.execute(text("SELECT * FROM society_tickets WHERE status IN ('proposed', 'planned', 'approved') "
+                             "AND candidate_id IS NULL AND proof::text LIKE '%\"bench:%'")).mappings().all():
+        why = bench_satisfied(db, dict(r))
+        if why:
+            set_status(db, r["id"], "already_satisfied", why)
+            n += 1
+    return n
+
+
 def check(db: Session, proposal_id: Optional[uuid.UUID], spec: Dict[str, Any], now: datetime) -> Dict[str, Any]:
     """The meaning gate. Returns the ticket (now ``building``) or raises GateRefused
     after recording the refusal on the ticket (the caller commits)."""
@@ -120,6 +153,10 @@ def check(db: Session, proposal_id: Optional[uuid.UUID], spec: Dict[str, Any], n
     missing = [p for p in proof_tests(t) if p not in (spec.get("acceptance_tests") or [])]
     if missing:
         refuse(f"the spec does not run the proof {missing}")
+    satisfied = bench_satisfied(db, t)
+    if satisfied:
+        set_status(db, t["id"], "already_satisfied", satisfied)
+        raise GateRefused(f"ticket already satisfied: {satisfied}")
     if t["status"] not in ("approved", "building") and t["source"] not in BYPASS_SOURCES:
         raise GateRefused(f"ticket is {t['status']}: it builds only after the owner approves it in a daily plan")
     dup = db.execute(text(
@@ -173,7 +210,9 @@ def build_plan(db: Session, cycle_id: Optional[uuid.UUID], now: datetime, *, red
     """Rank the proposed tickets of ACTIVE objectives (<= 2 per department) into
     one plan of <= 3 that awaits the owner. Nothing in it builds until approved.
     A plan is buildable: it holds at most as many RED tickets as the company can
-    still investigate (``red_slots``); non-RED tickets fill the rest."""
+    still investigate (``red_slots``); non-RED tickets fill the rest. Bench tickets
+    already delivered >= 2/3 close first (``close_satisfied``)."""
+    close_satisfied(db)
     active = {o["id"]: o for o in charter.objectives(db) if o["status"] == "active"}
     rows = db.execute(text("SELECT * FROM society_tickets WHERE status = 'proposed' AND plan_id IS NULL AND source NOT IN :bypass "
                            "AND created_at >= :since ORDER BY created_at").bindparams(bindparam("bypass", expanding=True)),
@@ -244,18 +283,18 @@ def _approved_at(db: Session, ticket_id: Any) -> Optional[datetime]:
                       {"t": EventType.COMPANY_TICKET_APPROVED, "id": str(ticket_id)}).scalar()
 
 
-def record_design_failure(db: Session, ref: Any, why: str, *, key: str) -> Optional[str]:
+def record_design_failure(db: Session, ref: Any, why: str, *, key: str, counted: bool = True) -> Optional[str]:
     """WHY a design attempt (REQUEST_CODE_CHANGE, or none in time) failed goes on the
     approved ticket; the second failure since its latest approval returns it to
     ``proposed`` (plan cleared) with the reason -- never silently stuck in approved.
     Gate refusals already closed the ticket ``refused``; other states are untouched.
-    Idempotent per ``key``. Returns the ticket's new status (None: not applicable).
+    ``counted=False`` (not the design's fault) only records why the ticket waits. Idempotent per ``key``. Returns the ticket's new status (None: not applicable).
     The caller commits."""
     t = _ticket_ref(db, ref)
     if t is None or t["status"] != "approved":
         return None
     why = " ".join(str(why or "unknown").split())[:300]
-    if why.startswith(CAPACITY_REFUSALS):  # the company's capacity, not the design: the ticket waits, uncounted
+    if not counted or why.startswith(CAPACITY_REFUSALS):  # capacity or a dead worker, not the design: the ticket waits, uncounted
         set_status(db, t["id"], "approved", f"waiting: {why}")
         return "approved"
     since = _approved_at(db, t["id"])
@@ -269,7 +308,7 @@ def record_design_failure(db: Session, ref: Any, why: str, *, key: str) -> Optio
     if n < DESIGN_FAILURES_TO_RETURN:
         set_status(db, t["id"], "approved", f"design failed ({n}/{DESIGN_FAILURES_TO_RETURN}): {why}")
         return "approved"
-    reason = f"refused {n}x by REQUEST_CODE_CHANGE, back to proposed: {why}"
+    reason = f"design failed {n}x, back to proposed: {why}"
     set_status(db, t["id"], "proposed", reason, plan_id=None)
     emit_event(db, event_type=EventType.COMPANY_TICKET_RETURNED, actor_type="system", subject_type="proposal", subject_id=t["proposal_id"],
                payload={"ticket_id": str(t["id"]), "proposal_id": str(t["proposal_id"]), "reason": reason[:300], "design_failures": int(n)},
@@ -291,7 +330,8 @@ def note_intent_failure(db: Session, settings: Any, row: Any) -> None:
 
 def sweep_stale_designs(db: Session, now: datetime) -> int:
     """An approved ticket with no candidate and no design activity (run) in its design story
-    for ``DESIGN_STALE_AFTER`` counts one failed design attempt. The caller commits."""
+    for ``DESIGN_STALE_AFTER`` counts one failed design attempt -- unless the society worker
+    had DEAD runs in that quiet period: then it waits, uncounted, and says so. The caller commits."""
     rows = db.execute(text(
         "SELECT DISTINCT ON (t.id) t.id, e.created_at AS approved_at, e.correlation_id AS corr FROM society_tickets t "
         "JOIN society_events e ON e.event_type = :ev AND e.payload ->> 'ticket_id' = t.id::text "
@@ -302,8 +342,12 @@ def sweep_stale_designs(db: Session, now: datetime) -> int:
         quiet_since = max(x for x in (r["approved_at"], last) if x is not None)
         periods = int((now - quiet_since) / DESIGN_STALE_AFTER)  # one failed attempt per quiet period
         if periods >= 1:
-            n += bool(record_design_failure(db, r["id"], f"no REQUEST_CODE_CHANGE within {DESIGN_STALE_AFTER.total_seconds() / 3600 * periods:g}h of approval",
-                                            key=f"stale:{quiet_since.isoformat()}:{periods}"))
+            why = f"no REQUEST_CODE_CHANGE within {DESIGN_STALE_AFTER.total_seconds() / 3600 * periods:g}h of approval"
+            dead, err = db.execute(text("SELECT COUNT(*), MAX(error) FROM agent_runs WHERE status = 'dead' AND completed_at >= :a AND completed_at < :b"),
+                                   {"a": quiet_since + DESIGN_STALE_AFTER * (periods - 1), "b": quiet_since + DESIGN_STALE_AFTER * periods}).one()
+            if dead:
+                why += f": the society worker had {dead} DEAD run(s) then ({' '.join(str(err).split())[:80]}), not a design refusal"
+            n += bool(record_design_failure(db, r["id"], why, key=f"stale:{quiet_since.isoformat()}:{periods}", counted=not dead))
     return n
 
 
@@ -383,6 +427,8 @@ def supply(db: Session, items: List[Dict[str, Any]], now: datetime) -> List[str]
         subject = _subject(item)
         dept, metric = SUPPLY.get(str(item.get("source")), (None, None))
         obj = next((o for o in objs if (metric and metric in [k["metric_id"] for k in o["key_results"]]) or o["id"] in (item.get("objectives") or [])), None)
+        if item.get("source") == "bench" and bench_met(item.get("delivered"), item.get("runs")):
+            continue  # already delivered >= 2/3: nothing for a harness change to buy
         if subject and obj:
             kr = next(k for k in obj["key_results"] if k["metric_id"] == metric) if metric else obj["key_results"][0]
             mapped.append((item, subject, dept, obj, kr))
