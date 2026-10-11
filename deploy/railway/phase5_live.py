@@ -921,6 +921,10 @@ def step_company(out: Out, base: str, token: str, args: List[str]) -> None:
     st, tks = api("GET", f"{base}/v1/society/company/tickets?limit=20", token)
     out.check("company", "K06", st == 200, f"GET company/tickets HTTP {st}")
     out.json("company", "tickets", tks)
+    st, appr = api("GET", f"{base}/v1/society/approvals", token)
+    queue = ((appr or {}).get("candidates") or {}).get("owner_merge") if isinstance(appr, dict) else None
+    out.check("company", "K07", st == 200, f"GET approvals HTTP {st}: {len(queue or [])} RED PR(s) in the owner merge queue")
+    out.json("company", "owner_merge", queue or [])
 
 
 def journey_summary(rows: Sequence[Tuple]) -> Dict[str, Any]:

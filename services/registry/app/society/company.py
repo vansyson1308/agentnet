@@ -396,7 +396,7 @@ def maybe_start_scheduled_cycle(db: Session, settings: SocietySettings, now: Opt
     return start_cycle(db, settings, trigger="scheduled", now=now, provider=provider)
 
 
-def settle_cycles(db: Session, now: Optional[datetime] = None) -> int:
+def settle_cycles(db: Session, now: Optional[datetime] = None, *, red_cap: int = 1) -> int:
     """Record outcomes of cycles whose work has finished."""
     now = now or utcnow()
     settled = 0
@@ -424,7 +424,7 @@ def settle_cycles(db: Session, now: Optional[datetime] = None) -> int:
         cycle.outcome = "changes_proposed" if changed else "no_high_value_change"
         cycle.outcome_detail = {"runs": int(runs), "intents_executed": executed}
         # the Chief of Staff's daily plan: the cycle's tickets, ranked, awaiting the owner
-        plan = tickets.build_plan(db, cycle.id, now)
+        plan = tickets.build_plan(db, cycle.id, now, red_cap=red_cap)
         cycle.outcome_detail = {**cycle.outcome_detail, **({"plan_id": plan["id"]} if plan["id"] else {"plan_empty_reason": plan["empty_reason"]})}
         settled += 1
     if settled:
@@ -521,6 +521,7 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
         "fitness": a2a_fitness(evidence),
         "candidates_by_status": candidates,
         "release_ready_candidates": candidates.get("ready", 0),
+        "owner_merge_queue": candidate_health.owner_merge_queue(db),
         "promotions_by_status": promotions,
         "bench_trend": backlog.trend(db, with_cost=True),
         "kpis": outcomes.kpis(db, utcnow()),
