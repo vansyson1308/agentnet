@@ -731,6 +731,23 @@ def _bench_ticket_spec(ctx: ExecContext, proposal_id: Optional[uuid.UUID], spec:
         spec["expected_effect"] = f"the builder harness delivers bench dev task {task_id} (>= 2/3 runs)"
 
 
+def _ticket_needs_info(ctx: ExecContext) -> ExecOutcome:
+    """The Architect cannot design the approved ticket ITS story opened: back to proposed
+    with what is missing (structured), for the owner. Never another story's ticket."""
+    p = ctx.validated.payload
+    t = tickets.for_correlation(ctx.db, ctx.run.correlation_id)
+    if t is None or str(t["id"]) != str(p.ticket_id):
+        raise ExecutionError("TICKET_NEEDS_INFO answers the ticket this story designs (engineering.company.ticket.id)")
+    if t["status"] != "approved":
+        raise ExecutionError(f"ticket is {t['status']}; only an approved ticket can be returned for information")
+    missing = list(dict.fromkeys(p.missing))
+    reason = f"needs_info [{', '.join(missing)}]: {' '.join(p.detail.split())}"
+    tickets.set_status(ctx.db, t["id"], "proposed", reason, plan_id=None)
+    ev = _emit(ctx, EventType.COMPANY_TICKET_NEEDS_INFO, {"ticket_id": str(t["id"]), "proposal_id": str(t["proposal_id"]), "missing": missing},
+               subject_type="proposal", subject_id=t["proposal_id"])
+    return ExecOutcome(result={"ticket_id": str(t["id"]), "status": "proposed", "missing": missing}, events=[str(ev.id)])
+
+
 def _request_code_change(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
     spec = p.spec.model_dump()
@@ -1386,6 +1403,14 @@ def _check_read_bounds(ctx: ExecContext) -> None:
     s = ctx.settings
     if _reads_in_correlation(ctx) >= s.max_repo_reads_per_correlation:
         raise ExecutionError(f"repository read budget exhausted for this correlation ({s.max_repo_reads_per_correlation})")
+    if s.company_cycle_enabled:
+        ticket = tickets.for_correlation(ctx.db, ctx.run.correlation_id)
+        if ticket is not None and ticket["status"] == "approved" and _reads_in_correlation(ctx) >= s.ticket_read_budget:
+            # one ticket never burns the role's hourly run cap: the budget is spent, the design is due
+            tickets.record_design_failure(ctx.db, ticket["id"], f"read budget ({s.ticket_read_budget} reads) spent without REQUEST_CODE_CHANGE or TICKET_NEEDS_INFO",
+                                          key=f"reads:{ctx.run.correlation_id}")
+            ctx.db.commit()  # the failure stays on the ticket; the read is refused
+            raise ExecutionError(f"ticket read budget ({s.ticket_read_budget} reads) is used up: design it now (REQUEST_CODE_CHANGE) or say what is missing (TICKET_NEEDS_INFO)")
     if _bytes_in_run(ctx) >= s.max_repo_bytes_per_run:
         raise ExecutionError(f"repository byte budget exhausted for this run ({s.max_repo_bytes_per_run} bytes)")
 
@@ -1747,6 +1772,7 @@ HANDLERS: Dict[IntentType, Callable[[ExecContext], ExecOutcome]] = {
     IntentType.BUILD_CODE_CANDIDATE: _build_code_candidate,
     IntentType.REQUEST_QA: _request_qa,
     IntentType.DECLINE_CODE_CANDIDATE: _decline_code_candidate,
+    IntentType.TICKET_NEEDS_INFO: _ticket_needs_info,
     IntentType.EVALUATE_CODE_CANDIDATE: _evaluate_code_candidate,
     IntentType.SECURITY_REVIEW_CANDIDATE: _security_review_candidate,
     IntentType.REQUEST_STAGING_DEPLOY: _request_staging_deploy,

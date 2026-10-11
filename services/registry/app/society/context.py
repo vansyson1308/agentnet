@@ -1013,6 +1013,15 @@ def _design_ticket(db: Session, event: SocietyEvent, settings: SocietySettings) 
         return {}
     view = {k: (str(t[k]) if isinstance(t[k], uuid.UUID) else t[k]) for k in ("id", "proposal_id", "title", "objective_id", "metric_id", "direction", "proof", "status", "reason")}
     view["expected_effect"] = float(t["expected_effect"]) if t.get("expected_effect") is not None else None
+    reads = (
+        db.query(AgentIntent.id).join(AgentRun, AgentRun.id == AgentIntent.run_id)
+        .filter(AgentRun.correlation_id == event.correlation_id, AgentIntent.intent_type.in_([x.value for x in REPO_READ_INTENT_TYPES]),
+                AgentIntent.execution_status == IntentExecutionStatus.EXECUTED)
+        .count()
+    )
+    budget = int(settings.ticket_read_budget)
+    view["read_budget"] = {"used": int(reads), "max": budget, "left": max(0, budget - int(reads)),
+                           "then": "REQUEST_CODE_CHANGE, or TICKET_NEEDS_INFO {ticket_id, missing, detail} -- further reads are refused"}
     return {"ticket": view, "work_packet": work_packet.for_ticket(db, t, getattr(settings, "repo_root", "") or "")}
 
 
