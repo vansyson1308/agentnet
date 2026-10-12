@@ -324,7 +324,7 @@ def reject_exhausted_builds(db: Session, settings: SocietySettings) -> int:
         cand.error = f"rejected by the runtime: {failed} builds failed without a green worktree (SOCIETY_MAX_BUILD_ATTEMPTS={settings.max_build_attempts}); last: {last}"
         ticket = tickets.for_proposal(db, cand.proposal_id)
         if ticket is not None and ticket["status"] == "building":
-            tickets.set_status(db, ticket["id"], "proposed", f"{failed} builds of candidate {str(cand.id)[:8]} failed; last {failing}", plan_id=None)
+            tickets.set_status(db, ticket["id"], "proposed", f"{failed} builds of candidate {str(cand.id)[:8]} failed; last {failing}", plan_id=None, candidate_id=None)
         emit_event(db, event_type=EventType.CODE_CANDIDATE_REJECTED, actor_type="system", subject_type="code_candidate", subject_id=cand.id,
                    correlation_id=cand.correlation_id,
                    payload={"candidate_id": str(cand.id), "title": cand.title, "proposal_id": str(cand.proposal_id) if cand.proposal_id else None,

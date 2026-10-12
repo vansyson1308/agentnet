@@ -118,11 +118,12 @@ def bench_satisfied(db: Session, t: Dict[str, Any]) -> Optional[str]:
 
 
 def close_satisfied(db: Session) -> int:
-    """Every bench ticket not yet built whose task is already delivered >= 2/3 closes
-    ``already_satisfied`` -- never planned, approved or designed. The caller commits."""
+    """Every bench ticket not being built (no candidate, or only a rejected/failed/abandoned one)
+    whose task is already delivered at the proof bar closes ``already_satisfied`` -- never
+    planned, approved or designed again. The caller commits."""
     n = 0
-    for r in db.execute(text("SELECT * FROM society_tickets WHERE status IN ('proposed', 'planned', 'approved') "
-                             "AND candidate_id IS NULL AND proof::text LIKE '%\"bench:%'")).mappings().all():
+    for r in db.execute(text("SELECT * FROM society_tickets WHERE status IN ('proposed', 'planned', 'approved') AND (candidate_id IS NULL OR candidate_id IN "
+                             "(SELECT id FROM code_candidates WHERE status IN ('rejected', 'failed', 'abandoned'))) AND proof::text LIKE '%\"bench:%'")).mappings().all():
         why = bench_satisfied(db, dict(r))
         if why:
             set_status(db, r["id"], "already_satisfied", why)

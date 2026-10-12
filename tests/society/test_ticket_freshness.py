@@ -66,6 +66,25 @@ def test_an_approved_satisfied_bench_ticket_closes_at_the_sweep_and_at_the_gate(
     assert t["status"] == "already_satisfied" and _events(db, EventType.COMPANY_TICKET_DESIGN_FAILED, t["id"]) == 0
 
 
+def test_a_satisfied_bench_ticket_whose_candidate_was_rejected_closes_too(db, company, monkeypatch):
+    """Staging 2026-10-12: 321b19bf (2/3) went back to proposed when the build cap rejected its
+    candidate, still pointing at it -- so 'candidate_id IS NULL' kept it out of the freshness close."""
+    report, _ = company
+    monkeypatch.delenv("RAILWAY_GIT_COMMIT_SHA", raising=False)
+    _report(db, {TASK: _runs(2)})
+    p, tid = _bench_ticket(db, report)
+    cid = uuid.uuid4()
+    db.execute(text("INSERT INTO code_candidates (id, proposal_id, correlation_id, title, status, spec) VALUES (:c, :p, :k, 't', 'requested', '{}')"),
+               {"c": cid, "p": p.id, "k": uuid.uuid4()})
+    db.execute(text("UPDATE society_tickets SET status = 'proposed', candidate_id = :c WHERE id = :i"), {"c": cid, "i": tid})
+    db.commit()
+    assert tickets.close_satisfied(db) == 0, "a candidate still being built keeps its ticket"
+    db.execute(text("UPDATE code_candidates SET status = 'rejected' WHERE id = :c"), {"c": cid})
+    assert tickets.close_satisfied(db) == 1
+    db.commit()
+    assert tickets.for_proposal(db, p.id)["status"] == "already_satisfied"
+
+
 def test_a_quiet_period_with_dead_worker_runs_waits_and_is_not_a_design_refusal(db, company):
     report, _ = company
     _activate(db)
