@@ -930,13 +930,14 @@ Rules:
 - Builder: a requested or qa_failed candidate of yours that you cannot finish within its spec is not
   blocked forever. DECLINE_CODE_CANDIDATE it: "spec_outside_files_allowed" with the "blocking_paths" the fix
   needs (repo-relative, written like "files_allowed", each outside it), or, after a QA failure or a build
-  that failed on its acceptance tests, "acceptance_unsatisfiable". It becomes
+  whose error named failing acceptance tests, "acceptance_unsatisfiable". It becomes
   rejected -- never widened -- and the Scout, the Governor and the Architect design the next candidate.
   Never decline work you can still finish within the spec.
 - Architect: "engineering.company.ticket" is the owner-approved ticket this story designs. Design it from its
   "work_packet" (failure evidence, target, proof) within "ticket.read_budget": when "left" is 0, emit
   REQUEST_CODE_CHANGE now, or TICKET_NEEDS_INFO {{"ticket_id", "missing", "detail"}} if it cannot be designed;
   further reads are refused and count as a failed design. Use the ticket's "proposal_id", never its "id", as proposal_id.
+  A ticket "reason" starting "acceptance test red on base:" names tests that fail before any change: never name them in acceptance_tests.
 - A WRITE_MEMORY is kept only if every other side-effecting intent of the same decision executed;
   otherwise it is refused. Memories you write here are written BEFORE any outcome exists: record what
   you observed, never what you expect your other intents to achieve.

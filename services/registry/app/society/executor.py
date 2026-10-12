@@ -69,7 +69,9 @@ from ..models import (
 from . import candidate_health, memory_grounding, repo_intel, tickets
 from .config import SocietySettings
 from ..maintenance import activities
+from ..maintenance import harness as mharness
 from ..maintenance.config import MaintenanceSettings
+from ..maintenance.patchset import reset_to_base
 from .engineering import build_engine
 from .engineering import qa as qa_mod
 from .engineering import workspace as ws_mod
@@ -920,7 +922,7 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
     try:
         ws = ws_mod.ensure_workspace(ctx.settings, cand.id)
         ctx.heartbeat()
-        fresh = _already_satisfied(ctx, cand, ws)
+        fresh = _already_satisfied(ctx, cand, ws) or _red_on_base(ctx, cand, ws)
         if fresh is not None:
             return fresh
         coro = build_engine.build(ws, spec, title=cand.title, model=model, ms=ms, ss=ctx.settings, cost_cap=ms.max_case_cost_usd, feedback=feedback)
@@ -968,6 +970,35 @@ def _already_satisfied(ctx: ExecContext, cand: CodeCandidate, ws) -> Optional[Ex
     tickets.set_status(ctx.db, ticket["id"], "already_satisfied", cand.error)
     ev = _emit(ctx, EventType.CODE_CANDIDATE_REJECTED, {"candidate_id": str(cand.id), "title": cand.title, "qa_summary": cand.error, "proposal_id": str(cand.proposal_id), "already_satisfied": True}, subject_type="code_candidate", subject_id=cand.id, key_suffix="already_satisfied")
     return ExecOutcome(result={"candidate_id": str(cand.id), "status": CodeCandidateStatus.REJECTED.value, "already_satisfied": True}, events=[str(ev.id)])
+
+
+def _red_on_base(ctx: ExecContext, cand: CodeCandidate, ws) -> Optional[ExecOutcome]:
+    """Baseline gate (staging 2026-10-12, c0b459e1): before a ticket's candidate has a committed
+    head, its GUARD tests -- acceptance tests that are neither the ticket's proof (meant to turn
+    green) nor in files_allowed (the Builder may change them) -- run on the untouched base. One
+    red there means no patch within the spec can pass: the candidate is REJECTED, the ticket
+    goes back to proposed with the ids (the next spec must not name them). No model call."""
+    ticket = tickets.for_proposal(ctx.db, cand.proposal_id)
+    spec = cand.spec or {}
+    files = set(spec.get("files_allowed") or [])
+    proof = set(tickets.proof_tests(ticket or {}))
+    guards = [t for t in build_engine.pytest_targets(spec) if t not in proof and t.split("::")[0] not in files]
+    if ticket is None or cand.head_sha or not guards:
+        return None
+    reset_to_base(ws)
+    run = mharness.run_targeted_tests(ws, guards, timeout=ctx.settings.qa_test_timeout_seconds)
+    ctx.heartbeat()
+    red = [f["test"] for f in run.failures if f["test"] != "*"][:5]
+    if run.passed or not red:
+        return None  # green, or a failure the gate cannot name (timeout, collection): the build decides
+    why = f"acceptance test red on base: {red}"
+    cand.status = CodeCandidateStatus.REJECTED
+    cand.error = f"{why} (outside files_allowed and not the ticket's proof: the spec cannot be met)"
+    if ticket["status"] == "building":
+        tickets.set_status(ctx.db, ticket["id"], "proposed", f"{why}; the next spec must not name them", plan_id=None)
+    ev = _emit(ctx, EventType.CODE_CANDIDATE_REJECTED, {"candidate_id": str(cand.id), "title": cand.title, "qa_summary": why[:500], "proposal_id": str(cand.proposal_id),
+                                                         "red_on_base": red}, subject_type="code_candidate", subject_id=cand.id, key_suffix="red_on_base")
+    return ExecOutcome(result={"candidate_id": str(cand.id), "status": CodeCandidateStatus.REJECTED.value, "red_on_base": red}, events=[str(ev.id)])
 
 
 def _record_build(ctx: ExecContext, cand: CodeCandidate, ws, head: str, *, summary: str, resubmitted: bool, result: Dict[str, Any]) -> ExecOutcome:
@@ -1045,8 +1076,10 @@ def _request_qa(ctx: ExecContext) -> ExecOutcome:
 #: The only states a Builder can hand a candidate back from: nobody else holds
 #: the work. Anything being evaluated, passed (READY) or closed is refused.
 DECLINABLE_STATUSES = (CodeCandidateStatus.REQUESTED.value, CodeCandidateStatus.QA_FAILED.value)
-#: ``cand.error`` of a build whose acceptance tests never went green (_build_code_candidate).
-BUILD_FAILED_ON_TESTS = "build failed: no green worktree (tests_failing"
+#: ``cand.error`` of a failed build (_build_code_candidate); one that NAMED red acceptance tests
+#: (any error class, turn_budget included) is the evidence for acceptance_unsatisfiable.
+BUILD_FAILED = "build failed: no green worktree ("
+NAMED_FAILING = "; failing ["
 
 
 def _decline_code_candidate(ctx: ExecContext) -> ExecOutcome:
@@ -1089,7 +1122,8 @@ def _decline_code_candidate(ctx: ExecContext) -> ExecOutcome:
         raise ExecutionError(f"candidate is {status}; only a requested or qa_failed candidate can be declined")
     if ctx.db.query(CodePromotion).filter(CodePromotion.candidate_id == cand.id).first() is not None:
         raise ExecutionError("candidate has a promotion; it cannot be declined")
-    if p.reason_code == "acceptance_unsatisfiable" and status != CodeCandidateStatus.QA_FAILED.value and not (cand.error or "").startswith(BUILD_FAILED_ON_TESTS):
+    built_red = (cand.error or "").startswith(BUILD_FAILED) and NAMED_FAILING in (cand.error or "")
+    if p.reason_code == "acceptance_unsatisfiable" and status != CodeCandidateStatus.QA_FAILED.value and not built_red:
         # The evidence that the acceptance tests cannot pass is a QA failure, or
         # the harness's own run of them on a build that never went green (a red
         # worktree is never submitted, so QA could never judge it); a fresh
