@@ -183,7 +183,7 @@ def test_replay_of_the_live_deadlock_state(db, SessionLocal, code_settings, gran
     assert str(cand.id) not in {r["candidate_id"] for r in candidate_health.operator_queue(db, code_settings)["stalled"]}
 
     # idempotent: another sweep neither re-requests QA nor re-notifies
-    assert candidate_health.sweep(db, code_settings) == {"healed": 0, "stalled_notices": 0, "obsolete_notices": 0}
+    assert candidate_health.sweep(db, code_settings) == {"healed": 0, "build_cap_rejected": 0, "stalled_notices": 0, "obsolete_notices": 0}
 
 
 def test_a_resubmission_clears_the_old_verdict_and_requests_qa_for_the_new_head(db, SessionLocal, code_settings, grants_with_no_cooldown):

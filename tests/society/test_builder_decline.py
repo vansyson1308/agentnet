@@ -469,21 +469,26 @@ def test_how_a_hypothesis_ended_decides_whether_it_may_be_proposed_again(db, Ses
             assert result["proposal_id"] == str(prop.id)
 
 
-def test_a_build_that_never_went_green_on_its_acceptance_tests_may_be_declined_and_closes_its_ticket(db, SessionLocal, code_settings, grants_with_no_cooldown):
+def test_a_build_that_named_red_acceptance_tests_may_be_declined_whatever_its_error_class_and_closes_its_ticket(db, SessionLocal, code_settings, grants_with_no_cooldown):
     """Staging 2026-10-11 (candidate c0b459e1, ticket 321b19bf): BUILD_CODE_CANDIDATE failed after 30
     turns with its acceptance tests red; a red worktree is never submitted, so QA never judged it,
     and DECLINE acceptance_unsatisfiable was refused for want of a QA failure -- no exit at all.
-    The harness's own failed run of the acceptance tests is that evidence."""
+    The harness's own failed run of the acceptance tests is that evidence -- staging 2026-10-12: also
+    when the try ended on turn_budget, as long as the error NAMED the failing tests."""
     from services.registry.app.society import tickets
-    from services.registry.app.society.executor import BUILD_FAILED_ON_TESTS
 
     report = _seed(db, grants_with_no_cooldown)
     proposal, cand = _live_deadlock(db, report, status="requested")
     tid = tickets.create(db, proposal_id=proposal.id, title=proposal.title, fields={"objective_id": "O3", "metric_id": "bench_holdout_pass_at_1", "expected_effect": 0.01,
                                                                                    "direction": "up", "proof": ["bench:t"]}, source="owner", role="governor", importance=60)
     tickets.set_status(db, tid, "building", candidate_id=cand.id)
-    cand.error = BUILD_FAILED_ON_TESTS + ": acceptance tests fail on the current worktree: fix them, then submit; failing ['tests/a.py::t']); BUILD again or DECLINE_CODE_CANDIDATE"
+    cand.error = "build failed: no green worktree (turn_budget: no result within 10 turns; failing ['tests/a.py::t']); BUILD again or DECLINE_CODE_CANDIDATE"
     db.commit()
+    unnamed = _live_deadlock(db, report, status="requested")[1]  # a failed build that named no test is no evidence
+    unnamed.error = "build failed: no green worktree (turn_budget: no result within 10 turns); BUILD again or DECLINE_CODE_CANDIDATE"
+    db.commit()
+    i = _intent_of(db, _run_as(db, SessionLocal, code_settings, "builder", [_decline(unnamed.id, reason="acceptance_unsatisfiable", blocking=())]))
+    assert _ev(i.execution_status) == "failed" and "build that failed on its acceptance tests" in i.error
     i = _intent_of(db, _run_as(db, SessionLocal, code_settings, "builder", [_decline(cand.id, reason="acceptance_unsatisfiable", blocking=())]))
     assert _ev(i.execution_status) == "executed", i.error
     assert _ev(db.get(CodeCandidate, cand.id).status) == "rejected"

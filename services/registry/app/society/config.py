@@ -297,6 +297,8 @@ class SocietySettings:
     # surfaced to the operator queue and no longer holds a portfolio slot. It is
     # never abandoned automatically (society/candidate_health.py).
     candidate_stall_hours: int = field(default_factory=lambda: _int("SOCIETY_CANDIDATE_STALL_HOURS", 24, minimum=1))
+    # failed builds (no committed head) after which the runtime itself rejects the candidate (candidate_health.py)
+    max_build_attempts: int = field(default_factory=lambda: _int("SOCIETY_MAX_BUILD_ATTEMPTS", 3, minimum=1))
     # ── public-surface synthetic monitor (surface_monitor.py) ──
     # Deterministic anonymous HTTP against the PUBLIC product; the model is
     # used only after a durable anomaly. OFF unless enabled (staging worker).

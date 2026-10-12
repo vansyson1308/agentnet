@@ -39,7 +39,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..models import CodeCandidate, CodeCandidateStatus, CodePromotion, SocietyEvent
+from ..models import AgentIntent, CodeCandidate, CodeCandidateStatus, CodePromotion, IntentExecutionStatus, SocietyEvent
 from .config import SocietySettings
 from .events import EventType, emit_event, utcnow
 
@@ -298,20 +298,59 @@ def _notice(db: Session, event_type: str, row: Dict[str, Any], key: str) -> bool
     return not getattr(ev, "deduplicated", False)
 
 
+# ── d) build cap ───────────────────────────────────────────────────────────
+
+
+def reject_exhausted_builds(db: Session, settings: SocietySettings) -> int:
+    """Staging 2026-10-12: c0b459e1 was rebuilt 6x in a day (changed_files [] each time) and held
+    the only RED slot. A REQUESTED candidate without a committed head whose builds failed
+    ``SOCIETY_MAX_BUILD_ATTEMPTS`` times (harness runs only: "build failed ...") is REJECTED by
+    the runtime -- no operator, no model; its ticket goes back to proposed with the last failing
+    ids. Its task is left to the timeout worker exactly as a QA rejection leaves it (one refund
+    rule). Idempotent (one event per candidate). Flushes; returns how many."""
+    from . import tickets  # noqa: PLC0415
+
+    n = 0
+    for cand in (db.query(CodeCandidate).filter(CodeCandidate.status == CodeCandidateStatus.REQUESTED, CodeCandidate.head_sha.is_(None))
+                 .order_by(CodeCandidate.created_at).with_for_update(skip_locked=True).limit(MAX_NOTICES_PER_SWEEP).all()):
+        failed = (db.query(func.count(AgentIntent.id))
+                  .filter(AgentIntent.intent_type == "BUILD_CODE_CANDIDATE", AgentIntent.execution_status == IntentExecutionStatus.FAILED,
+                          AgentIntent.payload["candidate_id"].astext == str(cand.id), AgentIntent.error.like("build failed%")).scalar() or 0)
+        if failed < settings.max_build_attempts:
+            continue
+        last = (cand.error or "")[:300]
+        failing = last[last.find("failing ["):].split("]")[0] + "]" if "failing [" in last else "no named failing test"
+        cand.status = CodeCandidateStatus.REJECTED
+        cand.error = f"rejected by the runtime: {failed} builds failed without a green worktree (SOCIETY_MAX_BUILD_ATTEMPTS={settings.max_build_attempts}); last: {last}"
+        ticket = tickets.for_proposal(db, cand.proposal_id)
+        if ticket is not None and ticket["status"] == "building":
+            tickets.set_status(db, ticket["id"], "proposed", f"{failed} builds of candidate {str(cand.id)[:8]} failed; last {failing}", plan_id=None)
+        emit_event(db, event_type=EventType.CODE_CANDIDATE_REJECTED, actor_type="system", subject_type="code_candidate", subject_id=cand.id,
+                   correlation_id=cand.correlation_id,
+                   payload={"candidate_id": str(cand.id), "title": cand.title, "proposal_id": str(cand.proposal_id) if cand.proposal_id else None,
+                            "qa_summary": f"rejected by the runtime after {failed} failed builds", "build_attempts_exhausted": int(failed)},
+                   idempotency_key=f"candidate-build-cap:{cand.id}")
+        n += 1
+        logger.info("candidate %s: rejected after %s failed builds (cap %s)", cand.id, failed, settings.max_build_attempts)
+    db.flush()
+    return n
+
+
 def sweep(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> Dict[str, int]:
     """One deterministic pass: heal stale verdicts, then record a durable
     operator notice once per stalled episode and once per recovery. Commits
     when it changed anything."""
     now = now or utcnow()
     healed = heal_stale_verdicts(db)
+    capped = reject_exhausted_builds(db, settings)
     stalled = obsolete = 0
     for row in stalled_candidates(db, settings, now)[:MAX_NOTICES_PER_SWEEP]:
         stalled += _notice(db, EventType.CODE_CANDIDATE_STALLED, row, f"candidate-stalled:{row['candidate_id']}:{row['last_progress_at']}")
     for row in obsolete_candidates(db)[:MAX_NOTICES_PER_SWEEP]:
         obsolete += _notice(db, EventType.CODE_CANDIDATE_OBSOLETE, row, f"candidate-obsolete:{row['candidate_id']}:{row['recovered_event_id']}")
-    if healed or stalled or obsolete:
+    if healed or capped or stalled or obsolete:
         db.commit()
-    return {"healed": healed, "stalled_notices": stalled, "obsolete_notices": obsolete}
+    return {"healed": healed, "build_cap_rejected": capped, "stalled_notices": stalled, "obsolete_notices": obsolete}
 
 
 __all__ = [
@@ -321,6 +360,7 @@ __all__ = [
     "has_stale_verdict",
     "emit_qa_request",
     "heal_stale_verdicts",
+    "reject_exhausted_builds",
     "last_progress",
     "stalled_candidates",
     "stalled_ids",

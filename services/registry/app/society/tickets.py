@@ -97,8 +97,10 @@ def proof_tests(ticket: Dict[str, Any]) -> List[str]:
 
 
 def bench_met(delivered: Any, runs: Any) -> bool:
-    """The harness already delivers the task >= 2/3 of the time: the bench proof's own bar."""
-    return int(runs or 0) > 0 and 3 * int(delivered or 0) >= 2 * int(runs)
+    """The harness already delivers the task at the bench proof's own bar (MIN_DELIVERED of REPEAT)."""
+    from .engineering.bench_proof import MIN_DELIVERED, REPEAT  # noqa: PLC0415
+
+    return int(runs or 0) > 0 and REPEAT * int(delivered or 0) >= MIN_DELIVERED * int(runs)
 
 
 def bench_satisfied(db: Session, t: Dict[str, Any]) -> Optional[str]:
@@ -326,6 +328,19 @@ def note_intent_failure(db: Session, settings: Any, row: Any) -> None:
             record_design_failure(db, (row.payload or {}).get("proposal_id"), row.error or "", key=f"intent:{row.id}")
     except Exception:  # noqa: BLE001
         logger.exception("recording the ticket design failure of intent %s failed", row.id)
+
+
+#: Staging 2026-10-10/11: these reasons were written while the society worker was DEAD (IndexError: 4);
+#: no design was refused. The wording no longer exists in code (#95), so the rewrite is idempotent.
+LEGACY_DEAD_WORKER_REASON = "refused % by REQUEST_CODE_CHANGE, back to proposed: no REQUEST_CODE_CHANGE within %"
+DEAD_WORKER_RELABEL = ("returned to proposed: no design within 12h of approval while the society worker was failing "
+                       "(DEAD runs, 2026-10-10/11) -- not a design refusal")
+
+
+def relabel_dead_worker_refusals(db: Session) -> int:
+    """One-off, idempotent data fix of the misleading legacy reasons. The caller commits."""
+    return db.execute(text("UPDATE society_tickets SET reason = :r WHERE reason LIKE :legacy"),
+                      {"r": DEAD_WORKER_RELABEL, "legacy": LEGACY_DEAD_WORKER_REASON}).rowcount or 0
 
 
 def sweep_stale_designs(db: Session, now: datetime) -> int:
