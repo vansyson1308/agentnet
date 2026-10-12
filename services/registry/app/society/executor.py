@@ -995,7 +995,7 @@ def _red_on_base(ctx: ExecContext, cand: CodeCandidate, ws) -> Optional[ExecOutc
     cand.status = CodeCandidateStatus.REJECTED
     cand.error = f"{why} (outside files_allowed and not the ticket's proof: the spec cannot be met)"
     if ticket["status"] == "building":
-        tickets.set_status(ctx.db, ticket["id"], "proposed", f"{why}; the next spec must not name them", plan_id=None)
+        tickets.set_status(ctx.db, ticket["id"], "proposed", f"{why}; the next spec must not name them", plan_id=None, candidate_id=None)
     ev = _emit(ctx, EventType.CODE_CANDIDATE_REJECTED, {"candidate_id": str(cand.id), "title": cand.title, "qa_summary": why[:500], "proposal_id": str(cand.proposal_id),
                                                          "red_on_base": red}, subject_type="code_candidate", subject_id=cand.id, key_suffix="red_on_base")
     return ExecOutcome(result={"candidate_id": str(cand.id), "status": CodeCandidateStatus.REJECTED.value, "red_on_base": red}, events=[str(ev.id)])

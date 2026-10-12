@@ -98,7 +98,8 @@ def test_a_candidate_that_failed_its_build_cap_is_rejected_by_code_and_frees_its
     db.refresh(cand)
     assert _ev(cand.status) == "rejected" and cand.error.startswith("rejected by the runtime: 3 builds failed without a green worktree (SOCIETY_MAX_BUILD_ATTEMPTS=3)")
     t = _ticket(db, tid)
-    assert t["status"] == "proposed" and t["plan_id"] is None and "3 builds of candidate" in t["reason"] and "failing ['tests/a.py::t']" in t["reason"]
+    assert t["status"] == "proposed" and t["plan_id"] is None and t["candidate_id"] is None, "the ticket no longer points at a dead candidate"
+    assert "3 builds of candidate" in t["reason"] and "failing ['tests/a.py::t']" in t["reason"]
     assert candidate_health.sweep(db, settings)["build_cap_rejected"] == 0, "idempotent"
     assert db.query(SocietyEvent).filter(SocietyEvent.event_type == EventType.CODE_CANDIDATE_REJECTED, SocietyEvent.subject_id == cand.id).count() == 1
     built = _candidate(db, report)  # a committed head is a surviving diff: QA judges it, the cap does not
