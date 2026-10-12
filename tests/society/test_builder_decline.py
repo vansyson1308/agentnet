@@ -226,7 +226,7 @@ def test_only_the_responsible_builder_may_decline_an_open_candidate(db, SessionL
 
     _, fresh = _live_deadlock(db, report, status="requested")
     i = _intent_of(db, _run_as(db, SessionLocal, code_settings, "builder", [_decline(fresh.id, reason="acceptance_unsatisfiable", blocking=())]))
-    assert "needs a qa_failed candidate" in i.error, "no QA failure, no claim that QA cannot pass"
+    assert "needs a qa_failed candidate or a build that failed on its acceptance tests" in i.error, "no evidence, no claim that QA cannot pass"
 
     _, c = _live_deadlock(db, report)
     for blocking, refusal in (
@@ -467,3 +467,25 @@ def test_how_a_hypothesis_ended_decides_whether_it_may_be_proposed_again(db, Ses
         assert result.get("duplicate", False) is (not allowed), (name, result)
         if not allowed:
             assert result["proposal_id"] == str(prop.id)
+
+
+def test_a_build_that_never_went_green_on_its_acceptance_tests_may_be_declined_and_closes_its_ticket(db, SessionLocal, code_settings, grants_with_no_cooldown):
+    """Staging 2026-10-11 (candidate c0b459e1, ticket 321b19bf): BUILD_CODE_CANDIDATE failed after 30
+    turns with its acceptance tests red; a red worktree is never submitted, so QA never judged it,
+    and DECLINE acceptance_unsatisfiable was refused for want of a QA failure -- no exit at all.
+    The harness's own failed run of the acceptance tests is that evidence."""
+    from services.registry.app.society import tickets
+    from services.registry.app.society.executor import BUILD_FAILED_ON_TESTS
+
+    report = _seed(db, grants_with_no_cooldown)
+    proposal, cand = _live_deadlock(db, report, status="requested")
+    tid = tickets.create(db, proposal_id=proposal.id, title=proposal.title, fields={"objective_id": "O3", "metric_id": "bench_holdout_pass_at_1", "expected_effect": 0.01,
+                                                                                   "direction": "up", "proof": ["bench:t"]}, source="owner", role="governor", importance=60)
+    tickets.set_status(db, tid, "building", candidate_id=cand.id)
+    cand.error = BUILD_FAILED_ON_TESTS + ": acceptance tests fail on the current worktree: fix them, then submit; failing ['tests/a.py::t']); BUILD again or DECLINE_CODE_CANDIDATE"
+    db.commit()
+    i = _intent_of(db, _run_as(db, SessionLocal, code_settings, "builder", [_decline(cand.id, reason="acceptance_unsatisfiable", blocking=())]))
+    assert _ev(i.execution_status) == "executed", i.error
+    assert _ev(db.get(CodeCandidate, cand.id).status) == "rejected"
+    t = tickets.for_proposal(db, proposal.id)
+    assert t["status"] == "closed" and t["reason"].startswith("candidate declined by the Builder (acceptance_unsatisfiable):")

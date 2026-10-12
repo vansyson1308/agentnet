@@ -929,8 +929,8 @@ Rules:
   BUILD again, or decline as below.
 - Builder: a requested or qa_failed candidate of yours that you cannot finish within its spec is not
   blocked forever. DECLINE_CODE_CANDIDATE it: "spec_outside_files_allowed" with the "blocking_paths" the fix
-  needs (repo-relative, written like "files_allowed", each outside it), or, after a QA failure,
-  "acceptance_unsatisfiable". It becomes
+  needs (repo-relative, written like "files_allowed", each outside it), or, after a QA failure or a build
+  that failed on its acceptance tests, "acceptance_unsatisfiable". It becomes
   rejected -- never widened -- and the Scout, the Governor and the Architect design the next candidate.
   Never decline work you can still finish within the spec.
 - Architect: "engineering.company.ticket" is the owner-approved ticket this story designs. Design it from its

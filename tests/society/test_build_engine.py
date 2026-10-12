@@ -101,6 +101,19 @@ def test_a_red_worktree_is_never_submitted_and_the_candidate_is_handed_back_with
     assert Decimal(str(db.get(AgentRun, row.run_id).cost_usd)) > 0, "a failed build still costs what it cost"
 
 
+def test_a_build_that_ends_red_names_the_acceptance_tests_that_stayed_red(db, SessionLocal, code_settings, grants_with_no_cooldown, monkeypatch):
+    """Staging 2026-10-11 (c0b459e1): "tests_failing" alone left the Builder guessing; the failing
+    ids decide between BUILD again, spec_outside_files_allowed and acceptance_unsatisfiable."""
+    monkeypatch.setenv("MAINTENANCE_BUILDER_SAMPLES", "1")  # one scripted try: its end is the build's end
+    report = seed_society(db)
+    grants_with_no_cooldown()
+    cand = _candidate(db, report)
+    row = _build(db, SessionLocal, code_settings, cand, [RED, {"action": "run_tests", "args": {}}] + [SUBMIT] * 30)
+    db.refresh(cand)
+    assert _ev(row.execution_status) == "failed" and cand.error.startswith("build failed: no green worktree (tests_failing"), cand.error
+    assert f"; failing ['{TESTS[0]}'" in cand.error, cand.error
+
+
 def test_a_rescope_answer_names_the_files_and_points_at_decline(db, SessionLocal, code_settings, grants_with_no_cooldown):
     report = seed_society(db)
     grants_with_no_cooldown()

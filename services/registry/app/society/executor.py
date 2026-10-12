@@ -939,7 +939,9 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
         if out.result.rescope:
             why = f"the harness needs files outside files_allowed {stats['rescope']['required_files']} ({stats['rescope']['reason']}): DECLINE_CODE_CANDIDATE if the spec cannot be met"
         else:
-            why = f"no green worktree ({out.result.error_class}: {(out.result.error or '')[:200]}); BUILD again or DECLINE_CODE_CANDIDATE"
+            failing = [f["test"] for f in (out.state.last_test.failures if out.state.last_test else [])][:5]
+            why = (f"no green worktree ({out.result.error_class}: {(out.result.error or '')[:200]}"
+                   + (f"; failing {failing}" if failing else "") + "); BUILD again or DECLINE_CODE_CANDIDATE")
         _release_build(ctx, cand, status, f"build failed: {why}")  # commits the cost too
         raise ExecutionError(f"build failed after {stats['turns']} turns, {stats['test_runs']} test runs: {why}")
     summary = str((out.result.output or {}).get("summary") or "built by the coding harness")
@@ -1043,6 +1045,8 @@ def _request_qa(ctx: ExecContext) -> ExecOutcome:
 #: The only states a Builder can hand a candidate back from: nobody else holds
 #: the work. Anything being evaluated, passed (READY) or closed is refused.
 DECLINABLE_STATUSES = (CodeCandidateStatus.REQUESTED.value, CodeCandidateStatus.QA_FAILED.value)
+#: ``cand.error`` of a build whose acceptance tests never went green (_build_code_candidate).
+BUILD_FAILED_ON_TESTS = "build failed: no green worktree (tests_failing"
 
 
 def _decline_code_candidate(ctx: ExecContext) -> ExecOutcome:
@@ -1085,10 +1089,12 @@ def _decline_code_candidate(ctx: ExecContext) -> ExecOutcome:
         raise ExecutionError(f"candidate is {status}; only a requested or qa_failed candidate can be declined")
     if ctx.db.query(CodePromotion).filter(CodePromotion.candidate_id == cand.id).first() is not None:
         raise ExecutionError("candidate has a promotion; it cannot be declined")
-    if p.reason_code == "acceptance_unsatisfiable" and status != CodeCandidateStatus.QA_FAILED.value:
-        # The evidence that the acceptance tests cannot pass is a QA failure;
-        # a fresh candidate has none, so it is built first.
-        raise ExecutionError("acceptance_unsatisfiable needs a qa_failed candidate: build it and let QA judge first")
+    if p.reason_code == "acceptance_unsatisfiable" and status != CodeCandidateStatus.QA_FAILED.value and not (cand.error or "").startswith(BUILD_FAILED_ON_TESTS):
+        # The evidence that the acceptance tests cannot pass is a QA failure, or
+        # the harness's own run of them on a build that never went green (a red
+        # worktree is never submitted, so QA could never judge it); a fresh
+        # candidate has neither, so it is built first.
+        raise ExecutionError("acceptance_unsatisfiable needs a qa_failed candidate or a build that failed on its acceptance tests: build it first")
     allowed = set((cand.spec or {}).get("files_allowed") or [])
     blocking = list(dict.fromkeys(p.blocking_paths))
     if p.reason_code == "spec_outside_files_allowed":
@@ -1116,6 +1122,9 @@ def _decline_code_candidate(ctx: ExecContext) -> ExecOutcome:
 
     cand.status = CodeCandidateStatus.REJECTED
     cand.error = f"declined by {ctx.agent.name} ({p.reason_code}): {p.detail}"[:2000]
+    ticket = tickets.for_proposal(ctx.db, cand.proposal_id)
+    if ticket is not None and ticket["status"] == "building":  # as a QA rejection does: closed, with the Builder's reason
+        tickets.set_status(ctx.db, ticket["id"], "closed", f"candidate declined by the Builder ({p.reason_code}): {p.detail}"[:300])
     ctx.db.flush()
     payload = {
         "candidate_id": str(cand.id),
