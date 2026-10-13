@@ -727,8 +727,12 @@ def _bench_ticket_spec(ctx: ExecContext, proposal_id: Optional[uuid.UUID], spec:
     if refusal:
         raise ExecutionError(refusal)
     spec["kind"] = "code"
-    tests = [t for t in spec.get("acceptance_tests") or [] if not str(t).startswith("bench:")]
-    spec["acceptance_tests"] = (tests or list(work_packet.REGRESSION_TESTS)) + [f"bench:{task_id}"]
+    red = set(work_packet.red_on_base_files(ctx.db)) - set(spec["files_allowed"])  # a test the Builder may fix stays
+    named = [t for t in spec.get("acceptance_tests") or [] if not str(t).startswith("bench:")]
+    tests = [t for t in named if str(t).split("::")[0] not in red]
+    if len(tests) < len(named):
+        spec["dropped_red_on_base"] = [t for t in named if t not in tests]
+    spec["acceptance_tests"] = (tests or [t for t in work_packet.REGRESSION_TESTS if t not in red]) + [f"bench:{task_id}"]
     if not (spec.get("expected_effect") or "").strip():
         spec["expected_effect"] = f"the builder harness delivers bench dev task {task_id} (>= 2/3 runs)"
 
@@ -988,10 +992,13 @@ def _red_on_base(ctx: ExecContext, cand: CodeCandidate, ws) -> Optional[ExecOutc
     reset_to_base(ws)
     run = mharness.run_targeted_tests(ws, guards, timeout=ctx.settings.qa_test_timeout_seconds)
     ctx.heartbeat()
-    red = [f["test"] for f in run.failures if f["test"] != "*"][:5]
+    named = [f for f in run.failures if f["test"] != "*"]
+    red = [f["test"] for f in named][:5]
     if run.passed or not red:
         return None  # green, or a failure the gate cannot name (timeout, collection): the build decides
-    why = f"acceptance test red on base: {red}"
+    # the first "E   ..." line of the traceback (the summary line is cut to the terminal width)
+    first = next((ln[1:].strip() for ln in run.tail.splitlines() if ln.startswith("E ")), str(named[0].get("reason") or ""))
+    why = f"acceptance test red on base: {red} ({first[:200]})"
     cand.status = CodeCandidateStatus.REJECTED
     cand.error = f"{why} (outside files_allowed and not the ticket's proof: the spec cannot be met)"
     if ticket["status"] == "building":
