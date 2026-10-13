@@ -32,6 +32,8 @@ never stops the plan so the evidence of the later steps is still recorded):
     audit[:<hours>]               quality / loop / economics / secret / public-surface audit (default 24 h)
     intents:<correlation-id>      per-intent policy/validation reasons + decision summaries of one story (diagnosis)
     journey[:<hours>]             the core-journey probe's maintenance_observations (sli=core_journey): count, success, duration (default 24 h)
+    autonomy[:<days>]             does the company run without the owner? plans decided by the board vs the owner and how long they
+                                  waited, design reviews and their conversation, growth tickets, merged work, the federated network (default 7 d)
 
 Environment (never printed):
     REGISTRY_PUBLIC_URL, POSTGRES_*, STAGING_VALIDATOR_SECRET, VALIDATOR_OPERATOR_EMAIL   as validate_staging.py
@@ -64,7 +66,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -143,6 +145,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("taskfail[:<escrow-credits>]")
         if name == "journey" and (len(args) > 1 or (args and not args[0].isdigit())):
             raise ValueError("journey[:<hours>]")
+        if name == "autonomy" and (len(args) > 1 or (args and not args[0].isdigit())):
+            raise ValueError("autonomy[:<days>]")
         if name == "company" and not _company_args_ok(args):
             raise ValueError("company[:view] | company:cycle | company:<activate|pause|propose|done>:<O1..O5> | company:<approve|reject>:<latest|plan-id>")
         plan.append((name, args))
@@ -952,6 +956,53 @@ def step_journey(out: Out, conn, hours: int) -> None:
     out.json("journey", "summary", s)
 
 
+#: An undecided plan older than this means the company is waiting for someone (board off or holding).
+AUTONOMY_PLAN_WAIT_HOURS = 24
+#: A design review still open this long means its sweep is not running (design_review.py windows are 2 h each).
+AUTONOMY_REVIEW_STUCK_HOURS = 7
+
+
+def step_autonomy(out: Out, conn, days: int) -> None:
+    """Does the company run without the owner? Structural counts only (no model text)."""
+    since = _now() - timedelta(days=days)
+    with conn.cursor() as cur:
+        plans = _rows(cur, "SELECT status, COALESCE(decided_by, CASE WHEN decided_at IS NULL THEN NULL ELSE 'owner' END), "
+                           "EXTRACT(EPOCH FROM (COALESCE(decided_at, NOW()) - created_at)) / 3600.0, board_note FROM society_daily_plans WHERE created_at >= %s", (since,))
+        reviews = _rows(cur, "SELECT status, round, EXTRACT(EPOCH FROM (NOW() - stage_at)) / 3600.0 FROM society_design_reviews WHERE created_at >= %s", (since,))
+        chat = _rows(cur, "SELECT COUNT(*) FROM agent_chat WHERE created_at >= %s AND thread_id IN (SELECT id FROM society_design_reviews)", (since,))[0][0]
+        tks = _rows(cur, "SELECT CASE WHEN proof::text LIKE '%%bench:%%' THEN 'bench' WHEN proof::text LIKE '%%probe:escrow%%' OR proof::text LIKE '%%probe:a2a%%' "
+                         "THEN 'growth' ELSE source END, status, COUNT(*) FROM society_tickets WHERE created_at >= %s GROUP BY 1, 2", (since,))
+        merged = _rows(cur, "SELECT COUNT(*) FROM society_tickets WHERE merged_at >= %s", (since,))[0][0]
+        live = _rows(cur, "SELECT COUNT(*) FROM a2a_remote_agents WHERE consecutive_failures = 0 AND last_validated_at >= %s", (_now() - timedelta(days=7),))[0][0]
+        via_dir = _rows(cur, "SELECT COUNT(*) FROM a2a_remote_agents WHERE provenance ->> 'source' = 'directory'")[0][0]
+        scans = _rows(cur, "SELECT COUNT(*) FROM society_events WHERE event_type = 'a2a.directory.scanned' AND idempotency_key LIKE '%%:done' AND created_at >= %s", (since,))[0][0]
+    by_decider: Dict[str, int] = {}
+    for st, who, _, _ in plans:
+        k = who or st
+        by_decider[k] = by_decider.get(k, 0) + 1
+    waits = sorted(float(h) for st, who, h, _ in plans if who)
+    waiting = [float(h) for st, who, h, _ in plans if st == "awaiting_owner"]
+    holds = sorted({str(n) for st, _, _, n in plans if st == "awaiting_owner" and n})
+    stuck = [r for r in reviews if r[0] in ("proposing", "reviewing", "deciding") and float(r[2]) > AUTONOMY_REVIEW_STUCK_HOURS]
+    rev: Dict[str, int] = {}
+    for st, _, _ in reviews:
+        rev[st] = rev.get(st, 0) + 1
+    tickets_view: Dict[str, Dict[str, int]] = {}
+    for kind, st, n in tks:
+        tickets_view.setdefault(str(kind), {})[str(st)] = int(n)
+    oldest = max(waiting) if waiting else 0.0
+    out.check("autonomy", "A01", oldest < AUTONOMY_PLAN_WAIT_HOURS,
+              f"plans in {days}d: {by_decider}; median wait {waits[len(waits) // 2] if waits else 'n/a'}h; oldest undecided {oldest:.1f}h"
+              + (f"; board holds: {holds}" if holds else ""))
+    out.check("autonomy", "A02", not stuck, f"design reviews in {days}d: {rev}; stuck > {AUTONOMY_REVIEW_STUCK_HOURS}h: {len(stuck)}")
+    out.check("autonomy", "A03", not reviews or int(chat) > 0, f"{int(chat)} message(s) in design-review threads")
+    out.check("autonomy", "A04", True, f"tickets in {days}d by kind/status: {tickets_view}; merged {int(merged)}")
+    out.check("autonomy", "A05", True, f"federated network: {int(live)} live remote card(s) (7d), {int(via_dir)} found via directories, {int(scans)} directory scan(s)")
+    out.json("autonomy", "summary", {"days": days, "plans_by_decider": by_decider, "plan_wait_hours": waits, "undecided_hours": waiting,
+                                     "reviews": rev, "review_messages": int(chat), "tickets": tickets_view, "merged_tickets": int(merged),
+                                     "live_remote_cards": int(live), "directory_agents": int(via_dir), "directory_scans": int(scans)})
+
+
 def step_candidates(out: Out, conn, limit: int) -> None:
     """Read recent candidates and, crucially, WHY each one ended where it did.
 
@@ -1423,7 +1474,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey") and conn is None:
+            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy") and conn is None:
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -1457,6 +1508,8 @@ def main() -> int:
                 step_company(out, base, token, args)
             elif name == "journey":
                 step_journey(out, conn, int(args[0]) if args else 24)
+            elif name == "autonomy":
+                step_autonomy(out, conn, int(args[0]) if args else 7)
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence
             if conn is not None:
                 try:

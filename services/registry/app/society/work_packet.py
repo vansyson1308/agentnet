@@ -153,9 +153,47 @@ def bench_packet(db: Session, task_id: str, repo_root: str = "") -> Optional[Dic
     }
 
 
+#: Where a growth key result is moved (backlog.kr_gap_items tickets): the product surfaces a
+#: real user or agent passes through. A starting point for the design, not an allow-list.
+METRIC_LEVERS: Dict[str, Dict[str, Any]] = {
+    "a2a_agents_live_card": {
+        "means": "remote A2A agents whose card AgentNet validated in the last 7 days (the federation catalog)",
+        "levers": ["services/dashboard/app/templates/network.html", "services/dashboard/app/templates/network_agent.html",
+                   "services/dashboard/app/templates/directory.html", "docs/A2A_QUICKSTART.md", "docs/A2A_FEDERATION.md",
+                   "examples/reference_agent.py", "sdk/python/agentnet/client.py"],
+        "ideas": ["make publishing and registering an A2A agent card a one-page, copy-paste flow",
+                  "show federated agents and their live status where visitors look first",
+                  "a reference agent another developer can deploy and register in minutes"],
+    },
+    "escrow_tasks_completed_7d": {
+        "means": "completed escrow tasks between two distinct agents in the last 7 days (the marketplace)",
+        "levers": ["services/dashboard/app/templates/marketplace.html", "services/dashboard/app/templates/agent_register.html",
+                   "services/dashboard/app/templates/new_agent.html", "services/dashboard/app/templates/create_offer.html",
+                   "docs/AGENT_DEVELOPMENT.md", "examples/agent_sdk.py", "sdk/python/agentnet/client.py"],
+        "ideas": ["shorten the path from sign-up to a first paid task", "make offers and their prices visible to callers",
+                  "a working example of one agent hiring another through escrow"],
+    },
+}
+
+
+def lever_packet(ticket: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The packet of a growth ticket (proof probe:<metric>): what the metric means, where it moves,
+    and how it is judged (outcomes.py reads the KR at merge, +24h and +7d)."""
+    proof = [p for p in ticket.get("proof") or [] if isinstance(p, str) and p.startswith("probe:")]
+    metric = proof[0].split(":", 1)[1] if proof else None
+    lever = METRIC_LEVERS.get(metric or "")
+    if lever is None:
+        return None
+    return {"kind": "growth", "metric_id": metric, **lever,
+            "proof": {"rule": "the key result is read at merge, +24h and +7d (outcomes.py): moved, no_effect or regressed",
+                      "acceptance": "name pytest tests for the behaviour you change; the probe is not a pytest target"}}
+
+
 def for_ticket(db: Session, ticket: Optional[Dict[str, Any]], repo_root: str = "") -> Optional[Dict[str, Any]]:
     task_id = bench_task(ticket)
-    return bench_packet(db, task_id, repo_root) if task_id else None
+    if task_id:
+        return bench_packet(db, task_id, repo_root)
+    return lever_packet(ticket) if ticket else None
 
 
 def harness_scope_refusal(files: List[str]) -> Optional[str]:

@@ -111,6 +111,37 @@ def issue_items(provider: Any) -> List[Dict[str, Any]]:
              "objectives": [lb for lb in i.get("labels") or [] if re.fullmatch(r"O[1-5]", str(lb))]} for i in issues[:10]]
 
 
+#: Key results the company grows through product work (kr_gap_items). The others have their own
+#: supply: core journey -> maintenance incidents, bench pass@1 -> bench items, spend -> none (a meta KR).
+GROWTH_METRICS = ("escrow_tasks_completed_7d", "a2a_agents_live_card")
+
+
+def kr_gap_items(db: Session, now: Any = None) -> List[Dict[str, Any]]:
+    """One item per growth key result of an ACTIVE objective that is off target (or has no
+    reading yet), keyed per ISO week: the company cycle turns it into ONE proposed ticket
+    whose proof is the metric's deterministic probe (tickets.supply). No model, no event."""
+    from . import charter, metrics  # noqa: PLC0415
+    from .events import utcnow  # noqa: PLC0415
+
+    now = now or utcnow()
+    week = "%d-W%02d" % now.isocalendar()[:2]
+    items = []
+    for obj in charter.objectives(db):
+        if obj["status"] != "active":
+            continue
+        for kr in obj["key_results"]:
+            m = kr["metric_id"]
+            if m not in GROWTH_METRICS:
+                continue
+            current = metrics.read(db, m, now)
+            target = float(kr["target"])
+            off = current is None or (current < target if kr["direction"] == "up" else current > target)
+            if off:
+                items.append({"source": "kr_gap", "key": f"kr_gap:{m}:{week}", "metric_id": m, "objective_id": obj["id"],
+                              "current": current, "target": target, "failure_class": "key_result_off_target"})
+    return items
+
+
 def collect(db: Session, settings: SocietySettings, provider: Any = None) -> List[Dict[str, Any]]:
     return bench_items(latest_report(db, running_revision(settings))) + incident_items(db) + issue_items(provider)
 

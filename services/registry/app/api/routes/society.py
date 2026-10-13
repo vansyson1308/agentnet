@@ -713,6 +713,14 @@ def list_plans(db: Session = Depends(get_db), operator: User = Depends(require_o
     return {"plans": tickets.plans_view(db), "empty_reason": tickets.last_empty_reason(db), "summary_text": outcomes.kpis(db, utcnow())["summary_text"]}
 
 
+@router.get("/company/reviews")
+def list_design_reviews(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """The company's design meetings and their minutes (model-authored text: operator only)."""
+    from ...society import design_review
+
+    return {"reviews": design_review.view(db), "counts": design_review.counts(db)}
+
+
 @router.post("/company/plans/{plan_id}/{decision}")
 def decide_plan(plan_id: uuid.UUID, decision: Literal["approve", "reject"], db: Session = Depends(get_db), operator: User = Depends(require_operator)):
     """The owner approves (or rejects) the Chief of Staff's daily plan; nothing in it builds before."""

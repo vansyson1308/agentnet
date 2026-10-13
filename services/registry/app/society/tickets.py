@@ -33,7 +33,7 @@ MODEL_TICKETS_PER_DEPARTMENT = 2
 NON_TEST_PROOFS = ("probe:", "bench:", "issue:")
 #: Supplied tickets (``supply``): backlog source -> (charter department, KR metric). An issue maps to the objective its owner tagged.
 SUPPLY = {"bench": ("engineering", "bench_holdout_pass_at_1"), "maintenance_incident": ("sre_release", "core_journey_success_rate"),
-          "github_issue": ("strategy_product", None)}
+          "github_issue": ("strategy_product", None), "kr_gap": ("strategy_product", None)}
 OPEN_TICKET = ("proposed", "planned", "approved", "building", "ready")
 _NS = uuid.UUID("6c1f0e3a-8a51-4c2e-9d0b-2f6a1c7e5b10")
 DEPARTMENT_BY_ROLE = {"governor": "ceo_office", "scout": "strategy_product", "architect": "engineering", "builder": "engineering", "qa": "quality", "security": "security", "evaluator": "analytics"}
@@ -251,14 +251,26 @@ def build_plan(db: Session, cycle_id: Optional[uuid.UUID], now: datetime, *, red
 
 
 def _approved(db: Session, t: Dict[str, Any], user_id: Any, *, by: str = "owner") -> None:
+    """The ticket is approved. With the design review on (design_review.py) the company meets
+    first and the Architect is woken by the review's ``go``; owner/incident tickets skip it."""
+    from . import design_review  # noqa: PLC0415
+
     set_status(db, t["id"], "approved")
+    if design_review.enabled() and t.get("source") not in BYPASS_SOURCES:
+        design_review.open_review(db, t, approved_by=by)
+        return
+    emit_approved(db, t, user_id, by=by)
+
+
+def emit_approved(db: Session, t: Dict[str, Any], user_id: Any, *, by: str = "owner", design_review: Optional[Dict[str, Any]] = None) -> None:
+    """Wake the Architect: ``company.ticket_approved`` opens the ticket's design story."""
     # one wake per approval: a ticket that came back (record_design_failure) is approved again in a NEW plan
-    key = f"company.ticket_approved:{t['id']}" + (f":{t['plan_id']}" if t.get("plan_id") else "")
+    key = f"company.ticket_approved:{t['id']}" + (f":{t['plan_id']}" if t.get("plan_id") else "") + (f":review:{design_review['review_id']}" if design_review else "")
     emit_event(db, event_type=EventType.COMPANY_TICKET_APPROVED, actor_type="operator" if by == "owner" else "system", actor_id=user_id,
                subject_type="proposal", subject_id=t["proposal_id"],
                payload={"ticket_id": str(t["id"]), "proposal_id": str(t["proposal_id"]), "title": t["title"], "objective_id": t["objective_id"],
                         "metric_id": t["metric_id"], "expected_effect": float(t["expected_effect"]), "direction": t["direction"], "proof": t["proof"],
-                        "approved_by": by},
+                        "approved_by": by, **({"design_review": design_review} if design_review else {})},
                idempotency_key=key)
 
 
@@ -484,6 +496,8 @@ def _subject(item: Dict[str, Any]) -> Optional[str]:
         return f"probe:core_journey_success_rate:{item['incident_id']}"
     if src == "github_issue" and item.get("objectives"):
         return f"issue:{item['issue_number']}"
+    if src == "kr_gap":
+        return f"probe:{item['metric_id']}:{item['key']}"
     return None  # not a ticket: no objective owns it
 
 
@@ -499,7 +513,9 @@ def supply(db: Session, items: List[Dict[str, Any]], now: datetime) -> List[str]
     for item in items:
         subject = _subject(item)
         dept, metric = SUPPLY.get(str(item.get("source")), (None, None))
-        obj = next((o for o in objs if (metric and metric in [k["metric_id"] for k in o["key_results"]]) or o["id"] in (item.get("objectives") or [])), None)
+        metric = metric or item.get("metric_id")
+        obj = next((o for o in objs if (o["id"] == item["objective_id"] if item.get("objective_id") else
+                                        (metric and metric in [k["metric_id"] for k in o["key_results"]]) or o["id"] in (item.get("objectives") or []))), None)
         if item.get("source") == "bench" and bench_met(item.get("delivered"), item.get("runs")):
             continue  # already delivered >= 2/3: nothing for a harness change to buy
         if subject and obj:
@@ -508,7 +524,7 @@ def supply(db: Session, items: List[Dict[str, Any]], now: datetime) -> List[str]
     created = []
     for item, subject, dept, obj, kr in mapped:
         tid = uuid.uuid5(_NS, f"ticket:{item['key']}")
-        proof = [subject.rsplit(":", 1)[0] if subject.startswith("probe:") else subject]
+        proof = [":".join(subject.split(":", 2)[:2]) if subject.startswith("probe:") else subject]
         if db.execute(text("SELECT 1 FROM society_tickets WHERE id = :id OR (proof = CAST(:p AS JSONB) AND status IN :open)").bindparams(
                 bindparam("open", expanding=True)), {"id": tid, "p": json.dumps(proof), "open": list(OPEN_TICKET)}).first():
             continue
@@ -520,7 +536,8 @@ def supply(db: Session, items: List[Dict[str, Any]], now: datetime) -> List[str]
             continue  # the key result is already met: nothing to buy
         title = {"bench": f"Builder harness: deliver dev task {item.get('task_id')} ({item.get('delivered')}/{item.get('runs')} runs)",
                  "maintenance_incident": f"Core journey: incident {str(item.get('incident_id'))[:8]} ({item.get('failure_class')})",
-                 "github_issue": f"Owner issue #{item.get('issue_number')}"}[item["source"]]
+                 "github_issue": f"Owner issue #{item.get('issue_number')}",
+                 "kr_gap": f"Grow {item.get('metric_id')}: {item.get('current') if item.get('current') is not None else 'no data'} -> {item.get('target')} ({obj['id']} {obj['title']})"}[item["source"]]
         pid = uuid.uuid5(_NS, f"proposal:{item['key']}")
         db.add(ImprovementProposal(id=pid, source="audit", title=title[:255], problem=f"backlog {item['key']} ({item.get('failure_class')})",
                                    proposed_change=f"move {kr['metric_id']} {kr['direction']} by {effect:g}; proof {proof[0]}", status="PROPOSED",

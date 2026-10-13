@@ -137,3 +137,28 @@ def test_the_board_window_is_bounded(monkeypatch):
     monkeypatch.setenv("SOCIETY_COMPANY_BOARD_APPROVAL_HOURS", "12")
     assert SocietySettings().company_board_approval_hours == 12
     assert not any("BOARD" in p for p in validate_settings(SocietySettings()))
+
+
+def test_the_validator_autonomy_step_reads_who_decided_and_how_long_plans_waited(db, company, engine, capsys):
+    import importlib.util
+    import pathlib
+
+    spec = importlib.util.spec_from_file_location("phase5_live_autonomy", pathlib.Path(__file__).resolve().parents[2] / "deploy/railway/phase5_live.py")
+    p5 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(p5)
+    _, settings = company
+    pid, _ = _plan(db)
+    db.execute(text("UPDATE society_daily_plans SET created_at = NOW() - INTERVAL '30 hours' WHERE id = :id"), {"id": pid})
+    db.commit()
+    out, conn = p5.Out(), engine.raw_connection()
+    try:
+        p5.step_autonomy(out, conn, 7)
+        assert out.failed == ["autonomy.A01"], "a plan undecided for 30h means the company waits for someone"
+        assert tickets.board_decide(db, _board(settings), utcnow()) == 1
+        db.commit()
+        out = p5.Out()
+        p5.step_autonomy(out, conn, 7)
+    finally:
+        conn.close()
+    assert out.failed == []
+    assert "plans in 7d: {'board': 1}" in capsys.readouterr().out

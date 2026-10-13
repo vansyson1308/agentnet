@@ -46,7 +46,7 @@ done
 
 cd "$(dirname "$0")/.."
 INIT_DIR="services/registry/init-db"
-EXPECTED_HEAD="0019_company_board"
+EXPECTED_HEAD="0020_design_review"
 PG_USER="${POSTGRES_USER:-agentnet}"
 PG_HOST="${POSTGRES_HOST:-127.0.0.1}"
 PG_PORT="${POSTGRES_PORT:-5432}"

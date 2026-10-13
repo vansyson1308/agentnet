@@ -537,4 +537,27 @@ ALTER TABLE society_daily_plans ADD COLUMN IF NOT EXISTS board_note VARCHAR(255)
 UPDATE society_daily_plans SET decided_by = 'owner' WHERE decided_by IS NULL AND decided_at IS NOT NULL;
 """
 
-SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL + SOCIETY_COMPANY_PLAN_SQL + SOCIETY_COMPANY_BOARD_SQL
+SOCIETY_DESIGN_REVIEW_SQL = r"""
+-- The design review (design_review.py): the company's meeting before an
+-- approved ticket is designed. One row per approval; rounds keep their history.
+CREATE TABLE IF NOT EXISTS society_design_reviews (
+    id              UUID PRIMARY KEY,
+    ticket_id       UUID NOT NULL REFERENCES society_tickets(id) ON DELETE CASCADE,
+    plan_id         UUID,
+    approved_by     VARCHAR(16),
+    correlation_id  UUID NOT NULL,
+    round           INTEGER NOT NULL DEFAULT 1 CHECK (round BETWEEN 1 AND 3),
+    status          VARCHAR(16) NOT NULL DEFAULT 'proposing' CHECK (status IN ('proposing', 'reviewing', 'deciding', 'go', 'dropped', 'returned')),
+    proposal        JSONB,
+    positions       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    decision        JSONB,
+    history         JSONB NOT NULL DEFAULT '[]'::jsonb,
+    stage_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_society_design_reviews_corr ON society_design_reviews (correlation_id);
+CREATE INDEX IF NOT EXISTS idx_society_design_reviews_ticket ON society_design_reviews (ticket_id, created_at DESC);
+"""
+
+SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL + SOCIETY_COMPANY_PLAN_SQL + SOCIETY_COMPANY_BOARD_SQL + SOCIETY_DESIGN_REVIEW_SQL

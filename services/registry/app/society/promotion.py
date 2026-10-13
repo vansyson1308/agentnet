@@ -817,6 +817,16 @@ def bench_verdict_lines(qa: Dict[str, Any]) -> List[str]:
     return lines + ["- the full harness merge rule (holdout, regression set) is `deploy/railway/bench_live.py` with `BENCH_HARNESS_REF=<this branch>`", ""]
 
 
+def design_review_lines(spec: Dict[str, Any]) -> List[str]:
+    """Which design review decided this change (design_review.py): structural facts only."""
+    dr = spec.get("design_review") if isinstance(spec.get("design_review"), dict) else None
+    if not dr:
+        return []
+    stances = ", ".join(f"{r} {s}" for r, s in sorted((dr.get("stances") or {}).items())) or "no reviewer spoke"
+    return ["### Design review", f"- review `{dr.get('review_id')}` · {dr.get('rounds')} round(s) · verdict **{dr.get('verdict')}** by {dr.get('by') or 'n/a'}"
+            f" · {int(dr.get('conditions') or 0)} condition(s)", f"- positions: {stances}", ""]
+
+
 def pr_body_from_facts(db: Session, promotion: CodePromotion, candidate: CodeCandidate) -> str:
     """PR description generated ONLY from durable records (never model prose)."""
     from ..models import ImprovementProposal
@@ -848,6 +858,7 @@ def pr_body_from_facts(db: Session, promotion: CodePromotion, candidate: CodeCan
         f"- summary: {qa.get('summary', 'n/a')}",
         "",
         *bench_verdict_lines(qa),
+        *design_review_lines(spec),
         "### Security",
         f"- verdict: **{sec.get('verdict', 'not required')}** (by {sec.get('reviewed_by', 'n/a')})",
         f"- static findings: {len(sec.get('static_findings') or [])} · reviewer findings: {len(sec.get('findings') or [])}",

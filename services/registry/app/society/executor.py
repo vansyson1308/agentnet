@@ -66,7 +66,7 @@ from ..models import (
     TaskSession,
     TaskStatus,
 )
-from . import candidate_health, memory_grounding, repo_intel, tickets
+from . import candidate_health, design_review, memory_grounding, repo_intel, tickets
 from .config import SocietySettings
 from ..maintenance import activities
 from ..maintenance import harness as mharness
@@ -754,6 +754,36 @@ def _ticket_needs_info(ctx: ExecContext) -> ExecOutcome:
     return ExecOutcome(result={"ticket_id": str(t["id"]), "status": "proposed", "missing": missing}, events=[str(ev.id)])
 
 
+def _design_review_call(ctx: ExecContext, fn: Callable[[], Dict[str, Any]], what: str) -> ExecOutcome:
+    try:
+        review = fn()
+    except design_review.ReviewRefused as exc:
+        raise ExecutionError(str(exc)) from exc
+    return ExecOutcome(result={"review_id": str(review["id"]), "round": int(review["round"]), "status": review["status"], "did": what})
+
+
+def _propose_design(ctx: ExecContext) -> ExecOutcome:
+    """The Architect's proposal for the review ITS story runs (design_review.py)."""
+    p = ctx.validated.payload
+    proposal = {"approach": " ".join(p.approach.split()), "files": list(dict.fromkeys(p.files)), "proof": " ".join(p.proof.split()), "risks": list(p.risks)}
+    return _design_review_call(ctx, lambda: design_review.propose(ctx.db, review_id=p.review_id, correlation_id=ctx.run.correlation_id, agent=ctx.agent,
+                                                                  proposal=proposal, causation=ctx.event), "proposed")
+
+
+def _review_design(ctx: ExecContext) -> ExecOutcome:
+    p = ctx.validated.payload
+    return _design_review_call(ctx, lambda: design_review.post_position(ctx.db, review_id=p.review_id, correlation_id=ctx.run.correlation_id, agent=ctx.agent,
+                                                                        role=ctx.grant.role, position={"stance": p.stance, "points": list(p.points)},
+                                                                        causation=ctx.event), f"reviewed:{p.stance}")
+
+
+def _decide_design(ctx: ExecContext) -> ExecOutcome:
+    p = ctx.validated.payload
+    return _design_review_call(ctx, lambda: design_review.decide(ctx.db, review_id=p.review_id, correlation_id=ctx.run.correlation_id, agent=ctx.agent,
+                                                                 decision={"verdict": p.verdict, "rationale": " ".join(p.rationale.split()),
+                                                                           "conditions": list(p.conditions)}), f"decided:{p.verdict}")
+
+
 def _request_code_change(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
     spec = p.spec.model_dump()
@@ -807,6 +837,10 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
             ctx.db.commit()  # the refusal stays on the ticket
             raise ExecutionError(str(exc)) from exc
         spec["expected_effect"] = f"{tickets.link_text(ticket)} {spec.get('expected_effect') or ''}".strip()[:1000]
+        minutes = (ctx.event.payload or {}).get("design_review") if ctx.event.event_type == EventType.COMPANY_TICKET_APPROVED else None
+        minutes = minutes or design_review.minutes_for_ticket(ctx.db, ticket["id"])
+        if minutes:  # structural: which meeting decided this design (the PR body shows it)
+            spec["design_review"] = {k: minutes.get(k) for k in ("review_id", "rounds", "verdict", "by", "stances")} | {"conditions": len(minutes.get("conditions") or [])}
     prelim = assess_risk(list(spec["files_allowed"]), "", spec_kind=str(spec.get("kind") or ""))
     if _candidates_today(ctx) >= ctx.settings.max_autonomous_candidates_per_day:
         raise ExecutionError(f"change budget exhausted: {ctx.settings.max_autonomous_candidates_per_day} autonomous candidates today")
@@ -1823,6 +1857,9 @@ HANDLERS: Dict[IntentType, Callable[[ExecContext], ExecOutcome]] = {
     IntentType.REQUEST_QA: _request_qa,
     IntentType.DECLINE_CODE_CANDIDATE: _decline_code_candidate,
     IntentType.TICKET_NEEDS_INFO: _ticket_needs_info,
+    IntentType.PROPOSE_DESIGN: _propose_design,
+    IntentType.REVIEW_DESIGN: _review_design,
+    IntentType.DECIDE_DESIGN: _decide_design,
     IntentType.EVALUATE_CODE_CANDIDATE: _evaluate_code_candidate,
     IntentType.SECURITY_REVIEW_CANDIDATE: _security_review_candidate,
     IntentType.REQUEST_STAGING_DEPLOY: _request_staging_deploy,

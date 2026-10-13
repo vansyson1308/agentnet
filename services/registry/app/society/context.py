@@ -999,8 +999,15 @@ def _engineering(db: Session, agent: Agent, event: SocietyEvent, settings: Socie
         "max_files_per_candidate": int(settings.max_files_per_candidate),
         "max_diff_lines": int(settings.max_diff_lines),
         "conventions": engineering_conventions(settings) if role in ENGINEERING_ROLES else {},
-        "company": {**_company(db), **_design_ticket(db, event, settings)} if settings.company_cycle_enabled else {},
+        "company": {**_company(db), **_design_ticket(db, event, settings), **_design_review(db, event)} if settings.company_cycle_enabled else {},
     }
+
+
+def _design_review(db: Session, event: SocietyEvent) -> Dict[str, Any]:
+    """The design review this story's round belongs to (design_review.py), or {}."""
+    from . import design_review  # noqa: PLC0415
+
+    return design_review.context_view(db, event.correlation_id)
 
 
 def _design_ticket(db: Session, event: SocietyEvent, settings: SocietySettings) -> Dict[str, Any]:

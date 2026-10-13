@@ -55,6 +55,8 @@ from . import fitness as fitness_mod
 from . import memory_grounding
 from . import outcomes as outcomes_mod
 from . import tickets as tickets_mod
+from . import design_review as design_review_mod
+from ..a2a.federation import directory as a2a_directory
 from . import promotion as promo_mod
 from . import redelivery as redelivery_mod
 from . import router as router_mod
@@ -86,6 +88,8 @@ from .runs import (
 )
 
 logger = logging.getLogger(__name__)
+#: one public-directory pass (scan or listing) never holds the loop longer than this
+DIRECTORY_PASS_SECONDS = 180
 
 # ── metrics (optional dependency) ─────────────────────────────────────
 try:  # pragma: no cover - metrics plumbing
@@ -683,8 +687,9 @@ class SocietyWorker:
                 db.commit()
             if self.settings.company_cycle_enabled and (tickets_mod.relabel_dead_worker_refusals(db) + tickets_mod.close_satisfied(db)
                                                         + tickets_mod.sweep_stale_designs(db, utcnow())
-                                                        + tickets_mod.board_decide(db, self.settings, utcnow())):
-                db.commit()  # a satisfied bench ticket closes; an approved ticket nobody designed is never silently stuck; the board approves an undecided plan
+                                                        + tickets_mod.board_decide(db, self.settings, utcnow())
+                                                        + design_review_mod.sweep(db, utcnow())):
+                db.commit()  # a satisfied bench ticket closes; an approved ticket nobody designed is never silently stuck; the board approves an undecided plan; no design review strands a ticket
         except Exception:  # noqa: BLE001 -- a reading failure never stops the loop
             db.rollback()
             logger.exception("ticket outcome recording failed")
@@ -745,6 +750,13 @@ class SocietyWorker:
             await federation_pump.pump_once(self.session_factory)
         except Exception:  # noqa: BLE001
             logger.exception("society federation pump failed")
+        # Public agent directories (a2a/federation/directory.py): find other people's agents
+        # once a day, ask to be listed once a week. Off unless configured; bounded in time.
+        try:
+            await asyncio.wait_for(a2a_directory.scan(self.session_factory), timeout=DIRECTORY_PASS_SECONDS)
+            await asyncio.wait_for(a2a_directory.publish_self(self.session_factory), timeout=DIRECTORY_PASS_SECONDS)
+        except Exception:  # noqa: BLE001 -- includes the timeout: the day's marker is already written, so no retry storm
+            logger.exception("a2a directory pass failed")
 
     async def watch_public_surface(self):
         """Start a public-surface probe when one is due, and fold a finished
