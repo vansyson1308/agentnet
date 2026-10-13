@@ -197,6 +197,8 @@ def produce_anomalies(db: Session, settings: SocietySettings, *, now: Optional[d
         if anomaly is None:
             continue
         key = f"telemetry:{anomaly.metric}:{_bucket(now, cooldown_seconds)}"
+        if db.query(SocietyEvent.id).filter(SocietyEvent.idempotency_key == key).first() is not None:
+            continue  # already emitted in this cooldown window: once per window, not a dedup attempt every tick
         ev = emit_event(
             db,
             event_type=EventType.PLATFORM_METRIC_ANOMALY,

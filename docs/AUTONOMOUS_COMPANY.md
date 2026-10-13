@@ -196,6 +196,10 @@ Without it the company stands still every day until the owner opens the plan: on
 - **Healthy only (fails closed).** It holds, and writes why on the plan's `board_note`, while
   an incident freeze is open, a society run went DEAD in the last 6 h, or the daily model
   budget is spent.
+- **Isolated.** The worker runs each ticket controller (outcomes, relabel, close, stale-design
+  sweep, board, design-review sweep) in its own transaction and logs a failure as
+  `company controller step <name> failed`: a broken step can neither skip the board nor roll
+  back its hold note.
 - **Visible.** `GET /v1/society/company/plans` shows `decided_by` (`owner` | `board`) and
   `board_note`; `GET /v1/society/company` shows `mode.company_board_approval_hours`.
 - Schema: `SOCIETY_COMPANY_BOARD_SQL`, migration `0019_company_board`.

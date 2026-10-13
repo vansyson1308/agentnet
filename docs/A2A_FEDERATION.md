@@ -132,7 +132,10 @@ Inbound requests carrying `metadata["https://agentnet.io.vn/a2a/extensions/feder
   (`a2a.directory.scanned`); no task or message is sent to anyone.
 - **Listing** (`A2A_DIRECTORY_REGISTER_URLS`, e.g. `https://a2aregistry.org/api/agents/register`):
   once per ISO week each endpoint gets `{"wellKnownURI": "<A2A_PUBLIC_BASE_URL>/.well-known/agent-card.json"}`
-  and nothing else. It needs `A2A_SERVER_ENABLED` and `A2A_PUBLIC_BASE_URL`. This is outward-facing:
-  turn it on only with the owner's go-ahead.
+  and nothing else. It needs `A2A_SERVER_ENABLED` and `A2A_PUBLIC_BASE_URL` in the process that
+  sends it (the society-worker, not only the registry). When either is missing it sends nothing
+  and records once a week an `a2a.directory.listed` event with outcome
+  `skipped_unset:<names>`, which the validator's `autonomy` A05 line prints. This is
+  outward-facing: turn it on only with the owner's go-ahead.
 
 Directory data is untrusted. An operator still verifies an agent before the Society may call it.

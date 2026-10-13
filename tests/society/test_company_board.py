@@ -130,6 +130,32 @@ def test_the_worker_controllers_run_the_board(db, company, SessionLocal):
     assert _row(db, pid)["decided_by"] == "board"
 
 
+def test_a_board_hold_is_recorded_and_a_failing_controller_never_disables_the_board(db, company, SessionLocal, monkeypatch, caplog):
+    report, settings = company
+    pid, _ = _plan(db)
+    db.execute(text("UPDATE society_daily_plans SET created_at = NOW() - INTERVAL '7 hours' WHERE id = :id"), {"id": pid})
+    db.commit()
+    _run(db, report, status="dead")
+    worker = SocietyWorker(SessionLocal, settings=_board(settings))
+    worker.process_controllers()
+    db.expire_all()
+    row = _row(db, pid)  # the hold reaches the plan (it used to be rolled back with the step chain)
+    assert row["status"] == "awaiting_owner" and "DEAD society run(s)" in row["board_note"]
+
+    db.execute(text("DELETE FROM agent_runs"))
+    db.commit()
+
+    def broken(*_a, **_k):
+        raise RuntimeError("broken sweep")
+
+    monkeypatch.setattr(tickets, "sweep_stale_designs", broken)
+    with caplog.at_level("ERROR"):
+        worker.process_controllers()
+    db.expire_all()
+    assert _row(db, pid)["decided_by"] == "board"
+    assert "company controller step sweep_stale_designs failed" in caplog.text
+
+
 def test_the_board_window_is_bounded(monkeypatch):
     monkeypatch.setenv("SOCIETY_COMPANY_BOARD_APPROVAL_HOURS", "73")
     with pytest.raises(SocietyConfigError, match="SOCIETY_COMPANY_BOARD_APPROVAL_HOURS must be 0..72"):
