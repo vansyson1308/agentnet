@@ -293,6 +293,14 @@ class SocietySettings:
     # stays APPROVED and visible, but no longer holds a portfolio slot
     # (company.portfolio_accounting). The cap itself is unchanged.
     company_hypothesis_shelf_hours: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_HYPOTHESIS_SHELF_HOURS", 72, minimum=24))
+    # The board (tickets.board_decide): the owner's standing delegation for the daily
+    # plan. A plan the owner left undecided this many hours is approved -- only while
+    # healthy (no incident freeze, no recent DEAD run, budget left). 0 = off: every
+    # plan waits for the owner. RED changes still reach main only by the owner's merge.
+    company_board_approval_hours: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_BOARD_APPROVAL_HOURS", 0, minimum=0))
+    # The design review (design_review.py): an approved ticket is discussed before it is
+    # designed -- the Architect proposes, Scout/QA/Security review, the Governor decides.
+    design_review_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_DESIGN_REVIEW_ENABLED", False))
     # An open candidate with no lifecycle progress this long is STALLED: it is
     # surfaced to the operator queue and no longer holds a portfolio slot. It is
     # never abandoned automatically (society/candidate_health.py).
@@ -405,6 +413,8 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
         problems.append("SOCIETY_DAILY_MODEL_BUDGET must be >= 0")
     if s.company_cycle_hour_utc > 23:
         problems.append("SOCIETY_COMPANY_CYCLE_HOUR_UTC must be 0..23")
+    if s.company_board_approval_hours > 72:
+        problems.append("SOCIETY_COMPANY_BOARD_APPROVAL_HOURS must be 0..72 (0 = every plan waits for the owner)")
     if s.public_surface_monitor_enabled:
         for name, origin in (("PUBLIC_PRODUCT_UI_ORIGIN", s.public_product_ui_origin), ("PUBLIC_PRODUCT_API_ORIGIN", s.public_product_api_origin)):
             if not origin.startswith("https://") and env != "development":

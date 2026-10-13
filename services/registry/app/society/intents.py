@@ -63,6 +63,10 @@ class IntentType(str, enum.Enum):
     DECLINE_CODE_CANDIDATE = "DECLINE_CODE_CANDIDATE"
     #: the Architect cannot design an approved ticket from what it has: it goes back to the owner (LOW)
     TICKET_NEEDS_INFO = "TICKET_NEEDS_INFO"
+    # the design review (design_review.py): the company meets before a ticket is designed
+    PROPOSE_DESIGN = "PROPOSE_DESIGN"
+    REVIEW_DESIGN = "REVIEW_DESIGN"
+    DECIDE_DESIGN = "DECIDE_DESIGN"
     EVALUATE_CODE_CANDIDATE = "EVALUATE_CODE_CANDIDATE"
     SECURITY_REVIEW_CANDIDATE = "SECURITY_REVIEW_CANDIDATE"
     REQUEST_STAGING_DEPLOY = "REQUEST_STAGING_DEPLOY"
@@ -394,6 +398,55 @@ class TicketNeedsInfoPayload(_Strict):
     detail: str = Field(..., min_length=10, max_length=500)
 
 
+def _short_items(v: List[str], *, lo: int = 3, hi: int = 300) -> List[str]:
+    for item in v:
+        if not isinstance(item, str) or not lo <= len(item.strip()) <= hi:
+            raise ValueError(f"each item must be {lo}..{hi} characters")
+    return [item.strip() for item in v]
+
+
+class ProposeDesignPayload(_Strict):
+    """The Architect's design proposal for the review its story runs (design_review.py)."""
+
+    review_id: uuid.UUID
+    approach: str = Field(..., min_length=20, max_length=1500)
+    files: List[str] = Field(..., min_length=1, max_length=12)
+    proof: str = Field(..., min_length=10, max_length=800)
+    risks: List[str] = Field(default_factory=list, max_length=5)
+
+    @field_validator("files", "risks")
+    @classmethod
+    def _items(cls, v: List[str]) -> List[str]:
+        return _short_items(v, lo=1)
+
+
+class ReviewDesignPayload(_Strict):
+    """A reviewer's position on the proposal (Scout: evidence/value, QA: provability, Security: risk)."""
+
+    review_id: uuid.UUID
+    stance: Literal["support", "concern", "object"]
+    points: List[str] = Field(..., min_length=1, max_length=5)
+
+    @field_validator("points")
+    @classmethod
+    def _items(cls, v: List[str]) -> List[str]:
+        return _short_items(v)
+
+
+class DecideDesignPayload(_Strict):
+    """The Governor's verdict. Security ``object`` bars ``go``; the last round has no ``revise``."""
+
+    review_id: uuid.UUID
+    verdict: Literal["go", "revise", "drop"]
+    rationale: str = Field(..., min_length=10, max_length=800)
+    conditions: List[str] = Field(default_factory=list, max_length=5)
+
+    @field_validator("conditions")
+    @classmethod
+    def _items(cls, v: List[str]) -> List[str]:
+        return _short_items(v)
+
+
 class DeclineCodeCandidatePayload(_Strict):
     """The responsible Builder declines an open candidate it cannot finish
     within its spec. The candidate becomes REJECTED -- never widened -- and
@@ -543,6 +596,9 @@ PAYLOAD_MODELS: Dict[IntentType, type] = {
     IntentType.REQUEST_QA: CandidateRefPayload,
     IntentType.DECLINE_CODE_CANDIDATE: DeclineCodeCandidatePayload,
     IntentType.TICKET_NEEDS_INFO: TicketNeedsInfoPayload,
+    IntentType.PROPOSE_DESIGN: ProposeDesignPayload,
+    IntentType.REVIEW_DESIGN: ReviewDesignPayload,
+    IntentType.DECIDE_DESIGN: DecideDesignPayload,
     IntentType.EVALUATE_CODE_CANDIDATE: CandidateRefPayload,
     IntentType.SECURITY_REVIEW_CANDIDATE: SecurityReviewPayload,
     IntentType.REQUEST_STAGING_DEPLOY: CandidateRefPayload,

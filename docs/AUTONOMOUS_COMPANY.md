@@ -109,7 +109,7 @@ freezes innovation promotion; maintenance and security repairs continue.
 ## 9. From an approved ticket to a candidate
 
 A ticket (`society/tickets.py`) says why work exists: an active objective, a key-result metric and a
-proof. The owner approves the daily plan, `company.ticket_approved` opens one design story per
+proof. The owner (or, after the owner's window, the board: §10) approves the daily plan, `company.ticket_approved` opens one design story per
 ticket, and the Architect designs it with `REQUEST_CODE_CHANGE`.
 
 **Bench tickets.** A backlog bench ticket ("Builder harness: deliver dev task X (k/3 runs)") names
@@ -178,3 +178,84 @@ what failed, not what to change. The change it needs is to the **builder harness
 - **Owner merge queue.** The PR is listed in `GET /v1/society/approvals` (under
   `candidates.owner_merge`), in `GET /v1/society/company` (under `owner_merge_queue`) and in the
   validator `company` step (K07). It is never auto-merged; the owner merges it.
+
+## 10. The board: the owner's standing delegation for the daily plan
+
+Without it the company stands still every day until the owner opens the plan: on staging the
+2026-10-13 plan was still `awaiting_owner` 14 hours after the cycle, and earlier plans waited
+5–17 hours. The board (`tickets.board_decide`, deterministic, no model) removes that wait.
+
+- **Off by default.** `SOCIETY_COMPANY_BOARD_APPROVAL_HOURS=0` keeps every plan waiting for the
+  owner. Set it to N (1–72) on the society-worker to delegate.
+- **The owner decides first.** A plan is the owner's for N hours after the cycle builds it. An
+  owner approval or rejection inside that window is final; the board never touches it.
+- **Approve only.** After the window the board approves the plan exactly as the owner would
+  (`company.ticket_approved`, `actor_type=system`, `payload.approved_by=board`). It never
+  rejects, never edits a ticket, the gate, the ranking, a budget or the RED merge law: a RED
+  candidate's PR still waits in the owner merge queue (§9).
+- **Healthy only (fails closed).** It holds, and writes why on the plan's `board_note`, while
+  an incident freeze is open, a society run went DEAD in the last 6 h, or the daily model
+  budget is spent.
+- **Visible.** `GET /v1/society/company/plans` shows `decided_by` (`owner` | `board`) and
+  `board_note`; `GET /v1/society/company` shows `mode.company_board_approval_hours`.
+- Schema: `SOCIETY_COMPANY_BOARD_SQL`, migration `0019_company_board`.
+
+## 11. The design review: the company meets before it builds
+
+Until now one agent decided alone what to change: the Architect read the ticket and designed.
+The other roles only saw the result after it was built, and `agent_chat` stayed empty (0 rows in
+every staging audit). The design review (`society/design_review.py`) is the meeting in between.
+
+| Step | Who | Typed intent | What the runtime enforces |
+| --- | --- | --- | --- |
+| Request | runtime | — | an approved ticket (owner or board) opens a review in a **fresh story** (`design_review.requested`); owner/incident tickets skip it |
+| Propose | Architect | `PROPOSE_DESIGN {review_id, approach, files, proof, risks}` | only in the review's current round |
+| Review | Scout (evidence, value), QA (provability), Security (risk) | `REVIEW_DESIGN {review_id, stance: support\|concern\|object, points}` | once per role per round; only these three roles |
+| Decide | Governor | `DECIDE_DESIGN {review_id, verdict: go\|revise\|drop, rationale, conditions}` | a Security `object` bars `go`; round 2 is the last (no `revise`) |
+| Design | Architect | `REQUEST_CODE_CHANGE` | `go` emits `company.ticket_approved` in a **fresh** design story with the minutes; the candidate spec and the PR body carry them (structural only) |
+
+- **A conversation.** Every proposal, review and decision is also an `AgentChat` message in the
+  review's thread (`thread_id` = review id).
+- **No stranded ticket** (`design_review.sweep`, every controller pass): no proposal within 2 h →
+  designed without a review (the minutes say so); reviews missing after 2 h → the Governor decides
+  with the positions it has; no decision within 2 h → `go` unless someone objected, otherwise the
+  ticket returns to `proposed` for re-planning. `drop` refuses the ticket with the Governor's
+  rationale.
+- **Bounded.** Fresh stories keep the loop-breaker depth of the design story unchanged; at most
+  2 rounds; each contribution is one LOW intent under the role's existing run and budget caps.
+- **Authority unchanged.** The review decides only whether and how a ticket is designed. It cannot
+  merge, deploy, change a grant, budget or the risk tier; QA, Security and the promotion controller
+  still judge the built candidate.
+- **Visible.** `GET /v1/society/company/reviews` (operator: minutes, positions, history) and
+  `mode.design_review_enabled` in `GET /v1/society/company`.
+- Off by default: `SOCIETY_DESIGN_REVIEW_ENABLED=false`. Schema `SOCIETY_DESIGN_REVIEW_SQL`,
+  migration `0020_design_review`.
+
+## 12. Growth supply: product work that needs nobody to file it
+
+Until now every supplied ticket came from the bench (RED harness work), an incident or an owner
+issue: on staging 11 of 14 tickets were `Builder harness: ...` and none was about the product,
+its users or other agents. `backlog.kr_gap_items` adds the growth key results:
+
+- For each **ACTIVE** objective, every growth KR (`backlog.GROWTH_METRICS`:
+  `escrow_tasks_completed_7d`, `a2a_agents_live_card`) that is off target, or has no reading yet,
+  is one item per ISO week. It is read only at the company cycle: no event, no heartbeat, no model.
+- `tickets.supply` turns it into ONE proposed ticket (`proof: probe:<metric>`, department
+  `strategy_product`), never a second open one for the same KR. It is not RED by construction, so
+  it is judged from its diff and fits the plan beside the single RED slot; O2 (owner priority 2)
+  ranks above O3 bench work.
+- Its work packet (`work_packet.METRIC_LEVERS`) says what the metric means, the product levers
+  (dashboard pages, docs, SDK, examples) and how it is judged: `outcomes.py` reads the KR at merge,
+  +24 h and +7 d (`moved` / `no_effect` / `regressed`).
+- The owner turns it on by activating the objective (`POST /v1/society/company/objectives/O2/status`
+  `{"status": "active"}`); nothing else changes.
+
+## 13. Proving it runs without the owner
+
+`deploy/railway/phase5_live.py` step `autonomy[:<days>]` (e.g. `PHASE5_PLAN=autonomy:7`) reads
+staging read-only and fails when the company waits on a person or a meeting stalls:
+
+- `A01` the oldest undecided daily plan is younger than 24 h (the board decides within its window);
+- `A02` no design review sits in one stage longer than 7 h (the sweep moves it on);
+- `A03` design reviews produce chat messages (the agents actually discuss);
+- `A04` / `A05` informational: tickets by kind and source, and the federated network by state.

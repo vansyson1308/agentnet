@@ -378,7 +378,7 @@ def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Op
     # (no model), so the settled plan never depends on a model choosing to file one.
     from . import backlog  # noqa: PLC0415
 
-    supplied = tickets.supply(db, backlog.collect(db, settings, provider), now)
+    supplied = tickets.supply(db, backlog.collect(db, settings, provider) + backlog.kr_gap_items(db, now), now)
     cycle.evidence = {**(cycle.evidence or {}), "tickets_supplied": len(supplied)}
     db.commit()
     return cycle
@@ -508,6 +508,8 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
         "mode": {
             "society_runtime_enabled": settings.runtime_enabled,
             "company_cycle_enabled": settings.company_cycle_enabled,
+            "company_board_approval_hours": settings.company_board_approval_hours,
+            "design_review_enabled": settings.design_review_enabled,
             "autonomous_code_enabled": settings.autonomous_code_enabled,
             "auto_merge_enabled": settings.auto_merge_enabled,
             "production_deploy_enabled": False,  # hard OFF; production releases are the trusted operator boundary

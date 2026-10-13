@@ -136,8 +136,11 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             IntentType.DISCOVER_A2A_AGENT.value,
             IntentType.REQUEST_A2A_TASK.value,
             IntentType.CHECK_A2A_TASK.value,
+            # the design review's chair (design_review.py)
+            IntentType.DECIDE_DESIGN.value,
         ),
         subscriptions=(
+            EventType.DESIGN_REVIEW_READY,
             EventType.PROPOSAL_CREATED,
             EventType.CODE_CANDIDATE_READY,
             EventType.CODE_CANDIDATE_REJECTED,
@@ -172,8 +175,10 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             IntentType.CREATE_GOAL.value,
             IntentType.REFRESH_A2A_AGENT.value,
             IntentType.CHECK_A2A_TASK.value,
+            IntentType.REVIEW_DESIGN.value,
         ),
         subscriptions=(
+            EventType.DESIGN_REVIEW_PROPOSED,
             EventType.COMPANY_CYCLE,
             EventType.BACKLOG_ITEM,
             EventType.A2A_AGENT_REFRESHED,
@@ -208,12 +213,14 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         + (
             IntentType.REQUEST_CODE_CHANGE.value,
             IntentType.TICKET_NEEDS_INFO.value,
+            IntentType.PROPOSE_DESIGN.value,
             IntentType.CREATE_TASK.value,
             IntentType.UPDATE_GOAL.value,
         ),
         subscriptions=(
             EventType.PROPOSAL_APPROVED,
             EventType.COMPANY_TICKET_APPROVED,
+            EventType.DESIGN_REVIEW_REQUESTED,
             EventType.REPO_READ_RESULT,
             EventType.CODE_CANDIDATE_QA_FAILED,
             EventType.CODE_CANDIDATE_READY,
@@ -288,8 +295,9 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         + (
             IntentType.EVALUATE_CODE_CANDIDATE.value,
             IntentType.CREATE_IMPROVEMENT.value,
+            IntentType.REVIEW_DESIGN.value,
         ),
-        subscriptions=(EventType.CODE_CANDIDATE_BUILT,),
+        subscriptions=(EventType.CODE_CANDIDATE_BUILT, EventType.DESIGN_REVIEW_PROPOSED),
         risk_ceiling=IntentRiskClass.MEDIUM.value,
         resource_scopes={"memory_scopes": ["agent", "society"]},
         capabilities=(_QA_CAPABILITY,),
@@ -306,8 +314,9 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             "cannot be ruled out is a FAIL. You are independently permissioned and cannot be overruled by QA."
         ),
         description="Security Reviewer — risky-surface review, fail closed",
-        allowed_intents=_LOW_COMMON + (IntentType.SECURITY_REVIEW_CANDIDATE.value, IntentType.READ_DIFF.value, IntentType.READ_REPO_FILE.value, IntentType.READ_CANDIDATE_STATE.value),
-        subscriptions=(EventType.CODE_CANDIDATE_SECURITY_REVIEW, EventType.REPO_READ_RESULT),
+        allowed_intents=_LOW_COMMON + (IntentType.SECURITY_REVIEW_CANDIDATE.value, IntentType.READ_DIFF.value, IntentType.READ_REPO_FILE.value, IntentType.READ_CANDIDATE_STATE.value,
+                                       IntentType.REVIEW_DESIGN.value),
+        subscriptions=(EventType.CODE_CANDIDATE_SECURITY_REVIEW, EventType.REPO_READ_RESULT, EventType.DESIGN_REVIEW_PROPOSED),
         risk_ceiling=IntentRiskClass.MEDIUM.value,
         resource_scopes={"memory_scopes": ["agent", "society"]},
         max_runs_per_hour=20,

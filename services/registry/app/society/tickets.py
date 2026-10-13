@@ -33,7 +33,7 @@ MODEL_TICKETS_PER_DEPARTMENT = 2
 NON_TEST_PROOFS = ("probe:", "bench:", "issue:")
 #: Supplied tickets (``supply``): backlog source -> (charter department, KR metric). An issue maps to the objective its owner tagged.
 SUPPLY = {"bench": ("engineering", "bench_holdout_pass_at_1"), "maintenance_incident": ("sre_release", "core_journey_success_rate"),
-          "github_issue": ("strategy_product", None)}
+          "github_issue": ("strategy_product", None), "kr_gap": ("strategy_product", None)}
 OPEN_TICKET = ("proposed", "planned", "approved", "building", "ready")
 _NS = uuid.UUID("6c1f0e3a-8a51-4c2e-9d0b-2f6a1c7e5b10")
 DEPARTMENT_BY_ROLE = {"governor": "ceo_office", "scout": "strategy_product", "architect": "engineering", "builder": "engineering", "qa": "quality", "security": "security", "evaluator": "analytics"}
@@ -250,13 +250,27 @@ def build_plan(db: Session, cycle_id: Optional[uuid.UUID], now: datetime, *, red
     return {"id": str(pid), "status": "awaiting_owner", "ranking": chosen}
 
 
-def _approved(db: Session, t: Dict[str, Any], user_id: Any) -> None:
+def _approved(db: Session, t: Dict[str, Any], user_id: Any, *, by: str = "owner") -> None:
+    """The ticket is approved. With the design review on (design_review.py) the company meets
+    first and the Architect is woken by the review's ``go``; owner/incident tickets skip it."""
+    from . import design_review  # noqa: PLC0415
+
     set_status(db, t["id"], "approved")
+    if design_review.enabled() and t.get("source") not in BYPASS_SOURCES:
+        design_review.open_review(db, t, approved_by=by)
+        return
+    emit_approved(db, t, user_id, by=by)
+
+
+def emit_approved(db: Session, t: Dict[str, Any], user_id: Any, *, by: str = "owner", design_review: Optional[Dict[str, Any]] = None) -> None:
+    """Wake the Architect: ``company.ticket_approved`` opens the ticket's design story."""
     # one wake per approval: a ticket that came back (record_design_failure) is approved again in a NEW plan
-    key = f"company.ticket_approved:{t['id']}" + (f":{t['plan_id']}" if t.get("plan_id") else "")
-    emit_event(db, event_type=EventType.COMPANY_TICKET_APPROVED, actor_type="operator", actor_id=user_id, subject_type="proposal", subject_id=t["proposal_id"],
+    key = f"company.ticket_approved:{t['id']}" + (f":{t['plan_id']}" if t.get("plan_id") else "") + (f":review:{design_review['review_id']}" if design_review else "")
+    emit_event(db, event_type=EventType.COMPANY_TICKET_APPROVED, actor_type="operator" if by == "owner" else "system", actor_id=user_id,
+               subject_type="proposal", subject_id=t["proposal_id"],
                payload={"ticket_id": str(t["id"]), "proposal_id": str(t["proposal_id"]), "title": t["title"], "objective_id": t["objective_id"],
-                        "metric_id": t["metric_id"], "expected_effect": float(t["expected_effect"]), "direction": t["direction"], "proof": t["proof"]},
+                        "metric_id": t["metric_id"], "expected_effect": float(t["expected_effect"]), "direction": t["direction"], "proof": t["proof"],
+                        "approved_by": by, **({"design_review": design_review} if design_review else {})},
                idempotency_key=key)
 
 
@@ -367,6 +381,18 @@ def sweep_stale_designs(db: Session, now: datetime) -> int:
     return n
 
 
+def _decide(db: Session, plan: Any, *, approve: bool, user_id: Any, by: str, note: Optional[str] = None) -> str:
+    status = "approved" if approve else "rejected"
+    db.execute(text("UPDATE society_daily_plans SET status = :s, decided_by_user_id = :u, decided_by = :by, board_note = :n, decided_at = NOW() WHERE id = :id"),
+               {"s": status, "u": user_id, "by": by, "n": note, "id": plan["id"]})
+    for t in db.execute(text("SELECT * FROM society_tickets WHERE plan_id = :p AND status = 'planned'"), {"p": plan["id"]}).mappings().all():
+        if approve:
+            _approved(db, dict(t), user_id, by=by)
+        else:
+            set_status(db, t["id"], "closed", "the owner rejected the daily plan")
+    return status
+
+
 def decide_plan(db: Session, plan_id: uuid.UUID, *, approve: bool, user_id: Any) -> Dict[str, Any]:
     """Operator only (the API wires require_operator): no model path reaches here."""
     plan = db.execute(text("SELECT * FROM society_daily_plans WHERE id = :id FOR UPDATE"), {"id": plan_id}).mappings().first()
@@ -374,15 +400,58 @@ def decide_plan(db: Session, plan_id: uuid.UUID, *, approve: bool, user_id: Any)
         raise KeyError("plan not found")
     if plan["status"] != "awaiting_owner":
         raise ValueError(f"plan is already {plan['status']}")
-    status = "approved" if approve else "rejected"
-    db.execute(text("UPDATE society_daily_plans SET status = :s, decided_by_user_id = :u, decided_at = NOW() WHERE id = :id"), {"s": status, "u": user_id, "id": plan_id})
-    for t in db.execute(text("SELECT * FROM society_tickets WHERE plan_id = :p AND status = 'planned'"), {"p": plan_id}).mappings().all():
-        if approve:
-            _approved(db, dict(t), user_id)
-        else:
-            set_status(db, t["id"], "closed", "the owner rejected the daily plan")
+    status = _decide(db, plan, approve=approve, user_id=user_id, by="owner")
     db.commit()
-    return {**dict(plan), "status": status}
+    return {**dict(plan), "status": status, "decided_by": "owner"}
+
+
+# ── the board: the owner's standing delegation for the daily plan (deterministic, no model) ──
+
+#: DEAD society runs within this window hold the board: a sick worker should not take on new work.
+BOARD_DEAD_RUN_WINDOW = timedelta(hours=6)
+
+
+def board_hold_reason(db: Session, settings: Any, now: datetime) -> Optional[str]:
+    """Why the board may not approve a plan right now (None = healthy). Fails closed:
+    an open incident freeze, recent DEAD runs or a spent daily model budget each hold it."""
+    from .policy import spend_today_usd  # noqa: PLC0415
+
+    freezes = db.execute(text("SELECT COUNT(*) FROM society_incident_freezes WHERE lifted_at IS NULL")).scalar() or 0
+    if freezes:
+        return f"incident freeze open ({freezes}): only an operator lifts it"
+    dead = db.execute(text("SELECT COUNT(*) FROM agent_runs WHERE status = 'dead' AND completed_at >= :since"),
+                      {"since": now - BOARD_DEAD_RUN_WINDOW}).scalar() or 0
+    if dead:
+        return f"{dead} DEAD society run(s) in the last {BOARD_DEAD_RUN_WINDOW.total_seconds() / 3600:g}h"
+    budget = float(getattr(settings, "daily_model_budget_usd", 0) or 0)
+    if budget > 0 and float(spend_today_usd(db, now=now)) >= budget:
+        return f"daily model budget spent ({budget:g} USD)"
+    return None
+
+
+def board_decide(db: Session, settings: Any, now: datetime) -> int:
+    """Approve each plan the owner left undecided for ``SOCIETY_COMPANY_BOARD_APPROVAL_HOURS``
+    (0 = off: every plan waits for the owner, as before). The owner's window comes first:
+    approve or reject sooner and the board never acts. Only approves -- never rejects,
+    never changes a ticket, the gate, the RED merge law or any budget. When unhealthy it
+    holds and says why on the plan (``board_note``). Returns plans approved. The caller commits."""
+    hours = int(getattr(settings, "company_board_approval_hours", 0) or 0)
+    if hours <= 0:
+        return 0
+    due = db.execute(text("SELECT * FROM society_daily_plans WHERE status = 'awaiting_owner' AND created_at <= :cut ORDER BY created_at FOR UPDATE SKIP LOCKED"),
+                     {"cut": now - timedelta(hours=hours)}).mappings().all()
+    if not due:
+        return 0
+    hold = board_hold_reason(db, settings, now)
+    if hold:
+        note = f"board holds: {hold}"
+        db.execute(text("UPDATE society_daily_plans SET board_note = :n WHERE status = 'awaiting_owner' AND id IN :ids AND board_note IS DISTINCT FROM :n")
+                   .bindparams(bindparam("ids", expanding=True)), {"n": note[:255], "ids": [p["id"] for p in due]})
+        return 0
+    for plan in due:
+        _decide(db, plan, approve=True, user_id=None, by="board", note=f"approved by the board: the owner left it undecided for {hours}h")
+    logger.info("board approved %d daily plan(s) after the owner's %dh window", len(due), hours)
+    return len(due)
 
 
 def set_objective_status(db: Session, objective_id: str, status: str, user_id: Any) -> None:
@@ -414,7 +483,7 @@ def last_empty_reason(db: Session) -> Optional[str]:
 
 
 def plans_view(db: Session, limit: int = 14) -> List[Dict[str, Any]]:
-    rows = db.execute(text("SELECT id, plan_date, status, ranking, decided_at, created_at FROM society_daily_plans ORDER BY created_at DESC LIMIT :n"), {"n": limit}).mappings().all()
+    rows = db.execute(text("SELECT id, plan_date, status, ranking, decided_by, board_note, decided_at, created_at FROM society_daily_plans ORDER BY created_at DESC LIMIT :n"), {"n": limit}).mappings().all()
     return [{k: (str(v) if isinstance(v, (uuid.UUID, date)) else v) for k, v in r.items()} for r in rows]
 
 
@@ -427,6 +496,8 @@ def _subject(item: Dict[str, Any]) -> Optional[str]:
         return f"probe:core_journey_success_rate:{item['incident_id']}"
     if src == "github_issue" and item.get("objectives"):
         return f"issue:{item['issue_number']}"
+    if src == "kr_gap":
+        return f"probe:{item['metric_id']}:{item['key']}"
     return None  # not a ticket: no objective owns it
 
 
@@ -442,7 +513,9 @@ def supply(db: Session, items: List[Dict[str, Any]], now: datetime) -> List[str]
     for item in items:
         subject = _subject(item)
         dept, metric = SUPPLY.get(str(item.get("source")), (None, None))
-        obj = next((o for o in objs if (metric and metric in [k["metric_id"] for k in o["key_results"]]) or o["id"] in (item.get("objectives") or [])), None)
+        metric = metric or item.get("metric_id")
+        obj = next((o for o in objs if (o["id"] == item["objective_id"] if item.get("objective_id") else
+                                        (metric and metric in [k["metric_id"] for k in o["key_results"]]) or o["id"] in (item.get("objectives") or []))), None)
         if item.get("source") == "bench" and bench_met(item.get("delivered"), item.get("runs")):
             continue  # already delivered >= 2/3: nothing for a harness change to buy
         if subject and obj:
@@ -451,7 +524,7 @@ def supply(db: Session, items: List[Dict[str, Any]], now: datetime) -> List[str]
     created = []
     for item, subject, dept, obj, kr in mapped:
         tid = uuid.uuid5(_NS, f"ticket:{item['key']}")
-        proof = [subject.rsplit(":", 1)[0] if subject.startswith("probe:") else subject]
+        proof = [":".join(subject.split(":", 2)[:2]) if subject.startswith("probe:") else subject]
         if db.execute(text("SELECT 1 FROM society_tickets WHERE id = :id OR (proof = CAST(:p AS JSONB) AND status IN :open)").bindparams(
                 bindparam("open", expanding=True)), {"id": tid, "p": json.dumps(proof), "open": list(OPEN_TICKET)}).first():
             continue
@@ -463,7 +536,8 @@ def supply(db: Session, items: List[Dict[str, Any]], now: datetime) -> List[str]
             continue  # the key result is already met: nothing to buy
         title = {"bench": f"Builder harness: deliver dev task {item.get('task_id')} ({item.get('delivered')}/{item.get('runs')} runs)",
                  "maintenance_incident": f"Core journey: incident {str(item.get('incident_id'))[:8]} ({item.get('failure_class')})",
-                 "github_issue": f"Owner issue #{item.get('issue_number')}"}[item["source"]]
+                 "github_issue": f"Owner issue #{item.get('issue_number')}",
+                 "kr_gap": f"Grow {item.get('metric_id')}: {item.get('current') if item.get('current') is not None else 'no data'} -> {item.get('target')} ({obj['id']} {obj['title']})"}[item["source"]]
         pid = uuid.uuid5(_NS, f"proposal:{item['key']}")
         db.add(ImprovementProposal(id=pid, source="audit", title=title[:255], problem=f"backlog {item['key']} ({item.get('failure_class')})",
                                    proposed_change=f"move {kr['metric_id']} {kr['direction']} by {effect:g}; proof {proof[0]}", status="PROPOSED",

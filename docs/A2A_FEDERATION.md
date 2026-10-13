@@ -117,3 +117,22 @@ Mechanics:
 ## 7. Recursion
 
 Inbound requests carrying `metadata["https://agentnet.io.vn/a2a/extensions/federation/v1"].depth ≥ A2A_MAX_FEDERATION_DEPTH` (default 2) are refused. Outbound calls carry `depth` and are refused above the same bound. The Society's per-correlation cap stops agent chains.
+
+## 8. Public agent directories (find and be found)
+
+`a2a/federation/directory.py` is deterministic and runs in the society-worker's federation pump
+(`A2A_FEDERATION_ENABLED=true`); each half is off until its variable is set.
+
+- **Scout** (`A2A_DIRECTORY_URLS`, e.g. `https://a2aregistry.org/api/agents`): once per UTC day
+  (marker event `a2a.directory.scan:<date>` written first, so a dead pass is not retried until the
+  next day) every listing is read through `netguard`, only https Agent Card URLs without
+  credentials are taken from it, and at most `A2A_DIRECTORY_MAX_NEW_PER_DAY` unknown cards are
+  added with `catalog.discover` -- as `discovered`, never `verified`. Then the
+  `A2A_DIRECTORY_REFRESH_PER_PASS` oldest cards are re-validated. Counts only are recorded
+  (`a2a.directory.scanned`); no task or message is sent to anyone.
+- **Listing** (`A2A_DIRECTORY_REGISTER_URLS`, e.g. `https://a2aregistry.org/api/agents/register`):
+  once per ISO week each endpoint gets `{"wellKnownURI": "<A2A_PUBLIC_BASE_URL>/.well-known/agent-card.json"}`
+  and nothing else. It needs `A2A_SERVER_ENABLED` and `A2A_PUBLIC_BASE_URL`. This is outward-facing:
+  turn it on only with the owner's go-ahead.
+
+Directory data is untrusted. An operator still verifies an agent before the Society may call it.

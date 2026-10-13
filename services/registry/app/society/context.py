@@ -999,8 +999,15 @@ def _engineering(db: Session, agent: Agent, event: SocietyEvent, settings: Socie
         "max_files_per_candidate": int(settings.max_files_per_candidate),
         "max_diff_lines": int(settings.max_diff_lines),
         "conventions": engineering_conventions(settings) if role in ENGINEERING_ROLES else {},
-        "company": {**_company(db), **_design_ticket(db, event, settings)} if settings.company_cycle_enabled else {},
+        "company": {**_company(db), **_design_ticket(db, event, settings), **_design_review(db, event)} if settings.company_cycle_enabled else {},
     }
+
+
+def _design_review(db: Session, event: SocietyEvent) -> Dict[str, Any]:
+    """The design review this story's round belongs to (design_review.py), or {}."""
+    from . import design_review  # noqa: PLC0415
+
+    return design_review.context_view(db, event.correlation_id)
 
 
 def _design_ticket(db: Session, event: SocietyEvent, settings: SocietySettings) -> Dict[str, Any]:
@@ -1034,7 +1041,7 @@ def _company(db: Session) -> Dict[str, Any]:
         "CREATE_IMPROVEMENT carries ticket {objective_id: an ACTIVE objective, metric_id: one of its key_results, "
         "expected_effect: number, direction: up|down, proof: [acceptance test node ids the code spec will run]}; "
         "without it, or for a proof that already passes on main, no candidate is built. A ticket is designed (REQUEST_CODE_CHANGE) "
-        "only after the owner approves it (event company.ticket_approved); until then the request is refused. Open backlog items "
+        "only after its daily plan is approved -- by the owner, or by the board when the owner left it undecided (event company.ticket_approved); until then the request is refused. Open backlog items "
         "already become tickets at each company cycle: file one only for NEW evidence (evidence required, <= 2 per department a day). "
         "Proof bench:<task> = the builder harness must deliver that bench dev task: design a change to the HARNESS (work_packet.target names the "
         "file and function the failure evidence implicates; files_allowed = harness files + tests only), acceptance_tests = "

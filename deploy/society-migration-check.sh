@@ -46,7 +46,7 @@ done
 
 cd "$(dirname "$0")/.."
 INIT_DIR="services/registry/init-db"
-EXPECTED_HEAD="0018_daily_plans"
+EXPECTED_HEAD="0020_design_review"
 PG_USER="${POSTGRES_USER:-agentnet}"
 PG_HOST="${POSTGRES_HOST:-127.0.0.1}"
 PG_PORT="${POSTGRES_PORT:-5432}"
@@ -179,7 +179,9 @@ for hop in \
   "0014_maintenance_os -> 0015_activity_turn_log" \
   "0015_activity_turn_log -> 0016_bench_reports" \
   "0016_bench_reports -> 0017_company" \
-  "0017_company -> $EXPECTED_HEAD"; do
+  "0017_company -> 0018_daily_plans" \
+  "0018_daily_plans -> 0019_company_board" \
+  "0019_company_board -> $EXPECTED_HEAD"; do
   [[ "$out" == *"$hop"* ]] && ok "$UPGRADE_DB: ran $hop" || bad "$UPGRADE_DB: hop did not run ($hop): $out"
 done
 expect_head "$UPGRADE_DB"
