@@ -508,6 +508,7 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
         "mode": {
             "society_runtime_enabled": settings.runtime_enabled,
             "company_cycle_enabled": settings.company_cycle_enabled,
+            "company_board_approval_hours": settings.company_board_approval_hours,
             "autonomous_code_enabled": settings.autonomous_code_enabled,
             "auto_merge_enabled": settings.auto_merge_enabled,
             "production_deploy_enabled": False,  # hard OFF; production releases are the trusted operator boundary

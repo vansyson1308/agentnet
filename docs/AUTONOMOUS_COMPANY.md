@@ -109,7 +109,7 @@ freezes innovation promotion; maintenance and security repairs continue.
 ## 9. From an approved ticket to a candidate
 
 A ticket (`society/tickets.py`) says why work exists: an active objective, a key-result metric and a
-proof. The owner approves the daily plan, `company.ticket_approved` opens one design story per
+proof. The owner (or, after the owner's window, the board: §10) approves the daily plan, `company.ticket_approved` opens one design story per
 ticket, and the Architect designs it with `REQUEST_CODE_CHANGE`.
 
 **Bench tickets.** A backlog bench ticket ("Builder harness: deliver dev task X (k/3 runs)") names
@@ -178,3 +178,24 @@ what failed, not what to change. The change it needs is to the **builder harness
 - **Owner merge queue.** The PR is listed in `GET /v1/society/approvals` (under
   `candidates.owner_merge`), in `GET /v1/society/company` (under `owner_merge_queue`) and in the
   validator `company` step (K07). It is never auto-merged; the owner merges it.
+
+## 10. The board: the owner's standing delegation for the daily plan
+
+Without it the company stands still every day until the owner opens the plan: on staging the
+2026-10-13 plan was still `awaiting_owner` 14 hours after the cycle, and earlier plans waited
+5–17 hours. The board (`tickets.board_decide`, deterministic, no model) removes that wait.
+
+- **Off by default.** `SOCIETY_COMPANY_BOARD_APPROVAL_HOURS=0` keeps every plan waiting for the
+  owner. Set it to N (1–72) on the society-worker to delegate.
+- **The owner decides first.** A plan is the owner's for N hours after the cycle builds it. An
+  owner approval or rejection inside that window is final; the board never touches it.
+- **Approve only.** After the window the board approves the plan exactly as the owner would
+  (`company.ticket_approved`, `actor_type=system`, `payload.approved_by=board`). It never
+  rejects, never edits a ticket, the gate, the ranking, a budget or the RED merge law: a RED
+  candidate's PR still waits in the owner merge queue (§9).
+- **Healthy only (fails closed).** It holds, and writes why on the plan's `board_note`, while
+  an incident freeze is open, a society run went DEAD in the last 6 h, or the daily model
+  budget is spent.
+- **Visible.** `GET /v1/society/company/plans` shows `decided_by` (`owner` | `board`) and
+  `board_note`; `GET /v1/society/company` shows `mode.company_board_approval_hours`.
+- Schema: `SOCIETY_COMPANY_BOARD_SQL`, migration `0019_company_board`.

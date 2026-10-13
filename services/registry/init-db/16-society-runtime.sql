@@ -477,3 +477,9 @@ CREATE TABLE IF NOT EXISTS society_daily_plans (
     decided_at          TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- The board (tickets.board_decide): the owner's standing delegation for the
+-- daily plan. Who decided a plan (owner | board) and why the board holds one.
+ALTER TABLE society_daily_plans ADD COLUMN IF NOT EXISTS decided_by VARCHAR(16);
+ALTER TABLE society_daily_plans ADD COLUMN IF NOT EXISTS board_note VARCHAR(255);
+UPDATE society_daily_plans SET decided_by = 'owner' WHERE decided_by IS NULL AND decided_at IS NOT NULL;

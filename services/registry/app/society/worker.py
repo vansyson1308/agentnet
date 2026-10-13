@@ -682,8 +682,9 @@ class SocietyWorker:
             if outcomes_mod.record(db, utcnow()):
                 db.commit()
             if self.settings.company_cycle_enabled and (tickets_mod.relabel_dead_worker_refusals(db) + tickets_mod.close_satisfied(db)
-                                                        + tickets_mod.sweep_stale_designs(db, utcnow())):
-                db.commit()  # a satisfied bench ticket closes; an approved ticket nobody designed is never silently stuck
+                                                        + tickets_mod.sweep_stale_designs(db, utcnow())
+                                                        + tickets_mod.board_decide(db, self.settings, utcnow())):
+                db.commit()  # a satisfied bench ticket closes; an approved ticket nobody designed is never silently stuck; the board approves an undecided plan
         except Exception:  # noqa: BLE001 -- a reading failure never stops the loop
             db.rollback()
             logger.exception("ticket outcome recording failed")
