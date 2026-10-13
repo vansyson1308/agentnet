@@ -976,6 +976,18 @@ def step_autonomy(out: Out, conn, days: int) -> None:
         live = _rows(cur, "SELECT COUNT(*) FROM a2a_remote_agents WHERE consecutive_failures = 0 AND last_validated_at >= %s", (_now() - timedelta(days=7),))[0][0]
         via_dir = _rows(cur, "SELECT COUNT(*) FROM a2a_remote_agents WHERE provenance ->> 'source' = 'directory'")[0][0]
         scans = _rows(cur, "SELECT COUNT(*) FROM society_events WHERE event_type = 'a2a.directory.scanned' AND idempotency_key LIKE '%%:done' AND created_at >= %s", (since,))[0][0]
+        last_scan = _rows(cur, "SELECT payload FROM society_events WHERE event_type = 'a2a.directory.scanned' AND idempotency_key LIKE '%%:done' ORDER BY created_at DESC LIMIT 1")
+        listings = _rows(cur, "SELECT payload ->> 'directory', payload ->> 'outcome', created_at FROM society_events WHERE event_type = 'a2a.directory.listed' "
+                              "AND idempotency_key LIKE '%%:done' ORDER BY created_at DESC LIMIT 3")
+        bench_open = _rows(cur, "SELECT id, status, proof, reason FROM society_tickets WHERE proof::text LIKE '%%bench:%%' AND (status IN ('proposed', 'planned', 'approved', 'building') "
+                                "OR updated_at >= %s) ORDER BY updated_at DESC LIMIT 5", (since,))
+        bench_view = []
+        for tid, st, proof, reason in bench_open:
+            task = next((str(p).split(":", 1)[1] for p in (proof or []) if str(p).startswith("bench:")), None)
+            reps = _rows(cur, "SELECT LEFT(revision, 12), per_task -> %s ->> 'delivered', jsonb_array_length(per_task -> %s -> 'runs'), created_at FROM society_bench_reports "
+                              "WHERE revision = judge_revision AND per_task ? %s ORDER BY created_at DESC LIMIT 3", (task, task, task)) if task else []
+            bench_view.append({"ticket": str(tid)[:8], "status": st, "task": task, "reports": [f"{d}/{n}@{r}" for r, d, n, _ in reps],
+                               "reason": scrub(str(reason or ""))[:160]})
     by_decider: Dict[str, int] = {}
     for st, who, _, _ in plans:
         k = who or st
@@ -997,10 +1009,16 @@ def step_autonomy(out: Out, conn, days: int) -> None:
     out.check("autonomy", "A02", not stuck, f"design reviews in {days}d: {rev}; stuck > {AUTONOMY_REVIEW_STUCK_HOURS}h: {len(stuck)}")
     out.check("autonomy", "A03", not reviews or int(chat) > 0, f"{int(chat)} message(s) in design-review threads")
     out.check("autonomy", "A04", True, f"tickets in {days}d by kind/status: {tickets_view}; merged {int(merged)}")
-    out.check("autonomy", "A05", True, f"federated network: {int(live)} live remote card(s) (7d), {int(via_dir)} found via directories, {int(scans)} directory scan(s)")
+    scan = (last_scan[0][0] if last_scan else None) or {}
+    out.check("autonomy", "A05", True, f"federated network: {int(live)} live remote card(s) (7d), {int(via_dir)} found via directories, {int(scans)} directory scan(s); "
+              f"last scan listed={scan.get('listed')} new={scan.get('new')} refreshed={scan.get('refreshed')} errors={scan.get('errors')}; "
+              f"listing requests: {[(str(d), str(o)) for d, o, _ in listings] or 'none yet (needs A2A_SERVER_ENABLED + A2A_PUBLIC_BASE_URL on the society-worker)'}")
+    out.check("autonomy", "A06", True, f"bench tickets vs their newest reports (newest first): {bench_view or 'none'}")
     out.json("autonomy", "summary", {"days": days, "plans_by_decider": by_decider, "plan_wait_hours": waits, "undecided_hours": waiting,
                                      "reviews": rev, "review_messages": int(chat), "tickets": tickets_view, "merged_tickets": int(merged),
-                                     "live_remote_cards": int(live), "directory_agents": int(via_dir), "directory_scans": int(scans)})
+                                     "live_remote_cards": int(live), "directory_agents": int(via_dir), "directory_scans": int(scans),
+                                     "last_scan": {k: scan.get(k) for k in ("listed", "new", "refreshed", "errors")}, "listings": [(str(d), str(o)) for d, o, _ in listings],
+                                     "bench_tickets": bench_view})
 
 
 def step_candidates(out: Out, conn, limit: int) -> None:

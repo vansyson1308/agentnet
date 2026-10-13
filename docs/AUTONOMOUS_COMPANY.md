@@ -258,4 +258,14 @@ staging read-only and fails when the company waits on a person or a meeting stal
 - `A01` the oldest undecided daily plan is younger than 24 h (the board decides within its window);
 - `A02` no design review sits in one stage longer than 7 h (the sweep moves it on);
 - `A03` design reviews produce chat messages (the agents actually discuss);
-- `A04` / `A05` informational: tickets by kind and source, and the federated network by state.
+- `A04` / `A05` informational: tickets by kind and source, the federated network, the last directory
+  scan (listed/new/refreshed/errors) and the listing requests;
+- `A06` informational: each live or recent bench ticket beside its task's newest reports.
+
+### Bench gaps must reproduce
+
+A bench item becomes a ticket only when the task misses the proof bar in each of the newest
+`tickets.BENCH_CONSISTENT_REPORTS` (2) main-judged reports that ran it. One report is noise until a
+second agrees; a real regression agrees and is supplied. A supplied bench ticket whose gap does not
+reproduce closes `closed` (with both scores in its reason) in `close_satisfied`, which also runs
+before the board approves a plan; the gate applies the same rule. An owner's own ticket is exempt.

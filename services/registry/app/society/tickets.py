@@ -35,6 +35,10 @@ NON_TEST_PROOFS = ("probe:", "bench:", "issue:")
 SUPPLY = {"bench": ("engineering", "bench_holdout_pass_at_1"), "maintenance_incident": ("sre_release", "core_journey_success_rate"),
           "github_issue": ("strategy_product", None), "kr_gap": ("strategy_product", None)}
 OPEN_TICKET = ("proposed", "planned", "approved", "building", "ready")
+#: A bench gap is a ticket only when it REPRODUCES: the task misses the proof bar in each of the
+#: newest this-many main-judged reports that ran it. Staging 2026-10-12/13: a task went 3/3 -> 0/3
+#: in two days and became a RED ticket on one report -- noise until a second report agrees.
+BENCH_CONSISTENT_REPORTS = 2
 _NS = uuid.UUID("6c1f0e3a-8a51-4c2e-9d0b-2f6a1c7e5b10")
 DEPARTMENT_BY_ROLE = {"governor": "ceo_office", "scout": "strategy_product", "architect": "engineering", "builder": "engineering", "qa": "quality", "security": "security", "evaluator": "analytics"}
 
@@ -117,16 +121,49 @@ def bench_satisfied(db: Session, t: Dict[str, Any]) -> Optional[str]:
     return f"bench:{task} already delivered {done}/{runs} (>= 2/3) on revision {str(report['revision'])[:12]} (report {str(report['id'])[:8]})"
 
 
+def task_reports(db: Session, task_id: str, n: int = BENCH_CONSISTENT_REPORTS) -> List[Dict[str, Any]]:
+    """The newest ``n`` reports in which main's own harness ran ``task_id``, newest first."""
+    rows = db.execute(text("SELECT id, revision, created_at, per_task -> :t AS v FROM society_bench_reports "
+                           "WHERE revision = judge_revision AND per_task ? :t ORDER BY created_at DESC LIMIT :n"), {"t": task_id, "n": n}).mappings()
+    return [dict(r) for r in rows]
+
+
+def _score(report: Dict[str, Any]) -> str:
+    v = report.get("v") or {}
+    return f"{int(v.get('delivered') or 0)}/{len(v.get('runs') or [])} on {str(report['revision'])[:12]} (report {str(report['id'])[:8]})"
+
+
+def bench_unreproduced(db: Session, task_id: Optional[str], *, need_all: bool = True) -> Optional[str]:
+    """Why a bench gap is NOT yet a harness gap: one of the newest BENCH_CONSISTENT_REPORTS reports
+    that ran the task met the proof bar (noise, or a regression the next report will confirm), or
+    -- for supply (``need_all``) -- fewer than that many reports ran it. None when it reproduces."""
+    if not task_id:
+        return None
+    reports = task_reports(db, task_id)
+    if len(reports) < BENCH_CONSISTENT_REPORTS:
+        if not need_all:
+            return None
+        return f"bench:{task_id} has {len(reports)} report(s); a gap needs {BENCH_CONSISTENT_REPORTS} consistent ones"
+    met = [r for r in reports if bench_met((r.get("v") or {}).get("delivered"), len((r.get("v") or {}).get("runs") or []))]
+    if met:
+        return f"bench:{task_id} inconsistent: " + ", ".join(_score(r) for r in reports) + " -- noise until a second report agrees"
+    return None
+
+
 def close_satisfied(db: Session) -> int:
     """Every bench ticket not being built (no candidate, or only a rejected/failed/abandoned one)
-    whose task is already delivered at the proof bar closes ``already_satisfied`` -- never
-    planned, approved or designed again. The caller commits."""
+    whose task is already delivered at the proof bar closes ``already_satisfied``; one whose gap
+    does not reproduce (``bench_unreproduced``; not an owner's own ticket) closes ``closed`` -- never planned, approved or
+    designed again. The caller commits."""
+    from . import work_packet  # noqa: PLC0415
+
     n = 0
     for r in db.execute(text("SELECT * FROM society_tickets WHERE status IN ('proposed', 'planned', 'approved') AND (candidate_id IS NULL OR candidate_id IN "
                              "(SELECT id FROM code_candidates WHERE status IN ('rejected', 'failed', 'abandoned'))) AND proof::text LIKE '%\"bench:%'")).mappings().all():
         why = bench_satisfied(db, dict(r))
-        if why:
-            set_status(db, r["id"], "already_satisfied", why)
+        noise = None if why or r["source"] in BYPASS_SOURCES else bench_unreproduced(db, work_packet.bench_task(dict(r)), need_all=False)
+        if why or noise:
+            set_status(db, r["id"], "already_satisfied" if why else "closed", why or noise)
             n += 1
     return n
 
@@ -160,6 +197,13 @@ def check(db: Session, proposal_id: Optional[uuid.UUID], spec: Dict[str, Any], n
     if satisfied:
         set_status(db, t["id"], "already_satisfied", satisfied)
         raise GateRefused(f"ticket already satisfied: {satisfied}")
+    if t["status"] != "building" and t["source"] not in BYPASS_SOURCES:
+        from . import work_packet  # noqa: PLC0415
+
+        noise = bench_unreproduced(db, work_packet.bench_task(t), need_all=False)
+        if noise:
+            set_status(db, t["id"], "closed", noise)
+            raise GateRefused(f"ticket closed: {noise}")
     if t["status"] not in ("approved", "building") and t["source"] not in BYPASS_SOURCES:
         raise GateRefused(f"ticket is {t['status']}: it builds only after the owner approves it in a daily plan")
     dup = db.execute(text(
@@ -448,6 +492,7 @@ def board_decide(db: Session, settings: Any, now: datetime) -> int:
         db.execute(text("UPDATE society_daily_plans SET board_note = :n WHERE status = 'awaiting_owner' AND id IN :ids AND board_note IS DISTINCT FROM :n")
                    .bindparams(bindparam("ids", expanding=True)), {"n": note[:255], "ids": [p["id"] for p in due]})
         return 0
+    close_satisfied(db)  # a bench gap that is met or does not reproduce never reaches the Builder via the board
     for plan in due:
         _decide(db, plan, approve=True, user_id=None, by="board", note=f"approved by the board: the owner left it undecided for {hours}h")
     logger.info("board approved %d daily plan(s) after the owner's %dh window", len(due), hours)
@@ -516,8 +561,8 @@ def supply(db: Session, items: List[Dict[str, Any]], now: datetime) -> List[str]
         metric = metric or item.get("metric_id")
         obj = next((o for o in objs if (o["id"] == item["objective_id"] if item.get("objective_id") else
                                         (metric and metric in [k["metric_id"] for k in o["key_results"]]) or o["id"] in (item.get("objectives") or []))), None)
-        if item.get("source") == "bench" and bench_met(item.get("delivered"), item.get("runs")):
-            continue  # already delivered >= 2/3: nothing for a harness change to buy
+        if item.get("source") == "bench" and (bench_met(item.get("delivered"), item.get("runs")) or bench_unreproduced(db, item.get("task_id"))):
+            continue  # already delivered >= 2/3, or one report only / not consistent: nothing for a harness change to buy yet
         if subject and obj:
             kr = next(k for k in obj["key_results"] if k["metric_id"] == metric) if metric else obj["key_results"][0]
             mapped.append((item, subject, dept, obj, kr))

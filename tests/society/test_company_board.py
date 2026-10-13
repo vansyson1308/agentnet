@@ -161,4 +161,7 @@ def test_the_validator_autonomy_step_reads_who_decided_and_how_long_plans_waited
     finally:
         conn.close()
     assert out.failed == []
-    assert "plans in 7d: {'board': 1}" in capsys.readouterr().out
+    printed = capsys.readouterr().out
+    assert "plans in 7d: {'board': 1}" in printed
+    assert "listing requests: none yet (needs A2A_SERVER_ENABLED + A2A_PUBLIC_BASE_URL" in printed and "autonomy INFO" not in printed
+    assert "PHASE5 autonomy A06 PASS bench tickets vs their newest reports" in printed
