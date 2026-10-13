@@ -11,7 +11,9 @@ failed, not WHAT to change. The work packet turns it into a design input:
 * the proof: ``bench:<task>`` -- QA re-runs that task x3 with the existing
   bench runner on the CANDIDATE harness (``engineering/bench_proof.py``),
   judged by the running revision. Never a pytest node id;
-* the regression tests the harness change must keep green.
+* the regression tests the harness change must keep green -- minus any test file
+  the baseline gate found red on the untouched base in the last
+  ``RED_ON_BASE_DAYS`` (no patch can turn those green, and QA would fail them).
 
 Only dev tasks have a packet: holdout tasks never reach a ticket or a context.
 Task text comes from ``scripts/bench/tasks.json`` (dev, Society-visible) and is
@@ -57,6 +59,8 @@ CODE_TARGETS: Dict[str, tuple] = {
 #: tests the harness change keeps green (QA runs them next to the bench proof)
 REGRESSION_TESTS = ("tests/society/maintenance/test_author_patch_loop.py", "tests/society/maintenance/test_activity_loop.py",
                     "tests/society/maintenance/test_builder_context.py", "tests/test_bench.py")
+#: how long a baseline-gate verdict (executor._red_on_base) keeps a test file out of bench specs
+RED_ON_BASE_DAYS = 7
 BENCH_PROOF_RULE = "QA re-runs the task x3 with scripts/bench on the candidate harness (judged by the running revision): delivered >= 2/3 and more than the baseline"
 TASKS_REL = "scripts/bench/tasks.json"
 
@@ -97,6 +101,20 @@ def latest_task_report(db: Session, task_id: str, revision: str = "") -> Optiona
     return dict(row) if row else None
 
 
+def red_on_base_files(db: Session, days: int = RED_ON_BASE_DAYS) -> List[str]:
+    """Test files the baseline gate found red on the untouched base recently (its
+    CODE_CANDIDATE_REJECTED events): staging 2026-10-13, every harness spec named
+    tests/test_bench.py and every one was rejected for it."""
+    rows = db.execute(text("SELECT payload -> 'red_on_base' FROM society_events WHERE event_type = 'code_candidate.rejected' "
+                           "AND payload ? 'red_on_base' AND created_at > now() - make_interval(days => :d)"), {"d": days}).scalars().all()
+    return sorted({str(t).split("::")[0] for ids in rows if isinstance(ids, list) for t in ids})
+
+
+def regression_tests(db: Session) -> List[str]:
+    red = set(red_on_base_files(db))
+    return [t for t in REGRESSION_TESTS if t not in red]
+
+
 def target_for(failure_class: Optional[str], last_code: Optional[str]) -> Dict[str, str]:
     f, fn, why = CODE_TARGETS.get(last_code or "") or TARGETS.get(failure_class or "") or DEFAULT_TARGET
     return {"file": f, "function": fn, "why": why}
@@ -130,7 +148,8 @@ def bench_packet(db: Session, task_id: str, repo_root: str = "") -> Optional[Dic
         "target": target_for(dominant, code),
         "files_allowed": {"harness": list(HARNESS_PATHS), "rule": "at least one harness file; anything else only under tests/"},
         "proof": {"acceptance": f"bench:{task_id}", "rule": BENCH_PROOF_RULE, "baseline_delivered": int(v.get("delivered") or 0), "repeat": 3},
-        "regression_tests": list(REGRESSION_TESTS),
+        "regression_tests": regression_tests(db),
+        "red_on_base": red_on_base_files(db),
     }
 
 
