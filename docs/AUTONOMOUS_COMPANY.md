@@ -260,6 +260,8 @@ its users or other agents. `backlog.kr_gap_items` adds the growth key results:
 staging read-only and fails when the company waits on a person or a meeting stalls:
 
 - `A01` the oldest undecided daily plan is younger than 24 h (the board decides within its window);
+  it prints the board's hold note and every open freeze by source with the status of its
+  maintenance incident, so the operator can see which freezes outlived their incident;
 - `A02` no design review sits in one stage longer than 7 h (the sweep moves it on);
 - `A03` design reviews produce chat messages (the agents actually discuss);
 - `A04` / `A05` informational: tickets by kind and source, the federated network, the last directory

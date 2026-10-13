@@ -176,10 +176,14 @@ def test_the_validator_autonomy_step_reads_who_decided_and_how_long_plans_waited
     pid, _ = _plan(db)
     db.execute(text("UPDATE society_daily_plans SET created_at = NOW() - INTERVAL '30 hours' WHERE id = :id"), {"id": pid})
     db.commit()
+    inc = company_mod.open_incident(db, reason="surface down", source="public_surface")
     out, conn = p5.Out(), engine.raw_connection()
     try:
         p5.step_autonomy(out, conn, 7)
         assert out.failed == ["autonomy.A01"], "a plan undecided for 30h means the company waits for someone"
+        assert "open freezes (source, incident status, n, oldest h): [('public_surface', '-', 1," in capsys.readouterr().out
+        db.execute(text("UPDATE society_incident_freezes SET lifted_at = NOW() WHERE id = :id"), {"id": inc.id})
+        db.commit()
         assert tickets.board_decide(db, _board(settings), utcnow()) == 1
         db.commit()
         out = p5.Out()
