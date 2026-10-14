@@ -20,6 +20,7 @@ implementation task closed through the ordinary escrow path.
 from __future__ import annotations
 
 import asyncio
+import pathlib
 import uuid
 from datetime import timedelta
 
@@ -138,6 +139,10 @@ def _intent(db, itype, cid=None):
 def test_the_live_deadlock_is_released_by_the_builder_and_recovery_designs_the_next_candidate(db, SessionLocal, code_settings, grants_with_no_cooldown):
     report = _seed(db, grants_with_no_cooldown)
     proposal, cand = _live_deadlock(db, report)
+    # the acceptance test exists on main (the spec gate checks the base: executor._acceptance_refusal)
+    surface_test = pathlib.Path(code_settings.repo_root) / "services/dashboard/tests/test_public_surface.py"
+    surface_test.parent.mkdir(parents=True, exist_ok=True)
+    surface_test.write_text("def test_placeholder():\n    pass\n")
 
     # ── the deadlock, exactly as observed ──
     same_spec = {"title": cand.title, "proposal_id": str(proposal.id), "requires_security_review": True, "spec": dict(cand.spec)}

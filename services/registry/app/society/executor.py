@@ -708,7 +708,10 @@ def _acceptance_refusal(ctx: ExecContext, spec: Dict[str, Any]) -> Optional[Dict
     root = pathlib.Path(ctx.settings.repo_root) if getattr(ctx.settings, "repo_root", "") else None
     if root is None or not root.is_dir():
         return None
-    allowed = set(spec["files_allowed"])
+    from . import work_packet  # noqa: PLC0415
+
+    # the runtime's own regression list (the bench packet offers it; red ones are dropped later) is not the Architect's claim
+    allowed = set(spec["files_allowed"]) | set(work_packet.REGRESSION_TESTS)
     for test in build_engine.pytest_targets(spec):
         path = test.split("::")[0]
         if path not in allowed and not (root / path).exists():
@@ -800,7 +803,7 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
             raise ExecutionError(f"spec allows a never-writable path: {f}")
     if len(spec["files_allowed"]) > ctx.settings.max_files_per_candidate:
         raise ExecutionError(f"spec allows {len(spec['files_allowed'])} files; change budget is {ctx.settings.max_files_per_candidate} per candidate")
-    missing = _acceptance_refusal(ctx, spec)  # the Architect's own tests, before the runtime adds any
+    missing = _acceptance_refusal(ctx, spec)  # the Architect's own tests, before the runtime adds any (and before the ticket gate)
     if missing:
         _spec_rejected(ctx, p, spec, [missing], f"acceptance file missing and not allowed: {missing['path']}")
     if ctx.settings.company_cycle_enabled and p.task_id is not None and tickets.for_proposal(ctx.db, p.proposal_id) is not None:
