@@ -12,6 +12,7 @@ from sqlalchemy import text
 from services.registry.app.a2a.federation import catalog, directory
 from services.registry.app.a2a.federation.fetcher import CardFetchError
 from services.registry.app.a2a.orm import A2ARemoteAgent
+from services.registry.app.models import SocietyEvent
 
 NOW = datetime(2026, 10, 13, 12, tzinfo=timezone.utc)
 LISTING = {"agents": [
@@ -120,3 +121,16 @@ def test_agentnet_asks_to_be_listed_once_a_week_with_only_its_public_card_url(db
     assert asyncio.run(directory.publish_self(SessionLocal, NOW + timedelta(days=1), client=client)) == {}, "same ISO week"
     assert len(client.posts) == 1
     assert asyncio.run(directory.publish_self(SessionLocal, NOW + timedelta(days=7), client=_Client(409))) == {"a2aregistry.org": "already_listed"}
+
+
+def test_a_listing_blocked_by_this_process_settings_says_which_once_a_week(db, SessionLocal, monkeypatch):
+    _configure(monkeypatch, A2A_DIRECTORY_REGISTER_URLS="https://a2aregistry.org/api/agents/register", ENVIRONMENT="production")
+    monkeypatch.delenv("A2A_SERVER_ENABLED", raising=False)
+    monkeypatch.delenv("A2A_PUBLIC_BASE_URL", raising=False)
+    client = _Client(201)
+    assert asyncio.run(directory.publish_self(SessionLocal, NOW, client=client)) is None
+    assert asyncio.run(directory.publish_self(SessionLocal, NOW + timedelta(days=1), client=client)) is None
+    assert client.posts == []
+    rows = db.query(SocietyEvent).filter(SocietyEvent.event_type == directory.LISTED_EVENT).all()
+    assert [r.payload["outcome"] for r in rows] == ["skipped_unset:A2A_SERVER_ENABLED+A2A_PUBLIC_BASE_URL"]
+    assert rows[0].idempotency_key.endswith(":done")

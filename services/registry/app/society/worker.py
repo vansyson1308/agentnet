@@ -676,23 +676,34 @@ class SocietyWorker:
                     stats.intents_failed += 1
         return done
 
+    def ticket_steps(self) -> List[tuple]:
+        """The deterministic ticket controllers, in order. outcomes.py: merged tickets' KR
+        readings at merge, +24h, +7d; then (company mode) a satisfied or unreproduced bench
+        ticket closes, an approved ticket nobody designed is never silently stuck, the board
+        approves an undecided plan (or records why it holds) and no design review strands a ticket."""
+        steps = [("outcomes", lambda db: outcomes_mod.record(db, utcnow()))]
+        if self.settings.company_cycle_enabled:
+            steps += [("relabel_dead_worker_refusals", tickets_mod.relabel_dead_worker_refusals),
+                      ("close_satisfied", tickets_mod.close_satisfied),
+                      ("sweep_stale_designs", lambda db: tickets_mod.sweep_stale_designs(db, utcnow())),
+                      ("board_decide", lambda db: tickets_mod.board_decide(db, self.settings, utcnow())),
+                      ("design_review_sweep", lambda db: design_review_mod.sweep(db, utcnow()))]
+        return steps
+
     def process_controllers(self, stats: Optional[CycleStats] = None) -> int:
         """Deterministic, non-LLM controllers: promotions (branch/PR/CI/eligibility)
         and fitness experiments. Returns how many items advanced."""
         p = promo_mod.process_promotions(self.session_factory, settings=self.settings, provider=self.promotion_provider, worker_id=self.worker_id)
         e = fitness_mod.process_experiments(self.session_factory, settings=self.settings, worker_id=self.worker_id)
         db = self.session_factory()
-        try:  # outcomes.py: merged tickets' KR readings at merge, +24h, +7d (no model)
-            if outcomes_mod.record(db, utcnow()):
-                db.commit()
-            if self.settings.company_cycle_enabled and (tickets_mod.relabel_dead_worker_refusals(db) + tickets_mod.close_satisfied(db)
-                                                        + tickets_mod.sweep_stale_designs(db, utcnow())
-                                                        + tickets_mod.board_decide(db, self.settings, utcnow())
-                                                        + design_review_mod.sweep(db, utcnow())):
-                db.commit()  # a satisfied bench ticket closes; an approved ticket nobody designed is never silently stuck; the board approves an undecided plan; no design review strands a ticket
-        except Exception:  # noqa: BLE001 -- a reading failure never stops the loop
-            db.rollback()
-            logger.exception("ticket outcome recording failed")
+        try:
+            for name, step in self.ticket_steps():
+                try:  # each step commits alone: a failing step never rolls back or skips the others (the board included)
+                    step(db)
+                    db.commit()
+                except Exception:  # noqa: BLE001 -- a controller failure never stops the loop
+                    db.rollback()
+                    logger.exception("company controller step %s failed", name)
         finally:
             db.close()
         advanced = sum(p.values()) + sum(e.values())

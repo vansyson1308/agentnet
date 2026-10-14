@@ -30,7 +30,7 @@ def test_quiet_system_produces_no_telemetry(db, society_settings):
     assert db.query(SocietyEvent).filter(SocietyEvent.event_type == EventType.PLATFORM_METRIC_ANOMALY).count() == 0
 
 
-def test_dead_run_anomaly_has_threshold_cooldown_and_evidence(db, society_settings):
+def test_dead_run_anomaly_has_threshold_cooldown_and_evidence(db, society_settings, caplog):
     report = seed_society(db)
     ev = emit_event(db, event_type="t.dead")
     db.commit()
@@ -45,7 +45,9 @@ def test_dead_run_anomaly_has_threshold_cooldown_and_evidence(db, society_settin
     p = row.payload
     assert p["metric"] == "run_dead_rate" and p["sample_size"] == 6 and p["threshold"] == 0.2 and p["window_seconds"] == 3600 and p["source"] == "telemetry"
     # cooldown: the same anomaly in the same bucket is not re-emitted; a later bucket is
-    assert telemetry.produce_anomalies(db, society_settings, now=now, only=["run_dead_rate"]) == 0
+    with caplog.at_level("INFO"):
+        assert telemetry.produce_anomalies(db, society_settings, now=now, only=["run_dead_rate"]) == 0
+    assert "society event dedup" not in caplog.text, "an emitted anomaly is skipped for the rest of its window, not re-tried every tick"
     assert telemetry.produce_anomalies(db, society_settings, now=now + timedelta(hours=2), only=["run_dead_rate"]) == 0, "runs are outside the window now"
     assert db.query(SocietyEvent).filter(SocietyEvent.event_type == EventType.PLATFORM_METRIC_ANOMALY).count() == 1
 

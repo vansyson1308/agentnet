@@ -196,6 +196,10 @@ Without it the company stands still every day until the owner opens the plan: on
 - **Healthy only (fails closed).** It holds, and writes why on the plan's `board_note`, while
   an incident freeze is open, a society run went DEAD in the last 6 h, or the daily model
   budget is spent.
+- **Isolated.** The worker runs each ticket controller (outcomes, relabel, close, stale-design
+  sweep, board, design-review sweep) in its own transaction and logs a failure as
+  `company controller step <name> failed`: a broken step can neither skip the board nor roll
+  back its hold note.
 - **Visible.** `GET /v1/society/company/plans` shows `decided_by` (`owner` | `board`) and
   `board_note`; `GET /v1/society/company` shows `mode.company_board_approval_hours`.
 - Schema: `SOCIETY_COMPANY_BOARD_SQL`, migration `0019_company_board`.
@@ -256,6 +260,8 @@ its users or other agents. `backlog.kr_gap_items` adds the growth key results:
 staging read-only and fails when the company waits on a person or a meeting stalls:
 
 - `A01` the oldest undecided daily plan is younger than 24 h (the board decides within its window);
+  it prints the board's hold note and every open freeze by source with the status of its
+  maintenance incident, so the operator can see which freezes outlived their incident;
 - `A02` no design review sits in one stage longer than 7 h (the sweep moves it on);
 - `A03` design reviews produce chat messages (the agents actually discuss);
 - `A04` / `A05` informational: tickets by kind and source, the federated network, the last directory

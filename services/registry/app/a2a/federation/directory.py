@@ -203,10 +203,20 @@ async def publish_self(session_factory: Callable[[], Session], now: Optional[dat
     """The weekly listing request. Sends only AgentNet's public card URL."""
     targets = register_urls()
     base = config.public_base_url()
-    if not targets or not config.federation_enabled() or not config.server_enabled() or base is None:
+    if not targets or not config.federation_enabled():
         return None
     now = now or datetime.now(timezone.utc)
     week = "%d-W%02d" % now.isocalendar()[:2]
+    missing = [n for n, ok in (("A2A_SERVER_ENABLED", config.server_enabled()), ("A2A_PUBLIC_BASE_URL", base is not None)) if not ok]
+    if missing:  # say once a week which setting of THIS process blocks the listing (names only)
+        key = f"a2a.directory.register:unconfigured:{week}:done"
+        db = session_factory()
+        try:
+            if not _marker(db, key):
+                _record(db, LISTED_EVENT, key, {"directory": None, "outcome": "skipped_unset:" + "+".join(missing)})
+        finally:
+            db.close()
+        return None
     card = f"{base}{CARD_PATH}"
     results: Dict[str, str] = {}
     own = client is None

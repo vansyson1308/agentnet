@@ -130,6 +130,32 @@ def test_the_worker_controllers_run_the_board(db, company, SessionLocal):
     assert _row(db, pid)["decided_by"] == "board"
 
 
+def test_a_board_hold_is_recorded_and_a_failing_controller_never_disables_the_board(db, company, SessionLocal, monkeypatch, caplog):
+    report, settings = company
+    pid, _ = _plan(db)
+    db.execute(text("UPDATE society_daily_plans SET created_at = NOW() - INTERVAL '7 hours' WHERE id = :id"), {"id": pid})
+    db.commit()
+    _run(db, report, status="dead")
+    worker = SocietyWorker(SessionLocal, settings=_board(settings))
+    worker.process_controllers()
+    db.expire_all()
+    row = _row(db, pid)  # the hold reaches the plan (it used to be rolled back with the step chain)
+    assert row["status"] == "awaiting_owner" and "DEAD society run(s)" in row["board_note"]
+
+    db.execute(text("DELETE FROM agent_runs"))
+    db.commit()
+
+    def broken(*_a, **_k):
+        raise RuntimeError("broken sweep")
+
+    monkeypatch.setattr(tickets, "sweep_stale_designs", broken)
+    with caplog.at_level("ERROR"):
+        worker.process_controllers()
+    db.expire_all()
+    assert _row(db, pid)["decided_by"] == "board"
+    assert "company controller step sweep_stale_designs failed" in caplog.text
+
+
 def test_the_board_window_is_bounded(monkeypatch):
     monkeypatch.setenv("SOCIETY_COMPANY_BOARD_APPROVAL_HOURS", "73")
     with pytest.raises(SocietyConfigError, match="SOCIETY_COMPANY_BOARD_APPROVAL_HOURS must be 0..72"):
@@ -150,10 +176,14 @@ def test_the_validator_autonomy_step_reads_who_decided_and_how_long_plans_waited
     pid, _ = _plan(db)
     db.execute(text("UPDATE society_daily_plans SET created_at = NOW() - INTERVAL '30 hours' WHERE id = :id"), {"id": pid})
     db.commit()
+    inc = company_mod.open_incident(db, reason="surface down", source="public_surface")
     out, conn = p5.Out(), engine.raw_connection()
     try:
         p5.step_autonomy(out, conn, 7)
         assert out.failed == ["autonomy.A01"], "a plan undecided for 30h means the company waits for someone"
+        assert "open freezes (source, incident status, n, oldest h): [('public_surface', '-', 1," in capsys.readouterr().out
+        db.execute(text("UPDATE society_incident_freezes SET lifted_at = NOW() WHERE id = :id"), {"id": inc.id})
+        db.commit()
         assert tickets.board_decide(db, _board(settings), utcnow()) == 1
         db.commit()
         out = p5.Out()

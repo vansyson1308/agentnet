@@ -979,6 +979,9 @@ def step_autonomy(out: Out, conn, days: int) -> None:
         last_scan = _rows(cur, "SELECT payload FROM society_events WHERE event_type = 'a2a.directory.scanned' AND idempotency_key LIKE '%%:done' ORDER BY created_at DESC LIMIT 1")
         listings = _rows(cur, "SELECT payload ->> 'directory', payload ->> 'outcome', created_at FROM society_events WHERE event_type = 'a2a.directory.listed' "
                               "AND idempotency_key LIKE '%%:done' ORDER BY created_at DESC LIMIT 3")
+        # the board holds while any freeze is open: which ones, and is their maintenance incident still open?
+        freezes = _rows(cur, "SELECT f.source, COALESCE(i.status, '-'), COUNT(*), EXTRACT(EPOCH FROM (NOW() - MIN(f.opened_at))) / 3600.0 FROM society_incident_freezes f "
+                             "LEFT JOIN maintenance_incidents i ON i.id::text = f.evidence ->> 'incident_id' WHERE f.lifted_at IS NULL GROUP BY 1, 2 ORDER BY 3 DESC")
         bench_open = _rows(cur, "SELECT id, status, proof, reason FROM society_tickets WHERE proof::text LIKE '%%bench:%%' AND (status IN ('proposed', 'planned', 'approved', 'building') "
                                 "OR updated_at >= %s) ORDER BY updated_at DESC LIMIT 5", (since,))
         bench_view = []
@@ -1005,7 +1008,8 @@ def step_autonomy(out: Out, conn, days: int) -> None:
     oldest = max(waiting) if waiting else 0.0
     out.check("autonomy", "A01", oldest < AUTONOMY_PLAN_WAIT_HOURS,
               f"plans in {days}d: {by_decider}; median wait {waits[len(waits) // 2] if waits else 'n/a'}h; oldest undecided {oldest:.1f}h"
-              + (f"; board holds: {holds}" if holds else ""))
+              + (f"; board holds: {holds}" if holds else "")
+              + (f"; open freezes (source, incident status, n, oldest h): {[(str(a), str(b), int(n), round(float(h), 1)) for a, b, n, h in freezes]}" if freezes else ""))
     out.check("autonomy", "A02", not stuck, f"design reviews in {days}d: {rev}; stuck > {AUTONOMY_REVIEW_STUCK_HOURS}h: {len(stuck)}")
     out.check("autonomy", "A03", not reviews or int(chat) > 0, f"{int(chat)} message(s) in design-review threads")
     out.check("autonomy", "A04", True, f"tickets in {days}d by kind/status: {tickets_view}; merged {int(merged)}")
@@ -1018,7 +1022,7 @@ def step_autonomy(out: Out, conn, days: int) -> None:
                                      "reviews": rev, "review_messages": int(chat), "tickets": tickets_view, "merged_tickets": int(merged),
                                      "live_remote_cards": int(live), "directory_agents": int(via_dir), "directory_scans": int(scans),
                                      "last_scan": {k: scan.get(k) for k in ("listed", "new", "refreshed", "errors")}, "listings": [(str(d), str(o)) for d, o, _ in listings],
-                                     "bench_tickets": bench_view})
+                                     "bench_tickets": bench_view, "open_freezes": [(str(a), str(b), int(n)) for a, b, n, _ in freezes]})
 
 
 def step_candidates(out: Out, conn, limit: int) -> None:
