@@ -195,9 +195,12 @@ Without it the company stands still every day until the owner opens the plan: on
   candidate's PR still waits in the owner merge queue (§9).
 - **Healthy only (fails closed).** It holds, and writes why on the plan's `board_note`, while
   an incident freeze is open, a society run went DEAD in the last 6 h, or the daily model
-  budget is spent. A freeze whose maintenance incident already recovered (or closed) is named
-  on that note and in `GET /v1/society/company` (`freezes_outlived`, `company.outlived_freezes`)
-  the same day, so the owner sees it; it is never lifted automatically.
+  budget is spent. The note is recomputed on every board pass and when an operator lifts a
+  freeze (`tickets.refresh_board_note`), so it never names a lifted freeze. A freeze that outlived
+  its cause (`company.OUTLIVED_FREEZES_SQL`: its maintenance incident recovered or closed, or for a
+  `public_surface` freeze a `public.surface.recovered` event after it at least 6 h ago and the
+  latest monitor check green) is named on that note and in `GET /v1/society/company`
+  (`freezes_outlived`) the same day, so the owner sees it; it is never lifted automatically.
 - **Isolated.** The worker runs each ticket controller (outcomes, relabel, close, stale-design
   sweep, board, design-review sweep) in its own transaction and logs a failure as
   `company controller step <name> failed`: a broken step can neither skip the board nor roll
@@ -272,8 +275,8 @@ staging read-only and fails when the company waits on a person or a meeting stal
 
 Step `freezes:lift-recovered` (e.g. `PHASE5_PLAN=freezes:lift-recovered,autonomy:7`) is an owner
 action: as the operator it calls `POST /v1/society/incidents/{id}/lift` ONLY for open freezes
-whose maintenance incident is `recovered`/`closed` (F01-F04: counts by source, lifted x/y, none
-left, the others untouched). It is idempotent. Every freeze it keeps is printed with its reason,
+that outlived their cause, by the same SQL as `company.OUTLIVED_FREEZES_SQL` (F01-F04: counts by
+source, lifted x/y, none left, the others untouched). It is idempotent. Every freeze it keeps is printed with its reason,
 the failing checks of its public-surface anomaly and whether the surface recovered since, so the
 operator can decide on it by hand.
 

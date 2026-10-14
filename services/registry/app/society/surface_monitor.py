@@ -27,7 +27,10 @@ prompt. Link paths are included only if they match ``surface.SAFE_PATH``.
 
 Availability failures (the apex or the API not answering, 5xx) on a critical
 item also open an incident freeze (operator-lifted) so no autonomous merge
-lands while the product is down. A wrong or missing page does NOT freeze:
+lands while the product is down -- but only once the same check has failed
+for ``FREEZE_MIN_OUTAGE_MINUTES`` (2026-10-13: two slow checks 11 min apart
+froze the company for 28 h). Only the freeze trigger waits; the anomaly event,
+the contract and its expectations are unchanged. A wrong or missing page does NOT freeze:
 its repair is itself a merge, and every normal gate still applies to it.
 
 A monitor failure is logged and counted; it never raises into the worker.
@@ -54,6 +57,8 @@ logger = logging.getLogger(__name__)
 
 SOURCE = "public_surface_monitor"
 INCIDENT_SOURCE = "public_surface"
+#: An availability failure freezes autonomous merges only after it lasted this long.
+FREEZE_MIN_OUTAGE_MINUTES = 15
 MAX_FAILING_IN_EVENT = 20
 _BLOCKING = ("major", "critical")
 _SAFE_NAME = re.compile(r"[A-Za-z0-9_:./~\-]{1,160}")
@@ -103,6 +108,7 @@ class SurfaceMonitor:
     consecutive: Dict[str, int] = field(default_factory=dict)
     healthy_streak: int = 0
     first_failed_at: Dict[str, str] = field(default_factory=dict)
+    failing_since: Dict[str, datetime] = field(default_factory=dict)
     last_run_at: Optional[datetime] = None
     last_summary: Optional[Dict[str, Any]] = None
 
@@ -133,9 +139,11 @@ class SurfaceMonitor:
             if name not in current:
                 self.consecutive.pop(name, None)
                 self.first_failed_at.pop(name, None)
+                self.failing_since.pop(name, None)
         for o in blocking:
             self.consecutive[o.name] = self.consecutive.get(o.name, 0) + 1
             self.first_failed_at.setdefault(o.name, report.checked_at)
+            self.failing_since.setdefault(o.name, now)
         self.healthy_streak = self.healthy_streak + 1 if not blocking else 0
         self.last_summary = {**report.summary(), "checked_at": report.checked_at}
         _inc(M_CHECKS, result="fail" if blocking else "ok")
@@ -150,6 +158,7 @@ class SurfaceMonitor:
             ev = self._emit_anomaly(db, settings, report, durable, now=now, out=out)
             if ev is not None:
                 out.anomaly_event_id = str(ev.id)
+            self._maybe_freeze(db, durable, now=now, out=out)
         elif open_anomaly is not None and self.healthy_streak >= threshold:
             ev = emit_event(
                 db,
@@ -230,16 +239,27 @@ class SurfaceMonitor:
         }
         payload = fit_to_context(payload)
         ev = emit_event(db, event_type=EventType.PUBLIC_SURFACE_ANOMALY, payload=payload, actor_type="system", idempotency_key=key)
-        if availability and not _open_surface_incident(db):
-            try:
-                from .company import open_incident  # noqa: PLC0415 -- avoid an import cycle at module load
-
-                open_incident(db, reason=f"public surface unavailable: {', '.join(o.name for o in failing if o.failure in surface_mod.AVAILABILITY_FAILURES)[:200]}", source=INCIDENT_SOURCE, evidence={"anomaly_event_id": str(ev.id), "signature": signature})
-                out.incident_opened = True
-            except Exception:  # noqa: BLE001 -- the event is the primary evidence
-                logger.exception("public surface: could not open the incident freeze")
         db.commit()
         return ev
+
+    def _maybe_freeze(self, db: Session, durable, *, now: datetime, out: MonitorOutcome) -> None:
+        """Freeze autonomous merges when a critical availability check has been failing for
+        ``FREEZE_MIN_OUTAGE_MINUTES`` (not merely two slow checks). Linked to the open anomaly."""
+        down = [o for o in durable if o.failure in surface_mod.AVAILABILITY_FAILURES and o.severity == "critical"
+                and (now - self.failing_since.get(o.name, now)).total_seconds() >= FREEZE_MIN_OUTAGE_MINUTES * 60]
+        if not down or _open_surface_incident(db):
+            return
+        anomaly = latest_open_anomaly(db)
+        try:
+            from .company import open_incident  # noqa: PLC0415 -- avoid an import cycle at module load
+
+            open_incident(db, reason=f"public surface unavailable: {', '.join(sorted(o.name for o in down))[:200]}", source=INCIDENT_SOURCE,
+                          evidence={"anomaly_event_id": str(anomaly.id) if anomaly is not None else None, "outage_minutes": FREEZE_MIN_OUTAGE_MINUTES})
+            db.commit()
+            out.incident_opened = True
+        except Exception:  # noqa: BLE001 -- the event is the primary evidence
+            db.rollback()
+            logger.exception("public surface: could not open the incident freeze")
 
 
 #: Per-item fields dropped first when the payload must shrink (the model

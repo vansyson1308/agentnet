@@ -120,14 +120,31 @@ def test_availability_failures_freeze_autonomous_merges_but_wrong_pages_do_not(d
     m.observe(db, mon_settings, BROKEN())
     assert db.query(IncidentFreeze).count() == 0  # a missing page's repair IS a merge; do not freeze it
     down = lambda: report(obs("api_ready", S.TIMEOUT, "critical"), obs("ui_root", S.SERVER_ERROR, "critical"))  # noqa: E731
-    m.observe(db, mon_settings, down())
-    out = m.observe(db, mon_settings, down())
-    assert out.incident_opened
+    t0 = utcnow()
+    m.observe(db, mon_settings, down(), now=t0)
+    out = m.observe(db, mon_settings, down(), now=t0 + timedelta(minutes=10))
+    assert out.anomaly_event_id and not out.incident_opened  # an anomaly, but two slow checks 10 min apart freeze nothing
+    assert db.query(IncidentFreeze).count() == 0
+    out = m.observe(db, mon_settings, down(), now=t0 + timedelta(minutes=M.FREEZE_MIN_OUTAGE_MINUTES))
+    assert out.incident_opened  # the outage now lasted 15 min
     (inc,) = db.query(IncidentFreeze).all()
     assert inc.source == M.INCIDENT_SOURCE and inc.lifted_at is None
+    assert inc.evidence["anomaly_event_id"] == str(events(db, EventType.PUBLIC_SURFACE_ANOMALY)[-1].id)
     # still down later: no second freeze
-    m.observe(db, mon_settings, down())
+    m.observe(db, mon_settings, down(), now=t0 + timedelta(minutes=30))
     assert db.query(IncidentFreeze).count() == 1
+
+
+def test_a_single_slow_spell_that_recovers_never_freezes_the_company(db, mon_settings):
+    """2026-10-13: ui_root timed out at 03:35 and 03:46, was green at 03:57, and one freeze held the board 28 h."""
+    m = M.SurfaceMonitor()
+    t0 = utcnow()
+    slow = lambda: report(obs("ui_root", S.TIMEOUT, "critical"), obs("api_ready", severity="critical"))  # noqa: E731
+    m.observe(db, mon_settings, slow(), now=t0)
+    m.observe(db, mon_settings, slow(), now=t0 + timedelta(minutes=11))
+    m.observe(db, mon_settings, report(obs("ui_root", severity="critical"), obs("api_ready", severity="critical")), now=t0 + timedelta(minutes=22))
+    m.observe(db, mon_settings, slow(), now=t0 + timedelta(minutes=33))  # a new spell starts its own clock
+    assert db.query(IncidentFreeze).count() == 0
 
 
 def test_the_anomaly_is_routed_to_the_scout_and_is_a_world_signal():

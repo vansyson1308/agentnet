@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -58,9 +59,11 @@ from ..models import (
     User,
 )
 from . import candidate_health, tickets
-from .config import SocietySettings
+from .config import SocietySettings, get_settings
 from .context import TXT_LONG
 from .events import emit_event, utcnow
+
+logger = logging.getLogger(__name__)
 
 COMPANY_CYCLE_EVENT = "company.cycle"
 INCIDENT_OPENED_EVENT = "incident.opened"
@@ -439,14 +442,25 @@ def open_incident_count(db: Session) -> int:
     return int(db.query(func.count(IncidentFreeze.id)).filter(IncidentFreeze.lifted_at.is_(None)).scalar() or 0)
 
 
+#: The ONE rule for a freeze that outlived its cause (deploy/railway/phase5_live.py runs the same SQL;
+#: tests/society/test_company_board.py checks they agree). A maintenance freeze: its incident recovered
+#: or closed. A public_surface freeze: a ``public.surface.recovered`` event after it, at least 6 h ago,
+#: and the latest monitor check (within the last hour) all green.
+OUTLIVED_FREEZES_SQL = (
+    "SELECT f.id FROM society_incident_freezes f LEFT JOIN maintenance_incidents i ON i.id::text = f.evidence ->> 'incident_id' "
+    "WHERE f.lifted_at IS NULL AND (i.status IN ('recovered', 'closed') OR (f.source = 'public_surface' "
+    "AND EXISTS (SELECT 1 FROM society_events r WHERE r.event_type = 'public.surface.recovered' AND r.created_at > f.opened_at "
+    "AND r.created_at <= NOW() - INTERVAL '6 hours') "
+    "AND (SELECT bool_and(o.ok) FROM maintenance_observations o WHERE o.source = 'public_surface_monitor' AND o.observed_at >= NOW() - INTERVAL '1 hour' "
+    "AND o.observed_at = (SELECT MAX(observed_at) FROM maintenance_observations WHERE source = 'public_surface_monitor')))) ORDER BY f.opened_at")
+
+
 def outlived_freezes(db: Session) -> list:
-    """Open freezes whose maintenance incident already recovered (or closed): the freeze
-    outlived its cause and only an operator lifts it (never auto-lifted). Ids, oldest first."""
+    """Open freezes that outlived their cause (``OUTLIVED_FREEZES_SQL``): only an operator
+    lifts them (never auto-lifted). Ids, oldest first."""
     from sqlalchemy import text  # noqa: PLC0415
 
-    return [str(r[0]) for r in db.execute(text(
-        "SELECT f.id FROM society_incident_freezes f JOIN maintenance_incidents i ON i.id::text = f.evidence ->> 'incident_id' "
-        "WHERE f.lifted_at IS NULL AND i.status IN ('recovered', 'closed') ORDER BY f.opened_at")).all()]
+    return [str(r[0]) for r in db.execute(text(OUTLIVED_FREEZES_SQL)).all()]
 
 
 def open_incident(db: Session, *, reason: str, source: str, evidence: Optional[Dict[str, Any]] = None, operator_id: Optional[uuid.UUID] = None) -> IncidentFreeze:
@@ -470,6 +484,12 @@ def lift_incident(db: Session, incident_id: uuid.UUID, *, operator: User, reason
         inc.lifted_by_user_id = operator.id
         inc.lift_reason = reason[:255]
         emit_event(db, event_type=INCIDENT_LIFTED_EVENT, payload={"incident_id": str(inc.id), "reason": inc.lift_reason}, actor_type="operator", actor_id=operator.id, subject_type="incident", subject_id=inc.id, idempotency_key=f"incident.lifted:{inc.id}")
+        db.flush()
+        try:  # a lifted freeze never lingers in a hold note; refreshing never blocks the lift itself
+            with db.begin_nested():
+                tickets.refresh_board_note(db, get_settings(), utcnow())
+        except Exception:  # noqa: BLE001
+            logger.exception("board note refresh after a lift failed; the next board pass refreshes it")
     db.commit()
     return inc
 

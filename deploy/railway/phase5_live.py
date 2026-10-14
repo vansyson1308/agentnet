@@ -34,7 +34,8 @@ never stops the plan so the evidence of the later steps is still recorded):
     journey[:<hours>]             the core-journey probe's maintenance_observations (sli=core_journey): count, success, duration (default 24 h)
     autonomy[:<days>]             does the company run without the owner? plans decided by the board vs the owner and how long they
                                   waited, design reviews and their conversation, growth tickets, merged work, the federated network (default 7 d)
-    freezes:lift-recovered        lift (operator API) ONLY the open freezes whose maintenance incident recovered/closed; others untouched
+    freezes:lift-recovered        lift (operator API) ONLY the open freezes that outlived their cause (maintenance incident recovered/closed,
+                                  or public surface recovered >= 6 h ago and green now); others untouched
 
 Environment (never printed):
     REGISTRY_PUBLIC_URL, POSTGRES_*, STAGING_VALIDATOR_SECRET, VALIDATOR_OPERATOR_EMAIL   as validate_staging.py
@@ -936,44 +937,56 @@ def step_company(out: Out, base: str, token: str, args: List[str]) -> None:
 
 #: The owner's decision of 2026-10-14 (project thread): a freeze whose maintenance incident recovered outlived it.
 FREEZE_LIFT_REASON = "owner 2026-10-14: incident recovered, freeze outlived it"
-FREEZE_LIFTABLE_INCIDENT = ("recovered", "closed")
+FREEZE_LIFT_REASON_SURFACE = "owner 2026-10-14: public surface recovered >= 6h ago and green now, freeze outlived it"
+#: Verbatim copy of services/registry/app/society/company.py OUTLIVED_FREEZES_SQL (this script imports no app code;
+#: tests/society/test_company_board.py asserts the two are identical).
+OUTLIVED_FREEZES_SQL = (
+    "SELECT f.id FROM society_incident_freezes f LEFT JOIN maintenance_incidents i ON i.id::text = f.evidence ->> 'incident_id' "
+    "WHERE f.lifted_at IS NULL AND (i.status IN ('recovered', 'closed') OR (f.source = 'public_surface' "
+    "AND EXISTS (SELECT 1 FROM society_events r WHERE r.event_type = 'public.surface.recovered' AND r.created_at > f.opened_at "
+    "AND r.created_at <= NOW() - INTERVAL '6 hours') "
+    "AND (SELECT bool_and(o.ok) FROM maintenance_observations o WHERE o.source = 'public_surface_monitor' AND o.observed_at >= NOW() - INTERVAL '1 hour' "
+    "AND o.observed_at = (SELECT MAX(observed_at) FROM maintenance_observations WHERE source = 'public_surface_monitor')))) ORDER BY f.opened_at")
 
 
 def _open_freezes(conn) -> List[Tuple]:
-    """(freeze id, source, linked maintenance incident status or None), oldest first."""
+    """(freeze id, source, status label), oldest first. The label is the linked maintenance incident's
+    status, ``recovered>=6h+green`` for an outlived surface freeze, else ``-``; liftable = OUTLIVED_FREEZES_SQL."""
     with conn.cursor() as cur:
+        outlived = {str(r[0]) for r in _rows(cur, OUTLIVED_FREEZES_SQL)}
         rows = _rows(cur, "SELECT f.id, f.source, i.status FROM society_incident_freezes f LEFT JOIN maintenance_incidents i "
                           "ON i.id::text = f.evidence ->> 'incident_id' WHERE f.lifted_at IS NULL ORDER BY f.opened_at")
     conn.rollback()
-    return rows
+    return [(fid, src, st or ("recovered>=6h+green" if str(fid) in outlived else None), str(fid) in outlived) for fid, src, st in rows]
 
 
 def _by_source(rows: Sequence[Tuple]) -> Dict[str, int]:
     out: Dict[str, int] = {}
-    for _, src, st in rows:
+    for _, src, st, _ in rows:
         k = f"{src}/{st or '-'}"
         out[k] = out.get(k, 0) + 1
     return out
 
 
 def step_freezes(out: Out, base: str, token: str, conn) -> None:
-    """Lift, through the operator API, ONLY the open freezes whose linked maintenance incident
-    recovered or closed. A freeze with no incident (or an open one) is never touched. Idempotent:
-    a second run finds nothing left to lift."""
+    """Lift, through the operator API, ONLY the open freezes that outlived their cause
+    (``OUTLIVED_FREEZES_SQL``). Any other freeze is never touched. Idempotent: a second run
+    finds nothing left to lift."""
     before = _open_freezes(conn)
-    liftable = [r for r in before if r[2] in FREEZE_LIFTABLE_INCIDENT]
-    kept = [r for r in before if r[2] not in FREEZE_LIFTABLE_INCIDENT]
-    out.check("freezes", "F01", True, f"open before: {_by_source(before)}; liftable (incident {'/'.join(FREEZE_LIFTABLE_INCIDENT)}): {len(liftable)}")
+    liftable = [r for r in before if r[3]]
+    kept = [r for r in before if not r[3]]
+    out.check("freezes", "F01", True, f"open before: {_by_source(before)}; liftable (outlived their cause): {len(liftable)}")
     failed = []
-    for fid, _, _ in liftable:
-        st, body = api("POST", f"{base}/v1/society/incidents/{fid}/lift", token, {"reason": FREEZE_LIFT_REASON})
+    for fid, src, _, _ in liftable:
+        reason = FREEZE_LIFT_REASON_SURFACE if src == "public_surface" else FREEZE_LIFT_REASON
+        st, body = api("POST", f"{base}/v1/society/incidents/{fid}/lift", token, {"reason": reason})
         if st != 200 or not isinstance(body, dict) or not body.get("liftedAt"):
             failed.append(f"{str(fid)[:8]}:HTTP {st}")
     out.check("freezes", "F02", not failed, f"lifted {len(liftable) - len(failed)}/{len(liftable)} through the operator API" + (f"; failed {failed}" if failed else ""))
     after = _open_freezes(conn)
     after_ids = {str(r[0]) for r in after}
-    out.check("freezes", "F03", not any(r[2] in FREEZE_LIFTABLE_INCIDENT for r in after), f"open after: {_by_source(after)}")
-    out.check("freezes", "F04", all(str(r[0]) in after_ids for r in kept), f"untouched: {len(kept)} freeze(s) without a recovered incident stay open")
+    out.check("freezes", "F03", not any(r[3] for r in after), f"open after: {_by_source(after)}")
+    out.check("freezes", "F04", all(str(r[0]) in after_ids for r in kept), f"untouched: {len(kept)} freeze(s) that did not outlive their cause stay open")
     with conn.cursor() as cur:  # why each kept freeze is open: structural reason, age, and for the surface its anomaly vs a later recovery
         why = _rows(cur, "SELECT f.id, f.source, f.reason, EXTRACT(EPOCH FROM (NOW() - f.opened_at)) / 3600.0, "
                          "(SELECT jsonb_agg(jsonb_build_object('name', x ->> 'name', 'failure', x ->> 'failure', 'status', x ->> 'final_status')) "

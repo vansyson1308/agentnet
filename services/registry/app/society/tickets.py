@@ -477,6 +477,15 @@ def board_hold_reason(db: Session, settings: Any, now: datetime) -> Optional[str
     return None
 
 
+def refresh_board_note(db: Session, settings: Any, now: datetime) -> None:
+    """Rewrite every standing hold note to the CURRENT hold reason (or clear it): runs on every
+    board pass and when an operator lifts a freeze, so a note never names a lifted freeze. Flushes."""
+    hold = board_hold_reason(db, settings, now) if int(getattr(settings, "company_board_approval_hours", 0) or 0) > 0 else None
+    note = f"board holds: {hold}"[:255] if hold else None
+    db.execute(text("UPDATE society_daily_plans SET board_note = :n WHERE status = 'awaiting_owner' AND board_note LIKE 'board holds:%%' "
+                    "AND board_note IS DISTINCT FROM :n"), {"n": note})
+
+
 def board_decide(db: Session, settings: Any, now: datetime) -> int:
     """Approve each plan the owner left undecided for ``SOCIETY_COMPANY_BOARD_APPROVAL_HOURS``
     (0 = off: every plan waits for the owner, as before). The owner's window comes first:
@@ -484,6 +493,7 @@ def board_decide(db: Session, settings: Any, now: datetime) -> int:
     never changes a ticket, the gate, the RED merge law or any budget. When unhealthy it
     holds and says why on the plan (``board_note``). Returns plans approved. The caller commits."""
     hours = int(getattr(settings, "company_board_approval_hours", 0) or 0)
+    refresh_board_note(db, settings, now)
     if hours <= 0:
         return 0
     due = db.execute(text("SELECT * FROM society_daily_plans WHERE status = 'awaiting_owner' AND created_at <= :cut ORDER BY created_at FOR UPDATE SKIP LOCKED"),
