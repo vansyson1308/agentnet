@@ -264,3 +264,90 @@ def test_freezes_that_outlived_their_incident_are_named_on_the_plan_and_only_the
     assert "lifted 2/2 through the operator API" in printed
     assert f"kept {str(surface.id)[:8]} public_surface" in printed and "'failure': 'timeout'" in printed and "surface recovered since: no" in printed
     assert p5.parse_plan("freezes:lift-recovered,autonomy:7") == [("freezes", ["lift-recovered"]), ("autonomy", ["7"])]
+
+
+def test_a_lifted_freeze_never_shows_in_a_stale_hold_note(db, company, monkeypatch):
+    """The hold note is recomputed on every board pass and the moment an operator lifts a freeze."""
+    import types
+
+    _, settings = company
+    monkeypatch.setattr(company_mod, "get_settings", lambda: _board(settings))
+    pid, _ = _plan(db)
+    a = company_mod.open_incident(db, reason="one", source="test")
+    b = company_mod.open_incident(db, reason="two", source="test")
+    later = utcnow() + timedelta(hours=7)
+    assert tickets.board_decide(db, _board(settings), later) == 0
+    db.commit()
+    assert "incident freeze open (2)" in _row(db, pid)["board_note"]
+    company_mod.lift_incident(db, a.id, operator=types.SimpleNamespace(id=None), reason="owner: recovered")
+    assert "incident freeze open (1)" in _row(db, pid)["board_note"]  # rewritten by the lift itself, before any board pass
+    company_mod.lift_incident(db, b.id, operator=types.SimpleNamespace(id=None), reason="owner: recovered")
+    row = _row(db, pid)
+    assert row["status"] == "awaiting_owner" and row["board_note"] is None  # no hold left: no stale reason; the next pass decides
+    # the board turned off still clears a hold note that no longer applies
+    c = company_mod.open_incident(db, reason="three", source="test")
+    assert tickets.board_decide(db, _board(settings), later) == 0
+    db.commit()
+    db.execute(text("UPDATE society_incident_freezes SET lifted_at = NOW() WHERE id = :id"), {"id": c.id})
+    tickets.board_decide(db, _board(settings, hours=0), later)
+    db.commit()
+    assert _row(db, pid)["board_note"] is None
+
+
+def _surface_freeze(db, *, opened_h, recovered_h):
+    anomaly = emit_event(db, event_type=EventType.PUBLIC_SURFACE_ANOMALY, payload={"failing": [{"name": "ui_root", "failure": "timeout"}]},
+                         idempotency_key=f"surface:{uuid.uuid4()}")
+    f = company_mod.open_incident(db, reason="public surface unavailable: ui_root", source="public_surface", evidence={"anomaly_event_id": str(anomaly.id)})
+    db.execute(text("UPDATE society_incident_freezes SET opened_at = NOW() - make_interval(hours => :h) WHERE id = :id"), {"h": opened_h, "id": f.id})
+    if recovered_h is not None:
+        rec = emit_event(db, event_type=EventType.PUBLIC_SURFACE_RECOVERED, payload={"anomaly_event_id": str(anomaly.id)}, idempotency_key=f"rec:{uuid.uuid4()}")
+        db.execute(text("UPDATE society_events SET created_at = NOW() - make_interval(hours => :h) WHERE id = :id"), {"h": recovered_h, "id": rec.id})
+    db.commit()
+    return str(f.id)
+
+
+def _surface_observation(db, ok, minutes_ago):
+    db.execute(text("INSERT INTO maintenance_observations (sli, target, source, collector_version, trust_class, ok, digest, observed_at) "
+                    "VALUES ('surface', 'production', 'public_surface_monitor', 'surface/1', 'trusted_probe', :ok, :d, NOW() - make_interval(mins => :m))"),
+               {"ok": ok, "d": "e" * 64, "m": minutes_ago})
+    db.commit()
+
+
+def test_a_surface_freeze_is_liftable_only_after_6h_of_recovery_and_a_green_latest_check(db, company, engine, SessionLocal, monkeypatch, capsys):
+    import types
+
+    p5 = _phase5()
+    assert p5.OUTLIVED_FREEZES_SQL == company_mod.OUTLIVED_FREEZES_SQL  # one rule, two readers
+    old = _surface_freeze(db, opened_h=29, recovered_h=28)  # 2026-10-13: recovered 04:28Z, held the board 28 h
+    young = _surface_freeze(db, opened_h=3, recovered_h=2)  # recovered, but not 6 h ago
+    never = _surface_freeze(db, opened_h=27, recovered_h=None)  # opened after the last recovery: never recovered since
+    _surface_observation(db, True, 30)
+    _surface_observation(db, False, 5)  # the LATEST check is red: keep everything
+    assert company_mod.outlived_freezes(db) == []
+
+    calls = []
+
+    def fake_api(method, url, token, body=None, timeout=30.0):
+        calls.append((url.rstrip("/").split("/")[-2], body["reason"]))
+        s = SessionLocal()
+        try:
+            return 200, company_mod.incident_view(company_mod.lift_incident(s, uuid.UUID(calls[-1][0]), operator=types.SimpleNamespace(id=None), reason=body["reason"]))
+        finally:
+            s.close()
+
+    monkeypatch.setattr(p5, "api", fake_api)
+    conn = engine.raw_connection()
+    try:
+        p5.step_freezes(p5.Out(), "http://registry", "tok", conn)
+        assert calls == []
+        _surface_observation(db, True, 1)  # green again
+        _surface_observation(db, True, 1)
+        assert company_mod.outlived_freezes(db) == [old]  # the app and the validator apply the same rule
+        out = p5.Out()
+        p5.step_freezes(out, "http://registry", "tok", conn)
+        assert out.failed == [] and calls == [(old, p5.FREEZE_LIFT_REASON_SURFACE)]
+    finally:
+        conn.close()
+    open_ids = {str(i) for (i,) in db.execute(text("SELECT id FROM society_incident_freezes WHERE lifted_at IS NULL")).all()}
+    assert open_ids == {young, never}
+    assert "public_surface/recovered>=6h+green" in capsys.readouterr().out

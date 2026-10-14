@@ -143,8 +143,11 @@ and the next probe waits a full interval.
   checks. It shares the anomaly's correlation, so the story reads end to end.
 
 **Incident freeze.** An availability failure (`unreachable`, `timeout`,
-`server_error`) on a critical item opens an incident freeze with source
-`public_surface`. That stops autonomous merges until an operator lifts it.
+`server_error`) on a critical item that has been failing for
+`surface_monitor.FREEZE_MIN_OUTAGE_MINUTES` (15) opens an incident freeze with source
+`public_surface`; two slow checks that recover do not. That stops autonomous merges until an
+operator lifts it. Only this trigger waits: the anomaly event, `surface.py` and the contract's
+routes and expectations are unchanged.
 A wrong or missing page does **not** freeze: its repair is itself a merge,
 and every gate still applies to it.
 
