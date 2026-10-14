@@ -34,6 +34,7 @@ never stops the plan so the evidence of the later steps is still recorded):
     journey[:<hours>]             the core-journey probe's maintenance_observations (sli=core_journey): count, success, duration (default 24 h)
     autonomy[:<days>]             does the company run without the owner? plans decided by the board vs the owner and how long they
                                   waited, design reviews and their conversation, growth tickets, merged work, the federated network (default 7 d)
+    freezes:lift-recovered        lift (operator API) ONLY the open freezes whose maintenance incident recovered/closed; others untouched
 
 Environment (never printed):
     REGISTRY_PUBLIC_URL, POSTGRES_*, STAGING_VALIDATOR_SECRET, VALIDATOR_OPERATOR_EMAIL   as validate_staging.py
@@ -66,7 +67,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -147,6 +148,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("journey[:<hours>]")
         if name == "autonomy" and (len(args) > 1 or (args and not args[0].isdigit())):
             raise ValueError("autonomy[:<days>]")
+        if name == "freezes" and args != ["lift-recovered"]:
+            raise ValueError("freezes:lift-recovered")
         if name == "company" and not _company_args_ok(args):
             raise ValueError("company[:view] | company:cycle | company:<activate|pause|propose|done>:<O1..O5> | company:<approve|reject>:<latest|plan-id>")
         plan.append((name, args))
@@ -931,6 +934,58 @@ def step_company(out: Out, base: str, token: str, args: List[str]) -> None:
     out.json("company", "owner_merge", queue or [])
 
 
+#: The owner's decision of 2026-10-14 (project thread): a freeze whose maintenance incident recovered outlived it.
+FREEZE_LIFT_REASON = "owner 2026-10-14: incident recovered, freeze outlived it"
+FREEZE_LIFTABLE_INCIDENT = ("recovered", "closed")
+
+
+def _open_freezes(conn) -> List[Tuple]:
+    """(freeze id, source, linked maintenance incident status or None), oldest first."""
+    with conn.cursor() as cur:
+        rows = _rows(cur, "SELECT f.id, f.source, i.status FROM society_incident_freezes f LEFT JOIN maintenance_incidents i "
+                          "ON i.id::text = f.evidence ->> 'incident_id' WHERE f.lifted_at IS NULL ORDER BY f.opened_at")
+    conn.rollback()
+    return rows
+
+
+def _by_source(rows: Sequence[Tuple]) -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    for _, src, st in rows:
+        k = f"{src}/{st or '-'}"
+        out[k] = out.get(k, 0) + 1
+    return out
+
+
+def step_freezes(out: Out, base: str, token: str, conn) -> None:
+    """Lift, through the operator API, ONLY the open freezes whose linked maintenance incident
+    recovered or closed. A freeze with no incident (or an open one) is never touched. Idempotent:
+    a second run finds nothing left to lift."""
+    before = _open_freezes(conn)
+    liftable = [r for r in before if r[2] in FREEZE_LIFTABLE_INCIDENT]
+    kept = [r for r in before if r[2] not in FREEZE_LIFTABLE_INCIDENT]
+    out.check("freezes", "F01", True, f"open before: {_by_source(before)}; liftable (incident {'/'.join(FREEZE_LIFTABLE_INCIDENT)}): {len(liftable)}")
+    failed = []
+    for fid, _, _ in liftable:
+        st, body = api("POST", f"{base}/v1/society/incidents/{fid}/lift", token, {"reason": FREEZE_LIFT_REASON})
+        if st != 200 or not isinstance(body, dict) or not body.get("liftedAt"):
+            failed.append(f"{str(fid)[:8]}:HTTP {st}")
+    out.check("freezes", "F02", not failed, f"lifted {len(liftable) - len(failed)}/{len(liftable)} through the operator API" + (f"; failed {failed}" if failed else ""))
+    after = _open_freezes(conn)
+    after_ids = {str(r[0]) for r in after}
+    out.check("freezes", "F03", not any(r[2] in FREEZE_LIFTABLE_INCIDENT for r in after), f"open after: {_by_source(after)}")
+    out.check("freezes", "F04", all(str(r[0]) in after_ids for r in kept), f"untouched: {len(kept)} freeze(s) without a recovered incident stay open")
+    with conn.cursor() as cur:  # why each kept freeze is open: structural reason, age, and for the surface its anomaly vs a later recovery
+        why = _rows(cur, "SELECT f.id, f.source, f.reason, EXTRACT(EPOCH FROM (NOW() - f.opened_at)) / 3600.0, "
+                         "(SELECT jsonb_agg(jsonb_build_object('name', x ->> 'name', 'failure', x ->> 'failure', 'status', x ->> 'final_status')) "
+                         " FROM society_events a, jsonb_array_elements(COALESCE(a.payload -> 'failing', '[]'::jsonb)) x WHERE a.id::text = f.evidence ->> 'anomaly_event_id'), "
+                         "(SELECT MAX(r.created_at) FROM society_events r WHERE r.event_type = 'public.surface.recovered' AND r.created_at > f.opened_at) "
+                         "FROM society_incident_freezes f WHERE f.lifted_at IS NULL AND f.id::text = ANY(%s) ORDER BY f.opened_at", ([str(r[0]) for r in kept],))
+    conn.rollback()
+    for fid, src, reason, age, failing, recovered_at in why:
+        out.info("freezes", f"kept {str(fid)[:8]} {src} {float(age):.1f}h: {scrub(str(reason or ''))[:160]}; failing={failing or []}; "
+                            f"surface recovered since: {recovered_at.isoformat() if recovered_at else 'no'}")
+
+
 def journey_summary(rows: Sequence[Tuple]) -> Dict[str, Any]:
     """(ok, duration_s, step, observed_at, target) rows, newest first -> counts and duration percentiles."""
     durs = sorted(float(r[1]) for r in rows if r[1] not in (None, ""))
@@ -1496,7 +1551,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy") and conn is None:
+            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes") and conn is None:
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -1532,6 +1587,8 @@ def main() -> int:
                 step_journey(out, conn, int(args[0]) if args else 24)
             elif name == "autonomy":
                 step_autonomy(out, conn, int(args[0]) if args else 7)
+            elif name == "freezes":
+                step_freezes(out, base, token, conn)
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence
             if conn is not None:
                 try:

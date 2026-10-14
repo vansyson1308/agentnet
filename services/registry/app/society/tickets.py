@@ -462,7 +462,11 @@ def board_hold_reason(db: Session, settings: Any, now: datetime) -> Optional[str
 
     freezes = db.execute(text("SELECT COUNT(*) FROM society_incident_freezes WHERE lifted_at IS NULL")).scalar() or 0
     if freezes:
-        return f"incident freeze open ({freezes}): only an operator lifts it"
+        from .company import outlived_freezes  # noqa: PLC0415 -- company imports tickets
+
+        stale = outlived_freezes(db)
+        outlived = f"; {len(stale)} outlived their recovered incident (lift them): {', '.join(i[:8] for i in stale[:5])}" if stale else ""
+        return f"incident freeze open ({freezes}): only an operator lifts it{outlived}"
     dead = db.execute(text("SELECT COUNT(*) FROM agent_runs WHERE status = 'dead' AND completed_at >= :since"),
                       {"since": now - BOARD_DEAD_RUN_WINDOW}).scalar() or 0
     if dead:
