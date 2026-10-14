@@ -681,32 +681,40 @@ def _enforce_docs_contract(ctx: ExecContext, spec: Dict[str, Any], p) -> None:
     if not errors:
         return
     detail = "; ".join(f"{e.field}: {e.code} (expected {e.expected})" for e in errors)
-    already = 0
-    if p.proposal_id is not None:
-        already = (
-            ctx.db.query(SocietyEvent.id)
-            .filter(
-                SocietyEvent.event_type == EventType.CODE_CHANGE_SPEC_REJECTED,
-                SocietyEvent.correlation_id == ctx.run.correlation_id,
-            )
-            .count()
-        )
+    _spec_rejected(ctx, p, spec, [e.as_dict() for e in errors], f"docs candidate spec violates the engineering contract -> {detail}")
+
+
+def _spec_rejected(ctx: ExecContext, p, spec: Dict[str, Any], errors: List[Dict[str, Any]], message: str) -> None:
+    """Refuse a spec no build could pass, with ONE corrective turn per story: the first refusal
+    emits ``code_change.spec_rejected`` (machine-readable errors) targeted at the Architect --
+    its own untargeted event would never wake it -- and is committed, since the refusal rolls
+    the intent back. A second refusal in the story is still refused but wakes nobody."""
+    already = ctx.db.query(SocietyEvent.id).filter(SocietyEvent.event_type == EventType.CODE_CHANGE_SPEC_REJECTED,
+                                                   SocietyEvent.correlation_id == ctx.run.correlation_id).count()
     if already == 0:
-        _emit(
-            ctx,
-            EventType.CODE_CHANGE_SPEC_REJECTED,
-            {
-                "proposal_id": str(p.proposal_id) if p.proposal_id else None,
-                "title": p.title,
-                "kind": spec.get("kind"),
-                "valid": False,
-                "errors": [e.as_dict() for e in errors],
-                "corrective_turns_remaining": 0,
-            },
-            subject_type="improvement_proposal",
-            subject_id=p.proposal_id,
-        )
-    raise ExecutionError(f"docs candidate spec violates the engineering contract -> {detail}")
+        _emit(ctx, EventType.CODE_CHANGE_SPEC_REJECTED,
+              {"proposal_id": str(p.proposal_id) if p.proposal_id else None, "title": p.title, "kind": spec.get("kind"), "valid": False, "errors": errors,
+               "corrective_turns_remaining": 0, "target_agent_id": str(ctx.agent.id)},
+              subject_type="improvement_proposal", subject_id=p.proposal_id)
+        ctx.db.commit()
+    raise ExecutionError(message)
+
+
+def _acceptance_refusal(ctx: ExecContext, spec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Spec gate (staging 2026-10-14, cb82c1a7): every pytest acceptance file the Architect names
+    must exist on the trusted base, or be in files_allowed (a new test the Builder writes).
+    Otherwise no patch can make it run: refused before any build. Judged against
+    SOCIETY_REPO_ROOT, never a worktree; without one there is nothing to judge (the build decides)."""
+    root = pathlib.Path(ctx.settings.repo_root) if getattr(ctx.settings, "repo_root", "") else None
+    if root is None or not root.is_dir():
+        return None
+    allowed = set(spec["files_allowed"])
+    for test in build_engine.pytest_targets(spec):
+        path = test.split("::")[0]
+        if path not in allowed and not (root / path).exists():
+            return {"field": "acceptance_tests", "code": "acceptance_file_missing", "path": path,
+                    "expected": "a test file that exists on the base, or one listed in files_allowed (a new test the Builder writes)"}
+    return None
 
 
 def _bench_ticket_spec(ctx: ExecContext, proposal_id: Optional[uuid.UUID], spec: Dict[str, Any]) -> None:
@@ -792,6 +800,13 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
             raise ExecutionError(f"spec allows a never-writable path: {f}")
     if len(spec["files_allowed"]) > ctx.settings.max_files_per_candidate:
         raise ExecutionError(f"spec allows {len(spec['files_allowed'])} files; change budget is {ctx.settings.max_files_per_candidate} per candidate")
+    missing = _acceptance_refusal(ctx, spec)  # the Architect's own tests, before the runtime adds any
+    if missing:
+        _spec_rejected(ctx, p, spec, [missing], f"acceptance file missing and not allowed: {missing['path']}")
+    if ctx.settings.company_cycle_enabled and p.task_id is not None and tickets.for_proposal(ctx.db, p.proposal_id) is not None:
+        _spec_rejected(ctx, p, spec, [{"field": "task_id", "code": "not_a_task_session", "expected": "omitted: a ticket's design links its proposal_id only"}],
+                       "a ticket's design names no task_id: a ticket is not a task session (work_packet.bench_task is a bench task name, "
+                       "already in the proof) -- omit task_id")
     if ctx.settings.company_cycle_enabled:
         open_red = (
             ctx.db.query(CodeCandidate)

@@ -112,6 +112,19 @@ A ticket (`society/tickets.py`) says why work exists: an active objective, a key
 proof. The owner (or, after the owner's window, the board: §10) approves the daily plan, `company.ticket_approved` opens one design story per
 ticket, and the Architect designs it with `REQUEST_CODE_CHANGE`.
 
+- **A ticket story offers only the design.** In a design story (or its design review's round) the
+  Architect is offered `PROPOSE_DESIGN`, `REQUEST_CODE_CHANGE`, `TICKET_NEEDS_INFO` and the ticket's
+  budgeted repository reads. Any other intent is denied (`context._story_permissions`; the grant is
+  narrowed, never widened). Staging 2026-10-14 showed why: a6dd4579's design carried a `task_id`,
+  and a ticket is not a task session. A ticket design that names a `task_id` is refused, and the
+  bench packet's field is now `bench_task`.
+- **Spec gate before any build.** Every pytest file in `acceptance_tests` must exist on the base
+  (`SOCIETY_REPO_ROOT`) or be listed in `files_allowed` (a new test the Builder writes). Otherwise
+  the request is refused with `acceptance file missing and not allowed: <path>`, and no candidate
+  is created. Staging 2026-10-14 showed why: cb82c1a7 named a test file that did not exist and
+  burned 3 builds. Each of these refusals gives the Architect one corrective turn in the same
+  story (`code_change.spec_rejected`, targeted at the Architect), so it can re-design.
+
 **Bench tickets.** A backlog bench ticket ("Builder harness: deliver dev task X (k/3 runs)") names
 what failed, not what to change. The change it needs is to the **builder harness**
 (`backlog.HARNESS_PATHS`), so that tasks like X are delivered. X itself is already solved on `main`.
