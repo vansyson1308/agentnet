@@ -11,14 +11,19 @@ The protocol is deterministic; the models only contribute typed positions.
            drop   -> the ticket is refused with the Governor's rationale
 
 Rules the models cannot argue with:
+- every stage change wakes exactly the roles that must act, by name: one targeted
+  system event per role agent (``_wake``; runs.TARGETED_ONLY_EVENT_TYPES), so each
+  role gets its own run in the review's story;
 - a Security ``object`` bars ``go`` (revise or drop only);
 - the last round has no ``revise``;
 - every contribution is also an AgentChat message in the review's thread
   (``thread_id`` = review id), so the meeting is readable as a conversation;
-- stalls never strand a ticket (``sweep``): no proposal in time -> the ticket is
-  designed without a review (said so in the minutes); reviews missing at the window
-  -> the Governor decides with the positions it has; no decision in time -> ``go``
-  unless anyone objected, then the ticket returns to ``proposed`` for re-planning.
+- a timeout is never approval, and never strands a ticket (``sweep``): no proposal
+  in time -> the Architect is woken once more, then the ticket returns to
+  ``proposed`` with the reason; reviews missing at the window -> the Governor
+  decides with what it has ("missing: ..." in its wake and context); no decision
+  in time -> the ticket returns to ``proposed``. Only the Governor says ``go``
+  (staging 2026-10-14: two reviews passed by timeout with one message between them).
 
 Off unless ``SOCIETY_DESIGN_REVIEW_ENABLED``. Owner and incident tickets skip it.
 Nothing here touches wallets, grants, secrets or the risk classifier.
@@ -94,11 +99,38 @@ def open_review(db: Session, ticket: Dict[str, Any], *, approved_by: str) -> uui
     return rid
 
 
+#: who acts at each stage, and the event that wakes them (targeted: runs.TARGETED_ONLY_EVENT_TYPES)
+STAGE_ROLES = {"proposing": ("architect",), "reviewing": REVIEWERS, "deciding": ("governor",)}
+STAGE_EVENTS = {"proposing": EventType.DESIGN_REVIEW_REQUESTED, "reviewing": EventType.DESIGN_REVIEW_PROPOSED, "deciding": EventType.DESIGN_REVIEW_READY}
+WAKE_EVENT_TYPES = frozenset(STAGE_EVENTS.values())
+
+
+def _role_agents(db: Session, roles: Any) -> List[tuple]:
+    return [(str(a), str(r)) for a, r in db.execute(text(
+        "SELECT g.agent_id, g.role FROM agent_capability_grants g JOIN agents a ON a.id = g.agent_id "
+        "WHERE g.enabled AND g.role = ANY(:roles) AND a.status::text IN ('active', 'unverified') ORDER BY g.role, a.name"),
+        {"roles": list(roles)}).all()]
+
+
+def _wake(db: Session, review: Dict[str, Any], *, extra: Optional[Dict[str, Any]] = None, rewake: bool = False, causation: Any = None) -> int:
+    """Wake the roles that must act at the review's CURRENT stage: one system event per role
+    agent in the review's story (caused by the contribution that moved the stage, if any),
+    targeted so nobody else is woken. Returns wakes."""
+    stage = review["status"]
+    t = _ticket(db, review)
+    n = 0
+    for agent_id, role in _role_agents(db, STAGE_ROLES[stage]):
+        emit_event(db, event_type=STAGE_EVENTS[stage], actor_type="system", subject_type="proposal", subject_id=t["proposal_id"],
+                   correlation_id=review["correlation_id"], causation=causation,
+                   payload={"review_id": str(review["id"]), "round": int(review["round"]), "stage": stage, "role": role, "target_agent_id": agent_id,
+                            "rewake": rewake, **_ticket_brief(t), **(extra or {})},
+                   idempotency_key=f"design_review.{stage}:{review['id']}:{review['round']}:{agent_id}" + (":rewake" if rewake else ""))
+        n += 1
+    return n
+
+
 def _request_round(db: Session, review: Dict[str, Any], ticket: Dict[str, Any], *, feedback: Optional[Dict[str, Any]]) -> None:
-    emit_event(db, event_type=EventType.DESIGN_REVIEW_REQUESTED, actor_type="system", subject_type="proposal", subject_id=ticket["proposal_id"],
-               correlation_id=review["correlation_id"],
-               payload={"review_id": str(review["id"]), "round": int(review["round"]), **_ticket_brief(ticket), **({"feedback": feedback} if feedback else {})},
-               idempotency_key=f"design_review.requested:{review['id']}:{review['round']}")
+    _wake(db, review, extra={"feedback": feedback} if feedback else None)
 
 
 def _chat(db: Session, review: Dict[str, Any], agent: Any, title: str, content: str, message_type: str) -> None:
@@ -136,9 +168,7 @@ def propose(db: Session, *, review_id: Any, correlation_id: Any, agent: Any, pro
     _chat(db, review, agent, f"Design proposal (round {review['round']}): {_ticket(db, review)['title']}",
           f"Approach: {proposal['approach']}\nFiles: {', '.join(proposal['files'])}\nProof: {proposal['proof']}\nRisks: {'; '.join(proposal.get('risks') or []) or 'none named'}",
           "proposal")
-    emit_event(db, event_type=EventType.DESIGN_REVIEW_PROPOSED, actor_type="agent", actor_id=agent.id, causation=causation,
-               payload={"review_id": str(review["id"]), "round": int(review["round"]), "ticket_id": str(review["ticket_id"])},
-               idempotency_key=f"design_review.proposed:{review['id']}:{review['round']}")
+    _wake(db, review, causation=causation)
     return review
 
 
@@ -155,16 +185,17 @@ def post_position(db: Session, *, review_id: Any, correlation_id: Any, agent: An
     _chat(db, review, agent, f"Review by {role} (round {review['round']}): {position['stance']}", "\n".join(f"- {p}" for p in position["points"]),
           "review_result")
     if all(r in positions for r in REVIEWERS):
-        _ready(db, review, causation=causation, why="all reviewers spoke")
+        _ready(db, review, why="all reviewers spoke", causation=causation)
     return review
 
 
-def _ready(db: Session, review: Dict[str, Any], *, causation: Any, why: str) -> None:
+def _missing(review: Dict[str, Any]) -> List[str]:
+    return [r for r in REVIEWERS if r not in (review.get("positions") or {})]
+
+
+def _ready(db: Session, review: Dict[str, Any], *, why: str, causation: Any = None) -> None:
     _update(db, review["id"], status="deciding", stage_at=utcnow())
-    emit_event(db, event_type=EventType.DESIGN_REVIEW_READY, actor_type="system", causation=causation, correlation_id=review["correlation_id"],
-               payload={"review_id": str(review["id"]), "round": int(review["round"]), "ticket_id": str(review["ticket_id"]),
-                        "stances": {r: p["stance"] for r, p in (review["positions"] or {}).items()}, "why": why},
-               idempotency_key=f"design_review.ready:{review['id']}:{review['round']}")
+    _wake(db, get(db, review["id"]), causation=causation, extra={"stances": {r: p["stance"] for r, p in (review["positions"] or {}).items()}, "missing": _missing(review), "why": why})
 
 
 def decide(db: Session, *, review_id: Any, correlation_id: Any, agent: Any, decision: Dict[str, Any]) -> Dict[str, Any]:
@@ -186,7 +217,7 @@ def _minutes(review: Dict[str, Any], decision: Dict[str, Any]) -> Dict[str, Any]
     history = list(review.get("history") or [])
     return {"review_id": str(review["id"]), "rounds": int(review["round"]), "verdict": decision["verdict"], "rationale": decision.get("rationale"),
             "conditions": list(decision.get("conditions") or []), "by": decision.get("by"), "proposal": review.get("proposal"),
-            "stances": {r: p["stance"] for r, p in (review.get("positions") or {}).items()}, "earlier_rounds": len(history)}
+            "stances": {r: p["stance"] for r, p in (review.get("positions") or {}).items()}, "missing": _missing(review), "earlier_rounds": len(history)}
 
 
 def _settle(db: Session, review: Dict[str, Any], decision: Dict[str, Any]) -> None:
@@ -211,35 +242,44 @@ def _settle(db: Session, review: Dict[str, Any], decision: Dict[str, Any]) -> No
         tickets.emit_approved(db, t, None, by=review["approved_by"] or "owner", design_review=minutes)
     elif verdict == "drop":
         tickets.set_status(db, t["id"], "refused", f"design review dropped it: {' '.join(str(decision.get('rationale') or '').split())}"[:500])
-    else:  # return: nobody decided and someone objected -- the owner/board re-plans it
+    else:  # return: the meeting did not decide in time -- the owner/board re-plans it
         tickets.set_status(db, t["id"], "proposed", f"design review: {decision.get('rationale')}"[:500], plan_id=None)
 
 
+def _rewoken(db: Session, review: Dict[str, Any]) -> bool:
+    return db.execute(text("SELECT 1 FROM society_events WHERE event_type = :t AND payload ->> 'review_id' = :r AND payload ->> 'round' = :n "
+                           "AND payload ->> 'rewake' = 'true' LIMIT 1"),
+                      {"t": EventType.DESIGN_REVIEW_REQUESTED, "r": str(review["id"]), "n": str(review["round"])}).first() is not None
+
+
+def _hours(window: timedelta) -> str:
+    return f"{window.total_seconds() / 3600:g}h"
+
+
 def sweep(db: Session, now: datetime) -> int:
-    """No review strands a ticket. The caller commits. Returns reviews advanced."""
+    """A timeout is never approval, and no review strands a ticket. The caller commits.
+    Returns reviews advanced."""
     n = 0
     rows = db.execute(text("SELECT * FROM society_design_reviews WHERE status IN ('proposing', 'reviewing', 'deciding') ORDER BY created_at FOR UPDATE SKIP LOCKED")).mappings().all()
     for r in rows:
         review = dict(r)
         age = now - review["stage_at"]
         if review["status"] == "proposing" and age >= PROPOSAL_WINDOW:
-            _settle(db, review, {"verdict": "go", "rationale": f"no design proposal within {PROPOSAL_WINDOW.total_seconds() / 3600:g}h: designed without a review",
-                                 "conditions": [], "by": "runtime"})
+            if not _rewoken(db, review):  # once more, with a fresh window
+                _update(db, review["id"], stage_at=now)
+                _wake(db, review, rewake=True)
+            else:
+                _settle(db, review, {"verdict": "return", "conditions": [], "by": "runtime",
+                                     "rationale": f"no design proposal after a re-wake ({_hours(PROPOSAL_WINDOW)} each): returned for re-planning"})
             n += 1
         elif review["status"] == "reviewing" and age >= REVIEW_WINDOW:
-            if review["positions"]:
-                _ready(db, review, causation=None, why=f"review window ({REVIEW_WINDOW.total_seconds() / 3600:g}h) elapsed; missing: "
-                       + ", ".join(x for x in REVIEWERS if x not in review["positions"]))
-            else:
-                _settle(db, review, {"verdict": "go", "rationale": "no reviewer spoke within the window: designed as proposed", "conditions": [], "by": "runtime"})
+            _ready(db, review, why=f"review window ({_hours(REVIEW_WINDOW)}) elapsed; missing: " + ", ".join(_missing(review)))
             n += 1
         elif review["status"] == "deciding" and age >= DECISION_WINDOW:
             objections = [k for k, p in (review["positions"] or {}).items() if p.get("stance") == "object"]
-            if objections:
-                _settle(db, review, {"verdict": "return", "rationale": f"no decision in time and {', '.join(objections)} objected: returned for re-planning",
-                                     "conditions": [], "by": "runtime"})
-            else:
-                _settle(db, review, {"verdict": "go", "rationale": "no decision in time and nobody objected", "conditions": [], "by": "runtime"})
+            _settle(db, review, {"verdict": "return", "conditions": [], "by": "runtime",
+                                 "rationale": f"no Governor decision within {_hours(DECISION_WINDOW)}" + (f" and {', '.join(objections)} objected" if objections else "")
+                                 + ": returned for re-planning"})
             n += 1
     return n
 
@@ -253,7 +293,8 @@ def context_view(db: Session, correlation_id: Any) -> Dict[str, Any]:
     step = {"proposing": "Architect: PROPOSE_DESIGN {review_id, approach, files, proof, risks}",
             "reviewing": "Scout, QA, Security: REVIEW_DESIGN {review_id, stance: support|concern|object, points} -- once each, about THIS proposal",
             "deciding": "Governor: DECIDE_DESIGN {review_id, verdict: go|revise|drop, rationale, conditions} -- Security object bars go; "
-                        f"round {MAX_ROUNDS} has no revise"}.get(review["status"], "nothing: the review is settled")
+                        f"round {MAX_ROUNDS} has no revise" + (f"; missing: {', '.join(_missing(review))} (decide with what you have)" if _missing(review) else "")
+            }.get(review["status"], "nothing: the review is settled")
     from . import work_packet  # noqa: PLC0415
     from .context import untrusted  # noqa: PLC0415
 
@@ -263,6 +304,7 @@ def context_view(db: Session, correlation_id: Any) -> Dict[str, Any]:
         "work_packet": work_packet.for_ticket(db, t),
         "proposal": untrusted(review["proposal"], source="agent:architect") if review["proposal"] else None,
         "positions": untrusted(review["positions"] or {}, source="agent:reviewers"),
+        "missing": _missing(review) if review["status"] == "deciding" else [],
         "earlier_rounds": untrusted(review["history"] or [], source="agent:review_history"),
     }}
 

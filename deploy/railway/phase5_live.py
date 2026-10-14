@@ -1028,6 +1028,8 @@ def step_journey(out: Out, conn, hours: int) -> None:
 AUTONOMY_PLAN_WAIT_HOURS = 24
 #: A design review still open this long means its sweep is not running (design_review.py windows are 2 h each).
 AUTONOMY_REVIEW_STUCK_HOURS = 7
+#: a real meeting: at least this many roles spoke in one review's thread (Architect + reviewers + Governor = 5)
+AUTONOMY_MEETING_ROLES = 4
 
 
 def step_autonomy(out: Out, conn, days: int) -> None:
@@ -1036,7 +1038,13 @@ def step_autonomy(out: Out, conn, days: int) -> None:
     with conn.cursor() as cur:
         plans = _rows(cur, "SELECT status, COALESCE(decided_by, CASE WHEN decided_at IS NULL THEN NULL ELSE 'owner' END), "
                            "EXTRACT(EPOCH FROM (COALESCE(decided_at, NOW()) - created_at)) / 3600.0, board_note FROM society_daily_plans WHERE created_at >= %s", (since,))
-        reviews = _rows(cur, "SELECT status, round, EXTRACT(EPOCH FROM (NOW() - stage_at)) / 3600.0 FROM society_design_reviews WHERE created_at >= %s", (since,))
+        reviews = _rows(cur, "SELECT status, round, EXTRACT(EPOCH FROM (NOW() - stage_at)) / 3600.0, id, COALESCE(decision ->> 'by', '') "
+                             "FROM society_design_reviews WHERE created_at >= %s ORDER BY created_at DESC", (since,))
+        # who was woken for each review (the run each stage wake created) and who spoke in its thread
+        woken = _rows(cur, "SELECT e.payload ->> 'review_id', r.role, r.status::text, COUNT(*) FROM society_events e JOIN agent_runs r ON r.event_id = e.id "
+                           "WHERE e.event_type LIKE 'design_review.%%' AND e.created_at >= %s GROUP BY 1, 2, 3", (since,))
+        spoke = _rows(cur, "SELECT c.thread_id::text, g.role, COUNT(*) FROM agent_chat c JOIN agent_capability_grants g ON g.agent_id = c.from_agent_id "
+                           "WHERE c.created_at >= %s AND c.thread_id IN (SELECT id FROM society_design_reviews) GROUP BY 1, 2", (since,))
         chat = _rows(cur, "SELECT COUNT(*) FROM agent_chat WHERE created_at >= %s AND thread_id IN (SELECT id FROM society_design_reviews)", (since,))[0][0]
         tks = _rows(cur, "SELECT CASE WHEN proof::text LIKE '%%bench:%%' THEN 'bench' WHEN proof::text LIKE '%%probe:escrow%%' OR proof::text LIKE '%%probe:a2a%%' "
                          "THEN 'growth' ELSE source END, status, COUNT(*) FROM society_tickets WHERE created_at >= %s GROUP BY 1, 2", (since,))
@@ -1068,8 +1076,19 @@ def step_autonomy(out: Out, conn, days: int) -> None:
     holds = sorted({str(n) for st, _, _, n in plans if st == "awaiting_owner" and n})
     stuck = [r for r in reviews if r[0] in ("proposing", "reviewing", "deciding") and float(r[2]) > AUTONOMY_REVIEW_STUCK_HOURS]
     rev: Dict[str, int] = {}
-    for st, _, _ in reviews:
+    for st, *_ in reviews:
         rev[st] = rev.get(st, 0) + 1
+    go_runtime = sum(1 for st, _, _, _, by in reviews if st == "go" and by == "runtime")
+    go_governor = sum(1 for st, _, _, _, by in reviews if st == "go" and by != "runtime")
+    runs_by: Dict[str, Dict[str, List[str]]] = {}
+    for rid, role, st, n in woken:  # e.g. {"qa": ["completed"], "scout": ["skipped"]}: a role with no run was never woken
+        runs_by.setdefault(str(rid), {}).setdefault(str(role), []).append(str(st) + (f"x{n}" if n > 1 else ""))
+    said: Dict[str, Dict[str, int]] = {}
+    for tid, role, n in spoke:
+        said.setdefault(str(tid), {})[str(role)] = int(n)
+    meetings = [{"review": str(rid)[:8], "status": st, "by": by or "-", "woken": runs_by.get(str(rid), {}), "spoke": said.get(str(rid), {})}
+                for st, _, _, rid, by in reviews[:5]]
+    real = [str(rid)[:8] for st, _, _, rid, _ in reviews if sum(said.get(str(rid), {}).values()) >= AUTONOMY_MEETING_ROLES and len(said.get(str(rid), {})) >= AUTONOMY_MEETING_ROLES]
     tickets_view: Dict[str, Dict[str, int]] = {}
     for kind, st, n in tks:
         tickets_view.setdefault(str(kind), {})[str(st)] = int(n)
@@ -1078,8 +1097,12 @@ def step_autonomy(out: Out, conn, days: int) -> None:
               f"plans in {days}d: {by_decider}; median wait {waits[len(waits) // 2] if waits else 'n/a'}h; oldest undecided {oldest:.1f}h"
               + (f"; board holds: {holds}" if holds else "")
               + (f"; open freezes (source, incident status, n, oldest h): {[(str(a), str(b), int(n), round(float(h), 1)) for a, b, n, h in freezes]}" if freezes else ""))
-    out.check("autonomy", "A02", not stuck, f"design reviews in {days}d: {rev}; stuck > {AUTONOMY_REVIEW_STUCK_HOURS}h: {len(stuck)}")
-    out.check("autonomy", "A03", not reviews or int(chat) > 0, f"{int(chat)} message(s) in design-review threads")
+    # a timeout is never approval: a review only passes when the Governor said go
+    out.check("autonomy", "A02", not stuck and not (go_runtime and not go_governor),
+              f"design reviews in {days}d: {rev}; go by Governor {go_governor}, go by runtime {go_runtime}; stuck > {AUTONOMY_REVIEW_STUCK_HOURS}h: {len(stuck)}")
+    out.check("autonomy", "A03", not reviews or bool(real),
+              f"{int(chat)} message(s) in design-review threads; meetings with >= {AUTONOMY_MEETING_ROLES} roles speaking: {real or 'none'}; latest: "
+              + "; ".join(f"{m['review']} {m['status']}/{m['by']} woken {m['woken'] or '-'} spoke: {', '.join(sorted(m['spoke'])) or 'nobody'}" for m in meetings))
     out.check("autonomy", "A04", True, f"tickets in {days}d by kind/status: {tickets_view}; merged {int(merged)}")
     scan = (last_scan[0][0] if last_scan else None) or {}
     out.check("autonomy", "A05", True, f"federated network: {int(live)} live remote card(s) (7d), {int(via_dir)} found via directories, {int(scans)} directory scan(s); "
@@ -1087,7 +1110,7 @@ def step_autonomy(out: Out, conn, days: int) -> None:
               f"listing requests: {[(str(d), str(o)) for d, o, _ in listings] or 'none yet (needs A2A_SERVER_ENABLED + A2A_PUBLIC_BASE_URL on the society-worker)'}")
     out.check("autonomy", "A06", True, f"bench tickets vs their newest reports (newest first): {bench_view or 'none'}")
     out.json("autonomy", "summary", {"days": days, "plans_by_decider": by_decider, "plan_wait_hours": waits, "undecided_hours": waiting,
-                                     "reviews": rev, "review_messages": int(chat), "tickets": tickets_view, "merged_tickets": int(merged),
+                                     "reviews": rev, "review_messages": int(chat), "go_by_governor": go_governor, "go_by_runtime": go_runtime, "meetings": meetings, "tickets": tickets_view, "merged_tickets": int(merged),
                                      "live_remote_cards": int(live), "directory_agents": int(via_dir), "directory_scans": int(scans),
                                      "last_scan": {k: scan.get(k) for k in ("listed", "new", "refreshed", "errors")}, "listings": [(str(d), str(o)) for d, o, _ in listings],
                                      "bench_tickets": bench_view, "open_freezes": [(str(a), str(b), int(n)) for a, b, n, _ in freezes]})

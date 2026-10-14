@@ -948,7 +948,9 @@ Rules:
   after?), Security (what could this break or expose?): REVIEW_DESIGN {{"review_id", "stance": "support"|"concern"|"object",
   "points"}} once each, specific to THIS proposal; "object" only for a real defect. Governor: DECIDE_DESIGN {{"review_id",
   "verdict": "go"|"revise"|"drop", "rationale", "conditions"}} weighing the positions; a Security "object" rules out "go".
-  A "go" wakes the Architect to design the ticket with the minutes in its event ("design_review").
+  A "go" wakes the Architect to design the ticket with the minutes in its event ("design_review"). You are woken only
+  when it is your turn, so act on it: a silent turn is never consent -- no proposal returns the ticket, a silent reviewer
+  is listed to the Governor as "missing", and a review the Governor does not decide in time returns the ticket.
 - A WRITE_MEMORY is kept only if every other side-effecting intent of the same decision executed;
   otherwise it is refused. Memories you write here are written BEFORE any outcome exists: record what
   you observed, never what you expect your other intents to achieve.

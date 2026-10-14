@@ -28,6 +28,7 @@ import os
 import select
 import time
 import uuid
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal
@@ -88,6 +89,8 @@ from .runs import (
 )
 
 logger = logging.getLogger(__name__)
+#: how long a design-review turn held back by an hourly run cap waits before it is tried again
+REVIEW_WAKE_RETRY_SECONDS = 300
 #: one public-directory pass (scan or listing) never holds the loop longer than this
 DIRECTORY_PASS_SECONDS = 180
 
@@ -552,6 +555,9 @@ class SocietyWorker:
                     stats.runs_dead += 1
                 return "dead"
             gate = check_run_budget(db, agent=agent, grant=grant, settings=self.settings, run=run)
+            if not gate.ok and gate.retry_after_seconds is None and "runs/hour limit" in gate.reason and event.event_type in design_review_mod.WAKE_EVENT_TYPES:
+                # A meeting turn is owed by THIS role: an hourly cap delays it, never drops it (bounded by the event TTL).
+                gate = dataclasses.replace(gate, retry_after_seconds=REVIEW_WAKE_RETRY_SECONDS)
             if not gate.ok:
                 now = utcnow()
                 created = run.created_at if run.created_at is not None else now
