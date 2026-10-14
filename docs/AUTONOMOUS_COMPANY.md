@@ -195,7 +195,9 @@ Without it the company stands still every day until the owner opens the plan: on
   candidate's PR still waits in the owner merge queue (§9).
 - **Healthy only (fails closed).** It holds, and writes why on the plan's `board_note`, while
   an incident freeze is open, a society run went DEAD in the last 6 h, or the daily model
-  budget is spent.
+  budget is spent. A freeze whose maintenance incident already recovered (or closed) is named
+  on that note and in `GET /v1/society/company` (`freezes_outlived`, `company.outlived_freezes`)
+  the same day, so the owner sees it; it is never lifted automatically.
 - **Isolated.** The worker runs each ticket controller (outcomes, relabel, close, stale-design
   sweep, board, design-review sweep) in its own transaction and logs a failure as
   `company controller step <name> failed`: a broken step can neither skip the board nor roll
@@ -267,6 +269,13 @@ staging read-only and fails when the company waits on a person or a meeting stal
 - `A04` / `A05` informational: tickets by kind and source, the federated network, the last directory
   scan (listed/new/refreshed/errors) and the listing requests;
 - `A06` informational: each live or recent bench ticket beside its task's newest reports.
+
+Step `freezes:lift-recovered` (e.g. `PHASE5_PLAN=freezes:lift-recovered,autonomy:7`) is an owner
+action: as the operator it calls `POST /v1/society/incidents/{id}/lift` ONLY for open freezes
+whose maintenance incident is `recovered`/`closed` (F01-F04: counts by source, lifted x/y, none
+left, the others untouched). It is idempotent. Every freeze it keeps is printed with its reason,
+the failing checks of its public-surface anomaly and whether the surface recovered since, so the
+operator can decide on it by hand.
 
 ### Bench gaps must reproduce
 

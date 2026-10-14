@@ -439,6 +439,16 @@ def open_incident_count(db: Session) -> int:
     return int(db.query(func.count(IncidentFreeze.id)).filter(IncidentFreeze.lifted_at.is_(None)).scalar() or 0)
 
 
+def outlived_freezes(db: Session) -> list:
+    """Open freezes whose maintenance incident already recovered (or closed): the freeze
+    outlived its cause and only an operator lifts it (never auto-lifted). Ids, oldest first."""
+    from sqlalchemy import text  # noqa: PLC0415
+
+    return [str(r[0]) for r in db.execute(text(
+        "SELECT f.id FROM society_incident_freezes f JOIN maintenance_incidents i ON i.id::text = f.evidence ->> 'incident_id' "
+        "WHERE f.lifted_at IS NULL AND i.status IN ('recovered', 'closed') ORDER BY f.opened_at")).all()]
+
+
 def open_incident(db: Session, *, reason: str, source: str, evidence: Optional[Dict[str, Any]] = None, operator_id: Optional[uuid.UUID] = None) -> IncidentFreeze:
     inc = IncidentFreeze(id=uuid.uuid4(), reason=reason[:255], source=source[:64], evidence=evidence or {}, opened_by_user_id=operator_id)
     db.add(inc)
@@ -534,6 +544,7 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
             "society_a2a_calls_per_day_cap": settings.a2a_max_calls_per_day,
         },
         "incidents": [incident_view(i) for i in incidents],
+        "freezes_outlived": outlived_freezes(db),  # an operator should lift these: their incident recovered
         "function_roles": FUNCTION_ROLE_MAP,
         "public_surface": _public_surface_view(db, settings),
     }

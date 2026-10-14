@@ -165,13 +165,18 @@ def test_the_board_window_is_bounded(monkeypatch):
     assert not any("BOARD" in p for p in validate_settings(SocietySettings()))
 
 
-def test_the_validator_autonomy_step_reads_who_decided_and_how_long_plans_waited(db, company, engine, capsys):
+def _phase5():
     import importlib.util
     import pathlib
 
     spec = importlib.util.spec_from_file_location("phase5_live_autonomy", pathlib.Path(__file__).resolve().parents[2] / "deploy/railway/phase5_live.py")
     p5 = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(p5)
+    return p5
+
+
+def test_the_validator_autonomy_step_reads_who_decided_and_how_long_plans_waited(db, company, engine, capsys):
+    p5 = _phase5()
     _, settings = company
     pid, _ = _plan(db)
     db.execute(text("UPDATE society_daily_plans SET created_at = NOW() - INTERVAL '30 hours' WHERE id = :id"), {"id": pid})
@@ -195,3 +200,67 @@ def test_the_validator_autonomy_step_reads_who_decided_and_how_long_plans_waited
     assert "plans in 7d: {'board': 1}" in printed
     assert "listing requests: none yet (needs A2A_SERVER_ENABLED + A2A_PUBLIC_BASE_URL" in printed and "autonomy INFO" not in printed
     assert "PHASE5 autonomy A06 PASS bench tickets vs their newest reports" in printed
+
+
+def _maint_incident(db, status):
+    from services.registry.app.maintenance.orm import MaintenanceIncident
+
+    inc = MaintenanceIncident(id=uuid.uuid4(), fingerprint=uuid.uuid4().hex, incident_class="AVAILABILITY", priority="P1", severity="major", source="probe",
+                              target="production", desired_state_ref="surface:/", status=status, first_observed_at=utcnow(), last_observed_at=utcnow(),
+                              current_evidence_digest="d" * 64)
+    db.add(inc)
+    db.flush()
+    return company_mod.open_incident(db, reason=f"maintenance {status}", source="maintenance", evidence={"incident_id": str(inc.id)})
+
+
+def test_freezes_that_outlived_their_incident_are_named_on_the_plan_and_only_they_are_lifted(db, company, engine, SessionLocal, monkeypatch, capsys):
+    import types
+
+    p5 = _phase5()
+    _, settings = company
+    pid, _ = _plan(db)
+    db.execute(text("UPDATE society_daily_plans SET created_at = NOW() - INTERVAL '7 hours' WHERE id = :id"), {"id": pid})
+    recovered, closed = _maint_incident(db, "recovered"), _maint_incident(db, "closed")
+    still_open = _maint_incident(db, "open")
+    anomaly = emit_event(db, event_type=EventType.PUBLIC_SURFACE_ANOMALY, payload={"failing": [{"name": "ui_root", "failure": "timeout", "final_status": None}]},
+                         idempotency_key=f"surface:{uuid.uuid4()}")
+    surface = company_mod.open_incident(db, reason="public surface unavailable: ui_root", source="public_surface", evidence={"anomaly_event_id": str(anomaly.id)})
+    db.commit()
+
+    assert tickets.board_decide(db, _board(settings), utcnow()) == 0
+    db.commit()
+    note = _row(db, pid)["board_note"]  # the owner sees it on the plan the same day; nothing is auto-lifted
+    assert "incident freeze open (4)" in note and "2 outlived their recovered incident (lift them)" in note and str(recovered.id)[:8] in note
+    assert set(company_mod.outlived_freezes(db)) == {str(recovered.id), str(closed.id)}
+
+    operator = types.SimpleNamespace(id=None)
+    calls = []
+
+    def fake_api(method, url, token, body=None, timeout=30.0):
+        calls.append((method, url, body))
+        fid = uuid.UUID(url.rstrip("/").split("/")[-2])
+        s = SessionLocal()
+        try:
+            return 200, company_mod.incident_view(company_mod.lift_incident(s, fid, operator=operator, reason=body["reason"]))
+        finally:
+            s.close()
+
+    monkeypatch.setattr(p5, "api", fake_api)
+    out, conn = p5.Out(), engine.raw_connection()
+    try:
+        p5.step_freezes(out, "http://registry", "tok", conn)
+        assert out.failed == []
+        assert sorted(c[1].split("/")[-2] for c in calls) == sorted([str(recovered.id), str(closed.id)])
+        assert all(c[2] == {"reason": p5.FREEZE_LIFT_REASON} for c in calls)
+        calls.clear()
+        p5.step_freezes(out, "http://registry", "tok", conn)  # idempotent: nothing left to lift
+        assert calls == [] and out.failed == []
+    finally:
+        conn.close()
+    db.expire_all()
+    open_ids = {str(i) for (i,) in db.execute(text("SELECT id FROM society_incident_freezes WHERE lifted_at IS NULL")).all()}
+    assert open_ids == {str(still_open.id), str(surface.id)}, "a freeze without a recovered incident is never touched"
+    printed = capsys.readouterr().out
+    assert "lifted 2/2 through the operator API" in printed
+    assert f"kept {str(surface.id)[:8]} public_surface" in printed and "'failure': 'timeout'" in printed and "surface recovered since: no" in printed
+    assert p5.parse_plan("freezes:lift-recovered,autonomy:7") == [("freezes", ["lift-recovered"]), ("autonomy", ["7"])]
