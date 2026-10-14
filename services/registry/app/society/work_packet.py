@@ -134,7 +134,8 @@ def bench_packet(db: Session, task_id: str, repo_root: str = "") -> Optional[Dic
     task = dev_task(task_id, pathlib.Path(repo_root) / TASKS_REL if repo_root else _TASKS) or {}
     return {
         "kind": "bench",
-        "task_id": task_id,
+        # a bench task NAME, never a task session id (REQUEST_CODE_CHANGE.task_id): staging a6dd4579
+        "bench_task": task_id,
         "change": ("change the BUILDER HARNESS so tasks like this one are delivered; the task itself is already solved on main -- "
                    "never edit the task's own files"),
         "task": {"trust": "bench_task", "text": str(task.get("task") or "")[:600], "files": list(task.get("files_allowed") or [])[:8],

@@ -121,7 +121,7 @@ def test_the_executor_refuses_a_contract_breaking_docs_spec_before_creating_a_ca
     from services.registry.app.society import executor as ex
 
     req = inspect.getsource(ex._request_code_change)
-    gate = inspect.getsource(ex._enforce_docs_contract)
+    gate = inspect.getsource(ex._enforce_docs_contract) + inspect.getsource(ex._spec_rejected)
     # the gate runs BEFORE the candidate row is created
     assert req.index('_enforce_docs_contract') < req.index("cand = CodeCandidate(")
     assert 'spec.get("kind") == "docs"' in req
@@ -138,7 +138,8 @@ def test_the_architect_gets_exactly_one_corrective_turn():
 
     from services.registry.app.society import executor as ex
 
-    gate = inspect.getsource(ex._enforce_docs_contract)
+    gate = inspect.getsource(ex._spec_rejected)
+    assert "_spec_rejected(" in inspect.getsource(ex._enforce_docs_contract)
     assert "already == 0" in gate, "the wake is emitted only when none has been emitted yet"
     assert "raise ExecutionError" in gate, "a second violation is still refused"
     # …and the refusal always carries the reason, whether or not it woke anyone

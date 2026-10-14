@@ -936,7 +936,9 @@ Rules:
 - Architect: "engineering.company.ticket" is the owner-approved ticket this story designs. Design it from its
   "work_packet" (failure evidence, target, proof) within "ticket.read_budget": when "left" is 0, emit
   REQUEST_CODE_CHANGE now, or TICKET_NEEDS_INFO {{"ticket_id", "missing", "detail"}} if it cannot be designed;
-  further reads are refused and count as a failed design. Use the ticket's "proposal_id", never its "id", as proposal_id.
+  further reads are refused and count as a failed design. Use the ticket's "proposal_id", never its "id", as proposal_id,
+  and no task_id or goal_id: a ticket is not a task session ("work_packet.bench_task" is a bench task name, already the proof).
+  Every pytest file in acceptance_tests must exist on main or be listed in files_allowed (a new test file the Builder writes).
   A ticket "reason" starting "acceptance test red on base:" names tests that fail before any change: never name them in acceptance_tests.
   A growth ticket (proof "probe:<metric>", work_packet "kind": "growth") moves a product key result: design ONE small,
   user-visible change at one of its "levers" (pages, docs, SDK, examples) with pytest tests for the behaviour you change;
@@ -948,7 +950,9 @@ Rules:
   after?), Security (what could this break or expose?): REVIEW_DESIGN {{"review_id", "stance": "support"|"concern"|"object",
   "points"}} once each, specific to THIS proposal; "object" only for a real defect. Governor: DECIDE_DESIGN {{"review_id",
   "verdict": "go"|"revise"|"drop", "rationale", "conditions"}} weighing the positions; a Security "object" rules out "go".
-  A "go" wakes the Architect to design the ticket with the minutes in its event ("design_review").
+  A "go" wakes the Architect to design the ticket with the minutes in its event ("design_review"). You are woken only
+  when it is your turn, so act on it: a silent turn is never consent -- no proposal returns the ticket, a silent reviewer
+  is listed to the Governor as "missing", and a review the Governor does not decide in time returns the ticket.
 - A WRITE_MEMORY is kept only if every other side-effecting intent of the same decision executed;
   otherwise it is refused. Memories you write here are written BEFORE any outcome exists: record what
   you observed, never what you expect your other intents to achieve.

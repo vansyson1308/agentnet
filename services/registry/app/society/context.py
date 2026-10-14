@@ -505,6 +505,29 @@ def _budget(db: Session, agent: Agent, grant: Optional[AgentCapabilityGrant], se
     }
 
 
+#: What an Architect's ticket story offers (a design story, or its design review's round): the
+#: design intents and the ticket's budgeted reads. Staging 2026-10-14 (a6dd4579): with the whole
+#: grant on offer a design carried a task_id, and a ticket is not a task session.
+TICKET_STORY_INTENTS = (IntentType.PROPOSE_DESIGN.value, IntentType.REQUEST_CODE_CHANGE.value, IntentType.TICKET_NEEDS_INFO.value)
+
+
+def _story_permissions(db: Session, grant: Optional[AgentCapabilityGrant], event: SocietyEvent, settings: SocietySettings) -> Dict[str, Any]:
+    """The grant's permissions, narrowed (never widened) to what the story is for. The worker
+    denies an intent the story does not offer (worker._persist_decision)."""
+    from . import design_review, tickets  # noqa: PLC0415
+
+    perms = _permissions(grant)
+    if grant is None or grant.role != "architect" or not settings.company_cycle_enabled:
+        return perms
+    if tickets.for_correlation(db, event.correlation_id) is None and design_review.for_correlation(db, event.correlation_id) is None:
+        return perms
+    offered = set(TICKET_STORY_INTENTS) | {t.value for t in REPO_READ_INTENT_TYPES}
+    perms["allowed_intents"] = [t for t in perms["allowed_intents"] if t in offered]
+    perms["intent_risk"] = {t: r for t, r in perms["intent_risk"].items() if t in offered}
+    perms["story"] = "ticket story: design intents and the ticket's budgeted reads only"
+    return perms
+
+
 def _permissions(grant: Optional[AgentCapabilityGrant]) -> Dict[str, Any]:
     if grant is None:
         return {"allowed_intents": [], "risk_ceiling": "low", "approval_required_intents": [], "resource_scopes": {}}
@@ -1170,7 +1193,7 @@ def build_context(
         candidates=_candidates(db, event),
         tasks=_tasks(db, agent),
         budget=_budget(db, agent, grant, settings, now),
-        permissions=_permissions(grant),
+        permissions=_story_permissions(db, grant, event, settings),
         restrictions=_restrictions(settings, grant),
         recent_activity=_recent_activity(db, agent, run.id if run else None),
         recent_refusals=_recent_refusals(db, agent, now),

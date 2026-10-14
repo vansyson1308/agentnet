@@ -77,7 +77,10 @@ class DispatchStats:
 #: was ignored. The candidate was stranded in REQUESTED. The bystander
 #: runs were also shown another agent's untrusted read preview. No cap changes:
 #: the same story now spends one run per read.
-TARGETED_ONLY_EVENT_TYPES = frozenset({EventType.REPO_READ_RESULT})
+#: The design review's stage wakes (design_review._wake) are the same kind: one event per
+#: role that must act, so a stage never wakes a bystander and every role gets its own run.
+TARGETED_ONLY_EVENT_TYPES = frozenset({EventType.REPO_READ_RESULT, EventType.DESIGN_REVIEW_REQUESTED, EventType.DESIGN_REVIEW_PROPOSED,
+                                       EventType.DESIGN_REVIEW_READY})
 
 
 def _agents_for_roles(db: Session, roles: Iterable[str]) -> List[tuple[Agent, AgentCapabilityGrant]]:

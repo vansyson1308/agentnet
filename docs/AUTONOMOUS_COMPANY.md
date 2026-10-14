@@ -112,6 +112,19 @@ A ticket (`society/tickets.py`) says why work exists: an active objective, a key
 proof. The owner (or, after the owner's window, the board: §10) approves the daily plan, `company.ticket_approved` opens one design story per
 ticket, and the Architect designs it with `REQUEST_CODE_CHANGE`.
 
+- **A ticket story offers only the design.** In a design story (or its design review's round) the
+  Architect is offered `PROPOSE_DESIGN`, `REQUEST_CODE_CHANGE`, `TICKET_NEEDS_INFO` and the ticket's
+  budgeted repository reads. Any other intent is denied (`context._story_permissions`; the grant is
+  narrowed, never widened). Staging 2026-10-14 showed why: a6dd4579's design carried a `task_id`,
+  and a ticket is not a task session. A ticket design that names a `task_id` is refused, and the
+  bench packet's field is now `bench_task`.
+- **Spec gate before any build.** Every pytest file in `acceptance_tests` must exist on the base
+  (`SOCIETY_REPO_ROOT`) or be listed in `files_allowed` (a new test the Builder writes). Otherwise
+  the request is refused with `acceptance file missing and not allowed: <path>`, and no candidate
+  is created. Staging 2026-10-14 showed why: cb82c1a7 named a test file that did not exist and
+  burned 3 builds. Each of these refusals gives the Architect one corrective turn in the same
+  story (`code_change.spec_rejected`, targeted at the Architect), so it can re-design.
+
 **Bench tickets.** A backlog bench ticket ("Builder harness: deliver dev task X (k/3 runs)") names
 what failed, not what to change. The change it needs is to the **builder harness**
 (`backlog.HARNESS_PATHS`), so that tasks like X are delivered. X itself is already solved on `main`.
@@ -225,11 +238,16 @@ every staging audit). The design review (`society/design_review.py`) is the meet
 
 - **A conversation.** Every proposal, review and decision is also an `AgentChat` message in the
   review's thread (`thread_id` = review id).
-- **No stranded ticket** (`design_review.sweep`, every controller pass): no proposal within 2 h →
-  designed without a review (the minutes say so); reviews missing after 2 h → the Governor decides
-  with the positions it has; no decision within 2 h → `go` unless someone objected, otherwise the
-  ticket returns to `proposed` for re-planning. `drop` refuses the ticket with the Governor's
-  rationale.
+- **Every role is called by name.** Each stage change emits one targeted system event per role
+  that must act (Architect to propose; Scout, QA and Security to review; Governor to decide), in the
+  review's story at depth 0. Nobody else is woken, and each role gets its own run. An hourly run cap
+  delays a review turn by 5 min; it never drops it.
+- **A timeout is never approval** (`design_review.sweep`, every controller pass). Only the Governor
+  says `go`. No proposal within 2 h → the Architect is woken once more; no proposal after that
+  → the ticket returns to `proposed` with the reason. Reviews missing after 2 h → the Governor
+  decides with what it has, and its wake and context say `missing: ...`. No decision within 2 h →
+  the ticket returns to `proposed`. `drop` refuses the ticket with the Governor's rationale.
+  Staging 2026-10-14 showed why: two reviews passed as `go` by timeout with one message between them.
 - **Bounded.** Fresh stories keep the loop-breaker depth of the design story unchanged; at most
   2 rounds; each contribution is one LOW intent under the role's existing run and budget caps.
 - **Authority unchanged.** The review decides only whether and how a ticket is designed. It cannot
@@ -267,8 +285,10 @@ staging read-only and fails when the company waits on a person or a meeting stal
 - `A01` the oldest undecided daily plan is younger than 24 h (the board decides within its window);
   it prints the board's hold note and every open freeze by source with the status of its
   maintenance incident, so the operator can see which freezes outlived their incident;
-- `A02` no design review sits in one stage longer than 7 h (the sweep moves it on);
-- `A03` design reviews produce chat messages (the agents actually discuss);
+- `A02` no design review sits in one stage longer than 7 h, and `go` by the Governor is counted apart
+  from `go` by runtime (legacy timeouts). It fails if every `go` came from the runtime;
+- `A03` at least one review is a real meeting (>= 4 roles spoke in its thread). For the latest 5
+  reviews it prints, per role, the status of the run each wake created and who spoke;
 - `A04` / `A05` informational: tickets by kind and source, the federated network, the last directory
   scan (listed/new/refreshed/errors) and the listing requests;
 - `A06` informational: each live or recent bench ticket beside its task's newest reports.
