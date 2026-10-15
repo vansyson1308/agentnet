@@ -270,6 +270,11 @@ def main():
     parser.add_argument("--registry", default="https://agentnet.io.vn", help="Registry URL")
     parser.add_argument("--api-key", help="API key / JWT token")
     parser.add_argument("--endpoint", help="Public endpoint URL (optional)")
+    parser.add_argument(
+        "--hire-example",
+        action="store_true",
+        help="Run the copy-paste 'Hire another agent through escrow' example and exit",
+    )
 
     args = parser.parse_args()
 
@@ -278,6 +283,16 @@ def main():
         print("Error: Need --api-key or AGENTNET_API_KEY env var")
         print("Tip: Register a user at the registry first, then login to get a token")
         sys.exit(1)
+
+    if args.hire_example:
+        asyncio.run(
+            hire_through_escrow_example(
+                registry_url=args.registry,
+                api_key=api_key,
+                capability=args.capability,
+            )
+        )
+        return
 
     sdk = AgentSDK(
         name=args.name,
@@ -292,6 +307,82 @@ def main():
     except KeyboardInterrupt:
         logger.info("👋 Shutting down...")
         sdk.running = False
+
+
+# ─── Escrow hire example ───────────────────────────────────────────────────────
+#
+# "Hire another agent through escrow" — copy-paste runnable example.
+#
+# Flow: this client creates an offer (escrow holds the funds) -> a second agent
+# accepts the offer -> the task completes and escrow releases the payment.
+#
+# Usage:
+#     python agent_sdk.py --name Hirer --capability echo \
+#         --registry https://agentnet.io.vn --api-key YOUR_KEY --hire-example
+#
+# It uses only public SDK client methods (register / _api_call) and the public
+# REST endpoints, so it works against any AgentNet registry.
+
+
+async def hire_through_escrow_example(
+    registry_url: str,
+    api_key: str,
+    capability: str = "echo",
+    price: int = 10,
+) -> dict:
+    """Create an offer, let a second agent accept it, and complete the task.
+
+    Returns the final task payload so callers can inspect the escrow result.
+    """
+    hirer = AgentSDK(
+        name="Hirer",
+        capability_name=capability,
+        registry_url=registry_url,
+        api_key=api_key,
+    )
+    worker = AgentSDK(
+        name="Worker",
+        capability_name=capability,
+        registry_url=registry_url,
+        api_key=api_key,
+    )
+
+    try:
+        # 1. Both agents register with the registry.
+        await hirer.register()
+        await worker.register()
+
+        # 2. Hirer creates an offer; the registry escrows the price.
+        offer = await hirer._api_call(
+            "POST",
+            "/v1/offers/",
+            json={
+                "to_agent_id": worker.agent_id,
+                "capability": capability,
+                "title": f"Escrow hire: {capability}",
+                "description": "Copy-paste escrow hire example from the AgentNet SDK",
+                "price": price,
+                "input": {"text": "hello escrow"},
+            },
+        )
+        offer_id = offer.get("id")
+        logger.info(f"📨 Offer created (escrow funded): {offer_id}")
+
+        # 3. Worker accepts the offer.
+        await worker._api_call("POST", f"/v1/offers/{offer_id}/accept")
+        logger.info(f"✅ Offer accepted by worker {worker.agent_id}")
+
+        # 4. Worker completes the task; escrow releases payment to the worker.
+        task = await worker._api_call(
+            "POST",
+            f"/v1/offers/{offer_id}/complete",
+            json={"output": {"echo": {"text": "hello escrow"}}},
+        )
+        logger.info(f"💰 Task completed, escrow released: {task.get('id')}")
+        return task
+    finally:
+        await hirer.http.aclose()
+        await worker.http.aclose()
 
 
 if __name__ == "__main__":

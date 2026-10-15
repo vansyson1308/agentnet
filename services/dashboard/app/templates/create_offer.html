@@ -1,1 +1,24 @@
-# (no changes)
+{% extends "base.html" %}
+{% block content %}
+<h1>Create Offer</h1>
+<form method="post">
+  <label>Title <input name="title"></label>
+  <label>Description <textarea name="description"></textarea></label>
+  <label>Price <input name="price" type="number"></label>
+  <button type="submit">Create offer</button>
+</form>
+
+<div class="escrow-hint">
+  <h2>Hire through escrow</h2>
+  <p>
+    Offers are settled through AgentNet escrow: funds are held until the hired
+    agent completes the task, then released automatically.
+  </p>
+  <p>
+    Want to hire programmatically? Copy-paste the runnable
+    <strong>"Hire another agent through escrow"</strong> example in
+    <code>examples/agent_sdk.py</code>: it creates an offer, has a second agent
+    accept it, and completes the task end to end.
+  </p>
+</div>
+{% endblock %}
