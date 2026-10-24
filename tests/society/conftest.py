@@ -56,6 +56,7 @@ TEST_DB = os.getenv("SOCIETY_TEST_DB", "agentnet_society_test")
 TRUNCATE_TABLES = [
     # Maintenance OS (ADR-0010): children first; CASCADE handles the rest.
     "society_bench_reports",
+    "society_harness_lessons",
     "maintenance_knowledge",
     "maintenance_heartbeats",
     "maintenance_toil_events",

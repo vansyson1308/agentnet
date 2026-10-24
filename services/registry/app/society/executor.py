@@ -70,6 +70,7 @@ from . import candidate_health, design_review, memory_grounding, repo_intel, tic
 from .config import SocietySettings
 from ..maintenance import activities
 from ..maintenance import harness as mharness
+from ..maintenance import harness2
 from ..maintenance.config import MaintenanceSettings
 from ..maintenance.patchset import reset_to_base
 from .engineering import build_engine
@@ -971,7 +972,7 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
         raise ExecutionError("BUILD_CODE_CANDIDATE builds code candidates; a docs candidate is written with SUBMIT_CODE_CANDIDATE")
     model = ctx.builder_model or activities.get_activity_model(ctx.settings)
     if model is None:
-        raise ExecutionError("no live builder model is configured (SOCIETY_MODEL_PROVIDER=openai_compatible + key + base URL)")
+        raise ExecutionError("no live builder model is configured (SOCIETY_MODEL_PROVIDER=anthropic|openai_compatible + key)")
     feedback = build_engine.qa_feedback(cand.qa_report)
     status, resubmitted = _claim_for_build(ctx, cand)
     ms = MaintenanceSettings()
@@ -981,8 +982,12 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
         fresh = _already_satisfied(ctx, cand, ws) or _red_on_base(ctx, cand, ws)
         if fresh is not None:
             return fresh
-        coro = build_engine.build(ws, spec, title=cand.title, model=model, ms=ms, ss=ctx.settings, cost_cap=ms.max_case_cost_usd, feedback=feedback)
+        lessons = harness2.load_lessons(ctx.db, harness2.domain_of(spec.get("files_allowed") or [])) if ms.harness2_enabled else []
+        coro = build_engine.build(ws, spec, title=cand.title, model=model, ms=ms, ss=ctx.settings, cost_cap=ms.max_case_cost_usd, feedback=feedback, lessons=lessons)
         out = build_engine.run_blocking(coro, heartbeat=ctx.heartbeat, every=ctx.settings.run_lease_seconds / 3)
+        if out.record:
+            # harnessing-level recursion: only execution contrasts reach the library
+            harness2.reflect(ctx.db, out.record, source=f"candidate:{cand.id}:run:{ctx.run.id}")
     except ws_mod.WorkspaceError as exc:
         _release_build(ctx, cand, status, str(exc))
         raise ExecutionError(f"workspace refused: {exc}") from exc
