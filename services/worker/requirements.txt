@@ -2,11 +2,11 @@ sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
 redis==5.0.1
 python-dotenv==1.2.3
-opentelemetry-api==1.44.0
-opentelemetry-sdk==1.44.0
-opentelemetry-semantic-conventions==0.65b0
-opentelemetry-exporter-otlp-proto-http==1.44.0
-opentelemetry-instrumentation-sqlalchemy==0.65b0
+opentelemetry-api==1.45.1
+opentelemetry-sdk==1.45.1
+opentelemetry-semantic-conventions==0.66b1
+opentelemetry-exporter-otlp-proto-http==1.45.1
+opentelemetry-instrumentation-sqlalchemy==0.66b1
 python-ulid==1.1.0
 httpx==0.28.1
 prometheus-client==0.20.0
