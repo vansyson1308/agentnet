@@ -73,7 +73,7 @@ SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
 MAX_PAYLOAD_BYTES = 8192
-LIVE_PROVIDER = "openai_compatible"
+LIVE_PROVIDERS = ("openai_compatible", "anthropic")
 ACTIVE_RUN = {"queued", "claimed", "running"}
 ACTIVE_EVENT = {"pending", "dispatched"}
 FORBIDDEN_HIGH = ("SHELL_EXEC", "GRANT_CAPABILITY", "MODIFY_BUDGET", "REQUEST_PRODUCTION_DEPLOY", "TRANSFER_FUNDS", "MODIFY_WALLET", "MODIFY_SECRET", "CHANGE_AUTH_POLICY", "DELETE_DATA", "OPEN_NETWORK_ACCESS", "RUN_MIGRATION")
@@ -265,7 +265,7 @@ def chain_checks(detail: Dict[str, Any], candidates_full: Sequence[Dict[str, Any
     candidates = detail.get("candidates") or []
     completed = [r for r in runs if r.get("status") == "completed"]
     checks: List[Tuple[str, bool, str]] = []
-    fake = [r.get("id", "")[:8] for r in completed if r.get("model_provider") != LIVE_PROVIDER]
+    fake = [r.get("id", "")[:8] for r in completed if r.get("model_provider") not in LIVE_PROVIDERS]
     checks.append(("K01", bool(completed) and not fake, f"{len(completed)} completed run(s), roles={sorted({r.get('role') for r in completed})}, non-live={fake}"))
     dead = [f"{r.get('role')}:{(r.get('error') or '')[:80]}" for r in runs if r.get("status") == "dead"]
     checks.append(("K02", not dead, "no DEAD run" if not dead else "; ".join(dead)))
@@ -1372,7 +1372,7 @@ def step_taskfail(out: Out, base: str, token: str, conn, credits: int, timeout: 
     runs = detail.get("runs") or []
     roles = sorted({r.get("role") for r in runs if r.get("status") == "completed"})
     dead = [r for r in runs if r.get("status") == "dead"]
-    fake = [r for r in runs if r.get("status") == "completed" and r.get("model_provider") not in (None, LIVE_PROVIDER)]
+    fake = [r for r in runs if r.get("status") == "completed" and r.get("model_provider") not in (None, *LIVE_PROVIDERS)]
     out.check("taskfail", "T06", bool(runs), f"the real task.failed event woke the fleet: {len(runs)} run(s), roles completed={roles}")
     out.check("taskfail", "T07", not dead, f"no DEAD run on the real-domain story ({len(dead)} dead)")
     out.check("taskfail", "T08", not fake, "every completed run used the live provider (no fake autonomy)")
@@ -1420,7 +1420,7 @@ def step_signal(out: Out, base: str, token: str, *, expect_candidate: bool, time
         out.check("signal", "I01", False, f"payload {size} bytes exceeds {MAX_PAYLOAD_BYTES}")
         return
     st, status_body = api("GET", f"{base}/v1/society/status", None)
-    if st != 200 or not isinstance(status_body, dict) or not status_body.get("runtime_enabled") or status_body.get("model_provider") != LIVE_PROVIDER or status_body.get("production_deploy_enabled") is not False:
+    if st != 200 or not isinstance(status_body, dict) or not status_body.get("runtime_enabled") or status_body.get("model_provider") not in LIVE_PROVIDERS or status_body.get("production_deploy_enabled") is not False:
         out.check("signal", "I01", False, f"runtime not in the expected live state (HTTP {st}, flags={ {k: (status_body or {}).get(k) for k in PUBLIC_FLAG_KEYS} if isinstance(status_body, dict) else None})")
         return
     if expect_candidate and not status_body.get("autonomous_code_enabled"):
@@ -1508,7 +1508,7 @@ def step_audit(out: Out, base: str, token: str, conn, hours: int) -> None:
     out.check("audit", "L02", dead == 0, f"DEAD runs in the last {hours}h: {dead} {snap['dead_runs'][:3]}")
     out.check("audit", "L03", int(snap["forbidden_high_executed"]) == 0, f"forbidden HIGH intents ever executed: {snap['forbidden_high_executed']}; high-risk rows={snap['high_risk_intents']}")
     out.check("audit", "L04", int(snap["correlations_with_multiple_candidates"]) == 0, f"correlations with >1 candidate: {snap['correlations_with_multiple_candidates']}; duplicate proposal titles: {snap['proposals_duplicate_titles']}")
-    fake = [m for m in snap["runs_by_model"] if m[0] not in (None, LIVE_PROVIDER) and int(m[2]) > 0]
+    fake = [m for m in snap["runs_by_model"] if m[0] not in (None, *LIVE_PROVIDERS) and int(m[2]) > 0]
     out.check("audit", "L05", not fake, f"runs by provider/model: {[(m[0], m[1], m[2]) for m in snap['runs_by_model']]}")
     with conn.cursor() as cur:
         tasks, txs, inflight = society_tasks(cur, since)

@@ -54,6 +54,9 @@ class MaintenanceSettings:
     # best-of-N: independent AuthorPatch samples (fresh worktree each, rising
     # temperature), stopping at the first green one; they share one cost cap
     builder_samples: int = field(default_factory=lambda: _int("MAINTENANCE_BUILDER_SAMPLES", 3, minimum=1))
+    # Harness² (harness2.py, ADR-0011): the Society Builder's build runs one
+    # Propose-Probe-Compose step instead of best-of-N and feeds the lesson library
+    harness2_enabled: bool = field(default_factory=lambda: _bool("MAINTENANCE_HARNESS2_ENABLED", False))
     # the per-turn max_tokens an AuthorPatch model call actually gets
     builder_max_output_tokens: int = field(default_factory=lambda: _int("MAINTENANCE_BUILDER_MAX_OUTPUT_TOKENS", 2500, minimum=256))
     max_test_runs_per_attempt: int = field(default_factory=lambda: _int("MAINTENANCE_MAX_TEST_RUNS_PER_ATTEMPT", 8, minimum=1))

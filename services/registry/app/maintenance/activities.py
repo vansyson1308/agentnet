@@ -161,19 +161,19 @@ class ActivityError(Exception):
 
 
 class LiveActivityModel:
-    """The Society's configured OpenAI-compatible provider (DeepSeek on
-    staging), reused for maintenance activities: same credential boundary
+    """The Society's configured live provider (OpenAI-compatible or Claude),
+    reused for maintenance activities: same credential boundary
     (the society-worker environment only), same retries and JSON-mode
     negotiation. The credential never enters a message."""
 
     live = True
 
     def __init__(self, society_settings, *, transport=None):
-        from ..society.cognition import OpenAICompatibleModel  # noqa: PLC0415
+        from ..society.cognition import live_model  # noqa: PLC0415
 
-        self._m = OpenAICompatibleModel(society_settings, transport=transport)
+        self._m = live_model(society_settings, transport=transport)
         self._s = society_settings
-        self.provider = "openai_compatible"
+        self.provider = self._m.provider
         self.model_name = self._m.model_name
 
     async def complete(self, messages: List[Dict[str, str]], *, max_tokens: int, temperature: float = 0.1) -> ModelReply:
@@ -190,7 +190,7 @@ class LiveActivityModel:
             raise ActivityError("rate_limit" if status == 429 else "provider_error", str(exc)[:300]) from None
         except EmptyContentError as exc:
             raise ActivityError("empty", str(exc)[:300]) from None
-        cost = (Decimal(out.tokens_in) / 1000) * self._s.model_usd_per_1k_input + (Decimal(out.tokens_out) / 1000) * self._s.model_usd_per_1k_output
+        cost = self._m.cost_usd(out.served_model or self.model_name, out.tokens_in, out.tokens_out)
         return ModelReply(out.content, out.tokens_in, out.tokens_out, cost.quantize(Decimal("0.000001")), out.finish_reason)
 
 
@@ -227,10 +227,10 @@ class ScriptedActivityModel:
 def get_activity_model(society_settings=None) -> Optional[ActivityModel]:
     """The live model, or None when no live provider is configured (cognition
     is then unavailable and cases escalate -- they never pretend)."""
-    from ..society.config import get_settings  # noqa: PLC0415
+    from ..society.config import LIVE_PROVIDERS, get_settings  # noqa: PLC0415
 
     s = society_settings or get_settings()
-    if s.model_provider != "openai_compatible" or not s.model_api_key or not s.model_base_url:
+    if s.model_provider not in LIVE_PROVIDERS or not s.model_api_key or not s.model_base_url:
         return None
     return LiveActivityModel(s)
 

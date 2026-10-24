@@ -603,7 +603,7 @@ def company_proof(rep: vs.Report, api: str, op_token: str, timeout_s: int, exist
     # used the live provider.
     thought = [r for r in runs if r.get("model_provider")]
     live = bool(thought) and all(
-        r.get("model_provider") == "openai_compatible"
+        r.get("model_provider") in ("openai_compatible", "anthropic")
         and not any(m in f"{r.get('model_provider')}/{r.get('model_name')}".lower() for m in _NON_LIVE_MODELS)
         for r in thought
     )

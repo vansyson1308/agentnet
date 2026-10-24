@@ -31,7 +31,7 @@ Steps (MAINT_PLAN, comma-separated, in order):
     watch:<min>[:<sec>]    bounded synchronous poll: cases + stranded every <sec> (default 60) for <min>
 
 Environment (never printed): POSTGRES_*, REGISTRY_PUBLIC_URL, STAGING_VALIDATOR_SECRET,
-VALIDATOR_OPERATOR_EMAIL, EXPECTED_ALEMBIC_HEAD (default 0020_design_review), MAINT_PLAN.
+VALIDATOR_OPERATOR_EMAIL, EXPECTED_ALEMBIC_HEAD (default 0021_harness_lessons), MAINT_PLAN.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ UNIQUE_INDEXES = ("uq_maintenance_incidents_open_fingerprint", "uq_repair_cases_
 TRIGGERS = ("trg_repair_plan_revisions_immutable", "trg_repair_artifacts_immutable", "trg_repair_transitions_append_only")
 TERMINAL = ("AUTO_REPAIRED", "AUTO_ROLLED_BACK", "SAFELY_ESCALATED", "CANNOT_REPRODUCE", "DUPLICATE_RESOLVED", "POLICY_REFUSED")
 TERMINAL_SQL = ", ".join(f"'{s}'" for s in TERMINAL)
-LIVE_PROVIDERS = ("openai_compatible",)
+LIVE_PROVIDERS = ("openai_compatible", "anthropic")
 STALL_SECONDS = 900
 MAX_LINE = 12000
 # Credential shapes that must never appear in maintenance state (release boundary, ADR-0010 D13).
@@ -129,7 +129,7 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
 
 
 def step_schema(rep: Rep, cur) -> None:
-    want = vs.env("EXPECTED_ALEMBIC_HEAD", "0020_design_review")
+    want = vs.env("EXPECTED_ALEMBIC_HEAD", "0021_harness_lessons")
     heads = [r["version_num"] for r in rows(cur, "SELECT version_num FROM alembic_version")]
     rep.record("S01", want in heads, f"alembic head {heads} (want {want})")
     present = {r["table_name"] for r in rows(cur, "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY(%s)", (list(TABLES),))}

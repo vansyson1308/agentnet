@@ -25,6 +25,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ...maintenance import activities as act
 from ...maintenance import harness as h
+from ...maintenance import harness2 as h2
 from ...maintenance.config import MaintenanceSettings
 from ...maintenance.patchset import reset_to_base
 from ..config import SocietySettings
@@ -39,6 +40,7 @@ class BuildOutcome:
     result: act.ActivityResult
     state: h.AttemptState
     samples: List[Dict[str, Any]] = field(default_factory=list)
+    record: Optional[Dict[str, Any]] = None  # Harness² improvement record (structural), when it ran
 
     @property
     def delivered(self) -> bool:
@@ -51,7 +53,7 @@ class BuildOutcome:
                 "patches": self.state.patches_applied, "tokens_in": r.tokens_in, "tokens_out": r.tokens_out, "cost_usd": str(r.cost_usd),
                 "auto_submitted": bool(out.get("auto_submitted")), "tests_unverified": bool(out.get("tests_unverified")),
                 "rescope": ({"reason": r.rescope.get("reason"), "required_files": list(r.rescope.get("required_files") or [])[:12]} if r.rescope else None),
-                "samples": self.samples, "actions": [str(t.get("refused") and f"submit!{t['refused']}" or t.get("action")) for t in r.turn_log][:60]}
+                "samples": self.samples, "harness2": self.record, "actions": [str(t.get("refused") and f"submit!{t['refused']}" or t.get("action")) for t in r.turn_log][:60]}
 
 
 def pytest_targets(spec: Dict[str, Any]) -> List[str]:
@@ -77,14 +79,20 @@ def spec_input(spec: Dict[str, Any], *, title: str, ws: ws_mod.Workspace, ms: Ma
 
 
 async def build(ws: ws_mod.Workspace, spec: Dict[str, Any], *, title: str, model: act.ActivityModel, ms: MaintenanceSettings, ss: SocietySettings,
-                cost_cap: Decimal, feedback: Sequence[str] = (), wrap_tools: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None) -> BuildOutcome:
+                cost_cap: Decimal, feedback: Sequence[str] = (), wrap_tools: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+                lessons: Sequence[Dict[str, Any]] = ()) -> BuildOutcome:
     """Best-of-N AuthorPatch (``harness.author_patch``) on ``ws``, each sample
-    from its base. The worktree is left as the delivered (else last) sample
-    ended; nothing is committed here."""
+    from its base -- or, with ``MAINTENANCE_HARNESS2_ENABLED``, one Harness²
+    Propose-Probe-Compose step whose editor reads ``lessons``. The worktree is
+    left as the delivered (else last) run ended; nothing is committed here."""
     reset_to_base(ws)
     files, tests = list(spec.get("files_allowed") or []), pytest_targets(spec)
-    run = await h.author_patch(ws, spec_input(spec, title=title, ws=ws, ms=ms, feedback=feedback), files_allowed=files, tests=tests, model=model,
-                               settings=ms, test_timeout=ss.qa_test_timeout_seconds, cost_cap=cost_cap, wrap_tools=wrap_tools)
+    payload = spec_input(spec, title=title, ws=ws, ms=ms, feedback=feedback)
+    common = dict(files_allowed=files, tests=tests, model=model, settings=ms, test_timeout=ss.qa_test_timeout_seconds, cost_cap=cost_cap, wrap_tools=wrap_tools)
+    if ms.harness2_enabled:
+        run = await h2.author_patch_recursive(ws, payload, lessons=lessons, **common)
+        return BuildOutcome(run.result, run.state, run.samples, getattr(run, "record", None))
+    run = await h.author_patch(ws, payload, **common)
     return BuildOutcome(run.result, run.state, run.samples)
 
 

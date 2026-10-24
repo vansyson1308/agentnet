@@ -560,4 +560,25 @@ CREATE INDEX IF NOT EXISTS idx_society_design_reviews_corr ON society_design_rev
 CREATE INDEX IF NOT EXISTS idx_society_design_reviews_ticket ON society_design_reviews (ticket_id, created_at DESC);
 """
 
-SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL + SOCIETY_COMPANY_PLAN_SQL + SOCIETY_COMPANY_BOARD_SQL + SOCIETY_DESIGN_REVIEW_SQL
+SOCIETY_HARNESS_SQL = r"""
+-- The improvement harness (maintenance/harness2.py, ADR-0011): coding-harness
+-- guidance edits proven by an execution contrast (the edit's run delivered
+-- where the base harness did not). Only the harness editor reads it.
+CREATE TABLE IF NOT EXISTS society_harness_lessons (
+    id          UUID PRIMARY KEY,
+    scope       VARCHAR(16) NOT NULL CHECK (scope IN ('invariant', 'domain')),
+    domain      VARCHAR(128) NOT NULL,
+    guidance    TEXT NOT NULL CHECK (char_length(guidance) BETWEEN 1 AND 1200),
+    evidence    JSONB NOT NULL,
+    source      VARCHAR(120) NOT NULL,
+    support     INTEGER NOT NULL DEFAULT 1 CHECK (support >= 0),
+    contradict  INTEGER NOT NULL DEFAULT 0 CHECK (contradict >= 0),
+    status      VARCHAR(16) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'retired')),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_society_harness_lessons_source ON society_harness_lessons (source, md5(guidance));
+CREATE INDEX IF NOT EXISTS idx_society_harness_lessons_active ON society_harness_lessons (status, scope, domain);
+"""
+
+SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL + SOCIETY_COMPANY_PLAN_SQL + SOCIETY_COMPANY_BOARD_SQL + SOCIETY_DESIGN_REVIEW_SQL + SOCIETY_HARNESS_SQL
