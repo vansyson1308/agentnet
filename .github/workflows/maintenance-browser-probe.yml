@@ -26,7 +26,8 @@ concurrency:
 
 jobs:
   probe:
-    runs-on: ubuntu-latest
+    # Pinned: playwright 1.56 cannot install chromium deps on ubuntu-latest (26.04).
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6

@@ -91,7 +91,8 @@ jobs:
 
   test:
     name: Unit + PostgreSQL-backed + Society + migrations + compose topology
-    runs-on: ubuntu-latest
+    # Pinned: playwright 1.56 cannot install chromium deps on ubuntu-latest (26.04).
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:15-alpine
