@@ -34,7 +34,7 @@ import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 PREFIX = "bench:"
 REPEAT = 3
@@ -50,10 +50,14 @@ def proofs(spec: Dict[str, Any]) -> List[str]:
 
 class ModelRelay:
     """Forwards ``POST /chat/completions`` to the real provider with the real key.
-    The child gets a loopback URL and a one-off token instead of the credential."""
+    The child gets a loopback URL and a one-off token instead of the credential.
+    ``forward`` (body -> (status, body)) replaces the plain HTTP forward for a
+    provider that does not speak ``/chat/completions`` (Claude, ``anthropic_forward``)."""
 
-    def __init__(self, base_url: str, api_key: str, *, max_requests: int = 400, timeout: float = 180.0):
+    def __init__(self, base_url: str, api_key: str, *, max_requests: int = 400, timeout: float = 180.0,
+                 forward: Optional[Callable[[bytes], Tuple[int, bytes]]] = None):
         self.base_url, self._key, self.max_requests, self.timeout = base_url.rstrip("/"), api_key, max_requests, timeout
+        self.forward = forward
         self.token = secrets.token_urlsafe(24)
         self.requests = 0
         self._lock = threading.Lock()
@@ -88,6 +92,8 @@ class ModelRelay:
                         return self._reply(429, b'{"error": "relay: request budget used up"}')
                     relay.requests += 1
                 body = self.rfile.read(size)
+                if relay.forward is not None:
+                    return self._reply(*relay.forward(body))
                 req = urllib.request.Request(relay.base_url + "/chat/completions", data=body, method="POST",
                                              headers={"Authorization": f"Bearer {relay._key}", "Content-Type": "application/json"})
                 try:
@@ -111,12 +117,48 @@ class ModelRelay:
             self._server.server_close()
 
 
+def anthropic_forward(settings: Any) -> Callable[[bytes], Tuple[int, bytes]]:
+    """Relay forward for SOCIETY_MODEL_PROVIDER=anthropic: the child's chat
+    request goes through the parent's Claude adapter (same request policy and
+    translation as the runtime) and comes back chat-shaped. Never echoes the request."""
+    import asyncio  # noqa: PLC0415
+
+    from ..cognition import AnthropicModel, ModelProviderError, _HTTPStatus  # noqa: PLC0415
+
+    model = AnthropicModel(settings)
+
+    def forward(body: bytes) -> Tuple[int, bytes]:
+        try:
+            payload = json.loads(body)
+            return 200, json.dumps(asyncio.run(asyncio.wait_for(model.post_chat(payload), timeout=settings.model_timeout_seconds))).encode()
+        except _HTTPStatus as exc:
+            return exc.status, json.dumps({"error": exc.excerpt}).encode()
+        except ModelProviderError as exc:
+            return 422, json.dumps({"error": str(exc)[:200]}).encode()
+        except asyncio.TimeoutError:
+            return 504, b'{"error": "relay: provider timed out"}'
+        except (ValueError, KeyError, TypeError):
+            return 400, b'{"error": "relay: malformed request"}'
+        except Exception:  # noqa: BLE001 -- never echo the request
+            return 502, b'{"error": "relay: provider unreachable"}'
+
+    return forward
+
+
 def child_env(settings: Any, relay: ModelRelay, harness_root: str, environ: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     env = {k: v for k, v in (os.environ if environ is None else environ).items() if _PASS.match(k) and not _CREDENTIAL.search(k)}
     no_proxy = ",".join(x for x in (env.get("NO_PROXY", ""), "127.0.0.1", "localhost") if x)
     env.update({"SOCIETY_MODEL_PROVIDER": "openai_compatible", "SOCIETY_MODEL_BASE_URL": relay.url, "SOCIETY_MODEL_API_KEY": relay.token,
                 "NO_PROXY": no_proxy, "no_proxy": no_proxy, "ENVIRONMENT": "development", "BENCH_HARNESS_ROOT": harness_root,
                 "PYTHONPATH": settings.repo_root, "BENCH_BUDGET_USD": str(settings.bench_proof_budget_usd)})
+    if getattr(settings, "model_provider", "") == "anthropic":
+        # the child speaks plain chat to the relay; the parent applies Claude's request policy,
+        # and the child's budget accounting uses the configured Claude model's price
+        from ..cognition import anthropic_usd_per_1k  # noqa: PLC0415
+
+        rate_in, rate_out = anthropic_usd_per_1k(settings, settings.model_fast_name)
+        env.update({"SOCIETY_MODEL_CAPABILITY_PROFILE": "generic", "SOCIETY_MODEL_THINKING_MODE": "auto", "SOCIETY_MODEL_REASONING_EFFORT": "auto",
+                    "SOCIETY_MODEL_USD_PER_1K_INPUT": str(rate_in), "SOCIETY_MODEL_USD_PER_1K_OUTPUT": str(rate_out)})
     return env
 
 
@@ -145,7 +187,8 @@ def run_proof(settings: Any, harness_root: str, task_id: str, *, baseline_delive
         _git(repo, "fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main")
     if not settings.model_api_key or not settings.model_base_url:
         return {**out, "error": "no live model is configured in this process"}
-    with tempfile.TemporaryDirectory(prefix="bench-proof-") as tmp, ModelRelay(settings.model_base_url, settings.model_api_key) as relay:
+    forward = anthropic_forward(settings) if getattr(settings, "model_provider", "") == "anthropic" else None
+    with tempfile.TemporaryDirectory(prefix="bench-proof-") as tmp, ModelRelay(settings.model_base_url, settings.model_api_key, forward=forward) as relay:
         report = os.path.join(tmp, "proof.json")
         argv = [sys.executable, os.path.join(repo, "scripts", "bench", "run.py"), "--repo", repo, "--only", task_id, "--repeat", str(REPEAT),
                 "--path", "maintenance", "--split", "dev", "--json-out", report]

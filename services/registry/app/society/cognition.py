@@ -12,6 +12,9 @@ the runtime depends on. Three implementations ship:
   DeepSeek, Ollama, vLLM…) with JSON-object output, strict timeout and
   usage-based cost accounting. Selected by ``SOCIETY_MODEL_PROVIDER=
   openai_compatible`` plus ``SOCIETY_MODEL_BASE_URL/_API_KEY``.
+* ``AnthropicModel`` — Claude through the official ``anthropic`` SDK
+  (Messages API), on the same retry / parsing / accounting loop. Selected by
+  ``SOCIETY_MODEL_PROVIDER=anthropic`` plus ``SOCIETY_MODEL_API_KEY``.
 
 Every implementation must return a decision that satisfies
 ``intents.parse_decision``; anything else is a ``DecisionValidationError``
@@ -29,9 +32,9 @@ import logging
 import re
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Callable, Dict, List, Optional, Protocol
+from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
-from .config import SocietySettings
+from .config import ANTHROPIC_FALLBACK_MODELS, ANTHROPIC_USD_PER_1K, SocietySettings
 from .context import AgentContext
 from .ids import candidate_id_for
 from .intents import AgentDecision, DecisionValidationError, IntentType, parse_decision
@@ -184,11 +187,17 @@ class RequestPolicy:
     @property
     def controls_thinking(self) -> bool:
         """Whether this profile can express a thinking toggle at all."""
-        return self.profile == "deepseek"
+        return self.profile in ("deepseek", "anthropic")
 
     def wire_fields(self) -> Dict[str, Any]:
         fields_out: Dict[str, Any] = {}
-        if self.profile == "deepseek":
+        if self.profile == "anthropic":
+            # Claude always thinks adaptively; "enabled" only makes it explicit.
+            if self.thinking_mode == "enabled":
+                fields_out["thinking"] = {"type": "adaptive"}
+            if self.reasoning_effort != "auto":
+                fields_out["output_config"] = {"effort": self.reasoning_effort}
+        elif self.profile == "deepseek":
             if self.thinking_mode in ("disabled", "enabled"):
                 fields_out["thinking"] = {"type": self.thinking_mode}
             if self.reasoning_effort != "auto":
@@ -225,6 +234,8 @@ class ChatOutcome:
     tokens_cached: Optional[int] = None
     usage_missing: bool = False
     empty_retries: int = 0
+    # the model that actually answered (a provider fallback may differ from the request)
+    served_model: str = ""
 
 
 _RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
@@ -1205,6 +1216,14 @@ class OpenAICompatibleModel:
                 raise _HTTPStatus(resp.status_code, resp.text[:200])
             return resp.json()
 
+    def usd_per_1k(self, model_name: str) -> Tuple[Decimal, Decimal]:
+        return self.settings.model_usd_per_1k_input, self.settings.model_usd_per_1k_output
+
+    def cost_usd(self, model_name: str, tokens_in: int, tokens_out: int) -> Decimal:
+        """Budget accounting for one call (the provider rarely returns cost)."""
+        rate_in, rate_out = self.usd_per_1k(model_name)
+        return (Decimal(tokens_in) / 1000) * rate_in + (Decimal(tokens_out) / 1000) * rate_out
+
     def _initial_format(self) -> str:
         mode = self.settings.model_output_format
         if mode == "json_object":
@@ -1254,6 +1273,8 @@ class OpenAICompatibleModel:
                     last_exc = ModelProviderError(f"provider status {exc.status} (attempt {attempt}/{max_attempts}): {exc.excerpt}", status=exc.status)
                 else:
                     raise ModelProviderError(f"provider status {exc.status}: {exc.excerpt}", status=exc.status) from None
+            except ModelProviderError:
+                raise  # already classified by the adapter (e.g. a refusal): never replayed
             except Exception as exc:  # noqa: BLE001 — transport-level failure
                 name = type(exc).__name__
                 if name in ("DecisionValidationError",):
@@ -1327,6 +1348,7 @@ class OpenAICompatibleModel:
             if cached is not None:
                 out.tokens_cached = (out.tokens_cached or 0) + int(cached or 0)
             meta = self._structure(data)
+            out.served_model = str(data.get("model") or "") if isinstance(data, dict) else ""
             out.finish_reason = meta["finish_reason"]
             out.reasoning_present = out.reasoning_present or bool(meta["reasoning_present"])
             if meta["reasoning_tokens"] is not None:
@@ -1363,11 +1385,11 @@ class OpenAICompatibleModel:
         outcome = await self.complete_json(payload, stats)
         used_format = str(stats.get("format") or fmt)
         tokens_in, tokens_out = outcome.tokens_in, outcome.tokens_out
-        cost = (Decimal(tokens_in) / 1000) * self.settings.model_usd_per_1k_input + (Decimal(tokens_out) / 1000) * self.settings.model_usd_per_1k_output
+        cost = self.cost_usd(outcome.served_model or chosen_model, tokens_in, tokens_out)
         # retried attempts that returned nothing still cost input tokens at the
         # provider; account conservatively for them.
         if stats["retries"]:
-            cost += (Decimal(tokens_in) / 1000) * self.settings.model_usd_per_1k_input * stats["retries"]
+            cost += self.cost_usd(outcome.served_model or chosen_model, tokens_in, 0) * stats["retries"]
         content = outcome.content
         try:
             decision = parse_decision(content, max_intents=int(context.permissions.get("max_intents_per_run") or 5))
@@ -1421,6 +1443,139 @@ class OpenAICompatibleModel:
         )
 
 
+class ModelRefused(ModelProviderError):
+    """The provider declined the request (Claude ``stop_reason == "refusal"``,
+    after any server-side fallback). Not retryable: the same request would be
+    declined again. Carries the refusal category only, never content."""
+
+
+_FENCED_JSON = re.compile(r"\A```(?:json)?[ \t]*\n(.*)\n```\s*\Z", re.S)
+_STOP_REASONS = {"end_turn": "stop", "stop_sequence": "stop", "max_tokens": "length", "model_context_window_exceeded": "length"}
+
+
+def anthropic_usd_per_1k(settings: SocietySettings, model_name: str) -> Tuple[Decimal, Decimal]:
+    """Claude list price for ``model_name``; the configured rates for a model the table lacks."""
+    price = ANTHROPIC_USD_PER_1K.get(model_name)
+    if price is None:
+        return settings.model_usd_per_1k_input, settings.model_usd_per_1k_output
+    return Decimal(price[0]), Decimal(price[1])
+
+
+class AnthropicModel(OpenAICompatibleModel):
+    """Claude through the official ``anthropic`` SDK (Messages API).
+
+    It runs on the OpenAI-compatible adapter's loop -- bounded request
+    retries, empty-content retries, strict decision parsing, accounting -- by
+    translating at the wire: ``build_chat_request`` still assembles the
+    provider-neutral chat payload, ``_post`` turns it into a Messages request
+    and the reply back into the chat shape ``complete_json`` reads. The
+    runtime, maintenance activities, the preflight probe and the bench relay
+    therefore share one path whichever provider is configured.
+
+    * the system prompt is one cached block (``cache_control``): a role's
+      prompt and schema doc repeat across its runs; the conversation prefix
+      is cached too (top-level ``cache_control``) for multi-turn tool loops;
+    * no ``temperature`` (the Messages API refuses sampling parameters) and no
+      assistant prefill: JSON comes from the prompt and is parsed strictly --
+      the only framing removed is ONE markdown fence around the whole reply;
+    * reasoning: adaptive thinking, depth from ``SOCIETY_MODEL_REASONING_EFFORT``
+      (``output_config.effort``); thinking blocks are counted, never kept;
+    * a decline (``stop_reason == "refusal"``) raises ``ModelRefused``; with
+      ``SOCIETY_MODEL_REFUSAL_FALLBACK`` the API first re-runs it on a fallback
+      model inside the same call (``fallbacks: "default"``).
+    """
+
+    provider = "anthropic"
+    FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
+    def __init__(self, settings: SocietySettings, *, transport: Optional[Callable[..., Any]] = None):
+        if not settings.model_api_key:
+            raise ValueError("SOCIETY_MODEL_API_KEY is required for SOCIETY_MODEL_PROVIDER=anthropic")
+        super().__init__(settings, transport=transport)
+
+    def _initial_format(self) -> str:
+        return "json_object"  # no JSON-mode flag on the Messages API: the prompt asks for json
+
+    def usd_per_1k(self, model_name: str) -> Tuple[Decimal, Decimal]:
+        return anthropic_usd_per_1k(self.settings, model_name)
+
+    def messages_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """The chat payload as a Messages API request (request fields from
+        ``RequestPolicy``, never from the payload)."""
+        system = [str(m.get("content") or "") for m in payload.get("messages", []) if m.get("role") == "system"]
+        turns = [{"role": m["role"], "content": str(m.get("content") or "")} for m in payload.get("messages", []) if m.get("role") in ("user", "assistant")]
+        # top-level cache_control caches the conversation prefix too: a multi-turn
+        # tool loop (maintenance activities) re-sends its transcript every turn
+        request: Dict[str, Any] = {"model": payload["model"], "max_tokens": int(payload["max_tokens"]), "messages": turns, "cache_control": {"type": "ephemeral"}}
+        if system:
+            request["system"] = [{"type": "text", "text": "\n\n".join(system), "cache_control": {"type": "ephemeral"}}]
+        request.update(self.policy.wire_fields())
+        if self.settings.model_refusal_fallback and request["model"] in ANTHROPIC_FALLBACK_MODELS:
+            request["betas"] = [self.FALLBACK_BETA]
+            request["fallbacks"] = "default"
+        return request
+
+    @staticmethod
+    def chat_response(message: Dict[str, Any]) -> Dict[str, Any]:
+        """A Messages API reply in the chat shape ``complete_json`` reads.
+        Thinking blocks become a presence flag; their text is dropped."""
+        blocks = message.get("content") or []
+        stop = str(message.get("stop_reason") or "")
+        if stop == "refusal":
+            category = ((message.get("stop_details") or {}).get("category")) or "unspecified"
+            raise ModelRefused(f"provider declined the request (stop_reason=refusal, category={str(category)[:40]})")
+        text = "".join(str(b.get("text") or "") for b in blocks if isinstance(b, dict) and b.get("type") == "text").strip()
+        fenced = _FENCED_JSON.match(text)
+        if fenced:
+            text = fenced.group(1).strip()
+        thinking = any(isinstance(b, dict) and b.get("type") in ("thinking", "redacted_thinking") for b in blocks)
+        usage = message.get("usage") or {}
+        cached = int(usage.get("cache_read_input_tokens") or 0)
+        prompt = int(usage.get("input_tokens") or 0) + int(usage.get("cache_creation_input_tokens") or 0) + cached
+        chat_usage = {"prompt_tokens": prompt, "completion_tokens": int(usage.get("output_tokens") or 0),
+                      "prompt_tokens_details": {"cached_tokens": cached}} if usage else {}
+        return {
+            "model": message.get("model") or "",
+            "choices": [{"index": 0, "finish_reason": _STOP_REASONS.get(stop, stop),
+                         "message": {"role": "assistant", "content": text, "thinking_present": thinking}}],
+            "usage": chat_usage,
+        }
+
+    @staticmethod
+    def _structure(data: Dict[str, Any]) -> Dict[str, Any]:
+        meta = OpenAICompatibleModel._structure(data)
+        try:
+            meta["reasoning_present"] = bool(data["choices"][0]["message"].get("thinking_present"))
+        except (KeyError, IndexError, TypeError, AttributeError):
+            pass
+        return meta
+
+    async def _post(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        request = self.messages_request(payload)
+        if self._transport is not None:  # test hook: async callable(messages request) -> Messages reply dict
+            return self.chat_response(await self._transport(request))
+        import anthropic  # noqa: PLC0415 -- only the process that calls the model needs the SDK
+
+        # SDK retries off: the bounded loop in _request_with_retries owns them.
+        async with anthropic.AsyncAnthropic(api_key=self.settings.model_api_key, base_url=self.settings.model_base_url,
+                                            max_retries=0, timeout=float(self.settings.model_timeout_seconds)) as client:
+            try:
+                if "betas" in request:
+                    message = await client.beta.messages.create(**request)
+                else:
+                    message = await client.messages.create(**request)
+            except anthropic.APITimeoutError:
+                raise asyncio.TimeoutError() from None
+            except anthropic.APIStatusError as exc:
+                # the SDK error carries the provider's message, never the request headers
+                raise _HTTPStatus(exc.status_code, str(exc.message)[:200]) from None
+        return self.chat_response(message.to_dict())
+
+    async def post_chat(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """One chat-shaped call, for the bench relay (no retries, no parsing)."""
+        return await self._post(payload)
+
+
 class _HTTPStatus(Exception):
     def __init__(self, status: int, excerpt: str):
         super().__init__(f"HTTP {status}")
@@ -1428,9 +1583,17 @@ class _HTTPStatus(Exception):
         self.excerpt = excerpt
 
 
+def live_model(settings: SocietySettings, *, transport: Optional[Callable[..., Any]] = None) -> OpenAICompatibleModel:
+    """The configured live provider's adapter (callers: runtime, maintenance
+    activities, preflight, canary, bench relay)."""
+    if settings.model_provider == "anthropic":
+        return AnthropicModel(settings, transport=transport)
+    return OpenAICompatibleModel(settings, transport=transport)
+
+
 def get_model(settings: SocietySettings) -> CognitiveModel:
-    if settings.model_provider == "openai_compatible":
-        return OpenAICompatibleModel(settings)
+    if settings.model_provider in ("openai_compatible", "anthropic"):
+        return live_model(settings)
     if settings.model_provider == "fake":
         return FakeModel()
     return ScriptedRoleModel()
@@ -1451,5 +1614,8 @@ __all__ = [
     "FakeModel",
     "ScriptedRoleModel",
     "OpenAICompatibleModel",
+    "AnthropicModel",
+    "ModelRefused",
+    "live_model",
     "get_model",
 ]

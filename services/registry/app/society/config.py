@@ -86,7 +86,9 @@ def _detect_repo_root() -> str:
 
 PROMPT_VERSION = "society-v1"
 
-MODEL_PROVIDERS = ("scripted", "openai_compatible", "fake")
+MODEL_PROVIDERS = ("scripted", "openai_compatible", "anthropic", "fake")
+# Providers that call a real model (NO FAKE AUTONOMY: only these count as live).
+LIVE_PROVIDERS = ("openai_compatible", "anthropic")
 OUTPUT_FORMATS = ("auto", "json_object", "json_schema")
 # Provider request-capability profile (Phase 4.1, ADR-0007). It decides which
 # provider-specific request fields the OpenAI-compatible adapter may send:
@@ -94,14 +96,35 @@ OUTPUT_FORMATS = ("auto", "json_object", "json_schema")
 #              ``reasoning_effort`` only when explicitly configured;
 #   deepseek — DeepSeek's documented thinking toggle
 #              (``thinking={"type": "enabled"|"disabled"}``) plus
-#              ``reasoning_effort`` (none|low|high|max).
-CAPABILITY_PROFILES = ("generic", "deepseek")
+#              ``reasoning_effort`` (none|low|high|max);
+#   anthropic — Claude Messages API (``SOCIETY_MODEL_PROVIDER=anthropic`` only):
+#              adaptive thinking (``thinking={"type": "adaptive"}``) and
+#              ``output_config.effort`` (low|medium|high|xhigh|max).
+CAPABILITY_PROFILES = ("generic", "deepseek", "anthropic")
 # ``auto`` never sends a thinking field (the provider's default applies).
 THINKING_MODES = ("auto", "disabled", "enabled")
 # ``auto`` never sends ``reasoning_effort``; ``none`` disables reasoning
 # where the provider supports that spelling (DeepSeek documents it).
-REASONING_EFFORTS = ("auto", "none", "low", "medium", "high", "max")
+REASONING_EFFORTS = ("auto", "none", "low", "medium", "high", "xhigh", "max")
 DEEPSEEK_REASONING_EFFORTS = ("auto", "none", "low", "high", "max")
+ANTHROPIC_REASONING_EFFORTS = ("auto", "low", "medium", "high", "xhigh", "max")
+ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
+# First-party list prices, USD per 1K tokens (input, output), for budget
+# accounting of the anthropic provider. Every input token is charged at the
+# input rate (cache reads are cheaper at the provider), so the daily cap is
+# conservative. A model missing here falls back to SOCIETY_MODEL_USD_PER_1K_*.
+ANTHROPIC_USD_PER_1K = {
+    "claude-fable-5-1": ("0.010", "0.050"),
+    "claude-opus-5-5": ("0.004", "0.020"),
+    "claude-opus-5": ("0.005", "0.025"),
+    "claude-opus-4-8": ("0.005", "0.025"),
+    "claude-sonnet-5-5": ("0.002", "0.010"),
+    "claude-sonnet-5": ("0.002", "0.010"),
+    "claude-haiku-5-5": ("0.0001", "0.0005"),
+}
+# Models the API may re-run on a fallback model when they decline a request
+# (``fallbacks: "default"``); Haiku has no server-side fallback.
+ANTHROPIC_FALLBACK_MODELS = ("claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5")
 MODEL_TIERS = ("fast", "strong")
 PROMOTION_PROVIDERS = ("disabled", "fake", "github")
 GITHUB_CREDENTIAL_PROVIDERS = ("disabled", "static", "app")
@@ -159,6 +182,8 @@ class SocietySettings:
     model_capability_profile: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_CAPABILITY_PROFILE", "generic").strip().lower())
     model_thinking_mode: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_THINKING_MODE", "auto").strip().lower())
     model_reasoning_effort: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_REASONING_EFFORT", "auto").strip().lower())
+    # anthropic only: let the API re-run a declined request on a fallback model
+    model_refusal_fallback: bool = field(default_factory=lambda: _bool("SOCIETY_MODEL_REFUSAL_FALLBACK", True))
     # Model router: logical tiers -> provider model names (never hard-coded in
     # business logic). Empty strong name = single-tier deployment.
     model_fast_name: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_FAST_NAME") or os.getenv("SOCIETY_MODEL_NAME") or os.getenv("LLM_MODEL_NAME", "gpt-4o-mini"))
@@ -339,6 +364,11 @@ class SocietySettings:
                 "society config: unknown SOCIETY_MODEL_PROVIDER=%r; falling back to 'scripted'", self.model_provider
             )
             object.__setattr__(self, "model_provider", "scripted")
+        if self.model_provider == "anthropic":
+            if not self.model_base_url:
+                object.__setattr__(self, "model_base_url", ANTHROPIC_DEFAULT_BASE_URL)
+            if not os.getenv("SOCIETY_MODEL_CAPABILITY_PROFILE"):
+                object.__setattr__(self, "model_capability_profile", "anthropic")
         if not os.getenv("SOCIETY_MODEL_FAST_NAME"):
             # single-tier deployments: the fast tier IS the configured model
             object.__setattr__(self, "model_fast_name", self.model_name)
@@ -462,20 +492,25 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
         problems.append(f"SOCIETY_MODEL_REASONING_EFFORT must be one of {'|'.join(REASONING_EFFORTS)}")
     elif s.model_capability_profile == "deepseek" and s.model_reasoning_effort not in DEEPSEEK_REASONING_EFFORTS:
         problems.append(f"SOCIETY_MODEL_REASONING_EFFORT={s.model_reasoning_effort!r} is not documented by DeepSeek (use {'|'.join(DEEPSEEK_REASONING_EFFORTS)})")
+    elif s.model_capability_profile == "anthropic" and s.model_reasoning_effort not in ANTHROPIC_REASONING_EFFORTS:
+        problems.append(f"SOCIETY_MODEL_REASONING_EFFORT={s.model_reasoning_effort!r} is not a Claude effort level (use {'|'.join(ANTHROPIC_REASONING_EFFORTS)})")
+    if (s.model_provider == "anthropic") != (s.model_capability_profile == "anthropic"):
+        problems.append("SOCIETY_MODEL_CAPABILITY_PROFILE=anthropic goes with SOCIETY_MODEL_PROVIDER=anthropic, and only with it")
+    if s.model_provider == "anthropic" and "deepseek" in (s.model_base_url or "").lower():
+        problems.append("SOCIETY_MODEL_BASE_URL still points at DeepSeek while SOCIETY_MODEL_PROVIDER=anthropic; unset it (default https://api.anthropic.com)")
+    if s.model_capability_profile == "anthropic" and s.model_thinking_mode == "disabled":
+        problems.append("SOCIETY_MODEL_THINKING_MODE=disabled is refused for Claude (current models always think adaptively); lower SOCIETY_MODEL_REASONING_EFFORT instead")
     if s.model_thinking_mode == "disabled" and s.model_reasoning_effort not in ("auto", "none"):
         problems.append("SOCIETY_MODEL_THINKING_MODE=disabled contradicts SOCIETY_MODEL_REASONING_EFFORT=" + s.model_reasoning_effort)
     if s.model_thinking_mode == "enabled" and s.model_reasoning_effort == "none":
         problems.append("SOCIETY_MODEL_THINKING_MODE=enabled contradicts SOCIETY_MODEL_REASONING_EFFORT=none")
-    if s.model_provider == LIVE_PROVIDER_NAME and env != "development":
+    if s.model_provider in LIVE_PROVIDERS and env != "development":
         url = (s.model_base_url or "").strip()
         if not url.startswith("https://"):
             problems.append("SOCIETY_MODEL_BASE_URL must be an https:// URL outside development")
         if model_caller and not s.model_api_key:
-            problems.append("SOCIETY_MODEL_API_KEY is required in the process that calls the model (society worker) when SOCIETY_MODEL_PROVIDER=openai_compatible")
+            problems.append(f"SOCIETY_MODEL_API_KEY is required in the process that calls the model (society worker) when SOCIETY_MODEL_PROVIDER={s.model_provider}")
     return problems
-
-
-LIVE_PROVIDER_NAME = "openai_compatible"
 
 
 @lru_cache(maxsize=1)

@@ -63,7 +63,7 @@ UNIQUE_INDEXES = ("uq_maintenance_incidents_open_fingerprint", "uq_repair_cases_
 TRIGGERS = ("trg_repair_plan_revisions_immutable", "trg_repair_artifacts_immutable", "trg_repair_transitions_append_only")
 TERMINAL = ("AUTO_REPAIRED", "AUTO_ROLLED_BACK", "SAFELY_ESCALATED", "CANNOT_REPRODUCE", "DUPLICATE_RESOLVED", "POLICY_REFUSED")
 TERMINAL_SQL = ", ".join(f"'{s}'" for s in TERMINAL)
-LIVE_PROVIDERS = ("openai_compatible",)
+LIVE_PROVIDERS = ("openai_compatible", "anthropic")
 STALL_SECONDS = 900
 MAX_LINE = 12000
 # Credential shapes that must never appear in maintenance state (release boundary, ADR-0010 D13).

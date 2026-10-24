@@ -17,7 +17,7 @@ Credential rules (docs/SOCIETY_LIVE_MODEL_RUNBOOK.md):
   or matches a provider-key-shaped string anywhere in this checkout's git
   history is refused with ``LIVE MODEL BLOCKED — NO SAFE CREDENTIAL``.
 * NO FAKE AUTONOMY: ``run`` and ``observe`` refuse any provider other than
-  ``openai_compatible``. ``ScriptedRoleModel``/``FakeModel`` never count as
+  the live ones (``openai_compatible``, ``anthropic``). ``ScriptedRoleModel``/``FakeModel`` never count as
   live, and every run in a canary report must carry the live provider.
 
 ``run`` drives an in-process worker (like the deterministic demo) against
@@ -43,12 +43,11 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
-from .config import SocietySettings, get_settings
+from .config import LIVE_PROVIDERS, SocietySettings, get_settings
 from .ids import CANARY_IDEMPOTENCY_PREFIX
 
 logger = logging.getLogger(__name__)
 
-LIVE_PROVIDER = "openai_compatible"
 
 VERDICT_READY = "LIVE MODEL READY"
 VERDICT_NO_CREDENTIAL = "LIVE MODEL BLOCKED — NO SAFE CREDENTIAL"
@@ -78,6 +77,8 @@ PROBE_USER_PROMPT = 'Reply with exactly this json object and no other text: {"ok
 # Large enough that a short JSON object can never be cut off even if the
 # provider prepends a little reasoning; small enough to stay a probe.
 PROBE_MAX_TOKENS = 256
+# Claude thinks adaptively and its thinking counts against max_tokens.
+PROBE_MAX_TOKENS_THINKING = 2048
 
 # SHA-256 fingerprints of provider-key-shaped strings that appeared in this
 # repository's git history (found by the v1 security gate). The secrets are
@@ -257,6 +258,8 @@ class ProbeResult:
 
 
 def _thinking_hint(policy: Any) -> Optional[str]:
+    if policy.profile == "anthropic":
+        return None  # Claude's thinking has its own budget inside max_tokens; effort sets its depth
     if policy.profile == "deepseek" and policy.thinking_mode != "disabled":
         return ("DeepSeek thinks by default (effort high) and reasoning consumes the output budget; "
                 "set SOCIETY_MODEL_THINKING_MODE=disabled and SOCIETY_MODEL_REASONING_EFFORT=none for structured output")
@@ -269,20 +272,20 @@ def _thinking_hint(policy: Any) -> Optional[str]:
 async def probe_provider(settings: SocietySettings, *, transport: Optional[Callable[..., Any]] = None) -> ProbeResult:
     """One minimal, bounded structured-output request through the SAME
     request-capability layer, retry loop and empty-content handling the
-    runtime uses (``OpenAICompatibleModel.build_chat_request`` /
+    runtime uses (``live_model(...).build_chat_request`` /
     ``complete_json``). Reports category, status, latency, usage and
     structural metadata only — never content, reasoning or the credential."""
-    from .cognition import EmptyContentError, ModelProviderError, ModelTimeout, OpenAICompatibleModel
+    from .cognition import EmptyContentError, ModelProviderError, ModelTimeout, live_model
 
     try:
-        model = OpenAICompatibleModel(settings, transport=transport)
+        model = live_model(settings, transport=transport)
     except ValueError as exc:
         return ProbeResult(False, "misconfigured", category="misconfigured", error=scrub(str(exc), settings))
     policy = model.policy
     fmt = model._response_format("json_object")  # the DeepSeek-documented mode; negotiation happens on real runs
     payload = model.build_chat_request(
         messages=[{"role": "system", "content": PROBE_SYSTEM_PROMPT}, {"role": "user", "content": PROBE_USER_PROMPT}],
-        max_tokens=PROBE_MAX_TOKENS,
+        max_tokens=PROBE_MAX_TOKENS_THINKING if policy.profile == "anthropic" else PROBE_MAX_TOKENS,
         response_format=fmt,
         temperature=0,
     )
@@ -421,7 +424,7 @@ def preflight(
     }
     base = dict(
         provider=settings.model_provider,
-        model_name=settings.model_name if settings.model_provider == LIVE_PROVIDER else "",
+        model_name=settings.model_name if settings.model_provider in LIVE_PROVIDERS else "",
         base_url_host=_host(settings.model_base_url),
         credential=cred,
         probe=None,
@@ -429,7 +432,7 @@ def preflight(
         limits=limits,
         request_policy=policy.describe(),
     )
-    if settings.model_provider != LIVE_PROVIDER:
+    if settings.model_provider not in LIVE_PROVIDERS:
         return PreflightReport(verdict=VERDICT_NOT_LIVE, **base)
     if not cred.safe:
         return PreflightReport(verdict=VERDICT_NO_CREDENTIAL, **base)
@@ -513,7 +516,7 @@ def evaluate(scenario: str, report: CanaryReport, *, decided: Optional[str], exp
     reasons: List[str] = []
     runs = report.runs
     for r in runs:
-        if r["status"] == "completed" and r.get("model_provider") != LIVE_PROVIDER:
+        if r["status"] == "completed" and r.get("model_provider") not in LIVE_PROVIDERS:
             reasons.append(f"fake autonomy: run {r['id'][:8]} ({r['role']}) used provider {r.get('model_provider')!r}")
         if r["status"] == "completed" and expected_model and r.get("model_name") not in (None, expected_model):
             reasons.append(f"run {r['id'][:8]} reported model {r.get('model_name')!r}, expected {expected_model!r}")
@@ -599,7 +602,7 @@ def run_canary(
 
     from ..models import AgentCapabilityGrant, AgentIntent, AgentRun, CodeCandidate, IntentApproval, SocietyEvent, User
     from . import approvals as approvals_mod
-    from .cognition import OpenAICompatibleModel
+    from .cognition import live_model
     from .events import emit_event
     from .operator_auth import is_operator
     from .roles import DEFAULT_ROLES
@@ -611,7 +614,7 @@ def run_canary(
     if decide not in (None, "approve", "reject"):
         raise CanaryRefused("--decide must be approve or reject")
     settings = settings or get_settings()
-    if settings.model_provider != LIVE_PROVIDER:
+    if settings.model_provider not in LIVE_PROVIDERS:
         raise CanaryRefused(f"{VERDICT_NOT_LIVE}: SOCIETY_MODEL_PROVIDER={settings.model_provider!r}")
     if not settings.runtime_enabled:
         raise CanaryRefused("SOCIETY_RUNTIME_ENABLED must be true for the canary process (set it for this process only)")
@@ -619,7 +622,7 @@ def run_canary(
     if not pre.ready:
         raise CanaryRefused(pre.verdict + (f": {pre.credential.reason}" if not pre.credential.safe else "") + (f": {pre.probe.error}" if pre.probe and pre.probe.error else ""))
 
-    model = OpenAICompatibleModel(settings, transport=transport)
+    model = live_model(settings, transport=transport)
     tag = uuid.uuid4().hex[:8]
     correlation = uuid.uuid4()
     report = CanaryReport(
@@ -797,7 +800,7 @@ def observe_canary(
     status, body = h.call("GET", "/v1/society/status")
     if status != 200 or not isinstance(body, dict):
         raise CanaryRefused(f"GET /v1/society/status returned {status}")
-    if body.get("model_provider") != LIVE_PROVIDER:
+    if body.get("model_provider") not in LIVE_PROVIDERS:
         raise CanaryRefused(f"{VERDICT_NOT_LIVE}: deployed model_provider={body.get('model_provider')!r}")
     if not body.get("runtime_enabled"):
         raise CanaryRefused("deployed runtime is disabled (SOCIETY_RUNTIME_ENABLED=false on the society worker)")
@@ -806,7 +809,7 @@ def observe_canary(
 
     tag = uuid.uuid4().hex[:8]
     correlation = str(uuid.uuid4())
-    report = CanaryReport(scenario=scenario, mode="observe", verdict="RUNNING", reasons=[], provider=LIVE_PROVIDER, model_name="", transport="live", correlation_id=correlation, started_at=_now_iso())
+    report = CanaryReport(scenario=scenario, mode="observe", verdict="RUNNING", reasons=[], provider=str(body.get("model_provider")), model_name="", transport="live", correlation_id=correlation, started_at=_now_iso())
     status, body = h.call("POST", "/v1/society/events", {"event_type": SCENARIOS[scenario]["event_type"], "payload": _payload_for(scenario, tag), "correlation_id": correlation, "idempotency_key": CANARY_IDEMPOTENCY_PREFIX + f"{scenario}-{tag}"})
     if status != 201:
         raise CanaryRefused(f"event injection failed with HTTP {status}: {str(body)[:200]}")
