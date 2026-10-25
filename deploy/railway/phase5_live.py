@@ -34,6 +34,9 @@ never stops the plan so the evidence of the later steps is still recorded):
     journey[:<hours>]             the core-journey probe's maintenance_observations (sli=core_journey): count, success, duration (default 24 h)
     autonomy[:<days>]             does the company run without the owner? plans decided by the board vs the owner and how long they
                                   waited, design reviews and their conversation, growth tickets, merged work, the federated network (default 7 d)
+    costs[:<days>[:<budget>]]     model spend p50/p95 per role+model (decide runs), per build, per maintenance activity, per day;
+                                  the caps it implies inside <budget> USD/day (default 7 d, 6.0) -- a recommendation, never applied
+    budget:<role>:<usd>           operator command: that role's grant daily_model_budget_usd (a re-seed keeps the larger of it and the default)
     freezes:lift-recovered        lift (operator API) ONLY the open freezes that outlived their cause (maintenance incident recovered/closed,
                                   or public surface recovered >= 6 h ago and green now); others untouched
 
@@ -68,7 +71,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes", "costs", "budget")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -149,6 +152,10 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("journey[:<hours>]")
         if name == "autonomy" and (len(args) > 1 or (args and not args[0].isdigit())):
             raise ValueError("autonomy[:<days>]")
+        if name == "costs" and (len(args) > 2 or any(not re.fullmatch(r"\d{1,3}(\.\d{1,2})?", a) for a in args) or (args and not args[0].isdigit())):
+            raise ValueError("costs[:<days>[:<daily-budget-usd>]]")
+        if name == "budget" and (len(args) != 2 or not re.fullmatch(r"[a-z_]{2,32}", args[0]) or not re.fullmatch(r"\d{1,2}(\.\d{1,2})?", args[1]) or float(args[1]) <= 0):
+            raise ValueError("budget:<role>:<usd> (0 < usd < 100, two decimals)")
         if name == "freezes" and args != ["lift-recovered"]:
             raise ValueError("freezes:lift-recovered")
         if name == "company" and not _company_args_ok(args):
@@ -999,6 +1006,131 @@ def step_freezes(out: Out, base: str, token: str, conn) -> None:
                             f"surface recovered since: {recovered_at.isoformat() if recovered_at else 'no'}")
 
 
+# ── costs: model spend per role / build / activity, and the caps it implies ──
+
+BUILD_INTENT = "BUILD_CODE_CANDIDATE"
+COST_DECIDE_SQL = (
+    "SELECT r.role, COALESCE(r.model_name, '?'), r.cost_usd, (r.created_at AT TIME ZONE 'UTC')::date, "
+    "EXISTS (SELECT 1 FROM agent_intents i WHERE i.run_id = r.id AND i.intent_type = %s), "
+    "EXISTS (SELECT 1 FROM agent_intents i WHERE i.run_id = r.id AND i.intent_type = %s AND i.execution_status = 'executed'), "
+    "EXISTS (SELECT 1 FROM agent_intents i WHERE i.run_id = r.id AND i.intent_type = %s AND (i.error ILIKE '%%cost_budget%%' OR i.error ILIKE '%%cost cap%%')) "
+    "FROM agent_runs r WHERE r.created_at >= NOW() - (%s * INTERVAL '1 day') AND r.model_provider = ANY(%s) AND r.cost_usd > 0")
+COST_ACTIVITY_SQL = (
+    "SELECT kind, COALESCE(model_name, '?'), cost_usd, (started_at AT TIME ZONE 'UTC')::date, status = 'succeeded', error_class = 'cost_budget' "
+    "FROM repair_activities WHERE started_at >= NOW() - (%s * INTERVAL '1 day') AND model_provider = ANY(%s) AND cost_usd > 0")
+#: what the recommendation plans for: builds/day, the minimum caps, the share of the daily budget one build may take
+COST_PLAN = {"builds_per_day": 2, "min_case_cap": 0.50, "max_case_share": 0.25, "min_role_budget": 0.25, "headroom": 1.5, "story_decides": 6}
+
+
+def _pct(values: Sequence[float], q: float) -> Optional[float]:
+    v = sorted(values)
+    return round(v[min(len(v) - 1, int(q * len(v)))], 4) if v else None
+
+
+def _ceil05(x: float) -> float:
+    return round(-(-round(x * 100) // 5) * 0.05, 2)
+
+
+def cost_summary(runs: Sequence[Tuple], activities: Sequence[Tuple]) -> Dict[str, Any]:
+    """runs: (role, model, cost, day, is_build, delivered, cap_hit); activities: (kind, model, cost, day, ok, cap_hit).
+    Per role+model: decide runs; per model: builds; per kind+model: maintenance activities; per day: totals."""
+    def stats(costs: List[float]) -> Dict[str, Any]:
+        return {"n": len(costs), "p50": _pct(costs, 0.5), "p95": _pct(costs, 0.95), "max": round(max(costs), 4) if costs else None, "sum": round(sum(costs), 4)}
+
+    decide: Dict[str, List[float]] = {}
+    role_day: Dict[str, Dict[Any, float]] = {}
+    builds: Dict[str, List[float]] = {}
+    build_meta: Dict[str, List[int]] = {}
+    days: Dict[str, float] = {}
+    for role, model, cost, day, is_build, delivered, cap_hit in runs:
+        c = float(cost or 0)
+        days[str(day)] = days.get(str(day), 0.0) + c
+        if is_build:
+            builds.setdefault(str(model), []).append(c)
+            meta = build_meta.setdefault(str(model), [0, 0])
+            meta[0] += int(bool(delivered))
+            meta[1] += int(bool(cap_hit))
+        else:
+            decide.setdefault(f"{role}/{model}", []).append(c)
+            role_day.setdefault(str(role), {}).setdefault(day, 0.0)
+            role_day[str(role)][day] += c
+    acts: Dict[str, List[float]] = {}
+    act_caps: Dict[str, int] = {}
+    for kind, model, cost, day, _ok, cap_hit in activities:
+        acts.setdefault(f"{kind}/{model}", []).append(float(cost or 0))
+        act_caps[f"{kind}/{model}"] = act_caps.get(f"{kind}/{model}", 0) + int(bool(cap_hit))
+        days[str(day)] = days.get(str(day), 0.0) + float(cost or 0)
+    return {
+        "decide": {k: stats(v) for k, v in sorted(decide.items())},
+        "role_daily": {r: {"days": len(d), "p50": _pct(list(d.values()), 0.5), "p95": _pct(list(d.values()), 0.95)} for r, d in sorted(role_day.items())},
+        "builds": {m: {**stats(v), "delivered": build_meta[m][0], "cap_hits": build_meta[m][1]} for m, v in sorted(builds.items())},
+        "activities": {k: {**stats(v), "cap_hits": act_caps[k]} for k, v in sorted(acts.items())},
+        "days": {d: round(v, 4) for d, v in sorted(days.items())},
+    }
+
+
+def recommend_costs(summary: Dict[str, Any], daily_budget: float, plan: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Deterministic caps from measured spend (every rule is printed with its inputs):
+    case cap = p95 build x1.25 (x2 when builds hit the cap: the sample is censored), within
+    [min_case_cap, max_case_share x budget]; a role's grant = its p95 daily spend x headroom
+    (>= min_role_budget), the Builder's plus builds_per_day x case cap; the correlation cap
+    = case cap + story_decides x the dearest decide p95; the strong-tier floor = 2x that
+    p95 (an Opus decide costs ~2x a Sonnet one). role_daily is decide spend only (builds apart).
+    Fits when the grants sum within the budget."""
+    p = {**COST_PLAN, **(plan or {})}
+    builds = [b for b in summary.get("builds", {}).values() if b["n"]]
+    p95_build = max((b["p95"] for b in builds), default=0.0)
+    censored = any(b["cap_hits"] for b in builds)
+    case_cap = _ceil05(min(max(p95_build * (2.0 if censored else 1.25), p["min_case_cap"]), p["max_case_share"] * daily_budget))
+    decide_p95 = max((d["p95"] for d in summary.get("decide", {}).values() if d["n"]), default=0.0)
+    roles: Dict[str, float] = {}
+    for role, d in summary.get("role_daily", {}).items():
+        base = (d["p95"] or 0.0) * p["headroom"] + (p["builds_per_day"] * case_cap if role == "builder" else 0.0)
+        roles[role] = _ceil05(max(base, p["min_role_budget"]))
+    if builds and "builder" not in roles:
+        roles["builder"] = _ceil05(max(p["builds_per_day"] * case_cap, p["min_role_budget"]))
+    total = round(sum(roles.values()), 2)
+    return {
+        "MAINTENANCE_MAX_CASE_COST_USD": case_cap,
+        "SOCIETY_MAX_CORRELATION_COST_USD": _ceil05(case_cap + p["story_decides"] * decide_p95),
+        "SOCIETY_MODEL_STRONG_FLOOR_USD": _ceil05(max(2 * decide_p95, 0.05)),
+        "grants": roles,
+        "grants_total": total,
+        "fits_daily_budget": total <= daily_budget,
+        "inputs": {"p95_build": p95_build, "build_cap_hits": censored, "decide_p95_max": decide_p95, "daily_budget": daily_budget, "plan": p},
+    }
+
+
+def step_costs(out: Out, conn, days: int, daily_budget: float) -> None:
+    with conn.cursor() as cur:
+        runs = _rows(cur, COST_DECIDE_SQL, (BUILD_INTENT, BUILD_INTENT, BUILD_INTENT, days, list(LIVE_PROVIDERS)))
+        acts = _rows(cur, COST_ACTIVITY_SQL, (days, list(LIVE_PROVIDERS)))
+        grants = _rows(cur, "SELECT role, daily_model_budget_usd FROM agent_capability_grants ORDER BY role")
+    conn.rollback()
+    summary = cost_summary(runs, acts)
+    for key in ("decide", "role_daily", "builds", "activities", "days"):
+        out.json("costs", key, summary[key])
+    out.json("costs", "grants_now", {str(r): float(b) for r, b in grants})
+    rec = recommend_costs(summary, daily_budget)
+    out.json("costs", "recommend", rec)
+    out.check("costs", "C01", bool(runs), f"{len(runs)} priced live runs and {len(acts)} activities in {days}d")
+    out.check("costs", "C02", rec["fits_daily_budget"], f"recommended grants sum {rec['grants_total']} within the daily budget {daily_budget}")
+
+
+def step_budget(out: Out, conn, role: str, usd: str) -> None:
+    """Operator command: one role's grant daily_model_budget_usd (a re-seed keeps the larger of it and the role default)."""
+    with conn.cursor() as cur:
+        row = _rows(cur, "SELECT id, daily_model_budget_usd FROM agent_capability_grants WHERE role = %s", (role.lower(),))
+        if not row:
+            out.check("budget", "B01", False, f"no grant for role {role!r}")
+            return
+        gid, before = row[0]
+        cur.execute("UPDATE agent_capability_grants SET daily_model_budget_usd = %s, updated_at = now() WHERE id = %s", (usd, gid))
+        conn.commit()
+        after = _rows(cur, "SELECT daily_model_budget_usd FROM agent_capability_grants WHERE id = %s", (gid,))[0][0]
+    out.check("budget", "B01", float(after) == float(usd), f"role={role.lower()} daily_model_budget_usd {float(before)} -> {float(after)}")
+
+
 def journey_summary(rows: Sequence[Tuple]) -> Dict[str, Any]:
     """(ok, duration_s, step, observed_at, target) rows, newest first -> counts and duration percentiles."""
     durs = sorted(float(r[1]) for r in rows if r[1] not in (None, ""))
@@ -1030,6 +1162,8 @@ AUTONOMY_PLAN_WAIT_HOURS = 24
 AUTONOMY_REVIEW_STUCK_HOURS = 7
 #: a real meeting: at least this many roles spoke in one review's thread (Architect + reviewers + Governor = 5)
 AUTONOMY_MEETING_ROLES = 4
+#: design_review.PROTOCOL: wakes that ask each role its question by name (G1j); older reviews are listed, not judged
+REVIEW_PROTOCOL = 2
 
 
 def step_autonomy(out: Out, conn, days: int) -> None:
@@ -1038,8 +1172,13 @@ def step_autonomy(out: Out, conn, days: int) -> None:
     with conn.cursor() as cur:
         plans = _rows(cur, "SELECT status, COALESCE(decided_by, CASE WHEN decided_at IS NULL THEN NULL ELSE 'owner' END), "
                            "EXTRACT(EPOCH FROM (COALESCE(decided_at, NOW()) - created_at)) / 3600.0, board_note FROM society_daily_plans WHERE created_at >= %s", (since,))
-        reviews = _rows(cur, "SELECT status, round, EXTRACT(EPOCH FROM (NOW() - stage_at)) / 3600.0, id, COALESCE(decision ->> 'by', '') "
-                             "FROM society_design_reviews WHERE created_at >= %s ORDER BY created_at DESC", (since,))
+        # the protocol a review ran (its wakes carry it, design_review.PROTOCOL): only current-protocol reviews are judged
+        reviews = _rows(cur, "SELECT r.status, r.round, EXTRACT(EPOCH FROM (NOW() - r.stage_at)) / 3600.0, r.id, COALESCE(r.decision ->> 'by', ''), "
+                             "COALESCE((SELECT MAX((e.payload ->> 'protocol')::int) FROM society_events e WHERE e.event_type LIKE 'design_review.%%' "
+                             "AND e.payload ->> 'review_id' = r.id::text), 1) "
+                             "FROM society_design_reviews r WHERE r.created_at >= %s ORDER BY r.created_at DESC", (since,))
+        legacy = sum(1 for r in reviews if int(r[5]) < REVIEW_PROTOCOL)
+        reviews = [r[:5] for r in reviews if int(r[5]) >= REVIEW_PROTOCOL]
         # who was woken for each review (the run each stage wake created) and who spoke in its thread
         woken = _rows(cur, "SELECT e.payload ->> 'review_id', r.role, r.status::text, COUNT(*) FROM society_events e JOIN agent_runs r ON r.event_id = e.id "
                            "WHERE e.event_type LIKE 'design_review.%%' AND e.created_at >= %s GROUP BY 1, 2, 3", (since,))
@@ -1099,7 +1238,8 @@ def step_autonomy(out: Out, conn, days: int) -> None:
               + (f"; open freezes (source, incident status, n, oldest h): {[(str(a), str(b), int(n), round(float(h), 1)) for a, b, n, h in freezes]}" if freezes else ""))
     # a timeout is never approval: a review only passes when the Governor said go
     out.check("autonomy", "A02", not stuck and not (go_runtime and not go_governor),
-              f"design reviews in {days}d: {rev}; go by Governor {go_governor}, go by runtime {go_runtime}; stuck > {AUTONOMY_REVIEW_STUCK_HOURS}h: {len(stuck)}")
+              f"design reviews in {days}d: {rev}; go by Governor {go_governor}, go by runtime {go_runtime}; stuck > {AUTONOMY_REVIEW_STUCK_HOURS}h: {len(stuck)}"
+              + (f"; {legacy} legacy review(s) not judged (before protocol {REVIEW_PROTOCOL})" if legacy else ""))
     out.check("autonomy", "A03", not reviews or bool(real),
               f"{int(chat)} message(s) in design-review threads; meetings with >= {AUTONOMY_MEETING_ROLES} roles speaking: {real or 'none'}; latest: "
               + "; ".join(f"{m['review']} {m['status']}/{m['by']} woken {m['woken'] or '-'} spoke: {', '.join(sorted(m['spoke'])) or 'nobody'}" for m in meetings))
@@ -1587,7 +1727,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes") and conn is None:
+            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes", "costs", "budget") and conn is None:
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -1625,6 +1765,10 @@ def main() -> int:
                 step_autonomy(out, conn, int(args[0]) if args else 7)
             elif name == "freezes":
                 step_freezes(out, base, token, conn)
+            elif name == "costs":
+                step_costs(out, conn, int(args[0]) if args else 7, float(args[1]) if len(args) > 1 else 6.0)
+            elif name == "budget":
+                step_budget(out, conn, args[0], args[1])
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence
             if conn is not None:
                 try:

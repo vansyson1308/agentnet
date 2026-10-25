@@ -34,7 +34,14 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
-from .config import ANTHROPIC_FALLBACK_MODELS, ANTHROPIC_USD_PER_1K, SocietySettings
+from .config import (
+    ANTHROPIC_CACHE_READ_X,
+    ANTHROPIC_CACHE_READ_X_DEFAULT,
+    ANTHROPIC_CACHE_WRITE_X,
+    ANTHROPIC_FALLBACK_MODELS,
+    ANTHROPIC_USD_PER_1K,
+    SocietySettings,
+)
 from .context import AgentContext
 from .ids import candidate_id_for
 from .intents import AgentDecision, DecisionValidationError, IntentType, parse_decision
@@ -232,6 +239,7 @@ class ChatOutcome:
     tokens_in: int = 0
     tokens_out: int = 0
     tokens_cached: Optional[int] = None
+    tokens_cache_write: int = 0
     usage_missing: bool = False
     empty_retries: int = 0
     # the model that actually answered (a provider fallback may differ from the request)
@@ -958,12 +966,14 @@ Rules:
   before an approved ticket is designed; "next" says whose turn it is. Architect: PROPOSE_DESIGN {{"review_id", "approach",
   "files", "proof", "risks"}} -- the smallest change that should move the ticket's key result, and how QA will prove it
   (answer every point of "earlier_rounds" feedback). Scout (evidence and value), QA (can the proof fail before and pass
-  after?), Security (what could this break or expose?): REVIEW_DESIGN {{"review_id", "stance": "support"|"concern"|"object",
-  "points"}} once each, specific to THIS proposal; "object" only for a real defect. Governor: DECIDE_DESIGN {{"review_id",
-  "verdict": "go"|"revise"|"drop", "rationale", "conditions"}} weighing the positions; a Security "object" rules out "go".
-  A "go" wakes the Architect to design the ticket with the minutes in its event ("design_review"). You are woken only
-  when it is your turn, so act on it: a silent turn is never consent -- no proposal returns the ticket, a silent reviewer
-  is listed to the Governor as "missing", and a review the Governor does not decide in time returns the ticket.
+  after?), Security (what could this break or expose?): REVIEW_DESIGN {{"review_id", "stance": "support"|"concern"|"object"|
+  "abstain", "points"}} once each, specific to THIS proposal; "object" only for a real defect, "abstain" (the reason as a
+  point) when you have nothing specific. Governor: DECIDE_DESIGN {{"review_id", "verdict": "go"|"revise"|"drop",
+  "rationale", "conditions"}} weighing the positions in its event; a Security "object" rules out "go". A "go" wakes the
+  Architect to design the ticket with REQUEST_CODE_CHANGE, the minutes in its event ("design_review"). Your wake's
+  "question" is addressed to you, with a "deadline", and only its answer is on offer: answer it. Silence is never
+  consent -- each stage wakes you once more, then no proposal returns the ticket, a reviewer is recorded "silent", and
+  a review the Governor does not decide returns the ticket.
 - A WRITE_MEMORY is kept only if every other side-effecting intent of the same decision executed;
   otherwise it is refused. Memories you write here are written BEFORE any outcome exists: record what
   you observed, never what you expect your other intents to achieve.
@@ -1224,6 +1234,11 @@ class OpenAICompatibleModel:
         rate_in, rate_out = self.usd_per_1k(model_name)
         return (Decimal(tokens_in) / 1000) * rate_in + (Decimal(tokens_out) / 1000) * rate_out
 
+    def outcome_cost(self, model_name: str, outcome: "ChatOutcome") -> Decimal:
+        """Cost of one completion; the base adapter charges every input token
+        at the input rate (an OpenAI-compatible cache discount is not priced)."""
+        return self.cost_usd(model_name, outcome.tokens_in, outcome.tokens_out)
+
     def _initial_format(self) -> str:
         mode = self.settings.model_output_format
         if mode == "json_object":
@@ -1347,6 +1362,7 @@ class OpenAICompatibleModel:
                 cached = ((usage.get("prompt_tokens_details") or {}).get("cached_tokens"))
             if cached is not None:
                 out.tokens_cached = (out.tokens_cached or 0) + int(cached or 0)
+            out.tokens_cache_write += int(((usage.get("prompt_tokens_details") or {}).get("cache_write_tokens")) or 0)
             meta = self._structure(data)
             out.served_model = str(data.get("model") or "") if isinstance(data, dict) else ""
             out.finish_reason = meta["finish_reason"]
@@ -1385,7 +1401,7 @@ class OpenAICompatibleModel:
         outcome = await self.complete_json(payload, stats)
         used_format = str(stats.get("format") or fmt)
         tokens_in, tokens_out = outcome.tokens_in, outcome.tokens_out
-        cost = self.cost_usd(outcome.served_model or chosen_model, tokens_in, tokens_out)
+        cost = self.outcome_cost(outcome.served_model or chosen_model, outcome)
         # retried attempts that returned nothing still cost input tokens at the
         # provider; account conservatively for them.
         if stats["retries"]:
@@ -1474,7 +1490,8 @@ class AnthropicModel(OpenAICompatibleModel):
 
     * the system prompt is one cached block (``cache_control``): a role's
       prompt and schema doc repeat across its runs; the conversation prefix
-      is cached too (top-level ``cache_control``) for multi-turn tool loops;
+      is cached too (top-level ``cache_control``) only for multi-turn tool
+      loops (``cache_conversation``); cost prices cache reads and writes;
     * no ``temperature`` (the Messages API refuses sampling parameters) and no
       assistant prefill: JSON comes from the prompt and is parsed strictly --
       the only framing removed is ONE markdown fence around the whole reply;
@@ -1487,6 +1504,10 @@ class AnthropicModel(OpenAICompatibleModel):
 
     provider = "anthropic"
     FALLBACK_BETA = "server-side-fallback-2026-07-01"
+    #: cache the conversation prefix too (top-level ``cache_control``): only a
+    #: multi-turn tool loop re-sends its transcript; a one-shot decide would
+    #: pay the 1.25x write on a context it never reads back.
+    cache_conversation = False
 
     def __init__(self, settings: SocietySettings, *, transport: Optional[Callable[..., Any]] = None):
         if not settings.model_api_key:
@@ -1499,14 +1520,28 @@ class AnthropicModel(OpenAICompatibleModel):
     def usd_per_1k(self, model_name: str) -> Tuple[Decimal, Decimal]:
         return anthropic_usd_per_1k(self.settings, model_name)
 
+    def outcome_cost(self, model_name: str, outcome: ChatOutcome) -> Decimal:
+        """List price with prompt caching: cache reads and 5-minute writes at
+        their multiple of the input rate; a model missing from the price
+        table keeps every input token at the full configured rate."""
+        if model_name not in ANTHROPIC_USD_PER_1K:
+            return super().outcome_cost(model_name, outcome)
+        rate_in, rate_out = self.usd_per_1k(model_name)
+        read = min(int(outcome.tokens_cached or 0), outcome.tokens_in)
+        write = min(outcome.tokens_cache_write, outcome.tokens_in - read)
+        plain = outcome.tokens_in - read - write
+        read_x = Decimal(ANTHROPIC_CACHE_READ_X.get(model_name, ANTHROPIC_CACHE_READ_X_DEFAULT))
+        units_in = Decimal(plain) + Decimal(read) * read_x + Decimal(write) * Decimal(ANTHROPIC_CACHE_WRITE_X)
+        return (units_in / 1000) * rate_in + (Decimal(outcome.tokens_out) / 1000) * rate_out
+
     def messages_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """The chat payload as a Messages API request (request fields from
         ``RequestPolicy``, never from the payload)."""
         system = [str(m.get("content") or "") for m in payload.get("messages", []) if m.get("role") == "system"]
         turns = [{"role": m["role"], "content": str(m.get("content") or "")} for m in payload.get("messages", []) if m.get("role") in ("user", "assistant")]
-        # top-level cache_control caches the conversation prefix too: a multi-turn
-        # tool loop (maintenance activities) re-sends its transcript every turn
-        request: Dict[str, Any] = {"model": payload["model"], "max_tokens": int(payload["max_tokens"]), "messages": turns, "cache_control": {"type": "ephemeral"}}
+        request: Dict[str, Any] = {"model": payload["model"], "max_tokens": int(payload["max_tokens"]), "messages": turns}
+        if self.cache_conversation:
+            request["cache_control"] = {"type": "ephemeral"}
         if system:
             request["system"] = [{"type": "text", "text": "\n\n".join(system), "cache_control": {"type": "ephemeral"}}]
         request.update(self.policy.wire_fields())
@@ -1533,7 +1568,7 @@ class AnthropicModel(OpenAICompatibleModel):
         cached = int(usage.get("cache_read_input_tokens") or 0)
         prompt = int(usage.get("input_tokens") or 0) + int(usage.get("cache_creation_input_tokens") or 0) + cached
         chat_usage = {"prompt_tokens": prompt, "completion_tokens": int(usage.get("output_tokens") or 0),
-                      "prompt_tokens_details": {"cached_tokens": cached}} if usage else {}
+                      "prompt_tokens_details": {"cached_tokens": cached, "cache_write_tokens": int(usage.get("cache_creation_input_tokens") or 0)}} if usage else {}
         return {
             "model": message.get("model") or "",
             "choices": [{"index": 0, "finish_reason": _STOP_REASONS.get(stop, stop),

@@ -110,9 +110,10 @@ DEEPSEEK_REASONING_EFFORTS = ("auto", "none", "low", "high", "max")
 ANTHROPIC_REASONING_EFFORTS = ("auto", "low", "medium", "high", "xhigh", "max")
 ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
 # First-party list prices, USD per 1K tokens (input, output), for budget
-# accounting of the anthropic provider. Every input token is charged at the
-# input rate (cache reads are cheaper at the provider), so the daily cap is
-# conservative. A model missing here falls back to SOCIETY_MODEL_USD_PER_1K_*.
+# accounting of the anthropic provider. Cache reads and 5-minute cache writes
+# are priced as multiples of the input rate (ANTHROPIC_CACHE_READ_X /
+# ANTHROPIC_CACHE_WRITE_X). A model missing here falls back to
+# SOCIETY_MODEL_USD_PER_1K_* with every input token at the full rate.
 ANTHROPIC_USD_PER_1K = {
     "claude-fable-5-1": ("0.010", "0.050"),
     "claude-opus-5-5": ("0.004", "0.020"),
@@ -122,6 +123,9 @@ ANTHROPIC_USD_PER_1K = {
     "claude-sonnet-5": ("0.002", "0.010"),
     "claude-haiku-5-5": ("0.0001", "0.0005"),
 }
+ANTHROPIC_CACHE_WRITE_X = "1.25"
+ANTHROPIC_CACHE_READ_X = {"claude-fable-5-1": "0.025", "claude-opus-5-5": "0.05"}  # every other listed model: 0.1
+ANTHROPIC_CACHE_READ_X_DEFAULT = "0.1"
 # Models the API may re-run on a fallback model when they decline a request
 # (``fallbacks: "default"``); Haiku has no server-side fallback.
 ANTHROPIC_FALLBACK_MODELS = ("claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5")
@@ -189,6 +193,8 @@ class SocietySettings:
     model_fast_name: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_FAST_NAME") or os.getenv("SOCIETY_MODEL_NAME") or os.getenv("LLM_MODEL_NAME", "gpt-4o-mini"))
     model_strong_name: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_STRONG_NAME", ""))
     max_correlation_cost_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_MAX_CORRELATION_COST_USD", "0.50"))
+    # the strong tier needs at least this much left in BOTH the agent and the correlation budget
+    model_strong_floor_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_MODEL_STRONG_FLOOR_USD", "0.05"))
     max_experiment_cost_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_MAX_EXPERIMENT_COST_USD", "0.25"))
     max_promotion_cost_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_MAX_PROMOTION_COST_USD", "0.25"))
 

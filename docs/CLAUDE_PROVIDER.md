@@ -39,8 +39,32 @@ request policy is what you configured. Any other verdict names the problem.
 ## What changes and what does not
 
 * Same retries, parsing, budgets, policy and approvals: the adapter translates at the wire and reuses the existing loop.
-* The system prompt is cached between runs of the same role (cheaper input).
+* The system prompt is cached between runs of the same role (cheaper input). The conversation prefix is cached only
+  for maintenance/build activities (multi-turn tool loops); a one-shot decide would pay the 1.25x write for nothing.
+* Spend is priced with prompt caching: cache reads at 0.1x the input rate (0.05x on Opus 5.5, 0.025x on Fable 5.1),
+  5-minute cache writes at 1.25x. A model missing from `ANTHROPIC_USD_PER_1K` keeps every input token at full rate.
 * A declined request (`stop_reason=refusal`) is re-run once on a fallback model by the API
   (`SOCIETY_MODEL_REFUSAL_FALLBACK=true`), otherwise it fails the run without a retry.
 * Optional, off by default: `MAINTENANCE_HARNESS2_ENABLED=true` turns on the Harness² Propose-Probe-Compose step for
   the Builder (ADR-0011, `maintenance/harness2.py`).
+
+## Calibrating the caps from measured spend
+
+The caps were sized for DeepSeek. Read what Claude actually costs, then set the caps from it:
+
+```bash
+PHASE5_PLAN=costs:7:6        # staging-validator: p50/p95 per role+model, per build, per activity, per day
+```
+
+`PHASE5-JSON costs.recommend` prints `MAINTENANCE_MAX_CASE_COST_USD`, `SOCIETY_MAX_CORRELATION_COST_USD`,
+`SOCIETY_MODEL_STRONG_FLOOR_USD` and a grant budget per role, each from a printed rule
+(`deploy/railway/phase5_live.py::recommend_costs`). It is a recommendation: the env vars are set by the owner, and a
+role's grant budget by the operator command
+
+```bash
+PHASE5_PLAN=budget:builder:2.20
+```
+
+The deploy re-seed keeps the larger of an operator budget and the role default (as approval gates are unioned); no
+intent can change a budget. `SOCIETY_MODEL_STRONG_FLOOR_USD` (default 0.05) is the headroom the strong tier needs in
+both the agent and the story budget, so an Opus run is never started when it cannot finish inside them.

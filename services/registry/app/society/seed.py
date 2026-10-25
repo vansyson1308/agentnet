@@ -17,6 +17,7 @@ import logging
 import os
 import secrets
 import uuid
+from decimal import Decimal
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -131,6 +132,10 @@ def upsert_grant(db: Session, agent: Agent, role: RoleDefinition, report: SeedRe
                 # only ever narrow permissions; a re-seed must not silently
                 # remove them. Role defaults and existing gates are unioned.
                 v = sorted(set(v or []) | set(grant.approval_required_intents or []))
+            elif k == "daily_model_budget_usd" and grant.daily_model_budget_usd is not None:
+                # An operator-set budget (validator `budget:<role>:<usd>`) survives the
+                # re-seed every deploy runs: the larger of it and the role default.
+                v = max(Decimal(str(v)), Decimal(str(grant.daily_model_budget_usd)))
             setattr(grant, k, v)
     db.flush()
     report.grants_upserted.append(role.agent_name)
