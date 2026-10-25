@@ -113,6 +113,15 @@ def test_the_cost_cap_stops_probing(monkeypatch):
     assert len(calls) == 1
 
 
+def test_a_reference_run_that_spent_the_cap_calls_no_editor(monkeypatch):
+    """The cap holds before the editor too (staging enablement, 2026-10-25): no model call past it."""
+    calls = _patch(monkeypatch, ["red"])
+    editor = _editor(EDIT)
+    out = _go(editor, cap="0.010")
+    assert len(calls) == 1 and editor.calls == [] and out.result.cost_usd == Decimal("0.01")
+    assert out.record["editor_error"] is None and out.record["probes"] == []
+
+
 def test_build_engine_uses_recursion_only_behind_its_flag(monkeypatch):
     from services.registry.app.society.engineering import build_engine
 

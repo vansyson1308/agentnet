@@ -43,6 +43,7 @@ from ..models import (
     AgentIntent,
     AgentRun,
     AgentRunStatus,
+    CodeCandidate,
     IntentExecutionStatus,
     PolicyDecision,
     SocietyEvent,
@@ -69,7 +70,7 @@ from .config import SocietySettings, get_settings, validate_settings
 from .context import build_context
 from .events import WAKE_CHANNEL, EventType, emit_event, utcnow
 from .executor import ExecContext, ExecutionError, execute
-from .intents import REPO_READ_INTENT_TYPES, DecisionValidationError, ValidatedIntent, payload_to_dict, validate_intents
+from .intents import REPO_READ_INTENT_TYPES, DecisionValidationError, IntentType, ValidatedIntent, payload_to_dict, validate_intents
 from .policy import check_run_budget, evaluate_intent, spend_today_usd
 from .roles import load_role_definitions, subscriptions_by_event
 from . import company as company_mod
@@ -294,12 +295,25 @@ class SocietyWorker:
 
     # ── one run ────────────────────────────────────────────────────────
 
-    def _route(self, db: Session, run: AgentRun, agent: Agent, grant: AgentCapabilityGrant, event: SocietyEvent) -> router_mod.Route:
-        payload = event.payload or {}
-        cand_tier = None
-        qa_failures = int(payload.get("attempts") or 0) if event.event_type == EventType.CODE_CANDIDATE_QA_FAILED else 0
+    def _headroom(self, db: Session, run: AgentRun, agent: Agent, grant: AgentCapabilityGrant) -> tuple:
+        """(agent, correlation) model budget left: what escalation and a build's cost cap may use."""
         agent_budget = Decimal(str(grant.daily_model_budget_usd)) - spend_today_usd(db, agent_id=agent.id)
-        corr_remaining = self.settings.max_correlation_cost_usd - router_mod.correlation_spend(db, run.correlation_id)
+        return agent_budget, self.settings.max_correlation_cost_usd - router_mod.correlation_spend(db, run.correlation_id)
+
+    def _route(self, db: Session, run: AgentRun, agent: Agent, grant: AgentCapabilityGrant, event: SocietyEvent) -> router_mod.Route:
+        payload = dict(event.payload or {})
+        cand_tier = None
+        # Candidate wakes carry candidate_id, not the spec: the route reads its kind and trusted tier.
+        try:
+            cand = db.get(CodeCandidate, uuid.UUID(str(payload["candidate_id"]))) if payload.get("candidate_id") else None
+        except ValueError:
+            cand = None
+        if cand is not None:
+            spec = cand.spec or {}
+            payload.setdefault("spec_kind", spec.get("kind"))
+            cand_tier = router_mod.build_risk_tier(spec.get("files_allowed") or [], cand.risk_tier)
+        qa_failures = int(payload.get("attempts") or 0) if event.event_type == EventType.CODE_CANDIDATE_QA_FAILED else 0
+        agent_budget, corr_remaining = self._headroom(db, run, agent, grant)
         route = router_mod.choose_route(
             self.settings,
             role=grant.role,
@@ -469,6 +483,7 @@ class SocietyWorker:
                 heartbeat=lambda: extend_lease(db, run, lease_seconds=self.settings.run_lease_seconds),
                 deployment_provider=self.deployment_provider,
                 builder_model=self.builder_model,
+                model_headroom_usd=self._headroom(db, run, agent, grant) if row.intent_type == IntentType.BUILD_CODE_CANDIDATE.value else None,
             )
             try:
                 outcome = execute(ctx)
