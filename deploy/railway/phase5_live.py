@@ -71,7 +71,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes", "costs", "budget")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes", "costs", "budget", "routes")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -156,6 +156,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("costs[:<days>[:<daily-budget-usd>]]")
         if name == "budget" and (len(args) != 2 or not re.fullmatch(r"[a-z_]{2,32}", args[0]) or not re.fullmatch(r"\d{1,2}(\.\d{1,2})?", args[1]) or float(args[1]) <= 0):
             raise ValueError("budget:<role>:<usd> (0 < usd < 100, two decimals)")
+        if name == "routes" and (len(args) > 1 or (args and not re.fullmatch(r"\d{1,3}", args[0]))):
+            raise ValueError("routes[:<limit>]")
         if name == "freezes" and args != ["lift-recovered"]:
             raise ValueError("freezes:lift-recovered")
         if name == "company" and not _company_args_ok(args):
@@ -1063,7 +1065,8 @@ def cost_summary(runs: Sequence[Tuple], activities: Sequence[Tuple]) -> Dict[str
     return {
         "decide": {k: stats(v) for k, v in sorted(decide.items())},
         "role_daily": {r: {"days": len(d), "p50": _pct(list(d.values()), 0.5), "p95": _pct(list(d.values()), 0.95)} for r, d in sorted(role_day.items())},
-        "builds": {m: {**stats(v), "delivered": build_meta[m][0], "cap_hits": build_meta[m][1]} for m, v in sorted(builds.items())},
+        "builds": {m: {**stats(v), "delivered": build_meta[m][0], "cap_hits": build_meta[m][1],
+                       "usd_per_delivered": round(sum(v) / build_meta[m][0], 4) if build_meta[m][0] else None} for m, v in sorted(builds.items())},
         "activities": {k: {**stats(v), "cap_hits": act_caps[k]} for k, v in sorted(acts.items())},
         "days": {d: round(v, 4) for d, v in sorted(days.items())},
     }
@@ -1129,6 +1132,25 @@ def step_budget(out: Out, conn, role: str, usd: str) -> None:
         conn.commit()
         after = _rows(cur, "SELECT daily_model_budget_usd FROM agent_capability_grants WHERE id = %s", (gid,))[0][0]
     out.check("budget", "B01", float(after) == float(usd), f"role={role.lower()} daily_model_budget_usd {float(before)} -> {float(after)}")
+
+
+ROUTES_SQL = (
+    "SELECT r.created_at, r.role, r.model_tier, COALESCE(r.model_name, '?'), r.route_reason, e.event_type, r.cost_usd, "
+    "(SELECT i.execution_status FROM agent_intents i WHERE i.run_id = r.id AND i.intent_type = %s ORDER BY i.seq LIMIT 1) "
+    "FROM agent_runs r JOIN society_events e ON e.id = r.event_id "
+    "WHERE r.role IN ('builder', 'architect') AND r.model_provider = ANY(%s) AND r.route_reason IS NOT NULL ORDER BY r.created_at DESC LIMIT %s")
+
+
+def step_routes(out: Out, conn, limit: int) -> None:
+    """The router's recorded reason for the last Builder/Architect runs (structural: tier, model, reason, cost, build outcome)."""
+    with conn.cursor() as cur:
+        rows = _rows(cur, ROUTES_SQL, (BUILD_INTENT, list(LIVE_PROVIDERS), limit))
+    conn.rollback()
+    for at, role, tier, model, reason, event_type, cost, build in rows:
+        out.json("routes", at.isoformat(timespec="seconds"), {"role": role, "tier": tier, "model": model, "event": event_type, "cost": float(cost or 0),
+                                                              "build": build, "reason": reason})
+    strong = sum(1 for r in rows if r[2] == "strong")
+    out.check("routes", "R01", bool(rows), f"{len(rows)} builder/architect routes, {strong} strong")
 
 
 def journey_summary(rows: Sequence[Tuple]) -> Dict[str, Any]:
@@ -1727,7 +1749,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes", "costs", "budget") and conn is None:
+            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes", "costs", "budget", "routes") and conn is None:
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -1769,6 +1791,8 @@ def main() -> int:
                 step_costs(out, conn, int(args[0]) if args else 7, float(args[1]) if len(args) > 1 else 6.0)
             elif name == "budget":
                 step_budget(out, conn, args[0], args[1])
+            elif name == "routes":
+                step_routes(out, conn, int(args[0]) if args else 20)
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence
             if conn is not None:
                 try:

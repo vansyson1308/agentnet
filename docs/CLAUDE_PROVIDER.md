@@ -68,3 +68,26 @@ PHASE5_PLAN=budget:builder:2.20
 The deploy re-seed keeps the larger of an operator budget and the role default (as approval gates are unioned); no
 intent can change a budget. `SOCIETY_MODEL_STRONG_FLOOR_USD` (default 0.05) is the headroom the strong tier needs in
 both the agent and the story budget, so an Opus run is never started when it cannot finish inside them.
+
+## Which runs use the strong model
+
+The router (`society/router.py`) picks the tier; the model never does. A decide run on a candidate wake reads the
+candidate's spec kind and trusted risk tier (the classifier over `files_allowed`), so a Builder decision on code and an
+Architect decision on RED work route STRONG. The build itself (the AuthorPatch loop of `BUILD_CODE_CANDIDATE`, most of
+a candidate's spend) has its own route, `choose_build_route`:
+
+| Build | Tier |
+|---|---|
+| RED/NEVER files, a bench ticket, or a re-build after a failed build or QA run | STRONG |
+| any other first build | FAST |
+
+Escalation needs `SOCIETY_MODEL_STRONG_FLOOR_USD` of headroom in both the Builder's grant and the story budget, and a
+build's cost cap is `MAINTENANCE_MAX_CASE_COST_USD` but never more than that headroom. The run records the build's
+tier, model and reason (`decide reason | build reason (cap $x)`). To see the last routes and the build delivery rate:
+
+```bash
+PHASE5_PLAN=routes:20,costs:1:15   # routes.*: tier/model/reason per run; costs.builds: delivered, usd_per_delivered
+```
+
+With Harness² on, the reference build, the editor call and each probe share that one cap; a reference build that has
+spent it ends the build without an editor call.

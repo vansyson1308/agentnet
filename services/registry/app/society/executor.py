@@ -31,7 +31,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from .. import task_service
@@ -66,7 +66,7 @@ from ..models import (
     TaskSession,
     TaskStatus,
 )
-from . import candidate_health, design_review, memory_grounding, repo_intel, tickets
+from . import candidate_health, design_review, memory_grounding, repo_intel, router, tickets
 from .config import SocietySettings
 from ..maintenance import activities
 from ..maintenance import harness as mharness
@@ -120,6 +120,7 @@ class ExecContext:
     now: datetime = field(default_factory=utcnow)
     deployment_provider: Any = None   # test injection; production resolves from settings
     builder_model: Any = None   # test injection; production uses the live activity model
+    model_headroom_usd: Optional[tuple] = None  # (agent, correlation) model budget left, from the worker (builds only)
 
 
 @dataclass
@@ -970,12 +971,21 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
     spec = cand.spec or {}
     if spec.get("kind") != "code":
         raise ExecutionError("BUILD_CODE_CANDIDATE builds code candidates; a docs candidate is written with SUBMIT_CODE_CANDIDATE")
-    model = ctx.builder_model or activities.get_activity_model(ctx.settings)
+    ms = MaintenanceSettings()
+    route, cost_cap = _build_route(ctx, cand, ms)
+    model = ctx.builder_model or activities.get_activity_model(ctx.settings, model_name=route.model_name)
     if model is None:
         raise ExecutionError("no live builder model is configured (SOCIETY_MODEL_PROVIDER=anthropic|openai_compatible + key)")
+    if cost_cap <= 0:
+        raise ExecutionError(f"no model budget left for a build (headroom {ctx.model_headroom_usd})")
     feedback = build_engine.qa_feedback(cand.qa_report)
     status, resubmitted = _claim_for_build(ctx, cand)
-    ms = MaintenanceSettings()
+    # The build is most of the run's spend: the run records the build's route and model
+    # (persisted with a failed build too: _release_build commits).
+    ctx.run.model_tier = route.tier
+    ctx.run.model_name = getattr(model, "model_name", None) or ctx.run.model_name
+    ctx.run.route_reason = f"{ctx.run.route_reason or ''} | {route.reason} (cap ${cost_cap:.2f})".lstrip(" |")[-255:]
+    logger.info("build route candidate=%s tier=%s model=%s cap=%.2f reason=%s", str(cand.id)[:8], route.tier, ctx.run.model_name, cost_cap, route.reason)
     try:
         ws = ws_mod.ensure_workspace(ctx.settings, cand.id)
         ctx.heartbeat()
@@ -983,7 +993,7 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
         if fresh is not None:
             return fresh
         lessons = harness2.load_lessons(ctx.db, harness2.domain_of(spec.get("files_allowed") or [])) if ms.harness2_enabled else []
-        coro = build_engine.build(ws, spec, title=cand.title, model=model, ms=ms, ss=ctx.settings, cost_cap=ms.max_case_cost_usd, feedback=feedback, lessons=lessons)
+        coro = build_engine.build(ws, spec, title=cand.title, model=model, ms=ms, ss=ctx.settings, cost_cap=cost_cap, feedback=feedback, lessons=lessons)
         out = build_engine.run_blocking(coro, heartbeat=ctx.heartbeat, every=ctx.settings.run_lease_seconds / 3)
         if out.record:
             # harnessing-level recursion: only execution contrasts reach the library
@@ -1013,7 +1023,23 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
     except ws_mod.WorkspaceError as exc:
         _release_build(ctx, cand, status, str(exc))
         raise ExecutionError(f"workspace refused: {exc}") from exc
-    return _record_build(ctx, cand, ws, head, summary=summary, resubmitted=resubmitted, result={"engine": stats})
+    return _record_build(ctx, cand, ws, head, summary=summary, resubmitted=resubmitted, result={"engine": {**stats, "route": {**route.to_dict(), "cost_cap": str(cost_cap)}}})
+
+
+def _build_route(ctx: ExecContext, cand: CodeCandidate, ms: MaintenanceSettings) -> tuple:
+    """The build's model tier (router.choose_build_route) and its cost cap: the case cap,
+    never more than the agent/correlation headroom the worker measured."""
+    spec = cand.spec or {}
+    ticket = tickets.for_proposal(ctx.db, cand.proposal_id)
+    bench = any(str(p).startswith("bench:") for p in list((ticket or {}).get("proof") or []) + list(spec.get("acceptance_tests") or []))
+    failed = ctx.db.query(func.count(AgentIntent.id)).filter(
+        AgentIntent.intent_type == IntentType.BUILD_CODE_CANDIDATE.value, AgentIntent.execution_status == IntentExecutionStatus.FAILED,
+        AgentIntent.payload["candidate_id"].astext == str(cand.id), AgentIntent.error.ilike("build failed%")).scalar() or 0
+    failed += 1 if _ev(cand.status) == CodeCandidateStatus.QA_FAILED.value else 0
+    agent_left, corr_left = ctx.model_headroom_usd or (None, None)
+    route = router.choose_build_route(ctx.settings, risk_tier=router.build_risk_tier(spec.get("files_allowed") or [], cand.risk_tier), bench=bench,
+                                      failed_builds=int(failed), budget_remaining_usd=agent_left, correlation_remaining_usd=corr_left)
+    return route, router.build_cost_cap(ms.max_case_cost_usd, agent_left, corr_left)
 
 
 def _already_satisfied(ctx: ExecContext, cand: CodeCandidate, ws) -> Optional[ExecOutcome]:
