@@ -332,6 +332,9 @@ class SocietySettings:
     # The design review (design_review.py): an approved ticket is discussed before it is
     # designed -- the Architect proposes, Scout/QA/Security review, the Governor decides.
     design_review_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_DESIGN_REVIEW_ENABLED", False))
+    # The north star (goals.py): the plan ranks tickets by their key result's weight toward the
+    # charter's north star (revenue) and every role sees the revenue scorecard. Off: unchanged.
+    north_star_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_NORTH_STAR_ENABLED", False))
     # An open candidate with no lifecycle progress this long is STALLED: it is
     # surfaced to the operator queue and no longer holds a portfolio slot. It is
     # never abandoned automatically (society/candidate_health.py).

@@ -703,6 +703,38 @@ def set_objective_status(objective_id: str, body: ObjectiveStatusBody, db: Sessi
     return {"objectives": [{"id": o["id"], "status": o["status"]} for o in charter.objectives(db)]}
 
 
+class RevenueBody(BaseModel):
+    source: Literal["external_job", "sponsorship", "subscription", "other"]
+    amount_usd: float = Field(..., gt=0, le=1_000_000, allow_inf_nan=False)
+    reference: str = Field(..., min_length=1, max_length=255)
+    note: Optional[str] = Field(None, max_length=500)
+    received_at: Optional[datetime] = None
+
+
+@router.get("/company/north-star")
+def north_star(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """The north star scorecard (revenue toward the charter target, pace, key results by weight,
+    model spend on objective tickets) and the recorded external income."""
+    from ...society import goals
+
+    return {**goals.scorecard(db), "revenue_entries": goals.revenue_view(db)}
+
+
+@router.post("/company/revenue", status_code=status.HTTP_201_CREATED)
+def record_revenue(body: RevenueBody, db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """An operator records income earned outside escrow (an external job's payout, a sponsorship)
+    with its reference. Record-only: no wallet or transaction changes. Idempotent per reference."""
+    from ...society import goals
+
+    try:
+        entry = goals.record_revenue(db, source=body.source, amount_usd=body.amount_usd, reference=body.reference,
+                                     received_at=body.received_at, note=body.note, operator_id=operator.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    db.commit()
+    return entry
+
+
 @router.get("/company/plans")
 def list_plans(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
     from ...society import tickets

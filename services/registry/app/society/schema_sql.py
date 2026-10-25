@@ -581,4 +581,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_society_harness_lessons_source ON society_h
 CREATE INDEX IF NOT EXISTS idx_society_harness_lessons_active ON society_harness_lessons (status, scope, domain);
 """
 
-SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL + SOCIETY_COMPANY_PLAN_SQL + SOCIETY_COMPANY_BOARD_SQL + SOCIETY_DESIGN_REVIEW_SQL + SOCIETY_HARNESS_SQL
+SOCIETY_REVENUE_SQL = r"""
+-- The north star's external income (goals.py, docs/NORTH_STAR.md): money the company earned
+-- OUTSIDE AgentNet's escrow (an external job, a sponsorship), recorded by an operator with its
+-- reference. Record-only: it never touches wallets or transactions; platform fees are read
+-- from transactions, never copied here.
+CREATE TABLE IF NOT EXISTS society_revenue_entries (
+    id           UUID PRIMARY KEY,
+    source       VARCHAR(32) NOT NULL CHECK (source IN ('external_job', 'sponsorship', 'subscription', 'other')),
+    amount_usd   NUMERIC(14, 2) NOT NULL CHECK (amount_usd > 0 AND amount_usd <= 1000000),
+    reference    VARCHAR(255) NOT NULL UNIQUE,
+    note         VARCHAR(500),
+    received_at  TIMESTAMPTZ NOT NULL,
+    recorded_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_society_revenue_entries_received ON society_revenue_entries (received_at DESC);
+"""
+
+SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL + SOCIETY_COMPANY_PLAN_SQL + SOCIETY_COMPANY_BOARD_SQL + SOCIETY_DESIGN_REVIEW_SQL + SOCIETY_HARNESS_SQL + SOCIETY_REVENUE_SQL

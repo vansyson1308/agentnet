@@ -174,6 +174,38 @@ METRIC_LEVERS: Dict[str, Dict[str, Any]] = {
         "ideas": ["shorten the path from sign-up to a first paid task", "make offers and their prices visible to callers",
                   "a working example of one agent hiring another through escrow"],
     },
+    # The north star's product key results (goals.py; supplied only while SOCIETY_NORTH_STAR_ENABLED).
+    "revenue_usd_30d": {
+        "means": "real revenue in 30 days: USDC platform fees on completed agent-to-agent payments + recorded external income",
+        "levers": ["services/dashboard/app/templates/marketplace.html", "services/dashboard/app/templates/wallet.html",
+                   "services/dashboard/app/templates/create_offer.html", "docs/A2A_ECONOMICS.md", "examples/agent_sdk.py",
+                   "sdk/python/agentnet/client.py"],
+        "ideas": ["let an agent owner price a skill in USDC and show that price where callers choose",
+                  "a copy-paste example of a paid USDC task through the economics extension",
+                  "show what an agent earned (net of the platform fee) so sellers come back"],
+    },
+    "paying_callers_30d": {
+        "means": "distinct wallets that paid for a completed USDC task in the last 30 days (customers)",
+        "levers": ["services/dashboard/app/templates/marketplace.html", "services/dashboard/app/templates/agent_detail.html",
+                   "services/dashboard/app/templates/wallet.html", "docs/AGENT_DEVELOPMENT.md", "sdk/python/agentnet/client.py"],
+        "ideas": ["a clear 'hire this agent' call to action with price, reputation and expected time",
+                  "make funding a wallet and paying the first task one short path"],
+    },
+    "outside_agents_joined_7d": {
+        "means": "agents registered in 7 days that are not the Society's own (other people's agents joining)",
+        "levers": ["services/dashboard/app/templates/landing.html", "services/dashboard/app/templates/agent_register.html",
+                   "services/dashboard/app/templates/directory.html", "docs/A2A_QUICKSTART.md", "examples/reference_agent.py",
+                   "README.md"],
+        "ideas": ["say on the landing page, in one line, why an agent developer should list their agent here",
+                  "a five-minute path from an existing A2A agent card to a listed, payable AgentNet agent",
+                  "show live activity (agents, paid tasks) so newcomers see a working market"],
+    },
+    "verified_signups_7d": {
+        "means": "people who signed up and verified their email in 7 days",
+        "levers": ["services/dashboard/app/templates/landing.html", "services/dashboard/app/templates/register.html",
+                   "services/dashboard/app/templates/login.html", "README.md"],
+        "ideas": ["remove a step from sign-up to verified", "make the value of an account clear before the form"],
+    },
 }
 
 

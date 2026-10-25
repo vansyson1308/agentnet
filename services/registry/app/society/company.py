@@ -524,7 +524,7 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
     """Everything an operator needs in one view. No secrets, no payloads."""
     from ..a2a import config as a2a_config
     from ..a2a.orm import A2AOutboundCall
-    from . import backlog, outcomes
+    from . import backlog, goals, outcomes
     from .policy import spend_today_usd
 
     evidence = evidence_bundle(db)
@@ -540,6 +540,7 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
             "company_cycle_enabled": settings.company_cycle_enabled,
             "company_board_approval_hours": settings.company_board_approval_hours,
             "design_review_enabled": settings.design_review_enabled,
+            "north_star_enabled": settings.north_star_enabled,
             "autonomous_code_enabled": settings.autonomous_code_enabled,
             "auto_merge_enabled": settings.auto_merge_enabled,
             "production_deploy_enabled": False,  # hard OFF; production releases are the trusted operator boundary
@@ -557,6 +558,7 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
         "promotions_by_status": promotions,
         "bench_trend": backlog.trend(db, with_cost=True),
         "kpis": outcomes.kpis(db, utcnow()),
+        "north_star": goals.scorecard(db),
         "budgets": {
             "model_spend_today_usd": str(spend),
             "daily_model_budget_usd": str(settings.daily_model_budget_usd),

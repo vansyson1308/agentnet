@@ -1038,7 +1038,7 @@ def _engineering(db: Session, agent: Agent, event: SocietyEvent, settings: Socie
         "max_files_per_candidate": int(settings.max_files_per_candidate),
         "max_diff_lines": int(settings.max_diff_lines),
         "conventions": engineering_conventions(settings) if role in ENGINEERING_ROLES else {},
-        "company": {**_company(db), **_design_ticket(db, event, settings), **_design_review(db, event)} if settings.company_cycle_enabled else {},
+        "company": {**_company(db, settings), **_design_ticket(db, event, settings), **_design_review(db, event)} if settings.company_cycle_enabled else {},
     }
 
 
@@ -1071,8 +1071,8 @@ def _design_ticket(db: Session, event: SocietyEvent, settings: SocietySettings) 
     return {"ticket": view, "work_packet": work_packet.for_ticket(db, t, getattr(settings, "repo_root", "") or "")}
 
 
-def _company(db: Session) -> Dict[str, Any]:
-    from . import charter  # noqa: PLC0415 -- the owner's objectives (trusted config) and the ticket rule
+def _company(db: Session, settings: Any = None) -> Dict[str, Any]:
+    from . import charter, goals  # noqa: PLC0415 -- the owner's objectives (trusted config) and the ticket rule
 
     objs = [{"id": o["id"], "title": o["title"], "status": o["status"], "owner_priority": o["owner_priority"],
              "key_results": [{k: kr[k] for k in ("metric_id", "target", "direction")} for kr in o["key_results"]]} for o in charter.objectives(db)]
@@ -1085,7 +1085,7 @@ def _company(db: Session) -> Dict[str, Any]:
         "Proof bench:<task> = the builder harness must deliver that bench dev task: design a change to the HARNESS (work_packet.target names the "
         "file and function the failure evidence implicates; files_allowed = harness files + tests only), acceptance_tests = "
         "work_packet.regression_tests (pytest) -- the bench proof is added for you and QA re-runs the task x3 on the candidate harness. "
-        "probe:<metric> = the deterministic probe.")}
+        "probe:<metric> = the deterministic probe."), **(goals.context_view(db) if goals.enabled(settings) else {})}
 
 
 def _promotions(db: Session, event: SocietyEvent) -> List[Dict[str, Any]]:

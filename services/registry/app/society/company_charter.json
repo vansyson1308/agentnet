@@ -1,18 +1,28 @@
 {
   "mission": "AgentNet is a working marketplace where AI agents find each other, agree on work and get paid through escrow; the Society keeps it working and makes it measurably better.",
+  "north_star": {"metric_id": "revenue_usd_total", "target": 1000000, "direction": "up", "deadline": "2029-12-31", "statement": "AgentNet earns its first $1,000,000 of real revenue: USDC platform fees from agents paying agents, plus paid work the company does for outside clients. Every ticket says which key result it moves and how much that key result weighs toward this number."},
   "objectives": [
     {"id": "O1", "title": "Core journey works every hour", "owner_priority": 1, "status": "proposed",
      "key_results": [
-       {"metric_id": "core_journey_success_rate", "baseline": null, "target": 0.99, "direction": "up", "deadline": "2026-12-31"},
-       {"metric_id": "core_journey_p95_minutes", "baseline": null, "target": 5, "direction": "down", "deadline": "2026-12-31"}]},
+       {"metric_id": "core_journey_success_rate", "baseline": null, "target": 0.99, "direction": "up", "deadline": "2026-12-31", "north_star_weight": 0.4},
+       {"metric_id": "core_journey_p95_minutes", "baseline": null, "target": 5, "direction": "down", "deadline": "2026-12-31", "north_star_weight": 0.2}]},
     {"id": "O2", "title": "Real marketplace", "owner_priority": 2, "status": "proposed",
      "key_results": [
-       {"metric_id": "escrow_tasks_completed_7d", "baseline": null, "target": 50, "direction": "up", "deadline": "2027-03-31"},
-       {"metric_id": "a2a_agents_live_card", "baseline": null, "target": 10, "direction": "up", "deadline": "2027-03-31"}]},
+       {"metric_id": "escrow_tasks_completed_7d", "baseline": null, "target": 50, "direction": "up", "deadline": "2027-03-31", "north_star_weight": 0.7},
+       {"metric_id": "a2a_agents_live_card", "baseline": null, "target": 10, "direction": "up", "deadline": "2027-03-31", "north_star_weight": 0.5}]},
     {"id": "O3", "title": "Self-development efficiency", "owner_priority": 3, "status": "proposed",
      "key_results": [
-       {"metric_id": "bench_holdout_pass_at_1", "baseline": 0.763, "target": 0.863, "direction": "up", "deadline": "2027-01-31"},
-       {"metric_id": "usd_per_objective_pr_30d", "baseline": null, "target": 1.0, "direction": "down", "deadline": "2027-01-31"}]}
+       {"metric_id": "bench_holdout_pass_at_1", "baseline": 0.763, "target": 0.863, "direction": "up", "deadline": "2027-01-31", "north_star_weight": 0.1},
+       {"metric_id": "usd_per_objective_pr_30d", "baseline": null, "target": 1.0, "direction": "down", "deadline": "2027-01-31", "north_star_weight": 0.2}]},
+    {"id": "O4", "title": "Earn real revenue", "owner_priority": 1, "status": "proposed",
+     "key_results": [
+       {"metric_id": "revenue_usd_30d", "baseline": 0, "target": 100, "direction": "up", "deadline": "2027-01-31", "north_star_weight": 1.0},
+       {"metric_id": "paying_callers_30d", "baseline": 0, "target": 5, "direction": "up", "deadline": "2027-01-31", "north_star_weight": 0.9},
+       {"metric_id": "external_jobs_paid_30d", "baseline": 0, "target": 3, "direction": "up", "deadline": "2027-01-31", "north_star_weight": 1.0}]},
+    {"id": "O5", "title": "Get noticed: outside agents and people join", "owner_priority": 2, "status": "proposed",
+     "key_results": [
+       {"metric_id": "outside_agents_joined_7d", "baseline": 0, "target": 20, "direction": "up", "deadline": "2027-01-31", "north_star_weight": 0.6},
+       {"metric_id": "verified_signups_7d", "baseline": 0, "target": 30, "direction": "up", "deadline": "2027-01-31", "north_star_weight": 0.5}]}
   ],
   "departments": {
     "ceo_office": {"charter": "Chief of Staff: ranks department tickets into the daily plan for the owner; never approves it.", "members": ["governor"], "reports_to": "owner", "heartbeat": "daily", "monthly_model_budget_usd": 15},

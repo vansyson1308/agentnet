@@ -57,6 +57,7 @@ TRUNCATE_TABLES = [
     # Maintenance OS (ADR-0010): children first; CASCADE handles the rest.
     "society_bench_reports",
     "society_harness_lessons",
+    "society_revenue_entries",
     "maintenance_knowledge",
     "maintenance_heartbeats",
     "maintenance_toil_events",
