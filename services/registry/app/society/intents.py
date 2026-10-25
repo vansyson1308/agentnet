@@ -421,10 +421,11 @@ class ProposeDesignPayload(_Strict):
 
 
 class ReviewDesignPayload(_Strict):
-    """A reviewer's position on the proposal (Scout: evidence/value, QA: provability, Security: risk)."""
+    """A reviewer's position on the proposal (Scout: evidence/value, QA: provability, Security: risk);
+    ``abstain`` (the reason as a point) when the reviewer has nothing specific to say."""
 
     review_id: uuid.UUID
-    stance: Literal["support", "concern", "object"]
+    stance: Literal["support", "concern", "object", "abstain"]
     points: List[str] = Field(..., min_length=1, max_length=5)
 
     @field_validator("points")

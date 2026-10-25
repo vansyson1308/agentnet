@@ -61,6 +61,7 @@ from .engineering.docs_contract import (
     DOCS_REQUIRED_SECTIONS,
     conventions_line as _docs_conventions_line,
 )
+from .events import EventType
 from .intents import ALLOWED_INTENT_TYPES, REPO_READ_INTENT_TYPES, IntentType
 from .policy import risk_of, runs_last_hour, spend_today_usd
 
@@ -517,14 +518,29 @@ def _story_permissions(db: Session, grant: Optional[AgentCapabilityGrant], event
     from . import design_review, tickets  # noqa: PLC0415
 
     perms = _permissions(grant)
-    if grant is None or grant.role != "architect" or not settings.company_cycle_enabled:
+    if grant is None or not settings.company_cycle_enabled:
         return perms
-    if tickets.for_correlation(db, event.correlation_id) is None and design_review.for_correlation(db, event.correlation_id) is None:
+    reads = {t.value for t in REPO_READ_INTENT_TYPES}
+    payload = event.payload or {}
+    offer = None
+    if event.event_type in design_review.WAKE_EVENT_TYPES and payload.get("target_agent_id") == str(grant.agent_id):
+        # a design-review wake asks this role ONE question (design_review._question): only its answer is on offer
+        offer = {"reviewing": ({IntentType.REVIEW_DESIGN.value}, "design review: answer the question with REVIEW_DESIGN (stance abstain if nothing specific)"),
+                 "deciding": ({IntentType.DECIDE_DESIGN.value}, "design review: decide with DECIDE_DESIGN"),
+                 "proposing": ({IntentType.PROPOSE_DESIGN.value, IntentType.TICKET_NEEDS_INFO.value} | reads, "design review: propose with PROPOSE_DESIGN"),
+                 }.get(str(payload.get("stage") or ""))
+    elif grant.role == "architect" and (tickets.for_correlation(db, event.correlation_id) is not None or design_review.for_correlation(db, event.correlation_id) is not None):
+        if event.event_type == EventType.COMPANY_TICKET_APPROVED and (payload.get("design_review") or {}).get("verdict") == "go":
+            offer = ({IntentType.REQUEST_CODE_CHANGE.value, IntentType.TICKET_NEEDS_INFO.value} | reads,
+                     "ticket story: the design review said go -- design it with REQUEST_CODE_CHANGE (the minutes are in the event)")
+        else:
+            offer = (set(TICKET_STORY_INTENTS) | reads, "ticket story: design intents and the ticket's budgeted reads only")
+    if offer is None:
         return perms
-    offered = set(TICKET_STORY_INTENTS) | {t.value for t in REPO_READ_INTENT_TYPES}
+    offered, story = offer
     perms["allowed_intents"] = [t for t in perms["allowed_intents"] if t in offered]
     perms["intent_risk"] = {t: r for t, r in perms["intent_risk"].items() if t in offered}
-    perms["story"] = "ticket story: design intents and the ticket's budgeted reads only"
+    perms["story"] = story
     return perms
 
 

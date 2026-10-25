@@ -375,7 +375,7 @@ class SocietyWorker:
             reason = verdict.reason
             if decision == PolicyDecision.ALLOW and context.permissions.get("story") and v.type_name not in context.permissions["allowed_intents"]:
                 decision = PolicyDecision.DENY  # the story narrows the grant (context._story_permissions); never widens it
-                reason = f"{v.type_name} is not offered in a ticket story: {', '.join(context.permissions['allowed_intents'])}"
+                reason = f"{v.type_name} is not offered in this story ({context.permissions['story']}): {', '.join(context.permissions['allowed_intents'])}"
             if v.seq >= max_intents and decision == PolicyDecision.ALLOW:
                 decision = PolicyDecision.DENY
                 reason = f"exceeds max_intents_per_run ({max_intents})"
