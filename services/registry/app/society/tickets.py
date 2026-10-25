@@ -227,14 +227,16 @@ def link_text(ticket: Dict[str, Any]) -> str:  # the objective link the PR body 
 # ── the daily plan (Chief of Staff ranking, deterministic) and owner decisions ──
 
 
-def score(t: Dict[str, Any], obj: Dict[str, Any]) -> float:
-    """owner_priority x expected KR impact (share of the KR's gap) / cost."""
+def score(t: Dict[str, Any], obj: Dict[str, Any], *, north_star: bool = False) -> float:
+    """owner_priority x expected KR impact (share of the KR's gap) / cost; with the north star
+    on (goals.py), x (1 + the KR's north_star_weight) -- revenue-moving work ranks first."""
     kr = next((k for k in obj["key_results"] if k["metric_id"] == t["metric_id"]), None)
     if kr is None or kr["direction"] != t["direction"]:
         return 0.0
     gap = abs(float(kr["target"]) - float(kr["baseline"] or 0)) or 1.0
     impact = min(1.0, abs(float(t["expected_effect"] or 0)) / gap)
-    return round((6 - int(obj["owner_priority"])) * impact / (1.0 + float(t["cost_usd"] or 0)), 6)
+    boost = 1.0 + float(kr.get("north_star_weight") or 0.0) if north_star else 1.0
+    return round((6 - int(obj["owner_priority"])) * impact * boost / (1.0 + float(t["cost_usd"] or 0)), 6)
 
 
 def is_red(t: Dict[str, Any]) -> bool:
@@ -259,12 +261,15 @@ def build_plan(db: Session, cycle_id: Optional[uuid.UUID], now: datetime, *, red
     A plan is buildable: it holds at most as many RED tickets as the company can
     still investigate (``red_slots``); non-RED tickets fill the rest. Bench tickets
     already delivered >= 2/3 close first (``close_satisfied``)."""
+    from . import goals  # noqa: PLC0415
+
     close_satisfied(db)
+    north_star = goals.enabled()
     active = {o["id"]: o for o in charter.objectives(db) if o["status"] == "active"}
     rows = db.execute(text("SELECT * FROM society_tickets WHERE status = 'proposed' AND plan_id IS NULL AND source NOT IN :bypass "
                            "AND created_at >= :since ORDER BY created_at").bindparams(bindparam("bypass", expanding=True)),
                       {"bypass": list(BYPASS_SOURCES), "since": now - timedelta(days=7)}).mappings().all()
-    ranked = sorted(((score(dict(r), active[r["objective_id"]]), dict(r)) for r in rows if r["objective_id"] in active), key=lambda x: -x[0])
+    ranked = sorted(((score(dict(r), active[r["objective_id"]], north_star=north_star), dict(r)) for r in rows if r["objective_id"] in active), key=lambda x: -x[0])
     chosen, per_dep, slots, red_skipped = [], {}, red_slots(db, red_cap), 0
     for sc, t in ranked:
         if sc > 0 and per_dep.get(t["department"], 0) < PER_DEPARTMENT and len(chosen) < PLAN_MAX:
@@ -275,7 +280,8 @@ def build_plan(db: Session, cycle_id: Optional[uuid.UUID], now: datetime, *, red
             slots -= int(red)
             per_dep[t["department"]] = per_dep.get(t["department"], 0) + 1
             chosen.append({"ticket_id": str(t["id"]), "title": t["title"], "objective_id": t["objective_id"], "metric_id": t["metric_id"],
-                           "department": t["department"], "score": sc, "risk": "RED" if red else "judged_from_diff"})
+                           "department": t["department"], "score": sc, "risk": "RED" if red else "judged_from_diff",
+                           **({"north_star_weight": goals.weight(active[t["objective_id"]], t["metric_id"])} if north_star else {})})
     if not chosen:
         if not active:
             why = "no active objective (activate one: company:activate:O<n>)"

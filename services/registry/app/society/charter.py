@@ -2,8 +2,9 @@
 
 Trusted config on the RED society path, edited only by the owner (the meaning
 gate refuses a spec that names it). Validated at load -- at most five
-objectives, every key-result ``metric_id`` resolvable in ``metrics.py`` -- or
-refused whole. Effective objective status: an operator override
+objectives, every key-result ``metric_id`` resolvable in ``metrics.py``, an
+optional ``north_star`` (goals.py) and each KR's ``north_star_weight`` in 0..1 --
+or refused whole. Effective objective status: an operator override
 (``society_objective_status``) first, else the file.
 """
 
@@ -49,6 +50,14 @@ def validate(doc: Dict[str, Any]) -> Dict[str, Any]:
                 raise CharterError(f"objective {oid}: metric_id {kr.get('metric_id')!r} has no deterministic source")
             if kr.get("direction") not in ("up", "down") or kr.get("target") is None or not kr.get("deadline"):
                 raise CharterError(f"objective {oid}: key result {kr.get('metric_id')} needs target, direction up|down and deadline")
+            if not 0.0 <= float(kr.get("north_star_weight", 0.0)) <= 1.0:
+                raise CharterError(f"objective {oid}: key result {kr.get('metric_id')} north_star_weight must be within 0..1")
+    ns = doc.get("north_star")
+    if ns is not None:
+        if not metrics.resolvable(str(ns.get("metric_id"))) or ns.get("direction") not in ("up", "down"):
+            raise CharterError(f"north_star: metric_id {ns.get('metric_id')!r} needs a deterministic source and direction up|down")
+        if not float(ns.get("target") or 0) > 0 or not ns.get("deadline") or not str(ns.get("statement") or "").strip():
+            raise CharterError("north_star needs a positive target, a deadline and a statement")
     missing = [d for d in DEPARTMENTS if d not in (doc.get("departments") or {})]
     if missing:
         raise CharterError(f"charter misses departments {missing}")

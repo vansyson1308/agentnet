@@ -26,7 +26,7 @@ GREEN = "tests/test_textutil.py"  # passes on the fixture's base revision
 
 def test_the_charter_loads_and_refuses_unresolvable_metrics_and_too_many_objectives():
     doc = charter.load()
-    assert [o["id"] for o in doc["objectives"]] == ["O1", "O2", "O3"] and all(o["status"] == "proposed" for o in doc["objectives"])
+    assert [o["id"] for o in doc["objectives"]] == ["O1", "O2", "O3", "O4", "O5"] and all(o["status"] == "proposed" for o in doc["objectives"])
     bad = copy.deepcopy(doc)
     bad["objectives"][0]["key_results"][0]["metric_id"] = "vibes"
     with pytest.raises(charter.CharterError, match="no deterministic source"):

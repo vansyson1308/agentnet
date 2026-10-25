@@ -307,3 +307,11 @@ A bench item becomes a ticket only when the task misses the proof bar in each of
 second agrees; a real regression agrees and is supplied. A supplied bench ticket whose gap does not
 reproduce closes `closed` (with both scores in its reason) in `close_satisfied`, which also runs
 before the board approves a plan; the gate applies the same rule. An owner's own ticket is exempt.
+
+## North star (revenue toward $1M)
+
+The charter's `north_star` (`revenue_usd_total` → $1,000,000) and each KR's `north_star_weight`
+rank the plan, reach every role and widen growth supply to the revenue KRs (O4, O5) when
+`SOCIETY_NORTH_STAR_ENABLED=true` (off by default). Revenue is USDC platform fees plus
+operator-recorded external income (record-only ledger, migration `0022_revenue_ledger`).
+See [NORTH_STAR.md](NORTH_STAR.md).

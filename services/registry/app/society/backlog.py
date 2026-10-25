@@ -114,6 +114,15 @@ def issue_items(provider: Any) -> List[Dict[str, Any]]:
 #: Key results the company grows through product work (kr_gap_items). The others have their own
 #: supply: core journey -> maintenance incidents, bench pass@1 -> bench items, spend -> none (a meta KR).
 GROWTH_METRICS = ("escrow_tasks_completed_7d", "a2a_agents_live_card")
+#: The north star's product key results (goals.py), supplied only while it is on. External
+#: income (external_jobs_paid_30d) has no product lever: it is the owner's outreach.
+NORTH_STAR_GROWTH_METRICS = ("revenue_usd_30d", "paying_callers_30d", "outside_agents_joined_7d", "verified_signups_7d")
+
+
+def growth_metrics() -> tuple:
+    from . import goals  # noqa: PLC0415
+
+    return GROWTH_METRICS + (NORTH_STAR_GROWTH_METRICS if goals.enabled() else ())
 
 
 def kr_gap_items(db: Session, now: Any = None) -> List[Dict[str, Any]]:
@@ -125,13 +134,13 @@ def kr_gap_items(db: Session, now: Any = None) -> List[Dict[str, Any]]:
 
     now = now or utcnow()
     week = "%d-W%02d" % now.isocalendar()[:2]
-    items = []
+    items, growth = [], growth_metrics()
     for obj in charter.objectives(db):
         if obj["status"] != "active":
             continue
         for kr in obj["key_results"]:
             m = kr["metric_id"]
-            if m not in GROWTH_METRICS:
+            if m not in growth:
                 continue
             current = metrics.read(db, m, now)
             target = float(kr["target"])
