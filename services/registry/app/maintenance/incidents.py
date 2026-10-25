@@ -38,6 +38,11 @@ from .taxonomy import IncidentClass, IncidentStatus, Priority, PRIORITY_RANK, Se
 #: itself still passes through the narrow repair exception, policy.py).
 FREEZING_CLASSES = frozenset({IncidentClass.AVAILABILITY, IncidentClass.SECURITY, IncidentClass.ECONOMIC_INVARIANT, IncidentClass.DATA_INVARIANT})
 FREEZE_SOURCE = "maintenance"
+#: An AVAILABILITY incident freezes only once the outage is sustained (the public
+#: surface monitor's FREEZE_MIN_OUTAGE_MINUTES rule): a blip that recovers inside
+#: the window -- e.g. the collector's own process starved -- must not leave a
+#: freeze behind for an operator to lift. Security and money incidents freeze at once.
+AVAILABILITY_FREEZE_MIN_OUTAGE_MINUTES = 15
 RECURRENCE_WINDOW = timedelta(days=7)
 
 #: Case states in which a release of the incident's own repair is settling:
@@ -177,10 +182,19 @@ def ingest_violation(db: Session, settings: MaintenanceSettings, v: Violation, *
         db, sli=v.sli, target=v.target, source=v.source, collector_version=v.collector_version, trust_class=v.trust_class,
         ok=False, payload=payload, fingerprint=fp, incident_id=inc.id, observed_at=now,
     )
-    if IncidentClass(inc.incident_class) in FREEZING_CLASSES and Severity(inc.severity) is not Severity.MINOR:
+    if IncidentClass(inc.incident_class) in FREEZING_CLASSES and Severity(inc.severity) is not Severity.MINOR and _freeze_due(inc, now):
         ensure_incident_freeze(db, inc, now=now)
     db.flush()
     return inc, created
+
+
+def _freeze_due(inc: MaintenanceIncident, now: datetime) -> bool:
+    if IncidentClass(inc.incident_class) is not IncidentClass.AVAILABILITY:
+        return True
+    first = inc.first_observed_at or now
+    if first.tzinfo is None and now.tzinfo is not None:
+        first = first.replace(tzinfo=now.tzinfo)
+    return now - first >= timedelta(minutes=AVAILABILITY_FREEZE_MIN_OUTAGE_MINUTES)
 
 
 def ensure_incident_freeze(db: Session, inc: MaintenanceIncident, *, now: Optional[datetime] = None) -> Optional[IncidentFreeze]:
@@ -278,6 +292,7 @@ def ingest_many(db: Session, settings: MaintenanceSettings, violations: Iterable
 __all__ = [
     "Violation",
     "FREEZING_CLASSES",
+    "AVAILABILITY_FREEZE_MIN_OUTAGE_MINUTES",
     "FREEZE_SOURCE",
     "record_observation",
     "ingest_violation",

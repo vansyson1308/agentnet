@@ -165,6 +165,12 @@ def test_security_objection_bars_go_the_last_round_has_no_revise_and_drop_refuse
     assert _events(db, EventType.COMPANY_TICKET_APPROVED) == []
 
 
+def _expire_stage(db, review):
+    """Move the review's current stage window into the past (the sweep runs on NOW())."""
+    db.execute(text("UPDATE society_design_reviews SET stage_at = stage_at - INTERVAL '3 hours' WHERE id = :i"), {"i": review["id"]})
+    db.flush()
+
+
 def _wakes(db, review_id):
     """{event type: sorted roles of the runs it created} for one review's stage wakes."""
     rows = db.execute(text("SELECT e.event_type, e.actor_type, e.causation_depth, r.role FROM society_events e JOIN agent_runs r ON r.event_id = e.id "
@@ -247,17 +253,23 @@ def test_a_timeout_is_never_approval(db, review_on):
     assert design_review.get(db, r1["id"])["status"] == "returned"
     tickets.set_status(db, t1["id"], "refused", "kept out of the next plans of this test")
 
-    # nobody reviewed: the Governor decides anyway, and sees who is missing
+    # nobody reviewed: one re-wake, then the Governor decides anyway and sees who stayed silent
     t2, r2 = _proposing(db, report)
-    assert design_review.sweep(db, utcnow() + design_review.REVIEW_WINDOW + timedelta(minutes=1)) == 1
+    _expire_stage(db, r2)
+    assert design_review.sweep(db, utcnow()) == 1 and design_review.get(db, r2["id"])["status"] == "reviewing"
+    _expire_stage(db, r2)
+    assert design_review.sweep(db, utcnow()) == 1
     r2 = design_review.get(db, r2["id"])
     assert r2["status"] == "deciding"
     (ready,) = [e for e in _events(db, EventType.DESIGN_REVIEW_READY) if e.payload["review_id"] == str(r2["id"])]
-    assert "missing: scout, qa, security" in ready.payload["why"] and ready.payload["target_agent_id"] == str(report.agents["governor"])
+    assert "silent: scout, qa, security" in ready.payload["why"] and ready.payload["target_agent_id"] == str(report.agents["governor"])
     view = design_review.context_view(db, r2["correlation_id"])["design_review"]
-    assert view["missing"] == ["scout", "qa", "security"] and "missing: scout, qa, security" in view["next"]
-    # ... and no decision in time is a return, never a go
-    assert design_review.sweep(db, utcnow() + design_review.DECISION_WINDOW + timedelta(minutes=1)) == 1
+    assert view["silent"] == ["scout", "qa", "security"] and "silent: scout, qa, security" in view["next"]
+    # ... and no decision in time (after one re-wake of the Governor) is a return, never a go
+    _expire_stage(db, r2)
+    assert design_review.sweep(db, utcnow()) == 1 and design_review.get(db, r2["id"])["status"] == "deciding"
+    _expire_stage(db, r2)
+    assert design_review.sweep(db, utcnow()) == 1
     db.commit()
     t2 = tickets.for_proposal(db, t2["proposal_id"])
     assert t2["status"] == "proposed" and "no Governor decision" in t2["reason"]
@@ -267,8 +279,9 @@ def test_a_timeout_is_never_approval(db, review_on):
     t3, r3 = _proposing(db, report)
     design_review.post_position(db, review_id=r3["id"], correlation_id=r3["correlation_id"], agent=_agent(db, report, "security"), role="security",
                                 position={"stance": "object", "points": ["it widens an auth path"]}, causation=None)
-    assert design_review.sweep(db, utcnow() + design_review.REVIEW_WINDOW + timedelta(minutes=1)) == 1
-    assert design_review.sweep(db, utcnow() + design_review.DECISION_WINDOW + timedelta(minutes=1)) == 1
+    for _ in range(4):  # reviewers re-woken, then silent; the Governor re-woken, then the return
+        _expire_stage(db, r3)
+        assert design_review.sweep(db, utcnow()) == 1
     db.commit()
     t3 = tickets.for_proposal(db, t3["proposal_id"])
     assert t3["status"] == "proposed" and "security objected" in t3["reason"]
@@ -348,3 +361,115 @@ def test_the_operator_sees_the_minutes(db, api_client, review_on, user_token):
     assert api_client.get("/v1/society/company/reviews", headers=auth(plain)).status_code == 403
     body = api_client.get("/v1/society/company/reviews", headers=auth(op)).json()
     assert body["counts"] == {"reviewing": 1} and body["reviews"][0]["proposal"]["files"] == ["src/textutil.py"]
+
+
+# ── G1j: the review is a conversation each role is asked to join ─────────
+
+
+def test_each_reviewer_is_asked_by_name_and_offered_only_review_design(db, SessionLocal, review_on):
+    """Staging 10-24: reviewers woke with the whole grant on offer and answered something else
+    (or nothing). Each wake now carries the question addressed to that role and a deadline;
+    the story offers only REVIEW_DESIGN (stance ``abstain`` when there is nothing specific)."""
+    report, settings = review_on
+    _, review = _proposing(db, report)
+    db.commit()
+    asks = [e for e in _events(db, EventType.DESIGN_REVIEW_PROPOSED) if e.payload["review_id"] == str(review["id"])]
+    assert sorted(e.payload["role"] for e in asks) == ["qa", "scout", "security"]
+    for e in asks:
+        assert e.payload["protocol"] == design_review.PROTOCOL and e.payload["deadline"]
+        q = e.payload["question"]
+        assert q.startswith(e.payload["role"].capitalize()) and "REVIEW_DESIGN" in q and "abstain" in q
+    seen = {}
+
+    def decide(ctx):
+        if ctx.event["type"] == EventType.DESIGN_REVIEW_PROPOSED:
+            seen[ctx.role] = list(ctx.permissions["allowed_intents"])
+            stance = "abstain" if ctx.role == "scout" else "support"
+            return _act({"type": "REVIEW_DESIGN", "payload": {"review_id": _review_id(ctx), "stance": stance, "points": [f"{ctx.role}: nothing specific to add" if stance == "abstain" else f"{ctx.role}: the proof is specific"]}},
+                        {"type": "WRITE_MEMORY", "payload": {"title": "x", "content": "a review is a good time to remember things", "tags": []}})
+        if ctx.event["type"] == EventType.DESIGN_REVIEW_READY:
+            seen["governor"] = list(ctx.permissions["allowed_intents"])
+        return IDLE
+
+    worker = SocietyWorker(SessionLocal, settings=settings, model=FakeModel(decide), worker_id="w-ask", telemetry_enabled=False, builder_model=ScriptedActivityModel([]))
+    asyncio.run(worker.run_until_idle(max_cycles=12))
+    db.expire_all()
+    review = design_review.get(db, review["id"])
+    assert review["status"] == "deciding"
+    assert seen["scout"] == seen["qa"] == seen["security"] == ["REVIEW_DESIGN"] and seen["governor"] == ["DECIDE_DESIGN"], seen
+    assert review["status"] == "deciding" and review["positions"]["scout"]["stance"] == "abstain"
+    denied = db.execute(text("SELECT COUNT(*) FROM agent_intents WHERE intent_type = 'WRITE_MEMORY' AND execution_status = 'denied'")).scalar()
+    assert denied == 3, "an intent the review story does not offer is denied"
+    (ready,) = [e for e in _events(db, EventType.DESIGN_REVIEW_READY) if e.payload["review_id"] == str(review["id"])]
+    positions = ready.payload["positions"]
+    assert positions["_untrusted"] is True and positions["data"]["qa"] == {"stance": "support", "points": ["qa: the proof is specific"]}
+    assert "Governor" in ready.payload["question"] and ready.payload["deadline"] and ready.payload["silent"] == []
+
+
+def test_a_silent_reviewer_is_woken_once_more_then_recorded_silent(db, review_on):
+    report, _ = review_on
+    _, review = _proposing(db, report)
+    design_review.post_position(db, review_id=review["id"], correlation_id=review["correlation_id"], agent=_agent(db, report, "qa"), role="qa",
+                                position={"stance": "concern", "points": ["the proof needs a failing case"]}, causation=None)
+    _expire_stage(db, review)
+    assert design_review.sweep(db, utcnow()) == 1
+    again = [e for e in _events(db, EventType.DESIGN_REVIEW_PROPOSED) if e.payload["review_id"] == str(review["id"]) and e.payload["rewake"]]
+    assert sorted(e.payload["role"] for e in again) == ["scout", "security"], "only the reviewers who have not spoken"
+    assert design_review.sweep(db, utcnow()) == 0, "the re-wake gets its own window"
+    _expire_stage(db, review)
+    assert design_review.sweep(db, utcnow()) == 1
+    review = design_review.get(db, review["id"])
+    assert review["status"] == "deciding"
+    assert {r: p["stance"] for r, p in review["positions"].items()} == {"qa": "concern", "scout": "silent", "security": "silent"}
+    assert review["positions"]["scout"]["by"] == "runtime"
+    # silence never speaks: no chat message, and it does not bar or allow anything
+    roles = db.execute(text("SELECT g.role FROM agent_chat c JOIN agent_capability_grants g ON g.agent_id = c.from_agent_id WHERE c.thread_id = :r"),
+                       {"r": review["id"]}).scalars().all()
+    assert sorted(roles) == ["architect", "qa"]
+    design_review.decide(db, review_id=review["id"], correlation_id=review["correlation_id"], agent=_agent(db, report, "governor"),
+                         decision={"verdict": "go", "rationale": "QA's concern is a condition", "conditions": ["add the failing case"]})
+    assert design_review.get(db, review["id"])["decision"]["verdict"] == "go"
+
+
+def test_after_go_the_architect_designs_and_does_not_propose_again(db, SessionLocal, review_on):
+    report, settings = review_on
+    _, review = _proposing(db, report)
+    for role in design_review.REVIEWERS:
+        design_review.post_position(db, review_id=review["id"], correlation_id=review["correlation_id"], agent=_agent(db, report, role), role=role,
+                                    position={"stance": "support", "points": ["ok"]}, causation=None)
+    design_review.decide(db, review_id=review["id"], correlation_id=review["correlation_id"], agent=_agent(db, report, "governor"),
+                         decision={"verdict": "go", "rationale": "small and provable", "conditions": []})
+    db.commit()
+    seen = {}
+
+    def decide(ctx):
+        if ctx.role == "architect":
+            seen[ctx.event["type"]] = list(ctx.permissions["allowed_intents"])
+            seen["story"] = ctx.permissions.get("story")
+        return IDLE
+
+    worker = SocietyWorker(SessionLocal, settings=settings, model=FakeModel(decide), worker_id="w-handoff", telemetry_enabled=False, builder_model=ScriptedActivityModel([]))
+    asyncio.run(worker.run_until_idle(max_cycles=6))
+    offered = seen[EventType.COMPANY_TICKET_APPROVED]
+    assert "REQUEST_CODE_CHANGE" in offered and "PROPOSE_DESIGN" not in offered and "said go" in seen["story"]
+
+
+def test_the_validator_judges_only_reviews_run_by_this_protocol(db, review_on, engine, capsys):
+    from .test_company_board import _phase5
+
+    report, _ = review_on
+    p5 = _phase5()
+    assert p5.REVIEW_PROTOCOL == design_review.PROTOCOL  # one protocol number, two readers
+    _, legacy = _proposing(db, report)
+    db.execute(text("UPDATE society_events SET payload = payload - 'protocol' WHERE payload ->> 'review_id' = :r"), {"r": str(legacy["id"])})
+    db.execute(text("UPDATE society_design_reviews SET status = 'go', decision = CAST(:d AS JSONB) WHERE id = :i"),
+               {"i": legacy["id"], "d": '{"verdict": "go", "by": "runtime", "rationale": "legacy timeout"}'})
+    db.commit()
+    conn = engine.raw_connection()
+    try:
+        out = p5.Out()
+        p5.step_autonomy(out, conn, 7)
+    finally:
+        conn.close()
+    assert "autonomy.A02" not in out.failed and "autonomy.A03" not in out.failed, "a review from before this protocol is listed, not judged"
+    assert "1 legacy review(s) not judged" in capsys.readouterr().out

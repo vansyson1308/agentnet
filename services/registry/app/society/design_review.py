@@ -18,12 +18,17 @@ Rules the models cannot argue with:
 - the last round has no ``revise``;
 - every contribution is also an AgentChat message in the review's thread
   (``thread_id`` = review id), so the meeting is readable as a conversation;
-- a timeout is never approval, and never strands a ticket (``sweep``): no proposal
-  in time -> the Architect is woken once more, then the ticket returns to
-  ``proposed`` with the reason; reviews missing at the window -> the Governor
-  decides with what it has ("missing: ..." in its wake and context); no decision
-  in time -> the ticket returns to ``proposed``. Only the Governor says ``go``
-  (staging 2026-10-14: two reviews passed by timeout with one message between them).
+- each wake asks ITS role the stage's question by name, with a deadline, and the
+  story offers only that stage's intent (context._story_permissions): reviewers
+  REVIEW_DESIGN (stance ``abstain`` when they have nothing specific), the Governor
+  DECIDE_DESIGN with every position in its wake; after ``go`` the Architect is
+  offered the design (REQUEST_CODE_CHANGE), not another proposal (G1j);
+- a timeout is never approval, and never strands a ticket (``sweep``): every stage
+  gets ONE re-wake of the roles that have not acted, with a fresh window; then no
+  proposal returns the ticket to ``proposed``, a reviewer who stayed quiet is
+  recorded ``silent`` and the Governor decides with what it has, no decision
+  returns the ticket. Only the Governor says ``go`` (staging 2026-10-14: two
+  reviews passed by timeout with one message between them).
 
 Off unless ``SOCIETY_DESIGN_REVIEW_ENABLED``. Owner and incident tickets skip it.
 Nothing here touches wallets, grants, secrets or the risk classifier.
@@ -50,6 +55,12 @@ PROPOSAL_WINDOW = timedelta(hours=2)
 REVIEW_WINDOW = timedelta(hours=2)
 DECISION_WINDOW = timedelta(hours=2)
 OPEN_STATUSES = ("proposing", "reviewing", "deciding")
+#: wakes carry it; the validator judges only reviews run by this protocol (deploy/railway/phase5_live.py A02/A03)
+PROTOCOL = 2
+STAGE_WINDOWS = {"proposing": PROPOSAL_WINDOW, "reviewing": REVIEW_WINDOW, "deciding": DECISION_WINDOW}
+REVIEW_FOCUS = {"scout": "is there evidence this moves the ticket's key result, and is it worth doing",
+                "qa": "can the proof fail on the base revision and pass after the change",
+                "security": "what could this change break or expose"}
 
 
 def enabled(settings: Any = None) -> bool:
@@ -112,18 +123,36 @@ def _role_agents(db: Session, roles: Any) -> List[tuple]:
         {"roles": list(roles)}).all()]
 
 
-def _wake(db: Session, review: Dict[str, Any], *, extra: Optional[Dict[str, Any]] = None, rewake: bool = False, causation: Any = None) -> int:
-    """Wake the roles that must act at the review's CURRENT stage: one system event per role
-    agent in the review's story (caused by the contribution that moved the stage, if any),
-    targeted so nobody else is woken. Returns wakes."""
+def _question(stage: str, role: str, review: Dict[str, Any], title: str, deadline: str) -> str:
+    """The one thing this role is asked at this stage (structural: our words, the ticket title)."""
+    n = int(review["round"])
+    if stage == "proposing":
+        return (f"Architect: propose the design for '{title}' (round {n}/{MAX_ROUNDS}): one PROPOSE_DESIGN "
+                f"{{review_id, approach, files, proof, risks}} before {deadline}.")
+    if stage == "reviewing":
+        return (f"{role.capitalize()}: {REVIEW_FOCUS.get(role, 'does this proposal hold up')}? Answer with ONE REVIEW_DESIGN "
+                f"{{review_id, stance: support|concern|object|abstain, points}} about THIS proposal before {deadline}; "
+                "abstain (the reason as a point) when you have nothing specific -- silence is recorded as silent.")
+    return (f"Governor: decide round {n}/{MAX_ROUNDS} of '{title}' with ONE DECIDE_DESIGN {{review_id, verdict: go|revise|drop, "
+            f"rationale, conditions}} before {deadline}; a Security object rules out go" + ("; this round has no revise." if n >= MAX_ROUNDS else "."))
+
+
+def _wake(db: Session, review: Dict[str, Any], *, extra: Optional[Dict[str, Any]] = None, rewake: bool = False, causation: Any = None,
+          roles: Optional[List[str]] = None) -> int:
+    """Wake the roles that must act at the review's CURRENT stage (or only ``roles`` of them):
+    one system event per role agent in the review's story (caused by the contribution that
+    moved the stage, if any), targeted so nobody else is woken, each with its question and
+    the stage deadline. Returns wakes."""
     stage = review["status"]
     t = _ticket(db, review)
+    deadline = (review["stage_at"] + STAGE_WINDOWS[stage]).isoformat(timespec="minutes")
     n = 0
-    for agent_id, role in _role_agents(db, STAGE_ROLES[stage]):
+    for agent_id, role in _role_agents(db, roles if roles is not None else STAGE_ROLES[stage]):
         emit_event(db, event_type=STAGE_EVENTS[stage], actor_type="system", subject_type="proposal", subject_id=t["proposal_id"],
                    correlation_id=review["correlation_id"], causation=causation,
                    payload={"review_id": str(review["id"]), "round": int(review["round"]), "stage": stage, "role": role, "target_agent_id": agent_id,
-                            "rewake": rewake, **_ticket_brief(t), **(extra or {})},
+                            "rewake": rewake, "protocol": PROTOCOL, "deadline": deadline, "question": _question(stage, role, review, t["title"], deadline),
+                            **_ticket_brief(t), **(extra or {})},
                    idempotency_key=f"design_review.{stage}:{review['id']}:{review['round']}:{agent_id}" + (":rewake" if rewake else ""))
         n += 1
     return n
@@ -193,9 +222,22 @@ def _missing(review: Dict[str, Any]) -> List[str]:
     return [r for r in REVIEWERS if r not in (review.get("positions") or {})]
 
 
+def _silent(review: Dict[str, Any]) -> List[str]:
+    return [r for r in REVIEWERS if ((review.get("positions") or {}).get(r) or {}).get("stance") == "silent"]
+
+
+def _governor_brief(review: Dict[str, Any], why: str) -> Dict[str, Any]:
+    """Everything the Governor decides on, in its wake: each position (model-authored: untrusted)."""
+    from .context import untrusted  # noqa: PLC0415 -- context imports this module
+
+    positions = review.get("positions") or {}
+    return {"positions": untrusted({r: {"stance": p["stance"], "points": list(p.get("points") or [])} for r, p in positions.items()}, source="agent:reviewers"),
+            "stances": {r: p["stance"] for r, p in positions.items()}, "missing": _missing(review), "silent": _silent(review), "why": why}
+
+
 def _ready(db: Session, review: Dict[str, Any], *, why: str, causation: Any = None) -> None:
     _update(db, review["id"], status="deciding", stage_at=utcnow())
-    _wake(db, get(db, review["id"]), causation=causation, extra={"stances": {r: p["stance"] for r, p in (review["positions"] or {}).items()}, "missing": _missing(review), "why": why})
+    _wake(db, get(db, review["id"]), causation=causation, extra=_governor_brief(review, why))
 
 
 def decide(db: Session, *, review_id: Any, correlation_id: Any, agent: Any, decision: Dict[str, Any]) -> Dict[str, Any]:
@@ -247,9 +289,15 @@ def _settle(db: Session, review: Dict[str, Any], decision: Dict[str, Any]) -> No
 
 
 def _rewoken(db: Session, review: Dict[str, Any]) -> bool:
+    """Has the CURRENT stage of this round had its one re-wake?"""
     return db.execute(text("SELECT 1 FROM society_events WHERE event_type = :t AND payload ->> 'review_id' = :r AND payload ->> 'round' = :n "
                            "AND payload ->> 'rewake' = 'true' LIMIT 1"),
-                      {"t": EventType.DESIGN_REVIEW_REQUESTED, "r": str(review["id"]), "n": str(review["round"])}).first() is not None
+                      {"t": STAGE_EVENTS[review["status"]], "r": str(review["id"]), "n": str(review["round"])}).first() is not None
+
+
+def _rewake(db: Session, review: Dict[str, Any], now: datetime, *, roles: Optional[List[str]] = None, extra: Optional[Dict[str, Any]] = None) -> None:
+    _update(db, review["id"], stage_at=now)
+    _wake(db, get(db, review["id"]), rewake=True, roles=roles, extra=extra)
 
 
 def _hours(window: timedelta) -> str:
@@ -263,24 +311,32 @@ def sweep(db: Session, now: datetime) -> int:
     rows = db.execute(text("SELECT * FROM society_design_reviews WHERE status IN ('proposing', 'reviewing', 'deciding') ORDER BY created_at FOR UPDATE SKIP LOCKED")).mappings().all()
     for r in rows:
         review = dict(r)
-        age = now - review["stage_at"]
-        if review["status"] == "proposing" and age >= PROPOSAL_WINDOW:
-            if not _rewoken(db, review):  # once more, with a fresh window
-                _update(db, review["id"], stage_at=now)
-                _wake(db, review, rewake=True)
+        stage = review["status"]
+        if now - review["stage_at"] < STAGE_WINDOWS[stage]:
+            continue
+        n += 1
+        again = not _rewoken(db, review)  # once more, with a fresh window, only those who have not acted
+        if stage == "proposing":
+            if again:
+                _rewake(db, review, now)
             else:
                 _settle(db, review, {"verdict": "return", "conditions": [], "by": "runtime",
                                      "rationale": f"no design proposal after a re-wake ({_hours(PROPOSAL_WINDOW)} each): returned for re-planning"})
-            n += 1
-        elif review["status"] == "reviewing" and age >= REVIEW_WINDOW:
-            _ready(db, review, why=f"review window ({_hours(REVIEW_WINDOW)}) elapsed; missing: " + ", ".join(_missing(review)))
-            n += 1
-        elif review["status"] == "deciding" and age >= DECISION_WINDOW:
+        elif stage == "reviewing":
+            if again:
+                _rewake(db, review, now, roles=_missing(review))
+            else:
+                silent = _missing(review)
+                positions = {**(review["positions"] or {}), **{r: {"stance": "silent", "points": [], "agent": None, "by": "runtime"} for r in silent}}
+                _update(db, review["id"], positions=positions)
+                _ready(db, get(db, review["id"]), why=f"review window ({_hours(REVIEW_WINDOW)}) elapsed after a re-wake; silent: " + ", ".join(silent))
+        elif again:
+            _rewake(db, review, now, extra=_governor_brief(review, f"no decision within {_hours(DECISION_WINDOW)}: woken once more"))
+        else:
             objections = [k for k, p in (review["positions"] or {}).items() if p.get("stance") == "object"]
             _settle(db, review, {"verdict": "return", "conditions": [], "by": "runtime",
-                                 "rationale": f"no Governor decision within {_hours(DECISION_WINDOW)}" + (f" and {', '.join(objections)} objected" if objections else "")
+                                 "rationale": f"no Governor decision after a re-wake ({_hours(DECISION_WINDOW)} each)" + (f" and {', '.join(objections)} objected" if objections else "")
                                  + ": returned for re-planning"})
-            n += 1
     return n
 
 
@@ -291,10 +347,13 @@ def context_view(db: Session, correlation_id: Any) -> Dict[str, Any]:
         return {}
     t = _ticket(db, review)
     step = {"proposing": "Architect: PROPOSE_DESIGN {review_id, approach, files, proof, risks}",
-            "reviewing": "Scout, QA, Security: REVIEW_DESIGN {review_id, stance: support|concern|object, points} -- once each, about THIS proposal",
+            "reviewing": "Scout, QA, Security: REVIEW_DESIGN {review_id, stance: support|concern|object|abstain, points} -- once each, about THIS proposal",
             "deciding": "Governor: DECIDE_DESIGN {review_id, verdict: go|revise|drop, rationale, conditions} -- Security object bars go; "
                         f"round {MAX_ROUNDS} has no revise" + (f"; missing: {', '.join(_missing(review))} (decide with what you have)" if _missing(review) else "")
+                        + (f"; silent: {', '.join(_silent(review))} (woken twice, said nothing)" if _silent(review) else "")
             }.get(review["status"], "nothing: the review is settled")
+    if review["status"] in STAGE_WINDOWS:
+        step += f"; deadline {(review['stage_at'] + STAGE_WINDOWS[review['status']]).isoformat(timespec='minutes')}"
     from . import work_packet  # noqa: PLC0415
     from .context import untrusted  # noqa: PLC0415
 
@@ -305,6 +364,7 @@ def context_view(db: Session, correlation_id: Any) -> Dict[str, Any]:
         "proposal": untrusted(review["proposal"], source="agent:architect") if review["proposal"] else None,
         "positions": untrusted(review["positions"] or {}, source="agent:reviewers"),
         "missing": _missing(review) if review["status"] == "deciding" else [],
+        "silent": _silent(review),
         "earlier_rounds": untrusted(review["history"] or [], source="agent:review_history"),
     }}
 

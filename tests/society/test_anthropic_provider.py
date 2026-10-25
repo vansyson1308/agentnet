@@ -125,7 +125,8 @@ def test_messages_request_shape(monkeypatch):
     assert req["model"] == "claude-sonnet-5-5" and req["max_tokens"] == s.model_max_output_tokens
     assert "temperature" not in req and "response_format" not in req  # the Messages API refuses sampling params
     assert req["system"][0]["cache_control"] == {"type": "ephemeral"} and "json" in req["system"][0]["text"]
-    assert req["cache_control"] == {"type": "ephemeral"}
+    # a decide run is one-shot: its context is unique, so caching it would only pay the 1.25x write
+    assert "cache_control" not in req
     assert [t["role"] for t in req["messages"]] == ["user"]
     assert req["output_config"] == {"effort": "high"} and "thinking" not in req
     assert req["betas"] == [AnthropicModel.FALLBACK_BETA] and req["fallbacks"] == "default"
@@ -154,15 +155,29 @@ def test_usage_cache_thinking_and_list_price(monkeypatch):
     assert r.provider == "anthropic" and r.decision.decision_summary == "fine"
     assert (r.tokens_in, r.tokens_out, r.tokens_cached) == (4000, 200, 3000)
     assert r.reasoning_present and r.finish_reason == "stop"
-    # claude-sonnet-5-5: $2 / $10 per MTok, every input token at the input rate (conservative)
-    assert r.cost_usd == Decimal("0.010000")
+    # claude-sonnet-5-5: 1000 uncached @ $2 + 3000 cache reads @ $0.20 + 200 out @ $10 per MTok
+    assert r.cost_usd == Decimal("0.004600")
 
 
 def test_cost_follows_the_model_that_answered(monkeypatch):
     s = _settings(monkeypatch)
     m = AnthropicModel(s, transport=_transport([_reply(model="claude-opus-5-5")], []))
     r = asyncio.run(m.decide(_context()))
-    assert r.cost_usd == Decimal("0.020000")  # 4000 in @ $4 + 200 out @ $20 per MTok
+    # 1000 in @ $4 + 3000 cache reads @ $0.20 (0.05x on Opus 5.5) + 200 out @ $20 per MTok
+    assert r.cost_usd == Decimal("0.008600")
+
+
+def test_cache_writes_cost_more_and_unknown_models_stay_conservative(monkeypatch):
+    s = _settings(monkeypatch)
+    write = {"input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 4000, "cache_read_input_tokens": 0}
+    r = asyncio.run(AnthropicModel(s, transport=_transport([_reply(usage=write)], [])).decide(_context()))
+    assert r.cost_usd == Decimal("0.010000")  # 4000 5-minute cache writes @ $2.50 per MTok (1.25x)
+    fable = asyncio.run(AnthropicModel(s, transport=_transport([_reply(model="claude-fable-5-1")], [])).decide(_context()))
+    assert fable.cost_usd == Decimal("0.020750")  # 1000 @ $10 + 3000 @ $0.25 (0.025x) + 200 @ $50
+    # a model the price table lacks: configured rates, every input token at the full rate
+    other = asyncio.run(AnthropicModel(s, transport=_transport([_reply(model="claude-future-9")], [])).decide(_context()))
+    rin, rout = s.model_usd_per_1k_input, s.model_usd_per_1k_output
+    assert other.cost_usd == (4 * rin + Decimal("0.2") * rout).quantize(Decimal("0.000001"))
 
 
 def test_one_fence_around_the_whole_reply_is_framing(monkeypatch):
@@ -236,7 +251,7 @@ def test_the_real_sdk_sends_what_the_adapter_built(monkeypatch):
     assert KEY in (captured["headers"].get("x-api-key", "") + captured["headers"].get("authorization", ""))
     assert captured["headers"]["anthropic-version"] and AnthropicModel.FALLBACK_BETA in captured["headers"].get("anthropic-beta", "")
     body = captured["body"]
-    assert body["cache_control"] == {"type": "ephemeral"} and body["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in body and body["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert body["fallbacks"] == "default" and body["output_config"] == {"effort": "medium"} and "temperature" not in body and "betas" not in body
 
 
@@ -249,9 +264,12 @@ def test_maintenance_activities_use_claude(monkeypatch):
     s = _settings(monkeypatch)
     live = activities.get_activity_model(s)
     assert live is not None and live.provider == "anthropic" and live.model_name == "claude-sonnet-5-5"
-    m = activities.LiveActivityModel(s, transport=_transport([_reply('{"action": "submit", "result": {}}')], []))
+    seen = []
+    m = activities.LiveActivityModel(s, transport=_transport([_reply('{"action": "submit", "result": {}}')], seen))
     reply = asyncio.run(m.complete([{"role": "system", "content": "json only"}, {"role": "user", "content": "go"}], max_tokens=2000))
-    assert json.loads(reply.content)["action"] == "submit" and reply.cost_usd == Decimal("0.010000")
+    assert json.loads(reply.content)["action"] == "submit" and reply.cost_usd == Decimal("0.004600")
+    # an activity is a multi-turn tool loop: it re-sends its transcript, so the conversation prefix is cached
+    assert seen[0]["cache_control"] == {"type": "ephemeral"}
 
 
 def test_preflight_probe_through_claude(monkeypatch):

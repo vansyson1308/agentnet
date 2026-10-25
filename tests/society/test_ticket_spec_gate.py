@@ -120,4 +120,4 @@ def test_an_intent_a_ticket_story_does_not_offer_is_denied(db, SessionLocal, com
     asyncio.run(worker.run_until_idle(max_cycles=4))
     db.expire_all()
     row = db.query(AgentIntent).filter(AgentIntent.intent_type == "UPDATE_GOAL").one()
-    assert _ev(row.execution_status) == "denied" and "not offered in a ticket story" in row.policy_reason
+    assert _ev(row.execution_status) == "denied" and "not offered in this story (ticket story" in row.policy_reason

@@ -172,6 +172,8 @@ class LiveActivityModel:
         from ..society.cognition import live_model  # noqa: PLC0415
 
         self._m = live_model(society_settings, transport=transport)
+        # an activity is a multi-turn tool loop: cache its re-sent transcript
+        self._m.cache_conversation = True
         self._s = society_settings
         self.provider = self._m.provider
         self.model_name = self._m.model_name
@@ -190,7 +192,7 @@ class LiveActivityModel:
             raise ActivityError("rate_limit" if status == 429 else "provider_error", str(exc)[:300]) from None
         except EmptyContentError as exc:
             raise ActivityError("empty", str(exc)[:300]) from None
-        cost = self._m.cost_usd(out.served_model or self.model_name, out.tokens_in, out.tokens_out)
+        cost = self._m.outcome_cost(out.served_model or self.model_name, out)
         return ModelReply(out.content, out.tokens_in, out.tokens_out, cost.quantize(Decimal("0.000001")), out.finish_reason)
 
 

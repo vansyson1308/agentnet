@@ -120,9 +120,39 @@ def test_coverage_is_an_active_case_never_a_memory(db, mset, make_agent):
 def test_availability_incidents_freeze_product_promotion_with_a_repair_exception(db, mset):
     from services.registry.app.models import IncidentFreeze
 
-    raise_incident(db, mset, incident_class=IncidentClass.AVAILABILITY, failure="server_error", severity=Severity.CRITICAL, desired_state_ref="api_health", path="/healthz")
+    over = dict(incident_class=IncidentClass.AVAILABILITY, failure="server_error", severity=Severity.CRITICAL, desired_state_ref="api_health", path="/healthz")
+    inc = raise_incident(db, mset, **over)
+    assert db.query(IncidentFreeze).count() == 0, "an availability blip shorter than the sustained outage does not freeze"
+    inc_mod.ingest_violation(db, mset, inc_mod.Violation(**{**_violation_fields(), **over}), now=at(inc_mod.AVAILABILITY_FREEZE_MIN_OUTAGE_MINUTES))
+    db.commit()
     fr = db.query(IncidentFreeze).filter(IncidentFreeze.lifted_at.is_(None)).one()
-    assert fr.source == "maintenance" and fr.evidence["incident_class"] == "AVAILABILITY"
+    assert fr.source == "maintenance" and fr.evidence["incident_class"] == "AVAILABILITY" and fr.evidence["incident_id"] == str(inc.id)
+
+
+def _violation_fields():
+    from .conftest import violation
+
+    v = violation()
+    return {k: getattr(v, k) for k in v.__dataclass_fields__}
+
+
+def test_an_availability_outage_that_recovers_inside_the_window_never_freezes(db, mset):
+    """The 10/18 pile-up: one worker-side exhaustion failed every probed item at once; each
+    item opened an AVAILABILITY incident AND a freeze at its first observation, and all of
+    them recovered. Availability freezes now wait for a sustained outage (the public
+    surface monitor's own 15 min rule); security and money incidents still freeze at once."""
+    from services.registry.app.models import IncidentFreeze
+
+    for i, ref in enumerate(("marketplace", "pricing", "docs")):
+        raise_incident(db, mset, incident_class=IncidentClass.AVAILABILITY, failure="unreachable", severity=Severity.CRITICAL, desired_state_ref=ref, path=f"/{ref}", times=3)
+    for minute in (5, 6, 7):
+        for ref in ("marketplace", "pricing", "docs"):
+            inc_mod.observe_healthy(db, mset, target="production", desired_state_ref=ref, sli="browser_journey", source="m", collector_version="v", now=at(minute))
+    db.commit()
+    assert db.query(MaintenanceIncident).filter(MaintenanceIncident.status == "recovered").count() == 3
+    assert db.query(IncidentFreeze).count() == 0
+    raise_incident(db, mset, incident_class=IncidentClass.SECURITY, failure="secret_exposed", severity=Severity.CRITICAL, desired_state_ref="headers", path="/", times=1, start=20)
+    assert db.query(IncidentFreeze).filter(IncidentFreeze.lifted_at.is_(None)).one().evidence["incident_class"] == "SECURITY"
 
 
 def test_failed_repair_does_not_resolve_and_the_incident_reopens_by_policy(db, mset):

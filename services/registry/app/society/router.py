@@ -81,7 +81,7 @@ def choose_route(
         if not strong_available:
             return Route(FAST, fast, f"{reason}; strong tier not configured -> fast (fail closed)")
         # Cost governor: escalation needs headroom in BOTH the agent and the correlation budget.
-        floor = Decimal("0.05")
+        floor = settings.model_strong_floor_usd
         if budget_remaining_usd is not None and budget_remaining_usd < floor:
             return Route(FAST, fast, f"{reason}; agent budget {budget_remaining_usd} below escalation floor -> fast")
         if correlation_remaining_usd is not None and correlation_remaining_usd < floor:
