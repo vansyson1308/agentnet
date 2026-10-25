@@ -165,6 +165,27 @@ def test_security_objection_bars_go_the_last_round_has_no_revise_and_drop_refuse
     assert _events(db, EventType.COMPANY_TICKET_APPROVED) == []
 
 
+def test_each_step_logs_one_structural_line(db, review_on, caplog):
+    """Live verification reads the worker log: roles, stances and the verdict, never the text."""
+    import logging
+
+    report, _ = review_on
+    caplog.set_level(logging.INFO, logger="services.registry.app.society.design_review")
+    _t, review = _proposing(db, report)
+    corr = review["correlation_id"]
+    for role in design_review.REVIEWERS:
+        design_review.post_position(db, review_id=review["id"], correlation_id=corr, agent=_agent(db, report, role), role=role,
+                                    position={"stance": "support", "points": [f"SECRET-POINT {role}"]}, causation=None)
+    design_review.decide(db, review_id=review["id"], correlation_id=corr, agent=_agent(db, report, "governor"),
+                         decision={"verdict": "go", "rationale": "SECRET-RATIONALE worth it", "conditions": []})
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("design_review ")]
+    assert any(" opened " in ln for ln in lines) and any(" proposed " in ln for ln in lines)
+    assert sum(" position " in ln for ln in lines) == 3 and any("spoken=3" in ln for ln in lines)
+    (decided,) = [ln for ln in lines if " decided " in ln]
+    assert "verdict=go" in decided and "protocol=2" in decided and "qa:support,scout:support,security:support" in decided
+    assert not any("SECRET" in ln for ln in lines)
+
+
 def _expire_stage(db, review):
     """Move the review's current stage window into the past (the sweep runs on NOW())."""
     db.execute(text("UPDATE society_design_reviews SET stage_at = stage_at - INTERVAL '3 hours' WHERE id = :i"), {"i": review["id"]})

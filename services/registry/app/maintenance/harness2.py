@@ -142,8 +142,8 @@ async def author_patch_recursive(ws, payload: Dict[str, Any], *, files_allowed: 
 
     ref = await execute(payload)
     record["reference"] = signals(ref)
-    if delivered(ref) or ref.result.rescope is not None:
-        return _finish(runs, ref, record)
+    if delivered(ref) or ref.result.rescope is not None or spent >= cost_cap:
+        return _finish(runs, ref, record)  # delivered, out of scope, or the cap is spent: no editor call
     proposal, cost, record["editor_error"] = await propose(model, payload, record["reference"], lessons)
     spent += cost
     record["editor_cost_usd"] = str(cost)

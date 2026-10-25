@@ -95,6 +95,13 @@ def _update(db: Session, review_id: Any, **cols: Any) -> None:
     db.execute(text(f"UPDATE society_design_reviews SET {sets}, updated_at = NOW() WHERE id = :id"), {"id": review_id, **vals})  # noqa: S608 -- column names are ours
 
 
+def _log(what: str, review: Dict[str, Any], **facts: Any) -> None:
+    """One structural log line per step (ids, roles, stances, verdicts; never proposal or position text),
+    so a live review can be followed in the worker log. Written before the caller commits."""
+    logger.info("design_review %s review=%s round=%s protocol=%s %s", what, str(review["id"])[:8], review.get("round"), PROTOCOL,
+                " ".join(f"{k}={v}" for k, v in facts.items()))
+
+
 def _ticket_brief(t: Dict[str, Any]) -> Dict[str, Any]:
     return {"ticket_id": str(t["id"]), "proposal_id": str(t["proposal_id"]), "title": t["title"], "objective_id": t["objective_id"],
             "metric_id": t["metric_id"], "direction": t["direction"], "expected_effect": float(t["expected_effect"] or 0), "proof": t["proof"]}
@@ -106,7 +113,9 @@ def open_review(db: Session, ticket: Dict[str, Any], *, approved_by: str) -> uui
     rid = uuid.uuid4()
     db.execute(text("INSERT INTO society_design_reviews (id, ticket_id, plan_id, approved_by, correlation_id) VALUES (:id, :t, :p, :by, :c)"),
                {"id": rid, "t": ticket["id"], "p": ticket.get("plan_id"), "by": approved_by, "c": uuid.uuid4()})
-    _request_round(db, get(db, rid), ticket, feedback=None)
+    review = get(db, rid)
+    _log("opened", review, ticket=str(ticket["id"])[:8], approved_by=approved_by)
+    _request_round(db, review, ticket, feedback=None)
     return rid
 
 
@@ -194,6 +203,7 @@ def propose(db: Session, *, review_id: Any, correlation_id: Any, agent: Any, pro
     review = _current(db, review_id, correlation_id, "proposing")
     _update(db, review["id"], proposal=proposal, positions={}, status="reviewing", stage_at=utcnow())
     review = get(db, review["id"])
+    _log("proposed", review, by="architect", files=len(proposal.get("files") or []))
     _chat(db, review, agent, f"Design proposal (round {review['round']}): {_ticket(db, review)['title']}",
           f"Approach: {proposal['approach']}\nFiles: {', '.join(proposal['files'])}\nProof: {proposal['proof']}\nRisks: {'; '.join(proposal.get('risks') or []) or 'none named'}",
           "proposal")
@@ -211,6 +221,7 @@ def post_position(db: Session, *, review_id: Any, correlation_id: Any, agent: An
     positions[role] = {**position, "agent": agent.name}
     _update(db, review["id"], positions=positions)
     review = get(db, review["id"])
+    _log("position", review, role=role, stance=position["stance"], spoken=len(positions))
     _chat(db, review, agent, f"Review by {role} (round {review['round']}): {position['stance']}", "\n".join(f"- {p}" for p in position["points"]),
           "review_result")
     if all(r in positions for r in REVIEWERS):
@@ -277,6 +288,7 @@ def _settle(db: Session, review: Dict[str, Any], decision: Dict[str, Any]) -> No
         _request_round(db, get(db, review["id"]), t, feedback=feedback)
         return
     minutes = _minutes(review, decision)
+    _log("decided", review, verdict=verdict, by=decision.get("by"), stances=",".join(f"{r}:{st}" for r, st in sorted(minutes["stances"].items())) or "-")
     _update(db, review["id"], decision=decision, status={"go": "go", "drop": "dropped", "return": "returned"}[verdict], stage_at=utcnow())
     if t["status"] != "approved":
         return  # the ticket moved on (owner, freshness close): the minutes stay on the review

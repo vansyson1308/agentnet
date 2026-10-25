@@ -168,12 +168,15 @@ class LiveActivityModel:
 
     live = True
 
-    def __init__(self, society_settings, *, transport=None):
+    def __init__(self, society_settings, *, transport=None, model_name: Optional[str] = None):
         from ..society.cognition import live_model  # noqa: PLC0415
 
         self._m = live_model(society_settings, transport=transport)
         # an activity is a multi-turn tool loop: cache its re-sent transcript
         self._m.cache_conversation = True
+        # a routed tier (society/router.py) names the model; otherwise the default
+        if model_name:
+            self._m.model_name = model_name
         self._s = society_settings
         self.provider = self._m.provider
         self.model_name = self._m.model_name
@@ -226,15 +229,16 @@ class ScriptedActivityModel:
         return ModelReply(text, self.tokens_in, self.tokens_out, self.cost, "stop")
 
 
-def get_activity_model(society_settings=None) -> Optional[ActivityModel]:
-    """The live model, or None when no live provider is configured (cognition
-    is then unavailable and cases escalate -- they never pretend)."""
+def get_activity_model(society_settings=None, *, model_name: Optional[str] = None) -> Optional[ActivityModel]:
+    """The live model (``model_name``: a routed tier's model, else the default),
+    or None when no live provider is configured (cognition is then unavailable
+    and cases escalate -- they never pretend)."""
     from ..society.config import LIVE_PROVIDERS, get_settings  # noqa: PLC0415
 
     s = society_settings or get_settings()
     if s.model_provider not in LIVE_PROVIDERS or not s.model_api_key or not s.model_base_url:
         return None
-    return LiveActivityModel(s)
+    return LiveActivityModel(s, model_name=model_name)
 
 
 # ── the bounded tool loop ─────────────────────────────────────────────────
