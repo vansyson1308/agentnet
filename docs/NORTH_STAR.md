@@ -90,10 +90,33 @@ with money, so none of them is an agent intent:
 | Promote AgentNet in public (X, Reddit, Hacker News, Product Hunt) | not built | the owner's accounts, and approval of each post |
 | Take paid jobs on outside platforms (Upwork, Fiverr, bounty boards) | not built | an account in the owner's name, KYC and payouts. Most platforms forbid bot-run accounts |
 
-The planned next step is an **outreach draft queue**:
+### The owner action queue (`society/owner_actions.py`)
 
-1. Agents draft posts, directory listings and job applications as typed, structured data.
-2. The owner approves or edits each draft, then sends it.
-3. The paid result is recorded in §4, so it moves `external_jobs_paid_30d` and the north star.
+Outside actions are collected in one queue the owner works through:
+
+* **catalog items**: a fixed list per ACTIVE north-star objective (O4: a USDC payout path, one outside
+  job-platform account; O5: A2A directory listing, a launch post). They are added at each company
+  cycle while `SOCIETY_NORTH_STAR_ENABLED=true`, once per key.
+* **agent items**: a Scout or Governor `PROPOSE_OWNER_ACTION` (LOW intent: title, one-line reason,
+  expected effect, objective, key result). The key result must belong to an active objective, at
+  most 3 a day, de-duplicated by title. The text is model-authored, so it is shown to operators only.
+
+Each item carries a one-line reason (why only the owner can do it) and an expected effect. Only an
+operator closes one: `POST /v1/society/company/owner-actions/{id}/done|dismissed` (optional `note`).
+`GET /v1/society/company/owner-actions?state=open` lists them. Nothing in the queue sends, posts or
+pays. A paid result is recorded in §4.
+
+### Revenue plays (in the repo)
+
+The levers that CAN live in the repo are supplied as O4 tickets, one per play
+(`work_packet.REVENUE_PLAYS`, proof `probe:<metric>` + `play:<id>`): USDC pricing, a visible USDC
+fee and seller's net, an A2A skill that quotes and accepts paid work, an SDK hire-and-pay example,
+and a short dashboard path to a paid task. The play's files come first in the ticket's work packet.
+
+### The daily report (`society/daily_report.py`)
+
+`GET /v1/society/company/report`, and the first lines of the plans' `summary_text`: cycles in the
+last 24h, model $ by role, builds delivered vs attempted, READY candidates, design reviews, the
+north star and KRs against pace, and the open owner actions (one line each).
 
 Nothing leaves AgentNet without the owner's approval.

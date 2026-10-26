@@ -742,7 +742,44 @@ def list_plans(db: Session = Depends(get_db), operator: User = Depends(require_o
     from ...society import outcomes
     from ...society.events import utcnow
 
-    return {"plans": tickets.plans_view(db), "empty_reason": tickets.last_empty_reason(db), "summary_text": outcomes.kpis(db, utcnow())["summary_text"]}
+    from ...society import daily_report
+
+    return {"plans": tickets.plans_view(db), "empty_reason": tickets.last_empty_reason(db),
+            "summary_text": daily_report.build(db)["text"] + "\n" + outcomes.kpis(db, utcnow())["summary_text"]}
+
+
+@router.get("/company/report")
+def company_report(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """The owner's daily report: built, $ by role, builds delivered/attempted, reviews, revenue vs pace, owner actions."""
+    from ...society import daily_report
+
+    return daily_report.build(db)
+
+
+@router.get("/company/owner-actions")
+def list_owner_actions(db: Session = Depends(get_db), operator: User = Depends(require_operator),
+                       state: Literal["open", "done", "dismissed"] = "open", limit: int = Query(50, ge=1, le=200)):
+    """Outside actions only the owner can take (agent-proposed text included: operator only)."""
+    from ...society import owner_actions
+
+    return {"owner_actions": owner_actions.listing(db, status=state, limit=limit)}
+
+
+class OwnerActionDecision(BaseModel):
+    note: Optional[str] = Field(None, max_length=300)
+
+
+@router.post("/company/owner-actions/{action_id}/{decision}")
+def decide_owner_action(action_id: uuid.UUID, decision: Literal["done", "dismissed"], body: Optional[OwnerActionDecision] = None,
+                        db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    from ...society import owner_actions
+
+    try:
+        row = owner_actions.decide(db, action_id, decision, user_id=operator.id, note=body.note if body else None)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    db.commit()
+    return row
 
 
 @router.get("/company/reviews")
@@ -789,7 +826,7 @@ def list_tickets(db: Session = Depends(get_db), operator: User = Depends(require
         t = dict(r)
         packet = work_packet.for_ticket(db, t) if t["status"] not in ("merged", "closed", "already_satisfied") else None
         if packet:  # the structural part only: bench (failure evidence, target, proof rule) or growth (kind, metric, proof rule)
-            t["work_packet"] = {k: packet[k] for k in ("kind", "metric_id", "evidence", "target", "proof") if k in packet}
+            t["work_packet"] = {k: packet[k] for k in ("kind", "metric_id", "play", "evidence", "target", "proof") if k in packet}
         out.append(t)
     return {"tickets": out}
 

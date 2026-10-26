@@ -314,7 +314,10 @@ The charter's `north_star` (`revenue_usd_total` → $1,000,000) and each KR's `n
 rank the plan, reach every role and widen growth supply to the revenue KRs (O4, O5) when
 `SOCIETY_NORTH_STAR_ENABLED=true` (off by default). Revenue is USDC platform fees plus
 operator-recorded external income (record-only ledger, migration `0022_revenue_ledger`).
-See [NORTH_STAR.md](NORTH_STAR.md).
+With it on, each revenue KR is supplied as one ticket per in-repo play, outside actions wait in the
+owner action queue (`PROPOSE_OWNER_ACTION`, migration `0024_owner_actions`), and the plans'
+`summary_text` opens with the daily report (`GET /company/report`).
+See [NORTH_STAR.md](NORTH_STAR.md) §6.
 
 ## Heartbeat precheck (idle wakes cost nothing)
 

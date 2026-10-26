@@ -67,6 +67,8 @@ class IntentType(str, enum.Enum):
     PROPOSE_DESIGN = "PROPOSE_DESIGN"
     REVIEW_DESIGN = "REVIEW_DESIGN"
     DECIDE_DESIGN = "DECIDE_DESIGN"
+    #: an action outside the repo that would move a key result goes to the owner's queue (LOW; owner_actions.py)
+    PROPOSE_OWNER_ACTION = "PROPOSE_OWNER_ACTION"
     EVALUATE_CODE_CANDIDATE = "EVALUATE_CODE_CANDIDATE"
     SECURITY_REVIEW_CANDIDATE = "SECURITY_REVIEW_CANDIDATE"
     REQUEST_STAGING_DEPLOY = "REQUEST_STAGING_DEPLOY"
@@ -398,6 +400,16 @@ class TicketNeedsInfoPayload(_Strict):
     detail: str = Field(..., min_length=10, max_length=500)
 
 
+class ProposeOwnerActionPayload(_Strict):
+    """Something only the owner can do (post, list, open an account, set up payments) that should
+    move an active key result. It is queued for the owner; nothing is sent or done."""
+
+    title: str = Field(..., min_length=10, max_length=200)
+    reason: str = Field(..., min_length=10, max_length=300)
+    expected_effect: str = Field(..., min_length=10, max_length=300)
+    metric_id: str = Field(..., min_length=3, max_length=64)  # a key result of an ACTIVE objective (its objective is derived)
+
+
 def _short_items(v: List[str], *, lo: int = 3, hi: int = 300) -> List[str]:
     for item in v:
         if not isinstance(item, str) or not lo <= len(item.strip()) <= hi:
@@ -600,6 +612,7 @@ PAYLOAD_MODELS: Dict[IntentType, type] = {
     IntentType.PROPOSE_DESIGN: ProposeDesignPayload,
     IntentType.REVIEW_DESIGN: ReviewDesignPayload,
     IntentType.DECIDE_DESIGN: DecideDesignPayload,
+    IntentType.PROPOSE_OWNER_ACTION: ProposeOwnerActionPayload,
     IntentType.EVALUATE_CODE_CANDIDATE: CandidateRefPayload,
     IntentType.SECURITY_REVIEW_CANDIDATE: SecurityReviewPayload,
     IntentType.REQUEST_STAGING_DEPLOY: CandidateRefPayload,

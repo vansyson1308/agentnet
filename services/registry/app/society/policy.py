@@ -58,6 +58,7 @@ RISK_BY_TYPE = {
     IntentType.PROPOSE_DESIGN: IntentRiskClass.LOW,
     IntentType.REVIEW_DESIGN: IntentRiskClass.LOW,
     IntentType.DECIDE_DESIGN: IntentRiskClass.LOW,
+    IntentType.PROPOSE_OWNER_ACTION: IntentRiskClass.LOW,
     IntentType.EVALUATE_CODE_CANDIDATE: IntentRiskClass.MEDIUM,
     IntentType.SECURITY_REVIEW_CANDIDATE: IntentRiskClass.MEDIUM,
     IntentType.REQUEST_STAGING_DEPLOY: IntentRiskClass.MEDIUM,

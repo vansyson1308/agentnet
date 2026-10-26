@@ -30,7 +30,7 @@ BYPASS_SOURCES = ("owner", "incident")
 PLAN_MAX, PER_DEPARTMENT = 3, 2
 MODEL_TICKETS_PER_DEPARTMENT = 2
 #: Proofs that are not pytest node ids: a probe metric, a bench task, an owner issue.
-NON_TEST_PROOFS = ("probe:", "bench:", "issue:")
+NON_TEST_PROOFS = ("probe:", "bench:", "issue:", "play:")
 #: Supplied tickets (``supply``): backlog source -> (charter department, KR metric). An issue maps to the objective its owner tagged.
 SUPPLY = {"bench": ("engineering", "bench_holdout_pass_at_1"), "maintenance_incident": ("sre_release", "core_journey_success_rate"),
           "github_issue": ("strategy_product", None), "kr_gap": ("strategy_product", None)}
@@ -590,7 +590,7 @@ def supply(db: Session, items: List[Dict[str, Any]], now: datetime) -> List[str]
     created = []
     for item, subject, dept, obj, kr in mapped:
         tid = uuid.uuid5(_NS, f"ticket:{item['key']}")
-        proof = [":".join(subject.split(":", 2)[:2]) if subject.startswith("probe:") else subject]
+        proof = [":".join(subject.split(":", 2)[:2]) if subject.startswith("probe:") else subject] + ([f"play:{item['play']}"] if item.get("play") else [])
         if db.execute(text("SELECT 1 FROM society_tickets WHERE id = :id OR (proof = CAST(:p AS JSONB) AND status IN :open)").bindparams(
                 bindparam("open", expanding=True)), {"id": tid, "p": json.dumps(proof), "open": list(OPEN_TICKET)}).first():
             continue
@@ -603,7 +603,8 @@ def supply(db: Session, items: List[Dict[str, Any]], now: datetime) -> List[str]
         title = {"bench": f"Builder harness: deliver dev task {item.get('task_id')} ({item.get('delivered')}/{item.get('runs')} runs)",
                  "maintenance_incident": f"Core journey: incident {str(item.get('incident_id'))[:8]} ({item.get('failure_class')})",
                  "github_issue": f"Owner issue #{item.get('issue_number')}",
-                 "kr_gap": f"Grow {item.get('metric_id')}: {item.get('current') if item.get('current') is not None else 'no data'} -> {item.get('target')} ({obj['id']} {obj['title']})"}[item["source"]]
+                 "kr_gap": (f"{obj['id']} {item.get('metric_id')}: {item['play_title']}" if item.get("play") else
+                            f"Grow {item.get('metric_id')}: {item.get('current') if item.get('current') is not None else 'no data'} -> {item.get('target')} ({obj['id']} {obj['title']})")}[item["source"]]
         pid = uuid.uuid5(_NS, f"proposal:{item['key']}")
         db.add(ImprovementProposal(id=pid, source="audit", title=title[:255], problem=f"backlog {item['key']} ({item.get('failure_class')})",
                                    proposed_change=f"move {kr['metric_id']} {kr['direction']} by {effect:g}; proof {proof[0]}", status="PROPOSED",

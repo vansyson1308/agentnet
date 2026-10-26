@@ -129,7 +129,7 @@ def kr_gap_items(db: Session, now: Any = None) -> List[Dict[str, Any]]:
     """One item per growth key result of an ACTIVE objective that is off target (or has no
     reading yet), keyed per ISO week: the company cycle turns it into ONE proposed ticket
     whose proof is the metric's deterministic probe (tickets.supply). No model, no event."""
-    from . import charter, metrics  # noqa: PLC0415
+    from . import charter, metrics, work_packet  # noqa: PLC0415
     from .events import utcnow  # noqa: PLC0415
 
     now = now or utcnow()
@@ -145,9 +145,15 @@ def kr_gap_items(db: Session, now: Any = None) -> List[Dict[str, Any]]:
             current = metrics.read(db, m, now)
             target = float(kr["target"])
             off = current is None or (current < target if kr["direction"] == "up" else current > target)
-            if off:
-                items.append({"source": "kr_gap", "key": f"kr_gap:{m}:{week}", "metric_id": m, "objective_id": obj["id"],
-                              "current": current, "target": target, "failure_class": "key_result_off_target"})
+            if not off:
+                continue
+            base = {"source": "kr_gap", "metric_id": m, "objective_id": obj["id"], "current": current, "target": target,
+                    "failure_class": "key_result_off_target"}
+            plays = work_packet.REVENUE_PLAYS.get(m) if m in NORTH_STAR_GROWTH_METRICS else None
+            if plays:  # one ticket per in-repo play that can move revenue (work_packet.REVENUE_PLAYS)
+                items += [{**base, "key": f"kr_gap:{m}:{p['id']}:{week}", "play": p["id"], "play_title": p["title"]} for p in plays]
+            else:
+                items.append({**base, "key": f"kr_gap:{m}:{week}"})
     return items
 
 

@@ -608,4 +608,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_society_company_cycles_scheduled_slot
     ON society_company_cycles (cycle_date, slot) WHERE trigger = 'scheduled';
 """
 
-SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL + SOCIETY_COMPANY_PLAN_SQL + SOCIETY_COMPANY_BOARD_SQL + SOCIETY_DESIGN_REVIEW_SQL + SOCIETY_HARNESS_SQL + SOCIETY_REVENUE_SQL + SOCIETY_COMPANY_SLOTS_SQL
+SOCIETY_OWNER_ACTIONS_SQL = r"""
+-- The owner action queue (owner_actions.py): work that moves a key result but happens outside the
+-- repo, in the owner's name (posting, listings, accounts, payments). Only an operator closes one.
+CREATE TABLE IF NOT EXISTS society_owner_actions (
+    id                    UUID PRIMARY KEY,
+    key                   VARCHAR(160) NOT NULL UNIQUE,
+    title                 VARCHAR(200) NOT NULL,
+    reason                VARCHAR(300) NOT NULL,
+    expected_effect       VARCHAR(300) NOT NULL,
+    objective_id          VARCHAR(16) NOT NULL,
+    metric_id             VARCHAR(64),
+    source                VARCHAR(16) NOT NULL CHECK (source IN ('catalog', 'agent')),
+    proposed_by_agent_id  UUID REFERENCES agents(id) ON DELETE SET NULL,
+    status                VARCHAR(16) NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done', 'dismissed')),
+    note                  VARCHAR(300),
+    decided_by            UUID REFERENCES users(id) ON DELETE SET NULL,
+    decided_at            TIMESTAMPTZ,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_society_owner_actions_open ON society_owner_actions (status, created_at DESC);
+"""
+
+SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL + SOCIETY_COMPANY_PLAN_SQL + SOCIETY_COMPANY_BOARD_SQL + SOCIETY_DESIGN_REVIEW_SQL + SOCIETY_HARNESS_SQL + SOCIETY_REVENUE_SQL + SOCIETY_COMPANY_SLOTS_SQL + SOCIETY_OWNER_ACTIONS_SQL
