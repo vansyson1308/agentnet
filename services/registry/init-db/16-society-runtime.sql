@@ -539,3 +539,10 @@ CREATE TABLE IF NOT EXISTS society_revenue_entries (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_society_revenue_entries_received ON society_revenue_entries (received_at DESC);
+
+-- More than one scheduled company cycle a day (SOCIETY_COMPANY_CYCLES_PER_DAY, company.scheduled_slot):
+-- a scheduled cycle is unique per (date, slot) instead of per date.
+ALTER TABLE society_company_cycles ADD COLUMN IF NOT EXISTS slot SMALLINT NOT NULL DEFAULT 0;
+DROP INDEX IF EXISTS uq_society_company_cycles_scheduled_day;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_society_company_cycles_scheduled_slot
+    ON society_company_cycles (cycle_date, slot) WHERE trigger = 'scheduled';

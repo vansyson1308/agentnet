@@ -64,6 +64,7 @@ from . import redelivery as redelivery_mod
 from . import router as router_mod
 from . import surface_monitor as surface_monitor_mod
 from . import telemetry as telemetry_mod
+from . import wake_precheck as wake_precheck_mod
 from .approvals import claim_next_approved_intent, execute_approved_intent
 from .cognition import CognitiveModel, ModelProviderError, ModelTimeout, get_model
 from .config import SocietySettings, get_settings, validate_settings
@@ -271,7 +272,8 @@ class SocietyWorker:
                 # cycle per UTC day, then outcome settlement. No-ops unless
                 # SOCIETY_COMPANY_CYCLE_ENABLED (and the runtime) are on.
                 company_mod.maybe_start_scheduled_cycle(db, self.settings, provider=self.promotion_provider)
-                company_mod.settle_cycles(db, red_cap=self.settings.company_max_high_risk_investigations)
+                company_mod.settle_cycles(db, red_cap=self.settings.company_max_high_risk_investigations, plan_max=self.settings.company_plan_max,
+                                          per_department=self.settings.company_plan_per_department)
                 # A candidate wake the loop breaker swallowed is re-sent once, in a
                 # fresh story, while the candidate still waits for it (redelivery.py).
                 redelivery_mod.redeliver_swallowed_wakes(db, self.settings)
@@ -595,6 +597,15 @@ class SocietyWorker:
                 if stats:
                     stats.runs_skipped += 1
                 return "skipped"
+            if self.settings.heartbeat_precheck_enabled and event.event_type == EventType.SOCIETY_HEARTBEAT:
+                busy, why = wake_precheck_mod.heartbeat_work(db, agent_id=agent.id, role=run.role or (grant.role if grant else ""), now=utcnow(),
+                                                             max_idle_hours=self.settings.heartbeat_max_idle_hours)
+                if not busy:  # nothing to act on: no context, no model call
+                    skip_run(db, run, wake_precheck_mod.IDLE_PREFIX + why)
+                    M_RUNS.labels(status="skipped").inc()
+                    if stats:
+                        stats.runs_skipped += 1
+                    return "skipped"
             mark_running(db, run)
 
             resumed = db.query(AgentIntent.id).filter(AgentIntent.run_id == run.id).first() is not None

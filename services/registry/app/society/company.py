@@ -351,15 +351,15 @@ def _canonical_size(obj: Any) -> int:
 
 
 def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Optional[datetime] = None, operator_id: Optional[uuid.UUID] = None,
-                provider: Any = None) -> Optional[CompanyCycle]:
+                provider: Any = None, slot: int = 0) -> Optional[CompanyCycle]:
     """Create a cycle + its ``company.cycle`` event. A scheduled cycle is
-    idempotent per UTC date (returns None when today's already exists)."""
+    idempotent per UTC date and slot (returns None when that one already exists)."""
     if trigger not in ("scheduled", "operator"):
         raise ValueError("trigger must be scheduled or operator")
     now = now or utcnow()
     cycle_day: date = now.date()
     evidence = evidence_bundle(db, now)
-    cycle = CompanyCycle(id=uuid.uuid4(), cycle_date=cycle_day, trigger=trigger, evidence=evidence)
+    cycle = CompanyCycle(id=uuid.uuid4(), cycle_date=cycle_day, trigger=trigger, evidence=evidence, slot=slot if trigger == "scheduled" else 0)
     try:
         with db.begin_nested():
             db.add(cycle)
@@ -387,19 +387,32 @@ def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Op
     return cycle
 
 
+def scheduled_slot(settings: SocietySettings, now: datetime) -> Optional[int]:
+    """The scheduled slot ``now`` falls in: SOCIETY_COMPANY_CYCLES_PER_DAY slots spread evenly
+    from the cycle hour to midnight (4 from 01:00 -> 01:00, 06:45, 12:30, 18:15). None before the first."""
+    start = int(settings.company_cycle_hour_utc) * 60
+    minute = now.hour * 60 + now.minute
+    if minute < start:
+        return None
+    n = max(1, min(24, int(settings.company_cycles_per_day)))
+    return min(n - 1, (minute - start) * n // (1440 - start))
+
+
 def maybe_start_scheduled_cycle(db: Session, settings: SocietySettings, now: Optional[datetime] = None, provider: Any = None) -> Optional[CompanyCycle]:
     now = now or utcnow()
     if not (settings.runtime_enabled and settings.company_cycle_enabled):
         return None
-    if now.hour < settings.company_cycle_hour_utc:
+    slot = scheduled_slot(settings, now)
+    if slot is None:
         return None
-    exists = db.query(CompanyCycle.id).filter(CompanyCycle.cycle_date == now.date(), CompanyCycle.trigger == "scheduled").first()
+    exists = db.query(CompanyCycle.id).filter(CompanyCycle.cycle_date == now.date(), CompanyCycle.trigger == "scheduled", CompanyCycle.slot == slot).first()
     if exists:
-        return None
-    return start_cycle(db, settings, trigger="scheduled", now=now, provider=provider)
+        return None  # a missed slot is not back-filled: the next one comes at its time
+    return start_cycle(db, settings, trigger="scheduled", now=now, provider=provider, slot=slot)
 
 
-def settle_cycles(db: Session, now: Optional[datetime] = None, *, red_cap: int = 1) -> int:
+def settle_cycles(db: Session, now: Optional[datetime] = None, *, red_cap: int = 1, plan_max: int = tickets.PLAN_MAX,
+                  per_department: int = tickets.PER_DEPARTMENT) -> int:
     """Record outcomes of cycles whose work has finished."""
     now = now or utcnow()
     settled = 0
@@ -427,7 +440,7 @@ def settle_cycles(db: Session, now: Optional[datetime] = None, *, red_cap: int =
         cycle.outcome = "changes_proposed" if changed else "no_high_value_change"
         cycle.outcome_detail = {"runs": int(runs), "intents_executed": executed}
         # the Chief of Staff's daily plan: the cycle's tickets, ranked, awaiting the owner
-        plan = tickets.build_plan(db, cycle.id, now, red_cap=red_cap)
+        plan = tickets.build_plan(db, cycle.id, now, red_cap=red_cap, plan_max=plan_max, per_department=per_department)
         cycle.outcome_detail = {**cycle.outcome_detail, **({"plan_id": plan["id"]} if plan["id"] else {"plan_empty_reason": plan["empty_reason"]})}
         settled += 1
     if settled:
@@ -524,7 +537,7 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
     """Everything an operator needs in one view. No secrets, no payloads."""
     from ..a2a import config as a2a_config
     from ..a2a.orm import A2AOutboundCall
-    from . import backlog, goals, outcomes
+    from . import backlog, goals, outcomes, wake_precheck
     from .policy import spend_today_usd
 
     evidence = evidence_bundle(db)
@@ -539,6 +552,8 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
             "society_runtime_enabled": settings.runtime_enabled,
             "company_cycle_enabled": settings.company_cycle_enabled,
             "company_board_approval_hours": settings.company_board_approval_hours,
+            "company_cycles_per_day": settings.company_cycles_per_day,
+            "company_plan_max": settings.company_plan_max,
             "design_review_enabled": settings.design_review_enabled,
             "north_star_enabled": settings.north_star_enabled,
             "autonomous_code_enabled": settings.autonomous_code_enabled,
@@ -559,6 +574,7 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
         "bench_trend": backlog.trend(db, with_cost=True),
         "kpis": outcomes.kpis(db, utcnow()),
         "north_star": goals.scorecard(db),
+        "heartbeat_precheck": {"enabled": settings.heartbeat_precheck_enabled, **wake_precheck.savings(db, utcnow())},
         "budgets": {
             "model_spend_today_usd": str(spend),
             "daily_model_budget_usd": str(settings.daily_model_budget_usd),

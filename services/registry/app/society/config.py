@@ -220,6 +220,10 @@ class SocietySettings:
     )
     wake_poll_seconds: int = field(default_factory=lambda: _int("SOCIETY_WAKE_POLL_SECONDS", 5, minimum=1))
     heartbeat_interval_seconds: int = field(default_factory=lambda: _int("SOCIETY_HEARTBEAT_INTERVAL_SECONDS", 3600, minimum=0))
+    # Heartbeat precheck (wake_precheck.py): a heartbeat run whose role has nothing to act on is
+    # SKIPPED ("idle: ...") before any model call; a role idle this long is woken anyway (liveness).
+    heartbeat_precheck_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_HEARTBEAT_PRECHECK_ENABLED", False))
+    heartbeat_max_idle_hours: int = field(default_factory=lambda: _int("SOCIETY_HEARTBEAT_MAX_IDLE_HOURS", 6, minimum=1))
     # daily scheduled bench on main (bench_schedule.py): off by default
     bench_daily_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_BENCH_DAILY_ENABLED", False))
     bench_daily_hour_utc: int = field(default_factory=lambda: min(23, _int("SOCIETY_BENCH_DAILY_HOUR_UTC", 3, minimum=0)))
@@ -318,6 +322,12 @@ class SocietySettings:
     # ── autonomous company mode (Phase 8, ADR-0009 D15) ──
     company_cycle_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_COMPANY_CYCLE_ENABLED", False))
     company_cycle_hour_utc: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_CYCLE_HOUR_UTC", 1, minimum=0))
+    # Scheduled cycles per UTC day, spread evenly from SOCIETY_COMPANY_CYCLE_HOUR_UTC to midnight
+    # (company.scheduled_slot). Each settles into its own plan; the board and budgets are unchanged.
+    company_cycles_per_day: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_CYCLES_PER_DAY", 1, minimum=1))
+    # The Chief of Staff's plan size (tickets.build_plan): at most this many tickets, this many per department.
+    company_plan_max: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_PLAN_MAX", 3, minimum=1))
+    company_plan_per_department: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_PLAN_PER_DEPARTMENT", 2, minimum=1))
     company_max_active_hypotheses: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES", 3, minimum=0))
     company_max_high_risk_investigations: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_MAX_HIGH_RISK_INVESTIGATIONS", 1, minimum=0))
     # An APPROVED hypothesis nobody started within this window is SHELVED: it
@@ -452,6 +462,10 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
         problems.append("SOCIETY_DAILY_MODEL_BUDGET must be >= 0")
     if s.company_cycle_hour_utc > 23:
         problems.append("SOCIETY_COMPANY_CYCLE_HOUR_UTC must be 0..23")
+    if s.company_cycles_per_day > 24:
+        problems.append("SOCIETY_COMPANY_CYCLES_PER_DAY must be 1..24")
+    if s.company_plan_max > 10 or s.company_plan_per_department > s.company_plan_max:
+        problems.append("SOCIETY_COMPANY_PLAN_MAX must be 1..10 and SOCIETY_COMPANY_PLAN_PER_DEPARTMENT <= it")
     if s.company_board_approval_hours > 72:
         problems.append("SOCIETY_COMPANY_BOARD_APPROVAL_HOURS must be 0..72 (0 = every plan waits for the owner)")
     if s.public_surface_monitor_enabled:

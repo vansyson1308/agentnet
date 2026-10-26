@@ -315,3 +315,23 @@ rank the plan, reach every role and widen growth supply to the revenue KRs (O4, 
 `SOCIETY_NORTH_STAR_ENABLED=true` (off by default). Revenue is USDC platform fees plus
 operator-recorded external income (record-only ledger, migration `0022_revenue_ledger`).
 See [NORTH_STAR.md](NORTH_STAR.md).
+
+## Heartbeat precheck (idle wakes cost nothing)
+
+With `SOCIETY_HEARTBEAT_PRECHECK_ENABLED=true` a `society.heartbeat` run is SKIPPED as
+`idle: ...` before any context or model call unless its role has something to act on
+(`society/wake_precheck.py`): a candidate in a Builder stage, an unreviewed proposal or an
+unpromoted READY candidate for the Governor, or a backlog item newer than the role's last
+completed run. A role silent for `SOCIETY_HEARTBEAT_MAX_IDLE_HOURS` (default 6) is woken
+anyway, so a gap delays work but never strands it. `GET /v1/society/company` →
+`heartbeat_precheck` reports idle skips in 24h and the estimated $ saved.
+
+## Throughput: several cycles a day, a bigger plan
+
+`SOCIETY_COMPANY_CYCLES_PER_DAY` (default 1, 1..24) spreads scheduled cycles evenly from
+`SOCIETY_COMPANY_CYCLE_HOUR_UTC` to midnight (`company.scheduled_slot`; 4 from 01:00 → 01:00,
+06:45, 12:30, 18:15). Each is unique per (date, slot) (migration `0023_company_slots`), settles
+into its own plan, and a missed slot is not back-filled. `SOCIETY_COMPANY_PLAN_MAX` (3, ≤ 10) and
+`SOCIETY_COMPANY_PLAN_PER_DEPARTMENT` (2) size each plan; builds in flight stay capped by
+`SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES`. The board, the RED merge law and the budgets are unchanged.
+Each cycle wakes the roles that subscribe to `company.cycle` once, so more cycles cost more model calls.

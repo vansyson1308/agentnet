@@ -788,8 +788,8 @@ def list_tickets(db: Session = Depends(get_db), operator: User = Depends(require
     for r in rows:
         t = dict(r)
         packet = work_packet.for_ticket(db, t) if t["status"] not in ("merged", "closed", "already_satisfied") else None
-        if packet:  # the structural part only (failure evidence, target, proof rule)
-            t["work_packet"] = {k: packet[k] for k in ("evidence", "target", "proof")}
+        if packet:  # the structural part only: bench (failure evidence, target, proof rule) or growth (kind, metric, proof rule)
+            t["work_packet"] = {k: packet[k] for k in ("kind", "metric_id", "evidence", "target", "proof") if k in packet}
         out.append(t)
     return {"tickets": out}
 
