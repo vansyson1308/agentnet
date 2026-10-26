@@ -187,3 +187,17 @@ def test_only_an_operator_records_revenue_and_reads_the_north_star(db, api_clien
     assert api_client.post("/v1/society/company/revenue", headers=auth(op), json={**body, "amount_usd": -1}).status_code == 422
     card = api_client.get("/v1/society/company/north-star", headers=auth(op)).json()
     assert card["north_star"]["current_usd"] == 12.5 and [e["reference"] for e in card["revenue_entries"]] == ["fiverr:order-1"]
+
+
+def test_the_ticket_list_shows_growth_tickets_without_a_500(db, company, api_client, user_token, north_star_on):
+    """Staging 92871db: GET /company/tickets raised KeyError 'evidence' on an O4/O5 growth ticket
+    (its packet is the lever packet, not the bench one)."""
+    _activate(db, "O4")
+    tickets.supply(db, backlog.kr_gap_items(db), utcnow())
+    db.commit()
+    _, op = user_token("operator")
+    r = api_client.get("/v1/society/company/tickets", headers=auth(op))
+    assert r.status_code == 200, r.text
+    growth = [t for t in r.json()["tickets"] if t["objective_id"] == "O4"]
+    assert growth and all(t["work_packet"]["kind"] == "growth" and t["work_packet"]["metric_id"] == t["metric_id"] for t in growth)
+    assert all("levers" not in t["work_packet"] for t in growth), "the structural part only"
