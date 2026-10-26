@@ -63,7 +63,7 @@ def test_schema_doc_documents_nested_payload_models():
     # Scalars carry the bounds the typed parser enforces; see
     # test_every_enforced_scalar_bound_is_stated_in_the_prompt for why.
     assert doc["WRITE_MEMORY"]["title"] == "string(1..255 chars)" and doc["WRITE_MEMORY"]["importance"] == "integer(0..100)"
-    assert len(_schemas_doc()) < 7000, "the schema block stays a bounded part of every prompt (+ the company ticket, + the design review)"
+    assert len(_schemas_doc()) < 7200, "the schema block stays a bounded part of every prompt (+ the company ticket, + the design review, + the owner action)"
 
 
 def test_engineering_conventions_match_the_trusted_acceptance_test_and_reach_only_engineering_roles():

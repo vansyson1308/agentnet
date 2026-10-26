@@ -383,6 +383,10 @@ def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Op
 
     supplied = tickets.supply(db, backlog.collect(db, settings, provider) + backlog.kr_gap_items(db, now), now)
     cycle.evidence = {**(cycle.evidence or {}), "tickets_supplied": len(supplied)}
+    from . import goals, owner_actions  # noqa: PLC0415
+
+    if goals.enabled(settings):  # outside actions of the active north-star objectives wait in the owner's queue
+        cycle.evidence = {**cycle.evidence, "owner_actions_supplied": owner_actions.supply_catalog(db)}
     db.commit()
     return cycle
 

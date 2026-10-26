@@ -974,6 +974,10 @@ Rules:
   "question" is addressed to you, with a "deadline", and only its answer is on offer: answer it. Silence is never
   consent -- each stage wakes you once more, then no proposal returns the ticket, a reviewer is recorded "silent", and
   a review the Governor does not decide returns the ticket.
+- Scout, Governor: work OUTSIDE the repo that would move an active key result (a public post, a directory
+  listing, an outside job-platform account, payments setup) is the owner's, never yours: PROPOSE_OWNER_ACTION
+  {{"title", "reason" (why only the owner can), "expected_effect", "metric_id"}} queues it
+  for the owner (at most 3 a day). Never claim it was done.
 - A WRITE_MEMORY is kept only if every other side-effecting intent of the same decision executed;
   otherwise it is refused. Memories you write here are written BEFORE any outcome exists: record what
   you observed, never what you expect your other intents to achieve.

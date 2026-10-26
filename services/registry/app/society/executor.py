@@ -767,6 +767,22 @@ def _ticket_needs_info(ctx: ExecContext) -> ExecOutcome:
     return ExecOutcome(result={"ticket_id": str(t["id"]), "status": "proposed", "missing": missing}, events=[str(ev.id)])
 
 
+def _propose_owner_action(ctx: ExecContext) -> ExecOutcome:
+    """Queue an outside action for the owner (owner_actions.py). Nothing is sent, posted or paid."""
+    from . import owner_actions  # noqa: PLC0415
+
+    p = ctx.validated.payload
+    try:
+        made = owner_actions.propose(ctx.db, agent_id=ctx.agent.id, title=p.title, reason=p.reason, expected_effect=p.expected_effect,
+                                     metric_id=p.metric_id, now=utcnow())
+    except ValueError as exc:
+        raise ExecutionError(str(exc)) from exc
+    if made["duplicate"]:
+        return ExecOutcome(result={"duplicate": True})
+    ev = _emit(ctx, EventType.OWNER_ACTION_PROPOSED, {"owner_action_id": made["id"], "objective_id": made["objective_id"], "metric_id": p.metric_id})
+    return ExecOutcome(result={"owner_action_id": made["id"]}, events=[str(ev.id)])
+
+
 def _design_review_call(ctx: ExecContext, fn: Callable[[], Dict[str, Any]], what: str) -> ExecOutcome:
     try:
         review = fn()
@@ -1906,6 +1922,7 @@ HANDLERS: Dict[IntentType, Callable[[ExecContext], ExecOutcome]] = {
     IntentType.REQUEST_QA: _request_qa,
     IntentType.DECLINE_CODE_CANDIDATE: _decline_code_candidate,
     IntentType.TICKET_NEEDS_INFO: _ticket_needs_info,
+    IntentType.PROPOSE_OWNER_ACTION: _propose_owner_action,
     IntentType.PROPOSE_DESIGN: _propose_design,
     IntentType.REVIEW_DESIGN: _review_design,
     IntentType.DECIDE_DESIGN: _decide_design,

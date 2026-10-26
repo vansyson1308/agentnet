@@ -138,6 +138,8 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             IntentType.CHECK_A2A_TASK.value,
             # the design review's chair (design_review.py)
             IntentType.DECIDE_DESIGN.value,
+            # an outside action only the owner can take goes to the owner's queue (owner_actions.py)
+            IntentType.PROPOSE_OWNER_ACTION.value,
         ),
         subscriptions=(
             EventType.DESIGN_REVIEW_READY,
@@ -176,6 +178,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             IntentType.REFRESH_A2A_AGENT.value,
             IntentType.CHECK_A2A_TASK.value,
             IntentType.REVIEW_DESIGN.value,
+            IntentType.PROPOSE_OWNER_ACTION.value,
         ),
         subscriptions=(
             EventType.DESIGN_REVIEW_PROPOSED,

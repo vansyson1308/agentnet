@@ -129,6 +129,7 @@ NO_ORM_TABLES = {
     "society_design_reviews": "company design reviews, written with SQL by society/design_review.py",
     "society_harness_lessons": "Harness² improvement library, written and read with SQL by maintenance/harness2.py",
     "society_revenue_entries": "north-star external income, written and read with SQL by society/goals.py",
+    "society_owner_actions": "the owner action queue, written and read with SQL by society/owner_actions.py",
 }
 # agent_connection_strength (05-social-graph.sql) is a MATERIALIZED VIEW, not a base table.
 
@@ -612,7 +613,7 @@ MAINTENANCE_TABLES = {
     "maintenance_known_good", "maintenance_release_freezes", "maintenance_toil_events", "maintenance_heartbeats",
     "maintenance_knowledge",
 }
-POST_0008_TABLES = APP_TABLES | PHASE3_TABLES | PHASE6_TABLES | PHASE8_TABLES | MAINTENANCE_TABLES | {"society_bench_reports", "society_objective_status", "society_tickets", "society_daily_plans", "society_design_reviews", "society_harness_lessons", "society_revenue_entries"}
+POST_0008_TABLES = APP_TABLES | PHASE3_TABLES | PHASE6_TABLES | PHASE8_TABLES | MAINTENANCE_TABLES | {"society_bench_reports", "society_objective_status", "society_tickets", "society_daily_plans", "society_design_reviews", "society_harness_lessons", "society_revenue_entries", "society_owner_actions"}
 
 
 def test_downgrade_0008_then_upgrade_head_round_trips(upgrade_db):

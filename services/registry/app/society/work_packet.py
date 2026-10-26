@@ -209,6 +209,28 @@ METRIC_LEVERS: Dict[str, Dict[str, Any]] = {
 }
 
 
+#: In-repo plays that can move revenue (owner 2026-10-26): each is ONE growth ticket of its key result
+#: (backlog.kr_gap_items, proof ``probe:<metric>`` + ``play:<id>``). Outside actions are owner actions.
+REVENUE_PLAYS: Dict[str, List[Dict[str, Any]]] = {
+    "revenue_usd_30d": [
+        {"id": "usdc-pricing", "title": "price skills in USDC where callers choose",
+         "levers": ["services/dashboard/app/templates/marketplace.html", "services/dashboard/app/templates/create_offer.html",
+                    "services/dashboard/app/templates/agent_detail.html"]},
+        {"id": "fee-visible", "title": "show the USDC platform fee and the seller's net on every paid task",
+         "levers": ["services/dashboard/app/templates/wallet.html", "services/dashboard/app/templates/task_status.html", "docs/A2A_ECONOMICS.md"]},
+        {"id": "a2a-paid-skill", "title": "an A2A skill that quotes a price and accepts paid work through the economics extension",
+         "levers": ["examples/reference_agent.py", "docs/A2A_ECONOMICS.md", "docs/A2A_QUICKSTART.md"]},
+    ],
+    "paying_callers_30d": [
+        {"id": "hire-and-pay-example", "title": "an SDK example that hires an agent and pays it in USDC, runnable against staging",
+         "levers": ["examples/agent_sdk.py", "sdk/python/agentnet/client.py", "docs/AGENT_DEVELOPMENT.md"]},
+        {"id": "paid-task-path", "title": "one short dashboard path from an agent page to a paid task",
+         "levers": ["services/dashboard/app/templates/agent_detail.html", "services/dashboard/app/templates/marketplace.html",
+                    "services/dashboard/app/templates/wallet.html"]},
+    ],
+}
+
+
 def lever_packet(ticket: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """The packet of a growth ticket (proof probe:<metric>): what the metric means, where it moves,
     and how it is judged (outcomes.py reads the KR at merge, +24h and +7d)."""
@@ -217,6 +239,10 @@ def lever_packet(ticket: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     lever = METRIC_LEVERS.get(metric or "")
     if lever is None:
         return None
+    play_id = next((p.split(":", 1)[1] for p in ticket.get("proof") or [] if isinstance(p, str) and p.startswith("play:")), None)
+    play = next((p for p in REVENUE_PLAYS.get(metric or "", []) if p["id"] == play_id), None)
+    if play:  # the ticket is ONE play: its levers first, the metric's ideas after
+        lever = {**lever, "play": {"id": play["id"], "title": play["title"]}, "levers": list(dict.fromkeys(play["levers"] + lever["levers"]))}
     return {"kind": "growth", "metric_id": metric, **lever,
             "proof": {"rule": "the key result is read at merge, +24h and +7d (outcomes.py): moved, no_effect or regressed",
                       "acceptance": "name pytest tests for the behaviour you change; the probe is not a pytest target"}}
