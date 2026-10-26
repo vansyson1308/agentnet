@@ -255,7 +255,8 @@ def red_slots(db: Session, red_cap: int) -> int:
     return max(0, int(red_cap) - int(open_red) - waiting)
 
 
-def build_plan(db: Session, cycle_id: Optional[uuid.UUID], now: datetime, *, red_cap: int = 1) -> Optional[Dict[str, Any]]:
+def build_plan(db: Session, cycle_id: Optional[uuid.UUID], now: datetime, *, red_cap: int = 1, plan_max: int = PLAN_MAX,
+               per_department: int = PER_DEPARTMENT) -> Optional[Dict[str, Any]]:
     """Rank the proposed tickets of ACTIVE objectives (<= 2 per department) into
     one plan of <= 3 that awaits the owner. Nothing in it builds until approved.
     A plan is buildable: it holds at most as many RED tickets as the company can
@@ -272,7 +273,7 @@ def build_plan(db: Session, cycle_id: Optional[uuid.UUID], now: datetime, *, red
     ranked = sorted(((score(dict(r), active[r["objective_id"]], north_star=north_star), dict(r)) for r in rows if r["objective_id"] in active), key=lambda x: -x[0])
     chosen, per_dep, slots, red_skipped = [], {}, red_slots(db, red_cap), 0
     for sc, t in ranked:
-        if sc > 0 and per_dep.get(t["department"], 0) < PER_DEPARTMENT and len(chosen) < PLAN_MAX:
+        if sc > 0 and per_dep.get(t["department"], 0) < per_department and len(chosen) < plan_max:
             red = is_red(t)
             if red and slots <= 0:
                 red_skipped += 1

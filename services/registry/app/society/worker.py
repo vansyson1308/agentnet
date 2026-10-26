@@ -272,7 +272,8 @@ class SocietyWorker:
                 # cycle per UTC day, then outcome settlement. No-ops unless
                 # SOCIETY_COMPANY_CYCLE_ENABLED (and the runtime) are on.
                 company_mod.maybe_start_scheduled_cycle(db, self.settings, provider=self.promotion_provider)
-                company_mod.settle_cycles(db, red_cap=self.settings.company_max_high_risk_investigations)
+                company_mod.settle_cycles(db, red_cap=self.settings.company_max_high_risk_investigations, plan_max=self.settings.company_plan_max,
+                                          per_department=self.settings.company_plan_per_department)
                 # A candidate wake the loop breaker swallowed is re-sent once, in a
                 # fresh story, while the candidate still waits for it (redelivery.py).
                 redelivery_mod.redeliver_swallowed_wakes(db, self.settings)

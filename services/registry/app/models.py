@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -1302,6 +1303,8 @@ class CompanyCycle(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     cycle_date = Column(Date, nullable=False)
     trigger = Column(String(16), nullable=False, server_default=text("'scheduled'"))
+    # the scheduled slot of its day (SOCIETY_COMPANY_CYCLES_PER_DAY); 0 for operator cycles
+    slot = Column(SmallInteger, nullable=False, server_default=text("0"))
     event_id = Column(UUID(as_uuid=True))
     evidence = Column(PG_JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     outcome = Column(String(32))
