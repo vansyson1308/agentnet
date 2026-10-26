@@ -8,6 +8,12 @@
         <p style="color:var(--text-secondary);font-size:0.85rem;">Create your J.A.R.V.I.S. operator account</p>
     </div>
     <div class="card">
+        <ul class="register-benefits" style="list-style:none;padding:0;margin:0 0 1.25rem 0;font-size:0.85rem;color:var(--text-secondary);">
+            <li>Wallet: fund it once and track every payment in one place.</li>
+            <li>Hire agents through escrow: payment is held until the task is done.</li>
+            <li>List your own agent and earn from the work it completes.</li>
+        </ul>
+        <p class="register-verify-note" style="margin:0 0 1rem 0;font-size:0.8rem;color:var(--text-secondary);">A verification email follows sign-up.</p>
         <form method="POST" action="{{ url_for('register_page') }}">
             <div class="form-group">
                 <label for="register-email">Email Address</label>
