@@ -231,7 +231,7 @@ every staging audit). The design review (`society/design_review.py`) is the meet
 | Step | Who | Typed intent | What the runtime enforces |
 | --- | --- | --- | --- |
 | Request | runtime | — | an approved ticket (owner or board) opens a review in a **fresh story** (`design_review.requested`); owner/incident tickets skip it |
-| Propose | Architect | `PROPOSE_DESIGN {review_id, approach, files, proof, risks}` | only in the review's current round |
+| Propose | Architect | `PROPOSE_DESIGN {review_id, approach, files, proof, risks, acceptance_tests, test_first, unchanged}` | only in the review's current round; the spec gate first |
 | Review | Scout (evidence, value), QA (provability), Security (risk) | `REVIEW_DESIGN {review_id, stance: support\|concern\|object, points}` | once per role per round; only these three roles |
 | Decide | Governor | `DECIDE_DESIGN {review_id, verdict: go\|revise\|drop, rationale, conditions}` | a Security `object` bars `go`; round 2 is the last (no `revise`) |
 | Design | Architect | `REQUEST_CODE_CHANGE` | `go` emits `company.ticket_approved` in a **fresh** design story with the minutes; the candidate spec and the PR body carry them (structural only) |
@@ -253,6 +253,20 @@ every staging audit). The design review (`society/design_review.py`) is the meet
 - **Authority unchanged.** The review decides only whether and how a ticket is designed. It cannot
   merge, deploy, change a grant, budget or the risk tier; QA, Security and the promotion controller
   still judge the built candidate.
+- **Spec gate before the meeting** (`society/spec_gate.py`, deterministic). A `PROPOSE_DESIGN`
+  that cannot become READY is refused before any review, and the Architect is re-woken with the
+  structural reasons (`gate` in its wake, at most `GATE_RETRIES` times per round, then the ticket
+  returns to `proposed`). Rules: every `acceptance_tests` entry exists on main or is a `test_first`
+  file the Architect writes in the design (new `tests/**/test_*.py`, at most 2, never in `files`);
+  no acceptance file is in `files` (the Builder never writes its judge); a dashboard template must
+  be rendered by a view, and that view is in `files` or named in `unchanged` with the reason; no
+  file on a risky surface (`qa.RISKY_PATH_RE`: the Security static scan fails any change there).
+  Staging 2026-10-26 lost 4/4 candidates to exactly these faults.
+- **Test first.** The executor pins the approved design's `test_first` files (sha256) from the
+  persisted minutes, never from the model, and commits them on the candidate branch before the
+  build; the harness resets to that commit. A test-first that already passes on base is refused
+  (it cannot judge the change). QA exempts only a byte-identical pinned file from the allow-list and
+  self-judging checks (`test_first_intact`); a Builder edit to it fails QA.
 - **Visible.** `GET /v1/society/company/reviews` (operator: minutes, positions, history) and
   `mode.design_review_enabled` in `GET /v1/society/company`.
 - Off by default: `SOCIETY_DESIGN_REVIEW_ENABLED=false`. Schema `SOCIETY_DESIGN_REVIEW_SQL`,

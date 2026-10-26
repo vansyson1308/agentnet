@@ -62,6 +62,8 @@ def _act(*intents):
     return {"decision_summary": "act", "intents": list(intents), "sleep_for_seconds": 1}
 
 
+#: exists on the fixture repository's main (the spec gate checks the design against it)
+ACCEPTANCE = "tests/acceptance/test_parse_bool_regression.py"
 IDLE = {"decision_summary": "nothing to do", "intents": [], "sleep_for_seconds": 60}
 
 
@@ -79,7 +81,8 @@ def test_an_approved_ticket_meets_before_it_is_designed_and_go_wakes_the_archite
             seen["architect"] = ctx.engineering["company"]["design_review"]
             return _act({"type": "PROPOSE_DESIGN", "payload": {
                 "review_id": _review_id(ctx), "approach": "extend parse_bool's affirmative set with yes/on and test both",
-                "files": ["src/textutil.py", "tests/test_textutil.py"], "proof": "a new test fails on base and passes after", "risks": ["callers relying on 'yes' -> False"]}})
+                "files": ["src/textutil.py", "tests/test_textutil.py"], "proof": "a new test fails on base and passes after", "risks": ["callers relying on 'yes' -> False"],
+                "acceptance_tests": [ACCEPTANCE]}})
         if etype == EventType.DESIGN_REVIEW_PROPOSED and ctx.role in ("scout", "qa", "security"):
             stance = "concern" if ctx.role == "qa" else "support"
             return _act({"type": "REVIEW_DESIGN", "payload": {"review_id": _review_id(ctx), "stance": stance, "points": [f"{ctx.role}: the proof is specific"]}})
@@ -119,7 +122,7 @@ def _proposing(db, report):
     review = design_review._row(db, "ticket_id = :t", {"t": t["id"]})
     corr = review["correlation_id"]
     design_review.propose(db, review_id=review["id"], correlation_id=corr, agent=_agent(db, report, "architect"),
-                          proposal={"approach": "a" * 30, "files": ["src/textutil.py"], "proof": "a failing test", "risks": []}, causation=None)
+                          proposal={"approach": "a" * 30, "files": ["src/textutil.py"], "acceptance_tests": [ACCEPTANCE], "proof": "a failing test", "risks": []}, causation=None)
     return t, design_review.get(db, review["id"])
 
 
@@ -215,7 +218,7 @@ def test_each_stage_wakes_exactly_the_roles_that_must_act(db, SessionLocal, revi
         etype = ctx.event["type"]
         if etype == EventType.DESIGN_REVIEW_REQUESTED:
             assert ctx.role == "architect"
-            return _act({"type": "PROPOSE_DESIGN", "payload": {"review_id": _review_id(ctx), "approach": "a" * 30, "files": ["src/textutil.py"],
+            return _act({"type": "PROPOSE_DESIGN", "payload": {"review_id": _review_id(ctx), "approach": "a" * 30, "files": ["src/textutil.py"], "acceptance_tests": [ACCEPTANCE],
                                                                "proof": "a failing test", "risks": []}})
         if etype == EventType.DESIGN_REVIEW_PROPOSED:
             assert ctx.role in design_review.REVIEWERS

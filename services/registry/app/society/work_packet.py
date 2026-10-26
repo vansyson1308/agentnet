@@ -159,8 +159,7 @@ def bench_packet(db: Session, task_id: str, repo_root: str = "") -> Optional[Dic
 METRIC_LEVERS: Dict[str, Dict[str, Any]] = {
     "a2a_agents_live_card": {
         "means": "remote A2A agents whose card AgentNet validated in the last 7 days (the federation catalog)",
-        "levers": ["services/dashboard/app/templates/network.html", "services/dashboard/app/templates/network_agent.html",
-                   "services/dashboard/app/templates/directory.html", "docs/A2A_QUICKSTART.md", "docs/A2A_FEDERATION.md",
+        "levers": ["services/dashboard/app/templates/network.html", "services/dashboard/app/templates/network_agent.html", "docs/A2A_QUICKSTART.md", "docs/A2A_FEDERATION.md",
                    "examples/reference_agent.py", "sdk/python/agentnet/client.py"],
         "ideas": ["make publishing and registering an A2A agent card a one-page, copy-paste flow",
                   "show federated agents and their live status where visitors look first",
@@ -168,8 +167,7 @@ METRIC_LEVERS: Dict[str, Dict[str, Any]] = {
     },
     "escrow_tasks_completed_7d": {
         "means": "completed escrow tasks between two distinct agents in the last 7 days (the marketplace)",
-        "levers": ["services/dashboard/app/templates/marketplace.html", "services/dashboard/app/templates/agent_register.html",
-                   "services/dashboard/app/templates/new_agent.html", "services/dashboard/app/templates/create_offer.html",
+        "levers": ["services/dashboard/app/templates/marketplace.html",
                    "docs/AGENT_DEVELOPMENT.md", "examples/agent_sdk.py", "sdk/python/agentnet/client.py"],
         "ideas": ["shorten the path from sign-up to a first paid task", "make offers and their prices visible to callers",
                   "a working example of one agent hiring another through escrow"],
@@ -177,8 +175,7 @@ METRIC_LEVERS: Dict[str, Dict[str, Any]] = {
     # The north star's product key results (goals.py; supplied only while SOCIETY_NORTH_STAR_ENABLED).
     "revenue_usd_30d": {
         "means": "real revenue in 30 days: USDC platform fees on completed agent-to-agent payments + recorded external income",
-        "levers": ["services/dashboard/app/templates/marketplace.html", "services/dashboard/app/templates/wallet.html",
-                   "services/dashboard/app/templates/create_offer.html", "docs/A2A_ECONOMICS.md", "examples/agent_sdk.py",
+        "levers": ["services/dashboard/app/templates/marketplace.html", "docs/A2A_ECONOMICS.md", "examples/agent_sdk.py",
                    "sdk/python/agentnet/client.py"],
         "ideas": ["let an agent owner price a skill in USDC and show that price where callers choose",
                   "a copy-paste example of a paid USDC task through the economics extension",
@@ -186,15 +183,13 @@ METRIC_LEVERS: Dict[str, Dict[str, Any]] = {
     },
     "paying_callers_30d": {
         "means": "distinct wallets that paid for a completed USDC task in the last 30 days (customers)",
-        "levers": ["services/dashboard/app/templates/marketplace.html", "services/dashboard/app/templates/agent_detail.html",
-                   "services/dashboard/app/templates/wallet.html", "docs/AGENT_DEVELOPMENT.md", "sdk/python/agentnet/client.py"],
+        "levers": ["services/dashboard/app/templates/marketplace.html", "docs/AGENT_DEVELOPMENT.md", "sdk/python/agentnet/client.py"],
         "ideas": ["a clear 'hire this agent' call to action with price, reputation and expected time",
                   "make funding a wallet and paying the first task one short path"],
     },
     "outside_agents_joined_7d": {
         "means": "agents registered in 7 days that are not the Society's own (other people's agents joining)",
-        "levers": ["services/dashboard/app/templates/landing.html", "services/dashboard/app/templates/agent_register.html",
-                   "services/dashboard/app/templates/directory.html", "docs/A2A_QUICKSTART.md", "examples/reference_agent.py",
+        "levers": ["services/dashboard/app/templates/landing.html", "docs/A2A_QUICKSTART.md", "examples/reference_agent.py",
                    "README.md"],
         "ideas": ["say on the landing page, in one line, why an agent developer should list their agent here",
                   "a five-minute path from an existing A2A agent card to a listed, payable AgentNet agent",
@@ -211,13 +206,16 @@ METRIC_LEVERS: Dict[str, Dict[str, Any]] = {
 
 #: In-repo plays that can move revenue (owner 2026-10-26): each is ONE growth ticket of its key result
 #: (backlog.kr_gap_items, proof ``probe:<metric>`` + ``play:<id>``). Outside actions are owner actions.
+#: Levers are RENDERED templates and their view only (spec_gate.py): wallet.html, task_status.html,
+#: agent_detail.html and create_offer.html are rendered by no view, and "wallet"/"payment" paths are
+#: risky surfaces the Security static scan always fails (staging 2026-10-26, 7ae459d7).
 REVENUE_PLAYS: Dict[str, List[Dict[str, Any]]] = {
     "revenue_usd_30d": [
         {"id": "usdc-pricing", "title": "price skills in USDC where callers choose",
-         "levers": ["services/dashboard/app/templates/marketplace.html", "services/dashboard/app/templates/create_offer.html",
-                    "services/dashboard/app/templates/agent_detail.html"]},
-        {"id": "fee-visible", "title": "show the USDC platform fee and the seller's net on every paid task",
-         "levers": ["services/dashboard/app/templates/wallet.html", "services/dashboard/app/templates/task_status.html", "docs/A2A_ECONOMICS.md"]},
+         "levers": ["services/dashboard/app/templates/marketplace.html", "services/dashboard/app/templates/network_agent.html",
+                    "services/dashboard/app/main.py"]},
+        {"id": "fee-visible", "title": "show the USDC platform fee and the seller's net where a caller picks a price",
+         "levers": ["services/dashboard/app/templates/network_agent.html", "services/dashboard/app/main.py", "docs/A2A_ECONOMICS.md"]},
         {"id": "a2a-paid-skill", "title": "an A2A skill that quotes a price and accepts paid work through the economics extension",
          "levers": ["examples/reference_agent.py", "docs/A2A_ECONOMICS.md", "docs/A2A_QUICKSTART.md"]},
     ],
@@ -225,8 +223,8 @@ REVENUE_PLAYS: Dict[str, List[Dict[str, Any]]] = {
         {"id": "hire-and-pay-example", "title": "an SDK example that hires an agent and pays it in USDC, runnable against staging",
          "levers": ["examples/agent_sdk.py", "sdk/python/agentnet/client.py", "docs/AGENT_DEVELOPMENT.md"]},
         {"id": "paid-task-path", "title": "one short dashboard path from an agent page to a paid task",
-         "levers": ["services/dashboard/app/templates/agent_detail.html", "services/dashboard/app/templates/marketplace.html",
-                    "services/dashboard/app/templates/wallet.html"]},
+         "levers": ["services/dashboard/app/templates/network_agent.html", "services/dashboard/app/templates/marketplace.html",
+                    "services/dashboard/app/main.py"]},
     ],
 }
 
