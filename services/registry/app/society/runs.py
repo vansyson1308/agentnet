@@ -160,6 +160,9 @@ def dispatch_pending_events(
             event.processed_at = now
             stats.events_ignored += 1
             stats.loop_breaks += 1
+            # one structural line per trip (the audit's L01 names the same facts from the DB)
+            logger.warning("loop_breaker.tripped correlation=%s kind=%s event_type=%s depth=%s subject=%s:%s", str(event.correlation_id)[:8],
+                           "depth" if "depth" in note else "runs", event.event_type, event.causation_depth, event.subject_type, str(event.subject_id or "")[:8])
             # One breaker event per correlation, never chained (no causation, depth 0),
             # so it cannot itself trip the breaker.
             emit_event(

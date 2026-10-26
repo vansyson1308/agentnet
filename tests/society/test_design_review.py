@@ -135,7 +135,8 @@ def test_security_objection_bars_go_the_last_round_has_no_revise_and_drop_refuse
                                     position={"stance": "support", "points": ["fine"]}, causation=None)
     for role, stance in (("scout", "support"), ("qa", "support"), ("security", "object")):
         design_review.post_position(db, review_id=review["id"], correlation_id=corr, agent=_agent(db, report, role), role=role,
-                                    position={"stance": stance, "points": [f"{role} point"]}, causation=None)
+                                    position={"stance": stance, "points": [f"{role} point"], "constraints": ["no new dependency"] if stance == "object" else []},
+                                    causation=None)
         if role == "scout":
             with pytest.raises(design_review.ReviewRefused, match="scout already reviewed round 1"):
                 design_review.post_position(db, review_id=review["id"], correlation_id=corr, agent=_agent(db, report, "scout"), role="scout",
@@ -302,7 +303,7 @@ def test_a_timeout_is_never_approval(db, review_on):
     # one objection, the rest silent: still the Governor's call, still a return on silence
     t3, r3 = _proposing(db, report)
     design_review.post_position(db, review_id=r3["id"], correlation_id=r3["correlation_id"], agent=_agent(db, report, "security"), role="security",
-                                position={"stance": "object", "points": ["it widens an auth path"]}, causation=None)
+                                position={"stance": "object", "points": ["it widens an auth path"], "constraints": ["no auth path change"]}, causation=None)
     for _ in range(4):  # reviewers re-woken, then silent; the Governor re-woken, then the return
         _expire_stage(db, r3)
         assert design_review.sweep(db, utcnow()) == 1

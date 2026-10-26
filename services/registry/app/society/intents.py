@@ -439,8 +439,10 @@ class ProposeDesignPayload(_Strict):
     acceptance_tests: List[str] = Field(default_factory=list, max_length=6)
     test_first: List[DesignTestFile] = Field(default_factory=list, max_length=2)
     unchanged: List[str] = Field(default_factory=list, max_length=4)
+    #: "S<n>: how the design meets it" for each Security constraint of an earlier round (design_review.obligations)
+    carries: List[str] = Field(default_factory=list, max_length=6)
 
-    @field_validator("files", "risks", "acceptance_tests", "unchanged")
+    @field_validator("files", "risks", "acceptance_tests", "unchanged", "carries")
     @classmethod
     def _items(cls, v: List[str]) -> List[str]:
         return _short_items(v, lo=1)
@@ -455,13 +457,15 @@ class ProposeDesignPayload(_Strict):
 
 class ReviewDesignPayload(_Strict):
     """A reviewer's position on the proposal (Scout: evidence/value, QA: provability, Security: risk);
-    ``abstain`` (the reason as a point) when the reviewer has nothing specific to say."""
+    ``abstain`` (the reason as a point) when the reviewer has nothing specific to say. Only Security
+    names ``constraints`` (what the spec must carry); a Security ``object`` names at least one."""
 
     review_id: uuid.UUID
     stance: Literal["support", "concern", "object", "abstain"]
     points: List[str] = Field(..., min_length=1, max_length=5)
+    constraints: List[str] = Field(default_factory=list, max_length=4)
 
-    @field_validator("points")
+    @field_validator("points", "constraints")
     @classmethod
     def _items(cls, v: List[str]) -> List[str]:
         return _short_items(v)

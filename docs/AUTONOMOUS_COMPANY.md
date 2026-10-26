@@ -267,6 +267,18 @@ every staging audit). The design review (`society/design_review.py`) is the meet
   build; the harness resets to that commit. A test-first that already passes on base is refused
   (it cannot judge the change). QA exempts only a byte-identical pinned file from the allow-list and
   self-judging checks (`test_first_intact`); a Builder edit to it fails QA.
+- **Security constraints.** Only Security names `constraints` in `REVIEW_DESIGN`, and an `object`
+  must name at least one: the constraint the spec must carry (staging 7ae459d7 passed QA and failed
+  Security on a constraint nobody had stated). They are numbered `S<n>` across the ticket's rounds;
+  every later proposal answers each in `carries` ("S1: how") or the spec gate refuses it; the
+  minutes (`security_constraints`), the candidate spec and the candidate's Security review event
+  carry them.
+- **Rescope, not a dead end.** A Builder's `spec_outside_files_allowed` decline of a ticket whose
+  review said `go` re-designs the SAME ticket: a new review in a fresh story (ticket back to
+  `approved`, no candidate), whose proposal must cover the `blocking_paths` in `files` or say in
+  `unchanged` why not, and carry the earlier constraints. Once per ticket (`MAX_RESCOPES`); a second
+  decline closes it as before. While it is open nobody builds the old design and the stale-design
+  sweep leaves the ticket alone.
 - **Visible.** `GET /v1/society/company/reviews` (operator: minutes, positions, history) and
   `mode.design_review_enabled` in `GET /v1/society/company`.
 - Off by default: `SOCIETY_DESIGN_REVIEW_ENABLED=false`. Schema `SOCIETY_DESIGN_REVIEW_SQL`,

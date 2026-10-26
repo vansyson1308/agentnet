@@ -416,7 +416,8 @@ def sweep_stale_designs(db: Session, now: datetime) -> int:
     rows = db.execute(text(
         "SELECT DISTINCT ON (t.id) t.id, e.created_at AS approved_at, e.correlation_id AS corr FROM society_tickets t "
         "JOIN society_events e ON e.event_type = :ev AND e.payload ->> 'ticket_id' = t.id::text "
-        "WHERE t.status = 'approved' AND t.candidate_id IS NULL ORDER BY t.id, e.created_at DESC"), {"ev": EventType.COMPANY_TICKET_APPROVED}).mappings().all()
+        "WHERE t.status = 'approved' AND t.candidate_id IS NULL AND NOT EXISTS (SELECT 1 FROM society_design_reviews r "
+        "WHERE r.ticket_id = t.id AND r.status IN ('proposing', 'reviewing', 'deciding')) ORDER BY t.id, e.created_at DESC"), {"ev": EventType.COMPANY_TICKET_APPROVED}).mappings().all()
     n = 0
     for r in rows:
         last = db.execute(text("SELECT MAX(created_at) FROM agent_runs WHERE correlation_id = :c"), {"c": r["corr"]}).scalar()

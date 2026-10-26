@@ -53,6 +53,8 @@ REVIEWERS = ("scout", "qa", "security")
 MAX_ROUNDS = 2
 #: spec-gate refusals (spec_gate.py) the Architect may fix within one round before the ticket returns
 GATE_RETRIES = 2
+#: re-designs of the SAME ticket after its Builder declined a candidate as outside files_allowed
+MAX_RESCOPES = 1
 PROPOSAL_WINDOW = timedelta(hours=2)
 REVIEW_WINDOW = timedelta(hours=2)
 DECISION_WINDOW = timedelta(hours=2)
@@ -140,10 +142,14 @@ def _question(stage: str, role: str, review: Dict[str, Any], title: str, deadlin
     if stage == "proposing":
         return (f"Architect: propose the design for '{title}' (round {n}/{MAX_ROUNDS}): one PROPOSE_DESIGN "
                 f"{{review_id, approach, files, proof, risks, acceptance_tests, test_first, unchanged}} before {deadline}; "
-                "the spec gate checks it first (an acceptance test exists on main or is your test_first, a template's view is in files).")
+                "the spec gate checks it first (an acceptance test exists on main or is your test_first, a template's view is in files)"
+                + (f"; carry {', '.join(c.split(':', 1)[0] for c in obligations(review)['constraints'])} in carries" if obligations(review)["constraints"] else "")
+                + (f"; cover {', '.join(obligations(review)['required_paths'])} (files or unchanged)" if obligations(review)["required_paths"] else "") + ".")
     if stage == "reviewing":
         return (f"{role.capitalize()}: {REVIEW_FOCUS.get(role, 'does this proposal hold up')}? Answer with ONE REVIEW_DESIGN "
                 f"{{review_id, stance: support|concern|object|abstain, points}} about THIS proposal before {deadline}; "
+                + ("name what the spec must carry in constraints (an object needs one); " if role == "security" else "")
+                + 
                 "abstain (the reason as a point) when you have nothing specific -- silence is recorded as silent.")
     return (f"Governor: decide round {n}/{MAX_ROUNDS} of '{title}' with ONE DECIDE_DESIGN {{review_id, verdict: go|revise|drop, "
             f"rationale, conditions}} before {deadline}; a Security object rules out go" + ("; this round has no revise." if n >= MAX_ROUNDS else "."))
@@ -243,7 +249,12 @@ def post_position(db: Session, *, review_id: Any, correlation_id: Any, agent: An
     positions = dict(review["positions"] or {})
     if role in positions:
         raise ReviewRefused(f"{role} already reviewed round {review['round']}")
-    positions[role] = {**position, "agent": agent.name}
+    constraints = list(position.get("constraints") or [])
+    if constraints and role != "security":
+        raise ReviewRefused("only Security names constraints: put the point in points")
+    if role == "security" and position["stance"] == "object" and not constraints:
+        raise ReviewRefused("a Security object names the constraint the spec must carry: constraints [\"...\"]")
+    positions[role] = {**position, "constraints": constraints, "agent": agent.name}
     _update(db, review["id"], positions=positions)
     review = get(db, review["id"])
     _log("position", review, role=role, stance=position["stance"], spoken=len(positions))
@@ -295,7 +306,8 @@ def _minutes(review: Dict[str, Any], decision: Dict[str, Any]) -> Dict[str, Any]
     history = list(review.get("history") or [])
     return {"review_id": str(review["id"]), "rounds": int(review["round"]), "verdict": decision["verdict"], "rationale": decision.get("rationale"),
             "conditions": list(decision.get("conditions") or []), "by": decision.get("by"), "proposal": review.get("proposal"),
-            "stances": {r: p["stance"] for r, p in (review.get("positions") or {}).items()}, "missing": _missing(review), "earlier_rounds": len(history)}
+            "stances": {r: p["stance"] for r, p in (review.get("positions") or {}).items()}, "missing": _missing(review), "earlier_rounds": len(history),
+            "security_constraints": security_constraints(review)}
 
 
 def _settle(db: Session, review: Dict[str, Any], decision: Dict[str, Any]) -> None:
@@ -308,7 +320,7 @@ def _settle(db: Session, review: Dict[str, Any], decision: Dict[str, Any]) -> No
                                                          "positions": review.get("positions"), "decision": decision}]
         _update(db, review["id"], history=history, round=int(review["round"]) + 1, status="proposing", proposal=None, positions={},
                 correlation_id=uuid.uuid4(), stage_at=utcnow())
-        feedback = {"rationale": decision.get("rationale"), "conditions": decision.get("conditions") or [],
+        feedback = {"rationale": decision.get("rationale"), "conditions": decision.get("conditions") or [], "constraints": security_constraints(review),
                     "positions": {r: {"stance": p["stance"], "points": p["points"]} for r, p in (review.get("positions") or {}).items()}}
         _request_round(db, get(db, review["id"]), t, feedback=feedback)
         return
@@ -323,6 +335,53 @@ def _settle(db: Session, review: Dict[str, Any], decision: Dict[str, Any]) -> No
         tickets.set_status(db, t["id"], "refused", f"design review dropped it: {' '.join(str(decision.get('rationale') or '').split())}"[:500])
     else:  # return: the meeting did not decide in time -- the owner/board re-plans it
         tickets.set_status(db, t["id"], "proposed", f"design review: {decision.get('rationale')}"[:500], plan_id=None)
+
+
+def security_constraints(review: Dict[str, Any]) -> List[str]:
+    """Every constraint Security named in this ticket's meetings, earliest first, numbered ``S<n>``:
+    each later proposal carries it (spec_gate.check_obligations), the minutes and the spec keep it."""
+    seen: List[str] = []
+    for positions in [h.get("positions") or {} for h in review.get("history") or []] + [review.get("positions") or {}]:
+        for c in (positions.get("security") or {}).get("constraints") or []:
+            if c not in seen:
+                seen.append(c)
+    return [f"S{i}: {c}" for i, c in enumerate(seen, 1)]
+
+
+def obligations(review: Dict[str, Any]) -> Dict[str, List[str]]:
+    """What the CURRENT round's proposal must answer: the Security constraints of earlier rounds and
+    the paths a Builder's spec_outside_files_allowed decline named (``rescope``)."""
+    paths = [p for h in review.get("history") or [] for p in ((h.get("rescope") or {}).get("blocking_paths") or [])]
+    return {"constraints": security_constraints({**review, "positions": {}}), "required_paths": list(dict.fromkeys(paths))}
+
+
+def open_for_ticket(db: Session, ticket_id: Any) -> bool:
+    return _row(db, "ticket_id = :t AND status IN ('proposing', 'reviewing', 'deciding')", {"t": ticket_id}) is not None
+
+
+def rescope(db: Session, ticket: Dict[str, Any], *, blocking_paths: List[str], detail: str) -> Optional[uuid.UUID]:
+    """The Builder declined the ticket's candidate as outside files_allowed: the SAME ticket is
+    designed again in a new review (a fresh story) whose proposal must cover ``blocking_paths`` (in
+    files, or in unchanged with the reason) and carry every earlier Security constraint. Only after a
+    ``go`` and at most MAX_RESCOPES times; otherwise None and the caller closes the ticket as before.
+    The caller sets the ticket back to approved and commits."""
+    if not enabled():
+        return None
+    prior = _row(db, "ticket_id = :t", {"t": ticket["id"]})
+    reviews = int(db.execute(text("SELECT COUNT(*) FROM society_design_reviews WHERE ticket_id = :t"), {"t": ticket["id"]}).scalar() or 0)
+    if prior is None or prior["status"] != "go" or reviews > MAX_RESCOPES:
+        return None
+    note = {"reason": "spec_outside_files_allowed", "blocking_paths": list(blocking_paths)}
+    history = list(prior["history"] or []) + [{"round": int(prior["round"]), "proposal": prior["proposal"], "positions": prior["positions"],
+                                               "decision": prior["decision"], "rescope": note}]
+    rid = uuid.uuid4()
+    db.execute(text("INSERT INTO society_design_reviews (id, ticket_id, plan_id, approved_by, correlation_id, history) "
+                    "VALUES (:id, :t, :p, :by, :c, CAST(:h AS JSONB))"),
+               {"id": rid, "t": ticket["id"], "p": ticket.get("plan_id"), "by": prior["approved_by"], "c": uuid.uuid4(), "h": json.dumps(history, default=str)})
+    review = get(db, rid)
+    _log("rescoped", review, ticket=str(ticket["id"])[:8], blocking=len(blocking_paths))
+    _request_round(db, review, ticket, feedback={"rescope": {**note, "detail": detail}, "previous": prior["proposal"], "constraints": security_constraints(review)})
+    return rid
 
 
 def _rewoken(db: Session, review: Dict[str, Any]) -> bool:
@@ -383,8 +442,8 @@ def context_view(db: Session, correlation_id: Any) -> Dict[str, Any]:
     if review is None:
         return {}
     t = _ticket(db, review)
-    step = {"proposing": "Architect: PROPOSE_DESIGN {review_id, approach, files, proof, risks, acceptance_tests, test_first, unchanged} (spec gate first)",
-            "reviewing": "Scout, QA, Security: REVIEW_DESIGN {review_id, stance: support|concern|object|abstain, points} -- once each, about THIS proposal",
+    step = {"proposing": "Architect: PROPOSE_DESIGN {review_id, approach, files, proof, risks, acceptance_tests, test_first, unchanged, carries} (spec gate first)",
+            "reviewing": "Scout, QA, Security: REVIEW_DESIGN {review_id, stance: support|concern|object|abstain, points, constraints (Security)} -- once each",
             "deciding": "Governor: DECIDE_DESIGN {review_id, verdict: go|revise|drop, rationale, conditions} -- Security object bars go; "
                         f"round {MAX_ROUNDS} has no revise" + (f"; missing: {', '.join(_missing(review))} (decide with what you have)" if _missing(review) else "")
                         + (f"; silent: {', '.join(_silent(review))} (woken twice, said nothing)" if _silent(review) else "")
@@ -403,6 +462,7 @@ def context_view(db: Session, correlation_id: Any) -> Dict[str, Any]:
         "missing": _missing(review) if review["status"] == "deciding" else [],
         "silent": _silent(review),
         "earlier_rounds": untrusted(review["history"] or [], source="agent:review_history"),
+        "obligations": untrusted(obligations(review), source="agent:security") if review["status"] == "proposing" else None,
     }}
 
 
