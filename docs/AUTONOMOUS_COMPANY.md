@@ -315,3 +315,13 @@ rank the plan, reach every role and widen growth supply to the revenue KRs (O4, 
 `SOCIETY_NORTH_STAR_ENABLED=true` (off by default). Revenue is USDC platform fees plus
 operator-recorded external income (record-only ledger, migration `0022_revenue_ledger`).
 See [NORTH_STAR.md](NORTH_STAR.md).
+
+## Heartbeat precheck (idle wakes cost nothing)
+
+With `SOCIETY_HEARTBEAT_PRECHECK_ENABLED=true` a `society.heartbeat` run is SKIPPED as
+`idle: ...` before any context or model call unless its role has something to act on
+(`society/wake_precheck.py`): a candidate in a Builder stage, an unreviewed proposal or an
+unpromoted READY candidate for the Governor, or a backlog item newer than the role's last
+completed run. A role silent for `SOCIETY_HEARTBEAT_MAX_IDLE_HOURS` (default 6) is woken
+anyway, so a gap delays work but never strands it. `GET /v1/society/company` →
+`heartbeat_precheck` reports idle skips in 24h and the estimated $ saved.

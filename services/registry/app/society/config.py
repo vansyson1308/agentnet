@@ -220,6 +220,10 @@ class SocietySettings:
     )
     wake_poll_seconds: int = field(default_factory=lambda: _int("SOCIETY_WAKE_POLL_SECONDS", 5, minimum=1))
     heartbeat_interval_seconds: int = field(default_factory=lambda: _int("SOCIETY_HEARTBEAT_INTERVAL_SECONDS", 3600, minimum=0))
+    # Heartbeat precheck (wake_precheck.py): a heartbeat run whose role has nothing to act on is
+    # SKIPPED ("idle: ...") before any model call; a role idle this long is woken anyway (liveness).
+    heartbeat_precheck_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_HEARTBEAT_PRECHECK_ENABLED", False))
+    heartbeat_max_idle_hours: int = field(default_factory=lambda: _int("SOCIETY_HEARTBEAT_MAX_IDLE_HOURS", 6, minimum=1))
     # daily scheduled bench on main (bench_schedule.py): off by default
     bench_daily_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_BENCH_DAILY_ENABLED", False))
     bench_daily_hour_utc: int = field(default_factory=lambda: min(23, _int("SOCIETY_BENCH_DAILY_HOUR_UTC", 3, minimum=0)))

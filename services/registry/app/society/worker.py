@@ -64,6 +64,7 @@ from . import redelivery as redelivery_mod
 from . import router as router_mod
 from . import surface_monitor as surface_monitor_mod
 from . import telemetry as telemetry_mod
+from . import wake_precheck as wake_precheck_mod
 from .approvals import claim_next_approved_intent, execute_approved_intent
 from .cognition import CognitiveModel, ModelProviderError, ModelTimeout, get_model
 from .config import SocietySettings, get_settings, validate_settings
@@ -595,6 +596,15 @@ class SocietyWorker:
                 if stats:
                     stats.runs_skipped += 1
                 return "skipped"
+            if self.settings.heartbeat_precheck_enabled and event.event_type == EventType.SOCIETY_HEARTBEAT:
+                busy, why = wake_precheck_mod.heartbeat_work(db, agent_id=agent.id, role=run.role or (grant.role if grant else ""), now=utcnow(),
+                                                             max_idle_hours=self.settings.heartbeat_max_idle_hours)
+                if not busy:  # nothing to act on: no context, no model call
+                    skip_run(db, run, wake_precheck_mod.IDLE_PREFIX + why)
+                    M_RUNS.labels(status="skipped").inc()
+                    if stats:
+                        stats.runs_skipped += 1
+                    return "skipped"
             mark_running(db, run)
 
             resumed = db.query(AgentIntent.id).filter(AgentIntent.run_id == run.id).first() is not None

@@ -524,7 +524,7 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
     """Everything an operator needs in one view. No secrets, no payloads."""
     from ..a2a import config as a2a_config
     from ..a2a.orm import A2AOutboundCall
-    from . import backlog, goals, outcomes
+    from . import backlog, goals, outcomes, wake_precheck
     from .policy import spend_today_usd
 
     evidence = evidence_bundle(db)
@@ -559,6 +559,7 @@ def status_report(db: Session, settings: SocietySettings) -> Dict[str, Any]:
         "bench_trend": backlog.trend(db, with_cost=True),
         "kpis": outcomes.kpis(db, utcnow()),
         "north_star": goals.scorecard(db),
+        "heartbeat_precheck": {"enabled": settings.heartbeat_precheck_enabled, **wake_precheck.savings(db, utcnow())},
         "budgets": {
             "model_spend_today_usd": str(spend),
             "daily_model_budget_usd": str(settings.daily_model_budget_usd),
