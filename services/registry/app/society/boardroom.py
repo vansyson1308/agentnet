@@ -9,7 +9,8 @@ Structural text only: numbers, ids, statuses, our own labels and system URLs. A 
 (a candidate, an agent-proposed owner action, a ticket) passes through the same redaction as an
 intent row (secret_redaction.py), loses control characters and is cut to ``TITLE_MAX`` -- nothing
 else a model wrote (rationales, payloads, minutes) is ever forwarded. The digest reads; it decides
-nothing: the plan and the owner actions are still decided only through the operator API."""
+nothing: the plan and the owner actions are decided only by the operator API's code -- the API
+itself or, step 2, a linked operator's command in the same chat (boardroom_commands.py)."""
 
 from __future__ import annotations
 
@@ -43,7 +44,7 @@ def clean(value: Any, limit: int = TITLE_MAX) -> str:
     return out if len(out) <= limit else out[: limit - 1] + "…"
 
 
-def _plan(db: Session) -> List[str]:
+def _plan(db: Session, commands: bool = False) -> List[str]:
     row = db.execute(text("SELECT id, plan_date, status, ranking FROM society_daily_plans ORDER BY created_at DESC LIMIT 1")).mappings().first()
     if row is None:
         return ["Plan: none yet"]
@@ -52,6 +53,8 @@ def _plan(db: Session) -> List[str]:
     lines += [f"  {i}. [{t.get('objective_id')}/{t.get('department')}] {clean(t.get('title'))} ({t.get('risk')})" for i, t in enumerate(ranking[:5], 1)]
     if row["status"] == "awaiting_owner":
         lines.append(f"  approve or reject: POST /v1/society/company/plans/{row['id']}/approve|reject (operator)")
+        if commands:
+            lines.append(f"  or here: /approve {str(row['id'])[:8]} | /reject {str(row['id'])[:8]}")
     return lines
 
 
@@ -70,12 +73,14 @@ def _ready(db: Session, settings: SocietySettings, now: datetime) -> List[str]:
     return lines
 
 
-def _owner_actions(db: Session) -> List[str]:
+def _owner_actions(db: Session, commands: bool = False) -> List[str]:
     rows = db.execute(text("SELECT id, objective_id, title, source FROM society_owner_actions WHERE status = 'open' ORDER BY created_at LIMIT 8")).mappings().all()
     lines = [f"Owner actions open: {len(rows)}"]
     lines += [f"  [{r['objective_id']}] {clean(r['title'])} ({r['source']}, {str(r['id'])[:8]})" for r in rows]
     if rows:
         lines.append("  close: POST /v1/society/company/owner-actions/<id>/done|dismissed (operator)")
+        if commands:
+            lines.append("  or here: /done <id> [note] | /dismiss <id> [note]")
     return lines
 
 
@@ -91,7 +96,8 @@ def digest(db: Session, settings: SocietySettings, now: Optional[datetime] = Non
     card = goals.scorecard(db, now)
     if card.get("north_star"):
         lines += goals.summary(card).splitlines()
-    lines += _plan(db) + _ready(db, settings, now) + _owner_actions(db)
+    commands = bool(settings.telegram_enabled and settings.telegram_commands_enabled)
+    lines += _plan(db, commands) + _ready(db, settings, now) + _owner_actions(db, commands)
     out = "\n".join(lines)
     return out if len(out) <= DIGEST_MAX else out[: DIGEST_MAX - 12] + "\n[truncated]"
 

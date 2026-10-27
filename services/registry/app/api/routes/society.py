@@ -778,6 +778,30 @@ def boardroom_send_now(db: Session = Depends(get_db), operator: User = Depends(r
     return boardroom.maybe_send_digest(db, settings, boardroom_telegram.sender(settings), force=True)
 
 
+@router.post("/company/boardroom/link", status_code=status.HTTP_201_CREATED)
+def boardroom_link(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """A one-time code (10 min) that links the Telegram account sending ``/link <code>`` in the
+    operator chat to THIS operator; replaces any earlier link. The code grants nothing by itself:
+    only the society worker, with SOCIETY_TELEGRAM_COMMANDS_ENABLED, reads ``/link`` and commands."""
+    from ...society import boardroom_commands
+
+    return boardroom_commands.issue_link_code(db, operator.id)
+
+
+@router.get("/company/boardroom/link")
+def boardroom_link_status(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    from ...society import boardroom_commands
+
+    return boardroom_commands.link_status(db, operator.id)
+
+
+@router.delete("/company/boardroom/link")
+def boardroom_unlink(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    from ...society import boardroom_commands
+
+    return {"unlinked": boardroom_commands.unlink(db, operator.id)}
+
+
 @router.get("/company/owner-actions")
 def list_owner_actions(db: Session = Depends(get_db), operator: User = Depends(require_operator),
                        state: Literal["open", "done", "dismissed"] = "open", limit: int = Query(50, ge=1, le=200)):

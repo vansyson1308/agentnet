@@ -411,3 +411,30 @@ society worker sends it once per UTC day at/after `SOCIETY_TELEGRAM_DIGEST_HOUR_
   `POST /v1/society/company/owner-actions/{id}/done|dismissed`).
 - `GET /v1/society/company/boardroom/digest` shows the page as it would be sent; `POST` sends it now
   (refused while the boardroom is off). Both are operator only.
+- The Bot API puts the token in the URL path and httpx logs request URLs at INFO, so
+  `boardroom_telegram.py` filters the `httpx`/`httpcore` loggers: a record naming the Bot API path
+  is dropped at any log level.
+
+### Telegram boardroom, step 2: owner commands
+
+`society/boardroom_commands.py` (`SOCIETY_TELEGRAM_COMMANDS_ENABLED`, default off, needs
+`SOCIETY_TELEGRAM_ENABLED`) lets the owner decide from the same chat. It adds no authority and no
+decision path: a command runs the very code behind the operator routes.
+
+- Who: a Telegram account speaks for an operator only once that operator linked it.
+  `POST /v1/society/company/boardroom/link` (operator) returns a one-time code (10 minutes, stored as
+  its sha256); `/link <code>` from the account in the operator chat claims it. A new code replaces
+  the old link; `DELETE .../boardroom/link` or `/unlink` removes it; `GET` shows it. On EVERY command
+  `operator_auth.operator_for_telegram` re-checks the durable operator role, so revoking the role
+  stops the account at once.
+- Where: only `SOCIETY_TELEGRAM_CHAT_ID`; other chats are dropped unanswered. A bot, a channel or
+  anonymous admin (`sender_chat`) or a forwarded message never commands.
+- What: `/approve <plan id>`, `/reject <plan id>` call `tickets.decide_plan`; `/done <id> [note]`,
+  `/dismiss <id> [note]` call `owner_actions.decide`, with the operator's user id. An id is at least
+  the 8 characters the digest shows and must match exactly one waiting plan / open action. `/plan`
+  and `/digest` read; `/help` lists the commands.
+- When: the worker polls `getUpdates` at most every 10 s (no inbound webhook). Each update is handled
+  once (`boardroom.command:<update_id>`); a command older than 15 minutes is refused (send it
+  again), so a backlog never fires after an outage.
+- What is kept: a `boardroom.command` event with the command, the outcome, the id prefix and the
+  operator's user id. The message text is never stored and never reaches the Society.

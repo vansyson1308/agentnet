@@ -566,3 +566,16 @@ CREATE TABLE IF NOT EXISTS society_owner_actions (
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_society_owner_actions_open ON society_owner_actions (status, created_at DESC);
+
+-- The Telegram boardroom's operator links (boardroom_commands.py): which Telegram account speaks for
+-- which operator user. The operator asks the operator API for a one-time code (stored only as its
+-- sha256, 10 minutes) and claims it with /link <code> from the ONE operator chat. Identity only:
+-- every command re-checks users.society_role (operator_auth.operator_for_telegram).
+CREATE TABLE IF NOT EXISTS society_telegram_links (
+    user_id           UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    telegram_user_id  BIGINT UNIQUE,
+    code_sha256       VARCHAR(64),
+    code_expires_at   TIMESTAMPTZ,
+    linked_at         TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

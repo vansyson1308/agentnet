@@ -59,6 +59,7 @@ TRUNCATE_TABLES = [
     "society_harness_lessons",
     "society_revenue_entries",
     "society_owner_actions",
+    "society_telegram_links",
     "maintenance_knowledge",
     "maintenance_heartbeats",
     "maintenance_toil_events",
