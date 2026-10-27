@@ -53,6 +53,7 @@ Environment (never printed):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pathlib
@@ -493,6 +494,80 @@ def secret_scan(cur, since: Optional[datetime]) -> Dict[str, Any]:
         r = _rows(cur, f"SELECT count(*) FILTER (WHERE row_to_json(t)::text ~ %s), count(*) FILTER (WHERE row_to_json(t)::text ~ %s), count(*) FILTER (WHERE row_to_json(t)::text ~* %s), count(*) FROM society_events t WHERE {cond} {w}", p)[0]
         out[label] = {"key_shaped": int(r[0]), "jwt_shaped": int(r[1]), "cot_markers": int(r[2]), "rows": int(r[3])}
     return out
+
+
+#: Verbatim copy of services/registry/app/society/canary.py COMPROMISED_CREDENTIAL_FINGERPRINTS (sha256 of
+#: keys that leaked in git history; tests/society/test_secret_redaction.py asserts the two are identical).
+COMPROMISED_CREDENTIAL_FINGERPRINTS = frozenset(
+    {
+        "7557e924b55eba39ac318b87ae34f1fffc435bfc92d207830c6801613b1fdcae",
+        "0da0e5d60ebfe5529eca6a5ef6bab689d5884b57f92e5e8009628e60bd2cc781",
+        "1ec5a2b2179f6f63cbab18b3195f6957224989e316f9eda470deeba995b01449",
+    }
+)
+#: sha256 fingerprints (hex, comma-separated) of the credentials to check X01 matches against, e.g.
+#: ``printf %s "$KEY" | sha256sum``. The validator never reads a credential itself, only fingerprints.
+CREDENTIAL_FINGERPRINTS_ENV = "X01_CREDENTIAL_SHA256"
+
+
+def _shape_paths(value: Any, field: str) -> List[Tuple[str, str, str]]:
+    """(field path, pattern class, sha256) of every key-/JWT-shaped substring -- the text never leaves here."""
+    if isinstance(value, str):
+        return [(field, cls, hashlib.sha256(m.group(0).encode("utf-8")).hexdigest()) for cls, shape in (("key", KEY_SHAPE), ("jwt", JWT_SHAPE)) for m in shape.finditer(value)]
+    if isinstance(value, dict):
+        return [x for k, v in value.items() for x in _shape_paths(v, f"{field}.{k}" if field else str(k))]
+    if isinstance(value, list):
+        return [x for i, v in enumerate(value) for x in _shape_paths(v, f"{field}[{i}]")]
+    return []
+
+
+def secret_locations(cur, since: Optional[datetime], env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Where the key-/JWT-shaped strings in ``agent_intents`` are: intent type, role, field, pattern class and
+    whether the fingerprint is a configured credential or on the compromised list. Never the string."""
+    env = os.environ if env is None else env
+    given = [f.strip().lower() for f in (env.get(CREDENTIAL_FINGERPRINTS_ENV) or "").split(",") if re.fullmatch(r"[0-9a-fA-F]{64}", f.strip())]
+    configured = {fp: f"{CREDENTIAL_FINGERPRINTS_ENV}[{i}]" for i, fp in enumerate(given)}
+    w = "AND i.created_at >= %s" if since else ""
+    rows = _rows(cur, "SELECT i.id, i.intent_type, coalesce(r.role, ''), i.policy_decision, i.execution_status, i.payload, i.policy_reason, i.result, i.error, i.created_at "
+                      f"FROM agent_intents i LEFT JOIN agent_runs r ON r.id = i.run_id WHERE (row_to_json(i)::text ~ %s OR row_to_json(i)::text ~ %s) {w} ORDER BY i.created_at",
+                 (SQL_KEY_RE, SQL_JWT_RE) + ((since,) if since else ()))
+    found = []
+    for r in rows:
+        cols = {"payload": r[5], "policy_reason": r[6], "result": r[7], "error": r[8]}
+        for name, value in cols.items():
+            for path, cls, fp in _shape_paths(value, name):
+                match = configured.get(fp) or ("compromised_list" if fp in COMPROMISED_CREDENTIAL_FINGERPRINTS else "none")
+                found.append({"intent": str(r[0])[:8], "intent_type": r[1], "role": r[2], "decision": str(r[3]), "status": str(r[4]), "field": path, "class": cls,
+                              "credential_match": match, "created_at": r[9].isoformat() if r[9] else None})
+    return {"credentials_checked": list(configured.values()) + ["compromised_list"], "locations": found}
+
+
+_SCHEMA_ERR = re.compile(r"'type': '([^']+)', 'loc': \[([^\]]*)\]")
+
+
+def refusal_class(reason: str) -> str:
+    """A refused intent's reason as a groupable class: the schema errors' ``type@loc`` (structural, from
+    intents.safe_error_summary), otherwise the reason with ids and numbers collapsed."""
+    reason = reason or ""
+    if reason.startswith("payload schema violation"):
+        errs = [f"{t}@{'.'.join(x.strip().strip(chr(39)) for x in loc.split(',') if x.strip())}" for t, loc in _SCHEMA_ERR.findall(reason)]
+        return "schema: " + (", ".join(errs) or "?")
+    reason = re.sub(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "<id>", reason)
+    return scrub(re.sub(r"\d+(\.\d+)?", "<n>", reason))[:120]
+
+
+def refused_intents(cur, since: Optional[datetime]) -> Dict[str, Any]:
+    """Invalid and denied intents in the window, by intent type and reason class (never the payload)."""
+    w = "WHERE created_at >= %s" if since else ""
+    rows = _rows(cur, f"SELECT intent_type, policy_decision::text, coalesce(policy_reason, '') FROM agent_intents {w}", (since,) if since else ())
+    groups: Dict[Tuple[str, str, str], int] = {}
+    for itype, decision, reason in rows:
+        if decision in ("invalid", "deny"):
+            key = (decision, itype, refusal_class(reason))
+            groups[key] = groups.get(key, 0) + 1
+    by = sorted(({"decision": d, "intent_type": t, "reason": r, "count": n} for (d, t, r), n in groups.items()), key=lambda x: (-x["count"], x["intent_type"]))
+    return {"intents": len(rows), "invalid": sum(x["count"] for x in by if x["decision"] == "invalid"),
+            "denied": sum(x["count"] for x in by if x["decision"] == "deny"), "by_type_reason": by}
 
 
 # ── steps ──────────────────────────────────────────────────────────────
@@ -1399,6 +1474,38 @@ def step_promotions(out: Out, conn, limit: int) -> None:
     auto = [v for v in view if v["gates"].get("auto_merge_enabled") or v["gates"].get("auto_merge_allowed")]
     out.check("promotions", "P03", not auto, f"no promotion was auto-merge eligible ({len(auto)} found)")
     out.json("promotions", "records", view)
+    with conn.cursor() as cur:
+        waiting = ready_without_promotion(cur)
+    silent = [w for w in waiting if not w["requests"] and not w["ended_promotion"]]
+    out.check("promotions", "P04", not silent, f"READY candidates without an active promotion: {len(waiting)}, never requested: {len(silent)}"
+              + "".join(f"; [{w['candidate']}] requests={w['requests']} last={w['last_request']} {w['last_error'] or ''} ended={w['ended_promotion'] or '-'} wakes={w['ready_wakes']}"
+                        for w in waiting[:5]))
+    out.json("promotions", "ready_without_promotion", waiting)
+
+
+#: promotion.ACTIVE_STATUSES as text (tests/society/test_promotion_queue.py asserts they are identical).
+ACTIVE_PROMOTION = ("requested", "validating", "branch_ready", "pr_open", "ci_pending", "ci_passed", "awaiting_approval", "merge_eligible", "blocked_external")
+
+
+def ready_without_promotion(cur) -> List[Dict[str, Any]]:
+    """Every READY candidate with no active promotion, and why (promotion_queue.ready_backlog, from the rows):
+    its REQUEST_PR_PROMOTION intents (count, last status, last refusal -- our words), an ended promotion, its READY wakes."""
+    rows = _rows(cur, """
+        SELECT c.id, c.updated_at,
+               (SELECT count(*) FROM agent_intents i WHERE i.intent_type = 'REQUEST_PR_PROMOTION' AND i.payload ->> 'candidate_id' = c.id::text),
+               (SELECT i.execution_status::text || '|' || coalesce(i.error, i.policy_reason, '') FROM agent_intents i WHERE i.intent_type = 'REQUEST_PR_PROMOTION'
+                  AND i.payload ->> 'candidate_id' = c.id::text ORDER BY i.created_at DESC LIMIT 1),
+               (SELECT p.status::text FROM code_promotions p WHERE p.candidate_id = c.id ORDER BY p.created_at DESC LIMIT 1),
+               (SELECT count(*) FROM society_events e WHERE e.event_type = 'code_candidate.ready' AND e.subject_id = c.id)
+        FROM code_candidates c
+        WHERE c.status::text = 'ready' AND NOT EXISTS (SELECT 1 FROM code_promotions p WHERE p.candidate_id = c.id AND p.status::text = ANY(%s))
+        ORDER BY c.updated_at""", (list(ACTIVE_PROMOTION),))
+    out = []
+    for r in rows:
+        status, _, error = (r[3] or "").partition("|")
+        out.append({"candidate": str(r[0])[:8], "ready_since": r[1].isoformat() if r[1] else None, "requests": int(r[2]), "last_request": status or None,
+                    "last_error": scrub(error)[:200] or None, "ended_promotion": r[4], "ready_wakes": int(r[5])})
+    return out
 
 
 def step_intents(out: Out, base: str, token: str, correlation: str) -> None:
@@ -1689,6 +1796,8 @@ def step_audit(out: Out, base: str, token: str, conn, hours: int) -> None:
         tasks, txs, inflight = society_tasks(cur, since)
         wallets = society_wallets(cur)
         scan = secret_scan(cur, since)
+        located = secret_locations(cur, since)
+        refused = refused_intents(cur, since)
     out.json("audit", "tasks", [{k: t[k] for k in ("id", "caller", "callee", "status", "escrow_amount", "created_at", "completed_at", "refund_at")} for t in tasks])
     out.json("audit", "transactions", txs)
     out.json("audit", "wallets", wallets)
@@ -1698,7 +1807,14 @@ def step_audit(out: Out, base: str, token: str, conn, hours: int) -> None:
     runtime_keys = sum(v["key_shaped"] for k, v in scan.items() if k != "society_events_from_users")
     runtime_jwt = sum(v["jwt_shaped"] for k, v in scan.items() if k != "society_events_from_users")
     cot = sum(v["cot_markers"] for v in scan.values())
-    out.check("audit", "X01", runtime_keys == 0, f"secret-shaped strings in runtime-produced rows: {runtime_keys} (user-injected payloads: {scan['society_events_from_users']['key_shaped']}, untrusted data)")
+    out.json("audit", "secret_locations", located)
+    out.json("audit", "refused_intents", refused)
+    out.check("audit", "I01", True, f"invalid intents {refused['invalid']}/{refused['intents']}, denied {refused['denied']} in the last {hours}h"
+              + "".join(f"; {x['decision']} {x['intent_type']} x{x['count']}: {x['reason']}" for x in refused["by_type_reason"][:6]))
+    real = [x for x in located["locations"] if x["credential_match"] != "none"]
+    out.check("audit", "X01", runtime_keys == 0, f"secret-shaped strings in runtime-produced rows: {runtime_keys} (user-injected payloads: {scan['society_events_from_users']['key_shaped']}, untrusted data)"
+              + "".join(f"; [{x['intent']}] {x['intent_type']} role={x['role']} {x['field']} class={x['class']} credential_match={x['credential_match']}" for x in located["locations"][:5])
+              + (f"; REAL CREDENTIAL MATCHED ({len(real)}): rotate it" if real else f"; checked against {', '.join(located['credentials_checked'])}"))
     out.check("audit", "X02", cot == 0, f"chain-of-thought markers stored: {cot}")
     out.check("audit", "X03", runtime_jwt == 0, f"token-shaped strings in runtime-produced rows: {runtime_jwt}")
     st, budget = api("GET", f"{base}/v1/society/budget", token)

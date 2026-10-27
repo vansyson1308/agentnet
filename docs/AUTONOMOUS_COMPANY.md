@@ -366,3 +366,26 @@ into its own plan, and a missed slot is not back-filled. `SOCIETY_COMPANY_PLAN_M
 `SOCIETY_COMPANY_PLAN_PER_DEPARTMENT` (2) size each plan; builds in flight stay capped by
 `SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES`. The board, the RED merge law and the budgets are unchanged.
 Each cycle wakes the roles that subscribe to `company.cycle` once, so more cycles cost more model calls.
+
+## Hygiene: no key in an intent row, no worker config in a test, no silent READY
+
+- **Redaction** (`society/secret_redaction.py`): before an `agent_intents` row is written (payload,
+  policy reason, result, error) every key-shaped (`sk-…`/`dsk-…`) or JWT-shaped string becomes
+  `[redacted-key]`/`[redacted-jwt]`. A match whose fingerprint is the configured model credential or
+  on the compromised list logs `secret.redacted … credential_match=True ROTATE THIS CREDENTIAL`;
+  the string itself is never logged or stored. Audit `X01` locates older rows the same way.
+- **Test environment** (`engineering/qa.scrubbed_env`): QA's acceptance run, the harness's targeted
+  runs, red-on-base and the test_first gate get an allowlist (`PATH`, `HOME`, locale, `TZ`,
+  `TMPDIR`, `VIRTUAL_ENV`, `SSL_CERT_*`) plus fixed safe flags -- never the worker's
+  `SOCIETY_*`, `DATABASE_URL` or any credential (staging 877a0ceb was judged by
+  `SOCIETY_AUTO_MERGE_ENABLED=true`).
+- **test_first proof** (QA `test_first_red_on_base` / `test_first_green_on_head`): the Architect's
+  pinned tests must fail on the candidate base with nothing but themselves added (exit 1 or a
+  collection error) and pass on the head, on every QA verdict.
+- **READY without a PR** (`society/promotion_queue.py`): each READY candidate without an active
+  promotion has one reason -- `promotion_<status>` (ended, e.g. the owner closed the PR; never
+  re-offered), `provider_disabled`, `cap_promotions_per_day`, `cap_open_prs`, `refused`,
+  `awaiting_request`. While capacity lasts the oldest waiting ones are re-offered to the Governor
+  (a fresh system `code_candidate.ready`, once per candidate per UTC day, after its last wake is
+  1h old). The request still goes through policy, the change budgets and the controller. The daily
+  report lists them (`READY without a PR`), the validator in `promotions` (`P04`).

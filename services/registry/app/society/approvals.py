@@ -58,6 +58,7 @@ from .events import EventType, emit_event, utcnow
 from .executor import ExecContext, ExecutionError, execute
 from .intents import FORBIDDEN_INTENT_TYPES, PAYLOAD_MODELS, IntentType, ValidatedIntent, safe_error_summary
 from .policy import evaluate_intent
+from .secret_redaction import scrub_intent
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +224,7 @@ def _finish(db: Session, intent: AgentIntent, approval: Optional[IntentApproval]
     intent.resume_lease_expires_at = None
     if error:
         intent.error = error[:2000]
+    scrub_intent(intent)
     if approval is not None:
         approval.final_state = status.value
         approval.executed_at = utcnow()

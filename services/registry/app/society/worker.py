@@ -60,6 +60,7 @@ from . import tickets as tickets_mod
 from . import design_review as design_review_mod
 from ..a2a.federation import directory as a2a_directory
 from . import promotion as promo_mod
+from . import promotion_queue as promotion_queue_mod
 from . import redelivery as redelivery_mod
 from . import router as router_mod
 from . import surface_monitor as surface_monitor_mod
@@ -74,6 +75,7 @@ from .executor import ExecContext, ExecutionError, execute
 from .intents import REPO_READ_INTENT_TYPES, DecisionValidationError, IntentType, ValidatedIntent, payload_to_dict, validate_intents
 from .policy import check_run_budget, evaluate_intent, spend_today_usd
 from .roles import load_role_definitions, subscriptions_by_event
+from .secret_redaction import scrub_intent
 from . import company as company_mod
 from . import federation_pump
 from .world import emit_heartbeat, ingest_task_outcomes
@@ -280,6 +282,10 @@ class SocietyWorker:
                 # Stale QA verdicts are cleared and QA re-requested; stalled and
                 # obsolete candidates are surfaced to the operator (candidate_health.py).
                 candidate_health_mod.sweep(db, self.settings)
+                # A READY candidate whose promotion request was refused (a change
+                # budget) or never made is re-offered to the Governor while there is
+                # capacity, once a day (promotion_queue.py).
+                promotion_queue_mod.retry_deferred(db, self.settings)
             except Exception:  # noqa: BLE001 — world ingestion must never block dispatch
                 db.rollback()
                 logger.exception("society world ingestion failed")
@@ -420,6 +426,7 @@ class SocietyWorker:
                 execution_status=exec_status,
                 result={},
             )
+            scrub_intent(row, credentials=(self.settings.model_api_key,), role=grant.role)
             db.add(row)
             rows.append(row)
             M_INTENTS.labels(decision=decision.value).inc()
@@ -427,7 +434,7 @@ class SocietyWorker:
                 emit_event(
                     db,
                     event_type=EventType.INTENT_DENIED,
-                    payload={"run_id": str(run.id), "agent": agent.name, "intent_type": v.type_name, "reason": reason[:300], "risk": verdict.risk.value},
+                    payload={"run_id": str(run.id), "agent": agent.name, "intent_type": v.type_name, "reason": (row.policy_reason or "")[:300], "risk": verdict.risk.value},
                     actor_type="agent",
                     actor_id=agent.id,
                     correlation_id=run.correlation_id,
@@ -492,6 +499,7 @@ class SocietyWorker:
                 row.execution_status = IntentExecutionStatus.EXECUTED
                 row.result = {"result": outcome.result, "events": outcome.events}
                 row.executed_at = utcnow()
+                scrub_intent(row, credentials=(self.settings.model_api_key,), role=grant.role)
                 self._span(db, run, agent, f"society.intent.{row.intent_type}", SpanStatus.SUCCESS, started, {"intent_id": str(row.id)})
                 db.commit()
                 M_INTENT_EXEC.labels(result="executed").inc()
@@ -503,6 +511,7 @@ class SocietyWorker:
                 row.execution_status = IntentExecutionStatus.FAILED
                 row.error = str(exc)[:2000]
                 row.executed_at = utcnow()
+                scrub_intent(row, credentials=(self.settings.model_api_key,), role=grant.role)
                 self._span(db, run, agent, f"society.intent.{row.intent_type}", SpanStatus.FAILED, started, {"intent_id": str(row.id), "error": str(exc)[:200]})
                 tickets_mod.note_intent_failure(db, self.settings, row)
                 db.commit()
@@ -516,6 +525,7 @@ class SocietyWorker:
                 row.execution_status = IntentExecutionStatus.FAILED
                 row.error = f"{type(exc).__name__}: {exc}"[:2000]
                 row.executed_at = utcnow()
+                scrub_intent(row, credentials=(self.settings.model_api_key,), role=grant.role)
                 self._span(db, run, agent, f"society.intent.{row.intent_type}", SpanStatus.FAILED, started, {"intent_id": str(row.id), "error": str(exc)[:200]})
                 tickets_mod.note_intent_failure(db, self.settings, row)
                 db.commit()
