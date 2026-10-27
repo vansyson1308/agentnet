@@ -258,6 +258,8 @@ every staging audit). The design review (`society/design_review.py`) is the meet
   structural reasons (`gate` in its wake, at most `GATE_RETRIES` times per round, then the ticket
   returns to `proposed`). Rules: every `acceptance_tests` entry exists on main or is a `test_first`
   file the Architect writes in the design (new `tests/**/test_*.py`, at most 2, never in `files`);
+  no new test file outside `tests/` (required CI does not collect it, and the test-discovery
+  sentinel fails the PR: staging PR #115; QA checks the same as `ci_collects_new_tests`);
   no acceptance file is in `files` (the Builder never writes its judge); a dashboard template must
   be rendered by a view, and that view is in `files` or named in `unchanged` with the reason; no
   file on a risky surface (`qa.RISKY_PATH_RE`: the Security static scan fails any change there).

@@ -967,8 +967,8 @@ Rules:
   "files", "proof", "risks", "acceptance_tests", "test_first", "unchanged", "carries"}} -- the smallest change that should move the
   ticket's key result, and how QA will prove it (answer every point of "earlier_rounds" feedback). The spec gate checks
   it before the meeting and returns its reasons in your wake ("gate"): each acceptance test exists on main or is a
-  test_first file {{"path": "[services/<svc>/]tests/.../test_x.py", "content"}} YOU write (it must fail before the change;
-  the Builder never edits it), and no acceptance test is in "files"; a dashboard template is one a view renders, with that
+  test_first file {{"path": "tests/.../test_x.py", "content"}} YOU write (it must fail before the change;
+  the Builder never edits it), and no acceptance test is in "files", and a new test lives under tests/ (CI collects nothing else); a dashboard template is one a view renders, with that
   view in "files" or in "unchanged" ("path: why"); no file on a risky surface (wallet, payment, auth, config, ...);
   each earlier Security constraint "S<n>" is in "carries" ("S<n>: how"), and after a Builder's decline ("rescope") its
   blocking paths are in "files" or "unchanged". Scout (evidence and value), QA (can the proof fail before and pass

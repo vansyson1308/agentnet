@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -207,6 +208,12 @@ def evaluate_candidate(settings: SocietySettings, ws: Workspace, spec: Dict, cha
         test_paths.add(t.split("::")[0])
     self_judged = [c for c in authored if c in test_paths]
     checks.append(Check("no_self_judging", not self_judged, "; ".join(self_judged) if self_judged else "acceptance tests untouched by Builder"))
+    from ..spec_gate import ci_orphans  # noqa: PLC0415
+
+    base_root = pathlib.Path(settings.repo_root) if getattr(settings, "repo_root", "") else ws.path / ".no-base"
+    orphans = ci_orphans(base_root, authored)  # required CI would fail the PR (scripts/ci/check_test_discovery.py)
+    checks.append(Check("ci_collects_new_tests", not orphans, "; ".join(f"{o}: new test outside tests/, a CI orphan" for o in orphans)
+                        if orphans else "every new test file is collected by required CI"))
     missing_tests = [t for t in test_paths if not (ws.path / t).exists()]
     checks.append(Check("acceptance_tests_exist", not missing_tests, "; ".join(missing_tests) if missing_tests else "acceptance tests present in worktree"))
 
