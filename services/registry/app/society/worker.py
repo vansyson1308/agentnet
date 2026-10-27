@@ -52,6 +52,7 @@ from ..models import (
 )
 from . import bench_schedule
 from . import boardroom as boardroom_mod
+from . import boardroom_commands as boardroom_commands_mod
 from . import boardroom_telegram
 from . import candidate_health as candidate_health_mod
 from . import deployment as dep_mod
@@ -256,6 +257,10 @@ class SocietyWorker:
         # the model and the isolated workspaces live. It is idle unless the
         # MAINTENANCE_* switches are on, and it never holds release credentials.
         self._maintenance_kernel = None
+        # The Telegram boardroom's commands (boardroom_commands.py): the next getUpdates offset and
+        # the last poll (monotonic); off unless SOCIETY_TELEGRAM_COMMANDS_ENABLED.
+        self._telegram_offset: Optional[int] = None
+        self._telegram_polled_at = 0.0
 
     # ── dispatch ───────────────────────────────────────────────────────
 
@@ -290,6 +295,11 @@ class SocietyWorker:
                 promotion_queue_mod.retry_deferred(db, self.settings)
                 # The owner's read-only daily digest to the one operator chat (boardroom.py; off by default).
                 boardroom_mod.maybe_send_digest(db, self.settings, boardroom_telegram.sender(self.settings))
+                # A linked operator's commands from that chat run the operator API's code (boardroom_commands.py; off by default).
+                if self.settings.telegram_commands_enabled and time.monotonic() - self._telegram_polled_at >= boardroom_commands_mod.POLL_SECONDS:
+                    self._telegram_polled_at = time.monotonic()
+                    self._telegram_offset = boardroom_commands_mod.poll(db, self.settings, boardroom_telegram.fetcher(self.settings),
+                                                                        boardroom_telegram.sender(self.settings), self._telegram_offset)
             except Exception:  # noqa: BLE001 — world ingestion must never block dispatch
                 db.rollback()
                 logger.exception("society world ingestion failed")
