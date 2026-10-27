@@ -121,6 +121,19 @@ def check_design(root: pathlib.Path, proposal: Dict[str, Any]) -> List[str]:
                        list(proposal.get("unchanged") or []))
 
 
+def check_obligations(proposal: Dict[str, Any], obligations: Dict[str, List[str]]) -> List[str]:
+    """What an earlier round left this proposal to answer (design_review.obligations): each Security
+    constraint ``S<n>`` is carried (``carries``: "S<n>: how"), each path a Builder's decline needed is in
+    files or unchanged. Reasons name ids and paths only, never the constraint text."""
+    carried = {str(c).split(":", 1)[0].strip() for c in proposal.get("carries") or []}
+    problems = [f"Security constraint {sid} is not carried: add '{sid}: how the design meets it' to carries"
+                for sid in (str(c).split(":", 1)[0] for c in obligations.get("constraints") or []) if sid not in carried]
+    named = set(proposal.get("files") or []) | _unchanged_paths(proposal.get("unchanged") or [])
+    problems += [f"the Builder declined the last design: the fix needs {path} -- add it to files, or name it in unchanged ('path: why not')"
+                 for path in obligations.get("required_paths") or [] if path not in named]
+    return problems
+
+
 def pin(proposal: Dict[str, Any]) -> List[Dict[str, str]]:
     """The approved design's test_first files, content-addressed (the spec carries them; the model never re-sends them)."""
     return [{"path": str(f["path"]), "content": str(f["content"]), "sha256": hashlib.sha256(str(f["content"]).encode()).hexdigest()}

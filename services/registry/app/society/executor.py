@@ -807,9 +807,12 @@ def _propose_design(ctx: ExecContext) -> ExecOutcome:
     """The Architect's proposal for the review ITS story runs (design_review.py)."""
     p = ctx.validated.payload
     proposal = {"approach": " ".join(p.approach.split()), "files": list(dict.fromkeys(p.files)), "proof": " ".join(p.proof.split()), "risks": list(p.risks),
-                "acceptance_tests": list(dict.fromkeys(p.acceptance_tests)), "test_first": [f.model_dump() for f in p.test_first], "unchanged": list(p.unchanged)}
+                "acceptance_tests": list(dict.fromkeys(p.acceptance_tests)), "test_first": [f.model_dump() for f in p.test_first], "unchanged": list(p.unchanged), "carries": list(p.carries)}
     root = pathlib.Path(ctx.settings.repo_root) if getattr(ctx.settings, "repo_root", "") else None
     problems = spec_gate.check_design(root, proposal) if root is not None and root.is_dir() else []
+    review = design_review.get(ctx.db, p.review_id)
+    if review is not None:  # what an earlier round left to answer: Security constraints, a Builder's blocking paths
+        problems += spec_gate.check_obligations(proposal, design_review.obligations(review))
     if problems:  # fixed in the review, before a build is paid for: the Architect is asked again with the reasons
         try:
             out = design_review.gate_refuse(ctx.db, review_id=p.review_id, correlation_id=ctx.run.correlation_id, agent=ctx.agent, problems=problems, causation=ctx.event)
@@ -823,7 +826,7 @@ def _propose_design(ctx: ExecContext) -> ExecOutcome:
 def _review_design(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
     return _design_review_call(ctx, lambda: design_review.post_position(ctx.db, review_id=p.review_id, correlation_id=ctx.run.correlation_id, agent=ctx.agent,
-                                                                        role=ctx.grant.role, position={"stance": p.stance, "points": list(p.points)},
+                                                                        role=ctx.grant.role, position={"stance": p.stance, "points": list(p.points), "constraints": list(p.constraints)},
                                                                         causation=ctx.event), f"reviewed:{p.stance}")
 
 
@@ -842,6 +845,9 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
             raise ExecutionError(f"spec allows a never-writable path: {f}")
     if len(spec["files_allowed"]) > ctx.settings.max_files_per_candidate:
         raise ExecutionError(f"spec allows {len(spec['files_allowed'])} files; change budget is {ctx.settings.max_files_per_candidate} per candidate")
+    open_t = tickets.for_proposal(ctx.db, p.proposal_id) if ctx.settings.company_cycle_enabled else None
+    if open_t is not None and design_review.open_for_ticket(ctx.db, open_t["id"]):
+        raise ExecutionError("the ticket is being re-designed: its design review is open -- design it after the review's go")
     design = _approved_design(ctx, p.proposal_id)
     if design is not None:  # the approved design's test_first files are pinned into the spec and always run
         spec["test_first"] = spec_gate.pin(design)
@@ -907,7 +913,10 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
         minutes = (ctx.event.payload or {}).get("design_review") if ctx.event.event_type == EventType.COMPANY_TICKET_APPROVED else None
         minutes = minutes or design_review.minutes_for_ticket(ctx.db, ticket["id"])
         if minutes:  # structural: which meeting decided this design (the PR body shows it)
-            spec["design_review"] = {k: minutes.get(k) for k in ("review_id", "rounds", "verdict", "by", "stances")} | {"conditions": len(minutes.get("conditions") or [])}
+            spec["design_review"] = {k: minutes.get(k) for k in ("review_id", "rounds", "verdict", "by", "stances")} | {"conditions": len(minutes.get("conditions") or []),
+                                                                                                                 "security_constraints": len(minutes.get("security_constraints") or [])}
+            # the PERSISTED constraints Security named in the meeting: the candidate's Security review checks them
+            spec["security_constraints"] = list(minutes.get("security_constraints") or [])
     prelim = assess_risk(list(spec["files_allowed"]), "", spec_kind=str(spec.get("kind") or ""))
     if _candidates_today(ctx) >= ctx.settings.max_autonomous_candidates_per_day:
         raise ExecutionError(f"change budget exhausted: {ctx.settings.max_autonomous_candidates_per_day} autonomous candidates today")
@@ -1322,8 +1331,14 @@ def _decline_code_candidate(ctx: ExecContext) -> ExecOutcome:
     cand.status = CodeCandidateStatus.REJECTED
     cand.error = f"declined by {ctx.agent.name} ({p.reason_code}): {p.detail}"[:2000]
     ticket = tickets.for_proposal(ctx.db, cand.proposal_id)
-    if ticket is not None and ticket["status"] == "building":  # as a QA rejection does: closed, with the Builder's reason
-        tickets.set_status(ctx.db, ticket["id"], "closed", f"candidate declined by the Builder ({p.reason_code}): {p.detail}"[:300])
+    rescoped = None
+    if ticket is not None and ticket["status"] == "building":
+        if p.reason_code == "spec_outside_files_allowed":  # the SAME ticket is designed again, covering the blocking paths (once)
+            rescoped = design_review.rescope(ctx.db, ticket, blocking_paths=blocking, detail=p.detail)
+        if rescoped is not None:
+            tickets.set_status(ctx.db, ticket["id"], "approved", f"rescope: the Builder declined ({p.reason_code}), needs {', '.join(blocking)}"[:300], candidate_id=None)
+        else:  # as a QA rejection does: closed, with the Builder's reason
+            tickets.set_status(ctx.db, ticket["id"], "closed", f"candidate declined by the Builder ({p.reason_code}): {p.detail}"[:300])
     ctx.db.flush()
     payload = {
         "candidate_id": str(cand.id),
@@ -1339,6 +1354,7 @@ def _decline_code_candidate(ctx: ExecContext) -> ExecOutcome:
         "blocking_paths": blocking,
         "files_allowed": sorted(allowed),
         "task_refunded": refunded,
+        "rescoped_review_id": str(rescoped) if rescoped else None,
     }
     ev = _emit(ctx, EventType.CODE_CANDIDATE_REJECTED, payload, subject_type="code_candidate", subject_id=cand.id, key_suffix="declined")
     result = {"candidate_id": str(cand.id), "status": CodeCandidateStatus.REJECTED.value, "reason_code": p.reason_code, "task_refunded": refunded}
@@ -1436,7 +1452,8 @@ def _evaluate_code_candidate(ctx: ExecContext) -> ExecOutcome:
         needs_security = bool(cand.requires_security_review) or bool(findings)
         if needs_security:
             cand.status = CodeCandidateStatus.SECURITY_REVIEW
-            ev2 = _emit(ctx, EventType.CODE_CANDIDATE_SECURITY_REVIEW, {"candidate_id": str(cand.id), "title": cand.title, "changed_files": list(cand.changed_files or []), "static_findings": findings, "qa_summary": report.summary}, subject_type="code_candidate", subject_id=cand.id)
+            ev2 = _emit(ctx, EventType.CODE_CANDIDATE_SECURITY_REVIEW, {"candidate_id": str(cand.id), "title": cand.title, "changed_files": list(cand.changed_files or []), "static_findings": findings, "qa_summary": report.summary,
+                                                                              "security_constraints": list((cand.spec or {}).get("security_constraints") or [])}, subject_type="code_candidate", subject_id=cand.id)
             events.append(str(ev2.id))
         else:
             events += _finish_candidate(ctx, cand, ready=True, summary=report.summary)

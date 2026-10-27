@@ -408,6 +408,17 @@ def snapshot(conn, since: Optional[datetime]) -> Dict[str, Any]:
         snap["events_by_type"] = _kv(_rows(cur, f"SELECT event_type, count(*) FROM society_events {w} GROUP BY 1 ORDER BY 2 DESC LIMIT 40", p))
         snap["loop_breaker_tripped"] = _rows(cur, f"SELECT count(*) FROM society_events {w + (' AND' if w else 'WHERE')} event_type = 'loop_breaker.tripped'", p)[0][0]
         snap["loop_breaker_suppressed"] = _rows(cur, f"SELECT count(*) FROM society_events {w + (' AND' if w else 'WHERE')} dispatch_note LIKE 'loop breaker%%'", p)[0][0]
+        # L01 names each trip: which story, why (depth vs runs), what was swallowed, where the story began, re-delivered?
+        lw = "AND lb.created_at >= %s" if since else ""
+        snap["loop_breaker_trips"] = [
+            {"correlation": str(r[0])[:8], "note": scrub(r[1] or "")[:90], "swallowed": r[2], "depth": r[3], "runs": r[4], "root": r[5],
+             "subject": f"{r[6]}:{str(r[7] or '')[:8]}", "redelivered": bool(r[8])}
+            for r in _rows(cur, "SELECT lb.correlation_id, coalesce(lb.payload ->> 'note', lb.payload ->> 'reason'), sw.event_type, sw.causation_depth, "
+                                "(SELECT count(*) FROM agent_runs a WHERE a.correlation_id = lb.correlation_id), "
+                                "(SELECT e0.event_type FROM society_events e0 WHERE e0.correlation_id = lb.correlation_id ORDER BY e0.created_at LIMIT 1), "
+                                "sw.subject_type, sw.subject_id, EXISTS (SELECT 1 FROM society_events rd WHERE rd.idempotency_key = 'redeliver:' || sw.id::text) "
+                                f"FROM society_events lb LEFT JOIN society_events sw ON sw.id::text = lb.payload ->> 'event_id' "
+                                f"WHERE lb.event_type = 'loop_breaker.tripped' {lw} ORDER BY lb.created_at DESC LIMIT 10", p)]
         snap["runs_by_status"] = _kv(_rows(cur, f"SELECT status, count(*) FROM agent_runs {w} GROUP BY 1", p))
         snap["runs_by_role"] = [list(r) for r in _rows(cur, f"SELECT role, status, count(*) FROM agent_runs {w} GROUP BY 1, 2 ORDER BY 1, 2", p)]
         snap["runs_by_model"] = [list(r) for r in _rows(cur, f"SELECT model_provider, model_name, count(*), coalesce(sum(tokens_in),0), coalesce(sum(tokens_out),0), coalesce(sum(cost_usd),0), coalesce(sum(model_requests),0), coalesce(sum(model_retries),0), coalesce(sum(model_timeouts),0) FROM agent_runs {w} GROUP BY 1, 2", p)]
@@ -1665,7 +1676,9 @@ def step_audit(out: Out, base: str, token: str, conn, hours: int) -> None:
     since = _now() - timedelta(hours=hours)
     snap = snapshot(conn, since)
     out.json("audit", "snapshot", snap)
-    out.check("audit", "L01", int(snap["loop_breaker_tripped"]) == 0 and int(snap["loop_breaker_suppressed"]) == 0, f"loop breaker tripped={snap['loop_breaker_tripped']} suppressed={snap['loop_breaker_suppressed']} in the last {hours}h")
+    out.check("audit", "L01", int(snap["loop_breaker_tripped"]) == 0 and int(snap["loop_breaker_suppressed"]) == 0, f"loop breaker tripped={snap['loop_breaker_tripped']} suppressed={snap['loop_breaker_suppressed']} in the last {hours}h"
+              + "".join(f"; [{t['correlation']}] {t['note']} swallowed={t['swallowed']} depth={t['depth']} runs={t['runs']} root={t['root']} {t['subject']}"
+                        f" redelivered={t['redelivered']}" for t in snap.get("loop_breaker_trips") or []))
     dead = int(snap["runs_by_status"].get("dead", 0))
     out.check("audit", "L02", dead == 0, f"DEAD runs in the last {hours}h: {dead} {snap['dead_runs'][:3]}")
     out.check("audit", "L03", int(snap["forbidden_high_executed"]) == 0, f"forbidden HIGH intents ever executed: {snap['forbidden_high_executed']}; high-risk rows={snap['high_risk_intents']}")
