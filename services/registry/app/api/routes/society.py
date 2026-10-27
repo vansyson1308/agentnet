@@ -756,6 +756,28 @@ def company_report(db: Session = Depends(get_db), operator: User = Depends(requi
     return daily_report.build(db)
 
 
+@router.get("/company/boardroom/digest")
+def boardroom_digest(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """The Telegram boardroom's read-only digest, as it would be sent (structural text only)."""
+    from ...society import boardroom
+    from ...society.config import get_settings
+
+    settings = get_settings()
+    return {"text": boardroom.digest(db, settings), "enabled": settings.telegram_enabled, "digest_hour_utc": settings.telegram_digest_hour_utc}
+
+
+@router.post("/company/boardroom/digest")
+def boardroom_send_now(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """Send the digest to the operator chat now (the owner's test of the wiring); refused while the boardroom is off."""
+    from ...society import boardroom, boardroom_telegram
+    from ...society.config import get_settings
+
+    settings = get_settings()
+    if not settings.telegram_enabled:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="the Telegram boardroom is off (SOCIETY_TELEGRAM_ENABLED=false)")
+    return boardroom.maybe_send_digest(db, settings, boardroom_telegram.sender(settings), force=True)
+
+
 @router.get("/company/owner-actions")
 def list_owner_actions(db: Session = Depends(get_db), operator: User = Depends(require_operator),
                        state: Literal["open", "done", "dismissed"] = "open", limit: int = Query(50, ge=1, le=200)):

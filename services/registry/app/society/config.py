@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
+import re
 import socket
 from dataclasses import dataclass, field, fields
 from decimal import Decimal
@@ -345,6 +346,11 @@ class SocietySettings:
     # The north star (goals.py): the plan ranks tickets by their key result's weight toward the
     # charter's north star (revenue) and every role sees the revenue scorecard. Off: unchanged.
     north_star_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_NORTH_STAR_ENABLED", False))
+    # The Telegram boardroom (boardroom.py): a read-only daily digest -- report, plan, owner actions,
+    # READY/PR links -- sent to ONE operator chat. The bot token is read only in boardroom_telegram.py.
+    telegram_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_TELEGRAM_ENABLED", False))
+    telegram_chat_id: str = field(default_factory=lambda: os.getenv("SOCIETY_TELEGRAM_CHAT_ID", "").strip())
+    telegram_digest_hour_utc: int = field(default_factory=lambda: _int("SOCIETY_TELEGRAM_DIGEST_HOUR_UTC", 7, minimum=0))
     # An open candidate with no lifecycle progress this long is STALLED: it is
     # surfaced to the operator queue and no longer holds a portfolio slot. It is
     # never abandoned automatically (society/candidate_health.py).
@@ -466,6 +472,10 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
         problems.append("SOCIETY_COMPANY_CYCLES_PER_DAY must be 1..24")
     if s.company_plan_max > 10 or s.company_plan_per_department > s.company_plan_max:
         problems.append("SOCIETY_COMPANY_PLAN_MAX must be 1..10 and SOCIETY_COMPANY_PLAN_PER_DEPARTMENT <= it")
+    if s.telegram_digest_hour_utc > 23:
+        problems.append("SOCIETY_TELEGRAM_DIGEST_HOUR_UTC must be 0..23")
+    if s.telegram_enabled and not re.fullmatch(r"-?\d{1,20}", s.telegram_chat_id):
+        problems.append("SOCIETY_TELEGRAM_ENABLED=true needs SOCIETY_TELEGRAM_CHAT_ID: the numeric id of the ONE operator chat")
     if s.company_board_approval_hours > 72:
         problems.append("SOCIETY_COMPANY_BOARD_APPROVAL_HOURS must be 0..72 (0 = every plan waits for the owner)")
     if s.public_surface_monitor_enabled:

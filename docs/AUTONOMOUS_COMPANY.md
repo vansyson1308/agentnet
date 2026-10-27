@@ -389,3 +389,25 @@ Each cycle wakes the roles that subscribe to `company.cycle` once, so more cycle
   (a fresh system `code_candidate.ready`, once per candidate per UTC day, after its last wake is
   1h old). The request still goes through policy, the change budgets and the controller. The daily
   report lists them (`READY without a PR`), the validator in `promotions` (`P04`).
+
+## Telegram boardroom (G2, step 1: read-only digest)
+
+`society/boardroom.py` builds one plain-text page, deterministically: the daily report's numbers,
+the north-star scorecard, the latest plan (and the operator call that approves or rejects it), the
+READY candidates with their PR link or the reason there is none (`promotion_queue.py`), and the open
+owner actions (and the operator call that closes one). With `SOCIETY_TELEGRAM_ENABLED=true` the
+society worker sends it once per UTC day at/after `SOCIETY_TELEGRAM_DIGEST_HOUR_UTC` to ONE chat,
+`SOCIETY_TELEGRAM_CHAT_ID` (a private chat with the owner); a failed send is recorded
+(`boardroom.digest_failed`) and retried an hour later.
+
+- Structural text only. A title a model wrote (candidate, agent-proposed owner action, ticket) is
+  redacted like an intent row (`secret_redaction.py`), flattened to one line and cut to 90
+  characters; rationales, payloads, minutes and QA/Security text are never forwarded.
+- The bot token `SOCIETY_TELEGRAM_BOT_TOKEN` is read only in `society/boardroom_telegram.py`; it
+  never reaches a log, an event, a row or a model context. The send has no parse mode and no link
+  previews.
+- The digest decides nothing. The plan and the owner actions are still decided only through the
+  operator API (`POST /v1/society/company/plans/{id}/approve|reject`,
+  `POST /v1/society/company/owner-actions/{id}/done|dismissed`).
+- `GET /v1/society/company/boardroom/digest` shows the page as it would be sent; `POST` sends it now
+  (refused while the boardroom is off). Both are operator only.

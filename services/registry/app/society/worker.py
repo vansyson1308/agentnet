@@ -51,6 +51,8 @@ from ..models import (
     SpanStatus,
 )
 from . import bench_schedule
+from . import boardroom as boardroom_mod
+from . import boardroom_telegram
 from . import candidate_health as candidate_health_mod
 from . import deployment as dep_mod
 from . import fitness as fitness_mod
@@ -286,6 +288,8 @@ class SocietyWorker:
                 # budget) or never made is re-offered to the Governor while there is
                 # capacity, once a day (promotion_queue.py).
                 promotion_queue_mod.retry_deferred(db, self.settings)
+                # The owner's read-only daily digest to the one operator chat (boardroom.py; off by default).
+                boardroom_mod.maybe_send_digest(db, self.settings, boardroom_telegram.sender(self.settings))
             except Exception:  # noqa: BLE001 — world ingestion must never block dispatch
                 db.rollback()
                 logger.exception("society world ingestion failed")
