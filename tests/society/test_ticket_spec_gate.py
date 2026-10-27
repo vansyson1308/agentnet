@@ -41,26 +41,27 @@ def test_an_acceptance_file_that_is_neither_on_base_nor_allowed_is_refused_befor
     tickets._approved(db, tickets.for_proposal(db, proposal.id), None)  # as the owner's or the board's approval does
     db.commit()
     row = _run(db, SessionLocal, settings, "architect", [_request(proposal, files=CB82_FILES, tests=CB82_TESTS)])
-    assert _ev(row.execution_status) == "failed" and row.error == "acceptance file missing and not allowed: tests/test_agent_sdk_examples.py"
+    assert _ev(row.execution_status) == "failed" and row.error == "acceptance file refused (acceptance_file_missing): tests/test_agent_sdk_examples.py"
     assert db.query(CodeCandidate).count() == 0, "no candidate, so no build is ever spent on it"
     # one corrective turn, addressed to the Architect, in the same story -- and it got a run
     (ev,) = _corrective(db)
     assert ev.correlation_id == db.get(AgentRun, row.run_id).correlation_id and ev.payload["target_agent_id"] == str(report.agents["architect"])
     assert ev.payload["errors"] == [{"field": "acceptance_tests", "code": "acceptance_file_missing", "path": "tests/test_agent_sdk_examples.py",
-                                     "expected": "a test file that exists on the base, or one listed in files_allowed (a new test the Builder writes)"}]
+                                     "expected": "a test file that exists on the base, or a test_first file of the approved design (the Architect writes it)"}]
     assert db.execute(text("SELECT role FROM agent_runs WHERE event_id = :e"), {"e": ev.id}).scalars().all() == ["architect"]
     t = tickets.for_proposal(db, proposal.id)  # counted as a failed design attempt: the corrective turn is the second
-    assert t["status"] == "approved" and t["reason"] == "design failed (1/2): acceptance file missing and not allowed: tests/test_agent_sdk_examples.py"
+    assert t["status"] == "approved" and t["reason"] == "design failed (1/2): acceptance file refused (acceptance_file_missing): tests/test_agent_sdk_examples.py"
 
 
-def test_a_new_test_the_builder_writes_is_allowed_and_a_test_on_base_needs_no_listing(db, SessionLocal, company):
+def test_a_new_test_the_builder_would_write_is_refused_and_a_test_on_base_needs_no_listing(db, SessionLocal, company):
+    """Staging 2026-10-26 (ffe44239): a test in files_allowed that judges the change is one QA always
+    fails (no_self_judging). A new acceptance test is the Architect's test_first (spec_gate.py)."""
     report, settings = company
     _activate(db)
     new_test = _run(db, SessionLocal, settings, "architect", [_request(_ticket(db, report), files=CB82_FILES + CB82_TESTS, tests=CB82_TESTS)])
-    assert "acceptance file missing" not in (new_test.error or "")
+    assert _ev(new_test.execution_status) == "failed" and new_test.error == "acceptance file refused (acceptance_self_judging): tests/test_agent_sdk_examples.py"
     on_base = _run(db, SessionLocal, settings, "architect", [_request(_ticket(db, report), files=(SRC,), tests=TESTS)])
     assert _ev(on_base.execution_status) == "executed", on_base.error
-    assert _corrective(db) == []
 
 
 def test_a_ticket_design_names_no_task_id(db, SessionLocal, company):

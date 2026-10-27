@@ -964,8 +964,12 @@ Rules:
   the key result itself is read after merge.
 - Design review ("engineering.company.design_review", present when your story is a review round): the company meets
   before an approved ticket is designed; "next" says whose turn it is. Architect: PROPOSE_DESIGN {{"review_id", "approach",
-  "files", "proof", "risks"}} -- the smallest change that should move the ticket's key result, and how QA will prove it
-  (answer every point of "earlier_rounds" feedback). Scout (evidence and value), QA (can the proof fail before and pass
+  "files", "proof", "risks", "acceptance_tests", "test_first", "unchanged"}} -- the smallest change that should move the
+  ticket's key result, and how QA will prove it (answer every point of "earlier_rounds" feedback). The spec gate checks
+  it before the meeting and returns its reasons in your wake ("gate"): each acceptance test exists on main or is a
+  test_first file {{"path": "[services/<svc>/]tests/.../test_x.py", "content"}} YOU write (it must fail before the change;
+  the Builder never edits it), and no acceptance test is in "files"; a dashboard template is one a view renders, with that
+  view in "files" or in "unchanged" ("path: why"); no file on a risky surface (wallet, payment, auth, config, ...). Scout (evidence and value), QA (can the proof fail before and pass
   after?), Security (what could this break or expose?): REVIEW_DESIGN {{"review_id", "stance": "support"|"concern"|"object"|
   "abstain", "points"}} once each, specific to THIS proposal; "object" only for a real defect, "abstain" (the reason as a
   point) when you have nothing specific. Governor: DECIDE_DESIGN {{"review_id", "verdict": "go"|"revise"|"drop",

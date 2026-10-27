@@ -181,12 +181,20 @@ def evaluate_candidate(settings: SocietySettings, ws: Workspace, spec: Dict, cha
     else:
         checks.append(Check("acceptance_criteria_present", True, f"{len(tests)} acceptance test target(s), {len(benches)} bench proof(s)"))
 
-    # 2. change must be non-empty and on the allow-list
-    if not changed:
-        checks.append(Check("non_empty_change", False, "candidate contains no changes"))
+    # 2. change must be non-empty and on the allow-list; the approved design's test_first files are
+    #    the Architect's (spec_gate.py), exempt only while byte-identical to the pinned content
+    from ..spec_gate import intact  # noqa: PLC0415
+
+    pinned = intact(ws.path, spec.get("test_first") or [])
+    tampered = [p for p, ok in pinned.items() if not ok]
+    if pinned:
+        checks.append(Check("test_first_intact", not tampered, "; ".join(tampered) if tampered else f"{len(pinned)} test_first file(s) as the design pinned them"))
+    authored = [c for c in changed if not pinned.get(c)]  # what the Builder wrote
+    if not authored:
+        checks.append(Check("non_empty_change", False, "candidate contains no changes" + (" beyond the test_first files" if changed else "")))
     else:
-        checks.append(Check("non_empty_change", True, f"{len(changed)} file(s) changed"))
-    off_list = [c for c in changed if c not in allowed]
+        checks.append(Check("non_empty_change", True, f"{len(authored)} file(s) changed"))
+    off_list = [c for c in authored if c not in allowed]
     checks.append(Check("allow_list", not off_list, "; ".join(off_list) if off_list else "all changed files are on files_allowed"))
     protected = [c for c in changed if is_protected(c)]
     checks.append(Check("protected_paths", not protected, "; ".join(protected) if protected else "no never-writable path touched"))
@@ -197,7 +205,7 @@ def evaluate_candidate(settings: SocietySettings, ws: Workspace, spec: Dict, cha
     test_paths = set()
     for t in tests:
         test_paths.add(t.split("::")[0])
-    self_judged = [c for c in changed if c in test_paths]
+    self_judged = [c for c in authored if c in test_paths]
     checks.append(Check("no_self_judging", not self_judged, "; ".join(self_judged) if self_judged else "acceptance tests untouched by Builder"))
     missing_tests = [t for t in test_paths if not (ws.path / t).exists()]
     checks.append(Check("acceptance_tests_exist", not missing_tests, "; ".join(missing_tests) if missing_tests else "acceptance tests present in worktree"))

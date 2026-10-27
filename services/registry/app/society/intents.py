@@ -417,19 +417,40 @@ def _short_items(v: List[str], *, lo: int = 3, hi: int = 300) -> List[str]:
     return [item.strip() for item in v]
 
 
+class DesignTestFile(_Strict):
+    """A new acceptance test the ARCHITECT writes (spec_gate.py): reviewed in the meeting,
+    committed before the Builder starts, never editable by the Builder."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    path: str = Field(..., min_length=10, max_length=200)
+    content: str = Field(..., min_length=20, max_length=6000)
+
+
 class ProposeDesignPayload(_Strict):
-    """The Architect's design proposal for the review its story runs (design_review.py)."""
+    """The Architect's design proposal for the review its story runs (design_review.py). The
+    spec gate (spec_gate.py) checks files / acceptance_tests / test_first / unchanged first."""
 
     review_id: uuid.UUID
     approach: str = Field(..., min_length=20, max_length=1500)
     files: List[str] = Field(..., min_length=1, max_length=12)
     proof: str = Field(..., min_length=10, max_length=800)
     risks: List[str] = Field(default_factory=list, max_length=5)
+    acceptance_tests: List[str] = Field(default_factory=list, max_length=6)
+    test_first: List[DesignTestFile] = Field(default_factory=list, max_length=2)
+    unchanged: List[str] = Field(default_factory=list, max_length=4)
 
-    @field_validator("files", "risks")
+    @field_validator("files", "risks", "acceptance_tests", "unchanged")
     @classmethod
     def _items(cls, v: List[str]) -> List[str]:
         return _short_items(v, lo=1)
+
+    @field_validator("files", "acceptance_tests", "test_first")
+    @classmethod
+    def _paths(cls, v: List[Any]) -> List[Any]:
+        for p in v:
+            _repo_path_ok(str(getattr(p, "path", p)).split("::")[0])
+        return v
 
 
 class ReviewDesignPayload(_Strict):
