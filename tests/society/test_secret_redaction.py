@@ -103,13 +103,13 @@ def test_the_audit_locates_a_key_shaped_string_without_printing_it(db, engine, m
     conn = engine.raw_connection()
     try:
         with conn.cursor() as cur:
-            out = p5.secret_locations(cur, None, env={"SOCIETY_MODEL_API_KEY": REAL})
+            out = p5.secret_locations(cur, None, env={"X01_CREDENTIAL_SHA256": f"not-a-fingerprint,{canary.fingerprint(REAL)}"})
         conn.rollback()
     finally:
         conn.close()
     assert PLACEHOLDER not in json.dumps(out) and REAL not in json.dumps(out)
-    assert out["credentials_checked"] == ["SOCIETY_MODEL_API_KEY", "compromised_list"]
+    assert out["credentials_checked"] == ["X01_CREDENTIAL_SHA256[0]", "compromised_list"]
     assert sorted((x["intent_type"], x["role"], x["field"], x["class"], x["credential_match"]) for x in out["locations"]) == [
         ("PROPOSE_DESIGN", "architect", "payload.approach", "key", "none"),
-        ("PROPOSE_DESIGN", "architect", "payload.proof", "key", "SOCIETY_MODEL_API_KEY"),
+        ("PROPOSE_DESIGN", "architect", "payload.proof", "key", "X01_CREDENTIAL_SHA256[0]"),
     ]

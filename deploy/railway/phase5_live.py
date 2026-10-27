@@ -505,8 +505,9 @@ COMPROMISED_CREDENTIAL_FINGERPRINTS = frozenset(
         "1ec5a2b2179f6f63cbab18b3195f6957224989e316f9eda470deeba995b01449",
     }
 )
-#: Credentials the validator can compare against when its environment carries them (names only are printed).
-CREDENTIAL_ENV = ("SOCIETY_MODEL_API_KEY", "LLM_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY")
+#: sha256 fingerprints (hex, comma-separated) of the credentials to check X01 matches against, e.g.
+#: ``printf %s "$KEY" | sha256sum``. The validator never reads a credential itself, only fingerprints.
+CREDENTIAL_FINGERPRINTS_ENV = "X01_CREDENTIAL_SHA256"
 
 
 def _shape_paths(value: Any, field: str) -> List[Tuple[str, str, str]]:
@@ -524,7 +525,8 @@ def secret_locations(cur, since: Optional[datetime], env: Optional[Dict[str, str
     """Where the key-/JWT-shaped strings in ``agent_intents`` are: intent type, role, field, pattern class and
     whether the fingerprint is a configured credential or on the compromised list. Never the string."""
     env = os.environ if env is None else env
-    configured = {hashlib.sha256(env[n].encode("utf-8")).hexdigest(): n for n in CREDENTIAL_ENV if env.get(n)}
+    given = [f.strip().lower() for f in (env.get(CREDENTIAL_FINGERPRINTS_ENV) or "").split(",") if re.fullmatch(r"[0-9a-fA-F]{64}", f.strip())]
+    configured = {fp: f"{CREDENTIAL_FINGERPRINTS_ENV}[{i}]" for i, fp in enumerate(given)}
     w = "AND i.created_at >= %s" if since else ""
     rows = _rows(cur, "SELECT i.id, i.intent_type, coalesce(r.role, ''), i.policy_decision, i.execution_status, i.payload, i.policy_reason, i.result, i.error, i.created_at "
                       f"FROM agent_intents i LEFT JOIN agent_runs r ON r.id = i.run_id WHERE (row_to_json(i)::text ~ %s OR row_to_json(i)::text ~ %s) {w} ORDER BY i.created_at",
@@ -537,7 +539,7 @@ def secret_locations(cur, since: Optional[datetime], env: Optional[Dict[str, str
                 match = configured.get(fp) or ("compromised_list" if fp in COMPROMISED_CREDENTIAL_FINGERPRINTS else "none")
                 found.append({"intent": str(r[0])[:8], "intent_type": r[1], "role": r[2], "decision": str(r[3]), "status": str(r[4]), "field": path, "class": cls,
                               "credential_match": match, "created_at": r[9].isoformat() if r[9] else None})
-    return {"credentials_checked": sorted(configured.values()) + ["compromised_list"], "locations": found}
+    return {"credentials_checked": list(configured.values()) + ["compromised_list"], "locations": found}
 
 
 _SCHEMA_ERR = re.compile(r"'type': '([^']+)', 'loc': \[([^\]]*)\]")
