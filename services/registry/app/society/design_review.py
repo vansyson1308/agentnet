@@ -51,6 +51,8 @@ logger = logging.getLogger(__name__)
 
 REVIEWERS = ("scout", "qa", "security")
 MAX_ROUNDS = 2
+#: spec-gate refusals (spec_gate.py) the Architect may fix within one round before the ticket returns
+GATE_RETRIES = 2
 PROPOSAL_WINDOW = timedelta(hours=2)
 REVIEW_WINDOW = timedelta(hours=2)
 DECISION_WINDOW = timedelta(hours=2)
@@ -137,7 +139,8 @@ def _question(stage: str, role: str, review: Dict[str, Any], title: str, deadlin
     n = int(review["round"])
     if stage == "proposing":
         return (f"Architect: propose the design for '{title}' (round {n}/{MAX_ROUNDS}): one PROPOSE_DESIGN "
-                f"{{review_id, approach, files, proof, risks}} before {deadline}.")
+                f"{{review_id, approach, files, proof, risks, acceptance_tests, test_first, unchanged}} before {deadline}; "
+                "the spec gate checks it first (an acceptance test exists on main or is your test_first, a template's view is in files).")
     if stage == "reviewing":
         return (f"{role.capitalize()}: {REVIEW_FOCUS.get(role, 'does this proposal hold up')}? Answer with ONE REVIEW_DESIGN "
                 f"{{review_id, stance: support|concern|object|abstain, points}} about THIS proposal before {deadline}; "
@@ -147,7 +150,7 @@ def _question(stage: str, role: str, review: Dict[str, Any], title: str, deadlin
 
 
 def _wake(db: Session, review: Dict[str, Any], *, extra: Optional[Dict[str, Any]] = None, rewake: bool = False, causation: Any = None,
-          roles: Optional[List[str]] = None) -> int:
+          roles: Optional[List[str]] = None, key_suffix: str = "") -> int:
     """Wake the roles that must act at the review's CURRENT stage (or only ``roles`` of them):
     one system event per role agent in the review's story (caused by the contribution that
     moved the stage, if any), targeted so nobody else is woken, each with its question and
@@ -162,7 +165,7 @@ def _wake(db: Session, review: Dict[str, Any], *, extra: Optional[Dict[str, Any]
                    payload={"review_id": str(review["id"]), "round": int(review["round"]), "stage": stage, "role": role, "target_agent_id": agent_id,
                             "rewake": rewake, "protocol": PROTOCOL, "deadline": deadline, "question": _question(stage, role, review, t["title"], deadline),
                             **_ticket_brief(t), **(extra or {})},
-                   idempotency_key=f"design_review.{stage}:{review['id']}:{review['round']}:{agent_id}" + (":rewake" if rewake else ""))
+                   idempotency_key=f"design_review.{stage}:{review['id']}:{review['round']}:{agent_id}" + (":rewake" if rewake else "") + key_suffix)
         n += 1
     return n
 
@@ -204,11 +207,33 @@ def propose(db: Session, *, review_id: Any, correlation_id: Any, agent: Any, pro
     _update(db, review["id"], proposal=proposal, positions={}, status="reviewing", stage_at=utcnow())
     review = get(db, review["id"])
     _log("proposed", review, by="architect", files=len(proposal.get("files") or []))
+    first = [f["path"] for f in proposal.get("test_first") or []]
     _chat(db, review, agent, f"Design proposal (round {review['round']}): {_ticket(db, review)['title']}",
-          f"Approach: {proposal['approach']}\nFiles: {', '.join(proposal['files'])}\nProof: {proposal['proof']}\nRisks: {'; '.join(proposal.get('risks') or []) or 'none named'}",
+          f"Approach: {proposal['approach']}\nFiles: {', '.join(proposal['files'])}\nProof: {proposal['proof']}\nRisks: {'; '.join(proposal.get('risks') or []) or 'none named'}"
+          + f"\nAcceptance: {', '.join(proposal.get('acceptance_tests') or []) or 'none named'}" + (f"\nTest-first (Architect): {', '.join(first)}" if first else ""),
           "proposal")
     _wake(db, review, causation=causation)
     return review
+
+
+def gate_refuse(db: Session, *, review_id: Any, correlation_id: Any, agent: Any, problems: List[str], causation: Any) -> Dict[str, Any]:
+    """The spec gate refused the Architect's proposal (spec_gate.py): the review stays in
+    ``proposing`` and the Architect is asked again with the reasons, at most GATE_RETRIES times a
+    round; then the ticket returns for re-planning. Nothing is built for a design that cannot pass."""
+    review = _current(db, review_id, correlation_id, "proposing")
+    n = int(db.execute(text("SELECT COUNT(*) FROM society_events WHERE event_type = :t AND payload ->> 'review_id' = :r AND payload ->> 'round' = :n "
+                            "AND payload ->> 'gate' IS NOT NULL"),
+                       {"t": STAGE_EVENTS["proposing"], "r": str(review["id"]), "n": str(review["round"])}).scalar() or 0)
+    _log("gate_refused", review, problems=len(problems), attempt=n + 1)
+    _chat(db, review, agent, f"Spec gate refused the proposal (round {review['round']}, attempt {n + 1}/{GATE_RETRIES + 1})",
+          "\n".join(f"- {p}" for p in problems), "review_result")
+    if n < GATE_RETRIES:
+        _update(db, review["id"], stage_at=utcnow())
+        _wake(db, get(db, review["id"]), roles=["architect"], extra={"gate": problems}, causation=causation, key_suffix=f":gate{n + 1}")
+        return {"gate": problems, "retry": n + 1}
+    _settle(db, review, {"verdict": "return", "conditions": [], "by": "runtime",
+                         "rationale": f"spec gate refused {n + 1} proposals: {problems[0]}"})
+    return {"gate": problems, "returned": True}
 
 
 def post_position(db: Session, *, review_id: Any, correlation_id: Any, agent: Any, role: str, position: Dict[str, Any], causation: Any) -> Dict[str, Any]:
@@ -358,7 +383,7 @@ def context_view(db: Session, correlation_id: Any) -> Dict[str, Any]:
     if review is None:
         return {}
     t = _ticket(db, review)
-    step = {"proposing": "Architect: PROPOSE_DESIGN {review_id, approach, files, proof, risks}",
+    step = {"proposing": "Architect: PROPOSE_DESIGN {review_id, approach, files, proof, risks, acceptance_tests, test_first, unchanged} (spec gate first)",
             "reviewing": "Scout, QA, Security: REVIEW_DESIGN {review_id, stance: support|concern|object|abstain, points} -- once each, about THIS proposal",
             "deciding": "Governor: DECIDE_DESIGN {review_id, verdict: go|revise|drop, rationale, conditions} -- Security object bars go; "
                         f"round {MAX_ROUNDS} has no revise" + (f"; missing: {', '.join(_missing(review))} (decide with what you have)" if _missing(review) else "")
