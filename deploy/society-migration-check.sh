@@ -185,7 +185,8 @@ for hop in \
   "0020_design_review -> 0021_harness_lessons" \
   "0021_harness_lessons -> 0022_revenue_ledger" \
   "0022_revenue_ledger -> 0023_company_slots" \
-  "0023_company_slots -> $EXPECTED_HEAD"; do
+  "0023_company_slots -> 0024_owner_actions" \
+  "0024_owner_actions -> $EXPECTED_HEAD"; do
   [[ "$out" == *"$hop"* ]] && ok "$UPGRADE_DB: ran $hop" || bad "$UPGRADE_DB: hop did not run ($hop): $out"
 done
 expect_head "$UPGRADE_DB"
