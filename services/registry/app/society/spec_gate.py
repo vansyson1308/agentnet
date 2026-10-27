@@ -14,7 +14,8 @@ Rules (``check_files`` / ``check_design``):
 1. every acceptance test exists on the trusted base, or is a ``test_first`` file -- a new test the
    ARCHITECT writes in the design (the meeting reviews it), committed before the Builder starts;
    an acceptance file is never in files_allowed (the Builder may not write what judges it);
-2. a test_first file is new, ``[services/<svc>/]tests/**/test_*.py``, and not in files_allowed;
+2. a test_first file is new, ``tests/**/test_*.py`` (what required CI collects), and not in
+   files_allowed; no new test file in files sits outside ``CI_TEST_ROOTS`` (a CI orphan);
 3. a dashboard template must be rendered (by a view, or through ``extends``/``include`` of a
    rendered one); its view file is in files, or named in ``unchanged`` with the reason;
 4. nothing on a risky or never-writable surface (Security cannot pass it).
@@ -32,7 +33,11 @@ from typing import Any, Dict, Iterable, List, Sequence
 
 DASHBOARD_APP = "services/dashboard/app"
 TEMPLATES = f"{DASHBOARD_APP}/templates/"
-TEST_FIRST_RE = re.compile(r"^(?:services/[a-z_]+/)?tests/(?:[A-Za-z0-9_]+/)*test_[A-Za-z0-9_]+\.py$")
+#: what required CI collects (scripts/ci/check_test_discovery.py REQUIRED_ROOTS): a new test file
+#: anywhere else is an ORPHAN and fails CI (staging PR #115: services/dashboard/tests/test_*.py)
+CI_TEST_ROOTS = ("tests/",)
+TEST_FIRST_RE = re.compile(r"^tests/(?:[A-Za-z0-9_]+/)*test_[A-Za-z0-9_]+\.py$")
+_TEST_NAME_RE = re.compile(r"(?:^|/)(?:test_[^/]*|[^/]*_test)\.py$")
 MAX_TEST_FIRST = 2
 _RENDER_RE = re.compile(r"""render_template\(\s*["']([^"']+\.html)["']""")
 _REF_RE = re.compile(r"""\{%-?\s*(?:extends|include|import|from)\s+["']([^"']+\.html)["']""")
@@ -67,6 +72,11 @@ def template_views(root: pathlib.Path) -> Dict[str, List[str]]:
     return views
 
 
+def ci_orphans(root: pathlib.Path, paths: Iterable[str]) -> List[str]:
+    """New test files (absent from the trusted base) outside the roots required CI collects."""
+    return [p for p in paths if _TEST_NAME_RE.search(p) and not p.startswith(CI_TEST_ROOTS) and not (root / p).exists()]
+
+
 def _unchanged_paths(unchanged: Iterable[str]) -> set:
     return {str(u).split(":", 1)[0].strip() for u in unchanged}
 
@@ -91,11 +101,14 @@ def check_files(root: pathlib.Path, files: Sequence[str], acceptance: Sequence[s
         problems.append(f"at most {MAX_TEST_FIRST} test_first files")
     for path in first:
         if not TEST_FIRST_RE.match(path):
-            problems.append(f"test_first {path}: must be a new [services/<svc>/]tests/**/test_*.py file")
+            problems.append(f"test_first {path}: must be a new tests/**/test_*.py file (the root required CI collects)")
         elif (root / path).exists():
             problems.append(f"test_first {path} already exists on main: name it in acceptance_tests instead")
         if path in files_set:
             problems.append(f"test_first {path} is in files: the Builder may not edit it")
+    for path in ci_orphans(root, sorted(files_set)):
+        problems.append(f"{path} is a new test file outside {', '.join(CI_TEST_ROOTS)}: required CI fails it as an orphan "
+                        "(scripts/ci/check_test_discovery.py) -- put new tests under tests/")
     views = template_views(root)
     named = files_set | _unchanged_paths(unchanged)
     for path in sorted(files_set):

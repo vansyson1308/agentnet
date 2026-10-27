@@ -47,6 +47,23 @@ def test_the_staging_faults_are_named_before_any_build():
     problems = spec_gate.check_files(REPO, [f"{TPL}wallet.html"], ["services/dashboard/tests/test_main.py"])
     assert any("not rendered by any view" in p for p in problems) and any("risky surface" in p for p in problems)
     assert "base.html" in spec_gate.template_views(REPO), "a template a rendered one extends is live too"
+    # PR #115: a new test under services/dashboard/tests is collected by no required CI job -> red PR
+    (p,) = spec_gate.check_files(REPO, [f"{TPL}register.html", "services/dashboard/tests/test_register_value_copy.py"],
+                                 ["tests/test_public_surface_contract.py"], unchanged=["services/dashboard/app/main.py: static page"])
+    assert "CI fails it as an orphan" in p or "required CI fails it as an orphan" in p
+    assert any("must be a new tests/" in p for p in spec_gate.check_files(REPO, ["examples/agent_sdk.py"], ["services/dashboard/tests/test_x_new.py"],
+                                                                          ["services/dashboard/tests/test_x_new.py"]))
+
+
+def test_the_gate_and_qa_know_exactly_what_required_ci_collects():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("check_test_discovery", REPO / "scripts/ci/check_test_discovery.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert tuple(f"{r}/" for r in mod.REQUIRED_ROOTS) == spec_gate.CI_TEST_ROOTS
+    assert spec_gate.ci_orphans(REPO, ["services/dashboard/tests/test_new_copy.py", "services/dashboard/tests/test_main.py",
+                                       "tests/test_new_copy.py", "services/dashboard/app/main.py"]) == ["services/dashboard/tests/test_new_copy.py"]
 
 
 def test_a_test_first_file_is_new_a_test_path_and_never_the_builders():

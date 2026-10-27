@@ -234,3 +234,13 @@ def test_a_file_edit_is_exactly_one_mode():
         FileEdit(path=SRC, replacements=[])
     with pytest.raises(ValidationError):
         FileEdit(path=SRC, replacements=[TextReplacement(old="", new="b")])
+
+
+def test_qa_fails_a_new_test_file_required_ci_would_not_collect(society_settings, temp_repo):
+    """PR #115: the Builder added services/dashboard/tests/test_*.py, QA passed, CI's test-discovery
+    sentinel failed the PR. QA now refuses the orphan before a PR is opened."""
+    orphan = "services/dashboard/tests/test_register_value_copy.py"
+    ws, changed = _built(society_settings, content="def test_x():\n    assert True\n", path=orphan)
+    report = evaluate_candidate(society_settings, ws, _spec(files_allowed=[orphan]), changed)
+    checks = {c.name: c.passed for c in report.checks}
+    assert checks["ci_collects_new_tests"] is False and not report.passed
