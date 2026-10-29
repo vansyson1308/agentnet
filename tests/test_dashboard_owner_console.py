@@ -12,7 +12,7 @@ import re
 
 import pytest
 
-DASH = pathlib.Path(__file__).resolve().parents[1] / "app"
+DASH = pathlib.Path(__file__).resolve().parents[1] / "services" / "dashboard" / "app"
 PLAN_ID = "11111111-1111-4111-8111-111111111111"
 ACTION_ID = "22222222-2222-4222-8222-222222222222"
 INCIDENT_ID = "33333333-3333-4333-8333-333333333333"
