@@ -131,6 +131,7 @@ NO_ORM_TABLES = {
     "society_revenue_entries": "north-star external income, written and read with SQL by society/goals.py",
     "society_owner_actions": "the owner action queue, written and read with SQL by society/owner_actions.py",
     "society_telegram_links": "Telegram boardroom operator links, written and read with SQL by society/boardroom_commands.py and operator_auth.py",
+    "society_owner_directives": "the owner's directive (append-only), written and read with SQL by society/directives.py",
 }
 # agent_connection_strength (05-social-graph.sql) is a MATERIALIZED VIEW, not a base table.
 
@@ -614,7 +615,7 @@ MAINTENANCE_TABLES = {
     "maintenance_known_good", "maintenance_release_freezes", "maintenance_toil_events", "maintenance_heartbeats",
     "maintenance_knowledge",
 }
-POST_0008_TABLES = APP_TABLES | PHASE3_TABLES | PHASE6_TABLES | PHASE8_TABLES | MAINTENANCE_TABLES | {"society_bench_reports", "society_objective_status", "society_tickets", "society_daily_plans", "society_design_reviews", "society_harness_lessons", "society_revenue_entries", "society_owner_actions", "society_telegram_links"}
+POST_0008_TABLES = APP_TABLES | PHASE3_TABLES | PHASE6_TABLES | PHASE8_TABLES | MAINTENANCE_TABLES | {"society_bench_reports", "society_objective_status", "society_tickets", "society_daily_plans", "society_design_reviews", "society_harness_lessons", "society_revenue_entries", "society_owner_actions", "society_telegram_links", "society_owner_directives"}
 
 
 def test_downgrade_0008_then_upgrade_head_round_trips(upgrade_db):

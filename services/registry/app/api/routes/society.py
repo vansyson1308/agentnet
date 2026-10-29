@@ -850,6 +850,35 @@ def decide_plan(plan_id: uuid.UUID, decision: Literal["approve", "reject"], db: 
     return {"id": str(plan["id"]), "status": plan["status"], "ranking": plan["ranking"]}
 
 
+class DirectiveBody(BaseModel):
+    text: str = Field(..., min_length=1, max_length=2000)
+    objective_ids: List[str] = Field(default_factory=list, max_length=5)
+
+
+@router.get("/company/directive")
+def get_directive(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """The owner's active directive ("Kim chi nam"), the earlier ones, and what came from the active one
+    (tickets of its objectives since it was set, with their review, candidate and PR)."""
+    from ...society import charter, directives
+
+    current = directives.active(db)
+    return {"active": current, "history": directives.history(db), "following": directives.following(db, current), "weight": directives.WEIGHT,
+            "objectives": [{"id": o["id"], "title": o["title"], "status": o["status"],
+                            "key_results": [{k: kr[k] for k in ("metric_id", "direction")} for kr in o["key_results"]]} for o in charter.objectives(db)]}
+
+
+@router.post("/company/directive", status_code=status.HTTP_201_CREATED)
+def set_directive(body: DirectiveBody, db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """Set the company's direction: supersedes the active directive (append-only). Every role sees it as
+    owner input; the plan weighs its objectives. It grants nothing, and no intent can write it."""
+    from ...society import directives
+
+    try:
+        return directives.set_directive(db, text_=body.text, objective_ids=body.objective_ids, user_id=operator.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
 @router.post("/company/tickets", status_code=status.HTTP_201_CREATED)
 def create_owner_ticket(body: OwnerTicketBody, db: Session = Depends(get_db), operator: User = Depends(require_operator)):
     """An owner task: approved at once (no plan), still checked by the meaning gate."""

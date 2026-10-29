@@ -155,6 +155,19 @@ def _request_count(db: Session, cand_id) -> int:
     return int(db.query(AgentIntent).filter(AgentIntent.intent_type == "REQUEST_PR_PROMOTION", AgentIntent.payload["candidate_id"].astext == str(cand_id)).count())
 
 
+def ready_view(db: Session, settings: SocietySettings, now: Optional[datetime] = None, limit: int = 20) -> List[Dict[str, Any]]:
+    """READY candidates with their latest promotion and PR link, or the reason there is none (Owner Console)."""
+    waiting = {b["candidate_id"]: b for b in ready_backlog(db, settings, now)}
+    out = []
+    for cand in db.query(CodeCandidate).filter(CodeCandidate.status == CodeCandidateStatus.READY).order_by(CodeCandidate.updated_at.desc()).limit(limit).all():
+        last = db.query(CodePromotion).filter(CodePromotion.candidate_id == cand.id).order_by(CodePromotion.created_at.desc()).first()
+        b = waiting.get(str(cand.id)) or {}
+        out.append({"candidate": str(cand.id)[:8], "candidate_id": str(cand.id), "title": cand.title, "risk_tier": _ev(cand.risk_tier) if cand.risk_tier else None,
+                    "promotion": _ev(last.status) if last is not None else None, "pr_number": last.external_pr_number if last is not None else None,
+                    "pr_url": last.external_pr_url if last is not None else None, "reason": b.get("reason"), "detail": b.get("detail")})
+    return out
+
+
 def retry_deferred(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> int:
     """Re-offer the oldest waiting READY candidates to the Governor while capacity lasts. Commits when it emitted."""
     now = now or utcnow()
@@ -183,4 +196,4 @@ def retry_deferred(db: Session, settings: SocietySettings, now: Optional[datetim
     return sent
 
 
-__all__ = ["capacity", "caps", "ready_backlog", "retry_deferred", "settle_ended"]
+__all__ = ["capacity", "caps", "ready_backlog", "ready_view", "retry_deferred", "settle_ended"]

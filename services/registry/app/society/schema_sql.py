@@ -645,4 +645,39 @@ CREATE TABLE IF NOT EXISTS society_telegram_links (
 );
 """
 
-SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL + SOCIETY_COMPANY_PLAN_SQL + SOCIETY_COMPANY_BOARD_SQL + SOCIETY_DESIGN_REVIEW_SQL + SOCIETY_HARNESS_SQL + SOCIETY_REVENUE_SQL + SOCIETY_COMPANY_SLOTS_SQL + SOCIETY_OWNER_ACTIONS_SQL + SOCIETY_TELEGRAM_LINKS_SQL
+SOCIETY_OWNER_DIRECTIVES_SQL = r"""
+-- The owner's direction ("Kim chi nam", Owner Console, society/directives.py): plain text and the
+-- charter objectives it serves. Append-only, at most ONE active row (superseded_at IS NULL); written
+-- only by the operator API (require_operator), never by an intent. It grants nothing: every role sees
+-- it as owner input and the plan score weighs its objectives; grants, budgets, flags, files_allowed,
+-- the RED/merge law and auto-merge are untouched by it.
+CREATE TABLE IF NOT EXISTS society_owner_directives (
+    id             UUID PRIMARY KEY,
+    text           TEXT NOT NULL,
+    objective_ids  JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_by     UUID,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    superseded_at  TIMESTAMPTZ,
+    CONSTRAINT ck_society_owner_directives_text CHECK (char_length(text) BETWEEN 1 AND 2000)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_society_owner_directives_active ON society_owner_directives ((TRUE)) WHERE superseded_at IS NULL;
+
+-- Append-only for every caller: a row is never deleted or rewritten; only superseded_at is set, once.
+CREATE OR REPLACE FUNCTION society_owner_directives_append_only() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' OR OLD.superseded_at IS NOT NULL OR NEW.superseded_at IS NULL
+       OR NEW.id <> OLD.id OR NEW.text <> OLD.text OR NEW.objective_ids <> OLD.objective_ids
+       OR NEW.created_by IS DISTINCT FROM OLD.created_by OR NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'society_owner_directives is append-only (attempted %)', TG_OP;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_society_owner_directives_append_only ON society_owner_directives;
+CREATE TRIGGER trg_society_owner_directives_append_only
+    BEFORE UPDATE OR DELETE ON society_owner_directives
+    FOR EACH ROW EXECUTE FUNCTION society_owner_directives_append_only();
+"""
+
+SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL + SOCIETY_COMPANY_PLAN_SQL + SOCIETY_COMPANY_BOARD_SQL + SOCIETY_DESIGN_REVIEW_SQL + SOCIETY_HARNESS_SQL + SOCIETY_REVENUE_SQL + SOCIETY_COMPANY_SLOTS_SQL + SOCIETY_OWNER_ACTIONS_SQL + SOCIETY_TELEGRAM_LINKS_SQL + SOCIETY_OWNER_DIRECTIVES_SQL
