@@ -496,3 +496,39 @@ ONE dashboard page, `/owner`.
   production it refuses unless `OWNER_GRANT_CONFIRM` names the same email: never automatic.
 - The public-surface contract names `/owner` (`owner_console`, auth required: an anonymous request
   ends on the login page).
+
+### Owner Console as a live conversation (owner 2026-10-29)
+
+"A CEO speaks and the team answers in minutes." Deterministic plumbing (`society/owner_thread.py`,
+`society_owner_thread`, migration `0027_owner_conversation`); the model still only proposes typed
+intents and nothing here grants anything.
+
+- **Owner events wake the company now.** Setting a directive, creating an owner task
+  (`POST /company/tickets`) or sending a message (`POST /company/owner-messages`, the console's
+  "Ra lệnh / hỏi công ty" box) writes an `owner` row (append-only, redacted like intent rows) and ONE
+  durable event `owner.directive_set` / `owner.task_created` / `owner.message` with the key
+  `owner:<row id>`. Owner events are PRIORITY: dispatched and claimed before any other pending event,
+  by a dedicated owner lane in the worker (its own thread and wake listener, so a long build or
+  controller pass never delays it), never subject to the heartbeat precheck or the wake cooldown.
+  While `SOCIETY_OWNER_RESERVE_USD` > 0 (staging: 5) they spend that reserve instead of the role's
+  daily budget, and every other run leaves the reserve's unspent part alone; the reserve is inside
+  `SOCIETY_DAILY_MODEL_BUDGET`. The global cap, the runs/hour limits (a capped owner run is retried
+  after 60 s, not dropped), the loop breaker and `max_runs_per_correlation` still apply.
+- **A directive starts work immediately.** `owner.directive_set` wakes the Governor (chair) and the
+  Scout and IS the event of one operator company cycle started at once (`company.start_cycle`, the
+  code of `POST /company/cycles`, unique per directive): the backlog supplies tickets and the plan is
+  ranked now, marked `directive_id` / `owner_entry_id` ("from directive" on the console).
+- **The Governor answers.** `RESPOND_TO_OWNER {reply <= 1200 chars, plan_steps <= 5, ticket_ids <= 5,
+  owner_actions_needed <= 3}` is Governor-only, LOW, valid only in the story an owner event opened, at
+  most one per owner event (a unique index; a second one fails). Shown ONLY on `/owner`.
+- **Tickets for the owner are planned in minutes.** In an owner story the Scout may file up to 2
+  tickets (`CREATE_IMPROVEMENT` with `ticket` + `evidence`) outside its department's daily cap; the
+  owner lane and the company controllers rank them into a plan of their own (`owner_entry_id`).
+- **The panel** shows each owner message, its status (received → working → answered, or no_reply when
+  every run ended without one), the reply, and what came from it (tickets, plans, design reviews,
+  candidates, PRs). `/owner` polls `/owner/thread` every 5 s while something is working.
+- **SLOs** (`owner_thread.slo`, on `/owner` and validator step `owner:slo`): owner event → first run
+  start p95 < 30 s; → Governor reply p95 < 2 min; directive → first ticket in a plan < 10 min. An owner
+  row left unanswered (or a directive unplanned) past its target counts against it.
+- The READY list on `/owner` and the daily report judge "no PR" with the WORKER's provider and caps
+  (its last heartbeat's `change_budget`, the `P05` source), not the registry's own env.

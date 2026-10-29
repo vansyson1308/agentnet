@@ -1,0 +1,44 @@
+{# The Owner Console conversation: rendered inside /owner and alone at /owner/thread (the 5 s poll). Operator data only. #}
+{% set labels = {"received": "📥 received", "working": "⚙️ working", "answered": "✅ answered", "no_reply": "⚠️ no reply"} %}
+{% set kinds = {"directive": "🧭 direction", "task": "➕ task", "message": "💬 message"} %}
+<div data-working="{{ '1' if thread and thread.working else '0' }}">
+{% if thread is none %}
+<p class="oc-muted">The conversation is unavailable right now.</p>
+{% elif not thread.entries %}
+<p class="oc-muted">Nothing said yet: write to the company above.</p>
+{% else %}
+{% for e in thread.entries %}
+<div class="oc-msg">
+    <div class="oc-muted">{{ kinds.get(e.kind, e.kind) }} · {{ e.created_at }} · <span class="oc-status oc-status-{{ e.status }}">{{ labels.get(e.status, e.status) }}</span></div>
+    <p class="oc-pre">{{ e.text }}</p>
+    {% if e.reply %}
+    <div class="oc-reply">
+        <div class="oc-muted">Governor · {{ e.reply.created_at }}</div>
+        <p class="oc-pre">{{ e.reply.text }}</p>
+        {% if e.reply.plan_steps %}<ol class="oc-steps">{% for s in e.reply.plan_steps %}<li>{{ s }}</li>{% endfor %}</ol>{% endif %}
+        {% if e.reply.owner_actions_needed %}<div class="oc-muted">Needs you: {{ e.reply.owner_actions_needed | join("; ") }}</div>{% endif %}
+    </div>
+    {% elif e.status == "no_reply" %}
+    <p class="oc-muted">The company's runs for this ended without a reply (budget, loop breaker or an invalid answer): see the daily report.</p>
+    {% endif %}
+    {% if e.plans %}<div class="oc-muted">Plans: {% for p in e.plans %}{{ p.id[:8] }} ({{ p.status }}{% if e.kind == "directive" %}, from this directive{% endif %}){% if not loop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+    {% if e.tickets %}
+    <table>
+        <tr><th>Ticket</th><th>Status</th><th>Review</th><th>Candidate</th><th>PR</th></tr>
+        {% for t in e.tickets %}
+        <tr><td>{{ t.title }} <span class="oc-muted">{{ t.objective_id }}</span></td><td>{{ t.status }}{% if t.planned %} · planned{% endif %}</td><td>{{ t.review or "-" }}</td>
+            <td>{{ t.candidate or "-" }}</td><td>{% if t.pr_url %}<a href="{{ t.pr_url }}" rel="noopener" target="_blank">{{ t.promotion }}</a>{% else %}{{ t.promotion or "-" }}{% endif %}</td></tr>
+        {% endfor %}
+    </table>
+    {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+{% if thread and thread.slo %}
+{% set names = {"first_run_start": "owner event → first run", "reply": "→ Governor reply", "directive_to_plan": "directive → ticket in a plan"} %}
+<p class="oc-muted" style="margin-top:.6rem;">SLO ({{ thread.slo.window_days }} days):
+{% for k in ["first_run_start", "reply", "directive_to_plan"] %}{% set m = thread.slo[k] %}
+{{ names[k] }} p95 {{ m.p95_s if m.p95_s is not none else "–" }}s / {{ m.target_s }}s ({{ m.n }}{% if m.late_unanswered %}, {{ m.late_unanswered }} late{% endif %}) {{ "no data" if m.ok is none else ("✅" if m.ok else "❌") }}{% if not loop.last %} · {% endif %}
+{% endfor %}</p>
+{% endif %}
+</div>

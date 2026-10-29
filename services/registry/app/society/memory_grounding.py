@@ -111,9 +111,10 @@ def check(db: Session, *, run_id: uuid.UUID, memory_intent_id: uuid.UUID, memory
 
 
 def execution_order_key(intent_type: str, seq: int) -> Tuple[int, int]:
-    """Sort key for a run's pending intents: memories after everything else,
-    each group in the model's order."""
-    return (1 if str(intent_type) == IntentType.WRITE_MEMORY.value else 0, int(seq))
+    """Sort key for a run's pending intents: a reply to the owner after the work it reports
+    (owner_thread.py), memories after everything else, each group in the model's order."""
+    t = str(intent_type)
+    return (2 if t == IntentType.WRITE_MEMORY.value else 1 if t == IntentType.RESPOND_TO_OWNER.value else 0, int(seq))
 
 
 __all__ = ["Grounding", "NON_SIDE_EFFECT_TYPES", "check", "decide", "execution_order_key", "is_side_effecting"]

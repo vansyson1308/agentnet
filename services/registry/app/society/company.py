@@ -353,30 +353,38 @@ def _canonical_size(obj: Any) -> int:
 
 
 def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Optional[datetime] = None, operator_id: Optional[uuid.UUID] = None,
-                provider: Any = None, slot: int = 0) -> Optional[CompanyCycle]:
+                provider: Any = None, slot: int = 0, directive_id: Optional[uuid.UUID] = None, event_type: str = COMPANY_CYCLE_EVENT,
+                extra_payload: Optional[Dict[str, Any]] = None, idempotency_key: Optional[str] = None) -> Optional[CompanyCycle]:
     """Create a cycle + its ``company.cycle`` event. A scheduled cycle is
-    idempotent per UTC date and slot (returns None when that one already exists)."""
+    idempotent per UTC date and slot, a directive's cycle per directive (returns None
+    when that one already exists). A directive's cycle is opened by the owner's own
+    event (owner_thread.directive_set: ``event_type``/``extra_payload``/``idempotency_key``)."""
     if trigger not in ("scheduled", "operator"):
         raise ValueError("trigger must be scheduled or operator")
     now = now or utcnow()
     cycle_day: date = now.date()
     evidence = evidence_bundle(db, now)
-    cycle = CompanyCycle(id=uuid.uuid4(), cycle_date=cycle_day, trigger=trigger, evidence=evidence, slot=slot if trigger == "scheduled" else 0)
+    cycle = CompanyCycle(id=uuid.uuid4(), cycle_date=cycle_day, trigger=trigger, evidence=evidence, slot=slot if trigger == "scheduled" else 0,
+                         directive_id=directive_id)
     try:
         with db.begin_nested():
             db.add(cycle)
             db.flush()
     except IntegrityError:
-        return None  # today's scheduled cycle already exists
+        return None  # today's scheduled cycle (or this directive's cycle) already exists
+    payload = {**cycle_event_payload(cycle.id, trigger, evidence, _portfolio(db, settings)), **(extra_payload or {})}
+    if "fitness" in payload and _canonical_size(payload) > TXT_LONG:  # the owner's ids fit the same bound
+        del payload["fitness"]
+        payload["omitted"] = ["fitness"]
     event = emit_event(
         db,
-        event_type=COMPANY_CYCLE_EVENT,
-        payload=cycle_event_payload(cycle.id, trigger, evidence, _portfolio(db, settings)),
+        event_type=event_type,
+        payload=payload,
         actor_type="operator" if trigger == "operator" else "system",
         actor_id=operator_id,
         subject_type="company_cycle",
         subject_id=cycle.id,
-        idempotency_key=f"company.cycle:{cycle.id}",
+        idempotency_key=idempotency_key or f"company.cycle:{cycle.id}",
     )
     cycle.event_id = event.id
     # Observe: every open backlog item an objective owns becomes a proposed ticket

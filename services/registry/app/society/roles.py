@@ -140,8 +140,14 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             IntentType.DECIDE_DESIGN.value,
             # an outside action only the owner can take goes to the owner's queue (owner_actions.py)
             IntentType.PROPOSE_OWNER_ACTION.value,
+            # the chair answers the owner, once per owner event (owner_thread.py)
+            IntentType.RESPOND_TO_OWNER.value,
         ),
         subscriptions=(
+            # the owner spoke on the Owner Console: the chair answers first (priority events)
+            EventType.OWNER_DIRECTIVE_SET,
+            EventType.OWNER_TASK_CREATED,
+            EventType.OWNER_MESSAGE,
             EventType.DESIGN_REVIEW_READY,
             EventType.PROPOSAL_CREATED,
             EventType.CODE_CANDIDATE_READY,
@@ -181,6 +187,8 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             IntentType.PROPOSE_OWNER_ACTION.value,
         ),
         subscriptions=(
+            EventType.OWNER_DIRECTIVE_SET,
+            EventType.OWNER_MESSAGE,
             EventType.DESIGN_REVIEW_PROPOSED,
             EventType.COMPANY_CYCLE,
             EventType.BACKLOG_ITEM,

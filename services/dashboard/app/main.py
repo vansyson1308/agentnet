@@ -314,6 +314,7 @@ OWNER_SECTIONS = {
     "owner_actions": "/company/owner-actions",
     "incidents": "/incidents",
     "budget": "/budget",
+    "thread": "/company/owner-thread",
 }
 
 
@@ -381,7 +382,25 @@ def _owner_action(path: str, body: dict, done: str):
 @app.route("/owner/directive", methods=["POST"])
 def owner_set_directive():
     text = (request.form.get("text") or "").strip()
-    return _owner_action("/company/directive", {"text": text, "objective_ids": request.form.getlist("objective_ids")}, "Directive set: the agents see it from their next run.")
+    return _owner_action("/company/directive", {"text": text, "objective_ids": request.form.getlist("objective_ids")}, "Directive set: the company is starting on it now -- the Governor answers below.")
+
+
+@app.route("/owner/messages", methods=["POST"])
+def owner_send_message():
+    text = (request.form.get("text") or "").strip()
+    return _owner_action("/company/owner-messages", {"text": text}, "Received: the Governor answers here within minutes.")
+
+
+@app.route("/owner/thread")
+def owner_thread_fragment():
+    """The conversation panel alone, for the page's 5 s poll while something is working."""
+    token = _owner_token()
+    try:
+        thread = api_client.operator_get(token, OWNER_SECTIONS["thread"])
+    except APIError as e:
+        _owner_refused(e)
+        thread = None
+    return render_template("owner_thread.html", thread=thread)
 
 
 @app.route("/owner/plans/<uuid:plan_id>/<any(approve, reject):decision>", methods=["POST"])
@@ -412,4 +431,4 @@ def owner_new_ticket():
     body = {"title": (f.get("title") or "").strip(), "problem": (f.get("problem") or "").strip(), "objective_id": (f.get("objective_id") or "").strip(),
             "metric_id": (f.get("metric_id") or "").strip(), "expected_effect": effect, "direction": f.get("direction") or "up",
             "proof": [p.strip() for p in (f.get("proof") or "").splitlines() if p.strip()][:10]}
-    return _owner_action("/company/tickets", body, "Task created: approved at once, it waits for its design review.")
+    return _owner_action("/company/tickets", body, "Task created: approved at once; the Governor answers in the conversation above.")
