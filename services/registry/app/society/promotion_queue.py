@@ -119,9 +119,47 @@ def _base(settings: SocietySettings, base_sha: Optional[str]) -> Dict[str, Any]:
         return {"ancestor": True, "behind": None}
 
 
-def ready_backlog(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
-    """Every READY candidate without an active promotion, oldest first, with one reason code."""
+def worker_caps(db: Session) -> Optional[Dict[str, Any]]:
+    """The change budget the WORKER last reported (``change_budget`` of its newest heartbeat) -- the
+    process that promotes. The registry API runs with its own env, so its settings may say
+    ``provider=disabled`` while the worker promotes (Owner Console 2026-10-29)."""
+    row = (db.query(SocietyEvent.payload).filter(SocietyEvent.event_type.in_([EventType.SOCIETY_HEARTBEAT, EventType.SOCIETY_HEARTBEAT_IDLE]))
+           .order_by(SocietyEvent.created_at.desc()).first())
+    cb = (row[0] or {}).get("change_budget") if row else None
+    return cb if isinstance(cb, dict) and cb.get("provider") else None
+
+
+def _as_worker(settings: SocietySettings, cb: Optional[Dict[str, Any]]) -> SocietySettings:
+    """``settings`` with the worker's promotion provider and change-budget caps (when it reported them)."""
+    if not cb:
+        return settings
+    import copy  # noqa: PLC0415
+
+    # A copy, NOT dataclasses.replace: this process's env need not satisfy the worker's provider
+    # rules (e.g. SOCIETY_GITHUB_REPOSITORY), and these settings only count and label, never promote.
+    view = copy.copy(settings)
+    object.__setattr__(view, "promotion_provider", str(cb["provider"]))
+    for k in ("max_promotions_per_day", "max_open_autonomous_prs"):
+        if isinstance(cb.get(k), int):
+            object.__setattr__(view, k, cb[k])
+    return view
+
+
+def worker_view_caps(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """:func:`caps` as the worker sees it: its provider, caps and auto-merge, counted now."""
+    cb = worker_caps(db)
+    out = caps(db, _as_worker(settings, cb), now)
+    if cb and "auto_merge_enabled" in cb:
+        out["auto_merge_enabled"] = bool(cb["auto_merge_enabled"])
+    return out
+
+
+def ready_backlog(db: Session, settings: SocietySettings, now: Optional[datetime] = None, *, from_worker: bool = False) -> List[Dict[str, Any]]:
+    """Every READY candidate without an active promotion, oldest first, with one reason code.
+    ``from_worker``: judge with the worker's provider and caps (its last heartbeat), not this process's."""
     now = now or utcnow()
+    if from_worker:
+        settings = _as_worker(settings, worker_caps(db))
     cap = capacity(db, settings, now)
     out = []
     for cand in db.query(CodeCandidate).filter(CodeCandidate.status == CodeCandidateStatus.READY).order_by(CodeCandidate.updated_at).all():
@@ -156,8 +194,9 @@ def _request_count(db: Session, cand_id) -> int:
 
 
 def ready_view(db: Session, settings: SocietySettings, now: Optional[datetime] = None, limit: int = 20) -> List[Dict[str, Any]]:
-    """READY candidates with their latest promotion and PR link, or the reason there is none (Owner Console)."""
-    waiting = {b["candidate_id"]: b for b in ready_backlog(db, settings, now)}
+    """READY candidates with their latest promotion and PR link, or the reason there is none (Owner
+    Console), judged with the worker's provider and caps."""
+    waiting = {b["candidate_id"]: b for b in ready_backlog(db, settings, now, from_worker=True)}
     out = []
     for cand in db.query(CodeCandidate).filter(CodeCandidate.status == CodeCandidateStatus.READY).order_by(CodeCandidate.updated_at.desc()).limit(limit).all():
         last = db.query(CodePromotion).filter(CodePromotion.candidate_id == cand.id).order_by(CodePromotion.created_at.desc()).first()
@@ -196,4 +235,4 @@ def retry_deferred(db: Session, settings: SocietySettings, now: Optional[datetim
     return sent
 
 
-__all__ = ["capacity", "caps", "ready_backlog", "ready_view", "retry_deferred", "settle_ended"]
+__all__ = ["capacity", "caps", "ready_backlog", "ready_view", "retry_deferred", "settle_ended", "worker_caps", "worker_view_caps"]

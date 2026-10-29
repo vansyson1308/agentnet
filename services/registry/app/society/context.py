@@ -54,7 +54,7 @@ from ..models import (
     Wallet,
     WalletOwnerType,
 )
-from . import directives
+from . import directives, owner_thread
 from .config import SocietySettings
 from .engineering.docs_contract import (
     DOCS_ACCEPTANCE_TEST,
@@ -158,6 +158,9 @@ class AgentContext:
     # Owner Console: the owner's active directive ("Kim chi nam", directives.py), labelled owner
     # input. Shown to every role after the policy text (restrictions); it grants nothing.
     owner_directive: Dict[str, Any] = field(default_factory=dict)
+    # Owner Console: in a story the owner opened (owner_thread.py), what the owner said, labelled
+    # owner input, and whether the Governor already answered. A request; it grants nothing.
+    owner_request: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -1225,5 +1228,6 @@ def build_context(
         federation=_federation(db, grant),
         signal_coverage=_signal_coverage(db, agent, event, settings, now),
         owner_directive=directives.context_view(db),
+        owner_request=owner_thread.context_view(db, event),
     )
     return ctx

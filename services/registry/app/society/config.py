@@ -202,6 +202,10 @@ class SocietySettings:
     # ── global budgets / loop-storm limits ─────────────────────────────
     max_runs_per_hour: int = field(default_factory=lambda: _int("SOCIETY_MAX_RUNS_PER_HOUR", 120, minimum=1))
     daily_model_budget_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_DAILY_MODEL_BUDGET", "2.0"))
+    # Owner events (owner_thread.py) spend this reserve INSIDE the daily budget instead of the role's
+    # budget and wake cooldown; other runs leave its unspent part alone. 0 = no reserve (owner runs
+    # then pass the ordinary role gates, still first in the queue).
+    owner_reserve_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_OWNER_RESERVE_USD", "0"))
     max_causation_depth: int = field(default_factory=lambda: _int("SOCIETY_MAX_CAUSATION_DEPTH", 24, minimum=1))
     max_runs_per_correlation: int = field(default_factory=lambda: _int("SOCIETY_MAX_RUNS_PER_CORRELATION", 40, minimum=1))
     max_intents_per_run: int = field(default_factory=lambda: _int("SOCIETY_MAX_INTENTS_PER_RUN", 5, minimum=1))
@@ -470,6 +474,8 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
             problems.append("SOCIETY_STAGING_DEPLOY_ENABLED=true is meaningless in production and refused")
     if s.daily_model_budget_usd < 0:
         problems.append("SOCIETY_DAILY_MODEL_BUDGET must be >= 0")
+    if s.owner_reserve_usd < 0 or s.owner_reserve_usd > s.daily_model_budget_usd:
+        problems.append("SOCIETY_OWNER_RESERVE_USD must be 0..SOCIETY_DAILY_MODEL_BUDGET (it is spent inside the daily budget)")
     if s.company_cycle_hour_utc > 23:
         problems.append("SOCIETY_COMPANY_CYCLE_HOUR_UTC must be 0..23")
     if s.company_cycles_per_day > 24:

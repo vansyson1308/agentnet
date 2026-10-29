@@ -26,6 +26,7 @@ import asyncio
 import logging
 import os
 import select
+import threading
 import time
 import uuid
 import dataclasses
@@ -59,6 +60,7 @@ from . import deployment as dep_mod
 from . import fitness as fitness_mod
 from . import memory_grounding
 from . import outcomes as outcomes_mod
+from . import owner_thread as owner_thread_mod
 from . import tickets as tickets_mod
 from . import design_review as design_review_mod
 from ..a2a.federation import directory as a2a_directory
@@ -73,7 +75,7 @@ from .approvals import claim_next_approved_intent, execute_approved_intent
 from .cognition import CognitiveModel, ModelProviderError, ModelTimeout, get_model
 from .config import SocietySettings, get_settings, validate_settings
 from .context import build_context
-from .events import WAKE_CHANNEL, EventType, emit_event, utcnow
+from .events import OWNER_EVENT_TYPES, WAKE_CHANNEL, EventType, emit_event, utcnow
 from .executor import ExecContext, ExecutionError, execute
 from .intents import REPO_READ_INTENT_TYPES, DecisionValidationError, IntentType, ValidatedIntent, payload_to_dict, validate_intents
 from .policy import check_run_budget, evaluate_intent, spend_today_usd
@@ -98,6 +100,8 @@ from .runs import (
 logger = logging.getLogger(__name__)
 #: how long a design-review turn held back by an hourly run cap waits before it is tried again
 REVIEW_WAKE_RETRY_SECONDS = 300
+#: the same for a run that answers the owner (an hourly cap delays it, never drops it)
+OWNER_WAKE_RETRY_SECONDS = 60
 #: one public-directory pass (scan or listing) never holds the loop longer than this
 DIRECTORY_PASS_SECONDS = 180
 
@@ -261,6 +265,10 @@ class SocietyWorker:
         # the last poll (monotonic); off unless SOCIETY_TELEGRAM_COMMANDS_ENABLED.
         self._telegram_offset: Optional[int] = None
         self._telegram_polled_at = 0.0
+        # The owner lane (owner_lane_once): a thread that serves ONLY the owner's events, so the
+        # owner is answered in seconds even while this loop is inside a long build or controller pass.
+        self._listen_dsn = listen_dsn
+        self._owner_thread = None
 
     # ── dispatch ───────────────────────────────────────────────────────
 
@@ -599,10 +607,14 @@ class SocietyWorker:
                 if stats:
                     stats.runs_dead += 1
                 return "dead"
-            gate = check_run_budget(db, agent=agent, grant=grant, settings=self.settings, run=run)
+            owner = event.event_type in OWNER_EVENT_TYPES  # the owner spoke: no cooldown, the owner reserve (policy.check_run_budget)
+            gate = check_run_budget(db, agent=agent, grant=grant, settings=self.settings, run=run, owner=owner)
             if not gate.ok and gate.retry_after_seconds is None and "runs/hour limit" in gate.reason and event.event_type in design_review_mod.WAKE_EVENT_TYPES:
                 # A meeting turn is owed by THIS role: an hourly cap delays it, never drops it (bounded by the event TTL).
                 gate = dataclasses.replace(gate, retry_after_seconds=REVIEW_WAKE_RETRY_SECONDS)
+            if not gate.ok and gate.retry_after_seconds is None and "runs/hour limit" in gate.reason and owner:
+                # The owner is answered late rather than never (bounded by the event TTL).
+                gate = dataclasses.replace(gate, retry_after_seconds=OWNER_WAKE_RETRY_SECONDS)
             if not gate.ok:
                 now = utcnow()
                 created = run.created_at if run.created_at is not None else now
@@ -712,6 +724,68 @@ class SocietyWorker:
             processed += 1
         return processed
 
+    async def owner_lane_once(self, stats: Optional[CycleStats] = None, *, max_runs: int = 20) -> int:
+        """One pass of the owner lane: dispatch the owner's pending events, process the runs they
+        woke (claimed before anything else), then plan what owner stories filed. The same claim,
+        lease and gates as the main loop (multi-replica safe); only the order differs."""
+        db = self.session_factory()
+        try:
+            ds = dispatch_pending_events(db, settings=self.settings, routing=self.routing, owner_only=True)
+        finally:
+            db.close()
+        if stats is not None:
+            stats.dispatched_events += ds.events_dispatched
+            stats.runs_created += ds.runs_created
+        processed = 0
+        while processed < max_runs and not self._stop:
+            db = self.session_factory()
+            try:
+                run = claim_next_run(db, worker_id=f"{self.worker_id}-owner", lease_seconds=self.settings.run_lease_seconds, owner_only=True)
+                run_id = run.id if run else None
+            finally:
+                db.close()
+            if run_id is None:
+                break
+            await self.process_run(run_id, stats)
+            processed += 1
+        if self.settings.company_cycle_enabled:
+            db = self.session_factory()
+            try:
+                owner_thread_mod.plan_owner_stories(db, self.settings)
+                db.commit()
+            except Exception:  # noqa: BLE001 -- planning never stops the lane
+                db.rollback()
+                logger.exception("owner lane: planning the owner's stories failed")
+            finally:
+                db.close()
+        return processed
+
+    def _owner_lane_main(self) -> None:  # pragma: no cover -- thread entrypoint; owner_lane_once is tested
+        listener = WakeListener(self._listen_dsn) if self._listen_dsn else None
+
+        async def _loop() -> None:
+            while not self._stop:
+                settings = self.settings
+                if settings.runtime_enabled:
+                    try:
+                        await self.owner_lane_once()
+                    except Exception:  # noqa: BLE001
+                        logger.exception("owner lane error")
+                wait = float(settings.wake_poll_seconds)
+                if listener is not None:
+                    await asyncio.to_thread(listener.wait, wait)
+                else:
+                    await asyncio.sleep(wait)
+            if listener is not None:
+                listener.close()
+
+        asyncio.run(_loop())
+
+    def start_owner_lane(self) -> None:
+        if self._owner_thread is None or not self._owner_thread.is_alive():
+            self._owner_thread = threading.Thread(target=self._owner_lane_main, name="society-owner-lane", daemon=True)
+            self._owner_thread.start()
+
     def process_approved_intents(self, stats: Optional[CycleStats] = None, *, max_intents: int = 50) -> int:
         """Resume human-approved intents without re-deciding (approvals.py)."""
         done = 0
@@ -743,7 +817,8 @@ class SocietyWorker:
         approves an undecided plan (or records why it holds) and no design review strands a ticket."""
         steps = [("outcomes", lambda db: outcomes_mod.record(db, utcnow()))]
         if self.settings.company_cycle_enabled:
-            steps += [("relabel_dead_worker_refusals", tickets_mod.relabel_dead_worker_refusals),
+            steps += [("owner_stories", lambda db: owner_thread_mod.plan_owner_stories(db, self.settings, utcnow())),
+                      ("relabel_dead_worker_refusals", tickets_mod.relabel_dead_worker_refusals),
                       ("close_satisfied", tickets_mod.close_satisfied),
                       ("sweep_stale_designs", lambda db: tickets_mod.sweep_stale_designs(db, utcnow())),
                       ("board_decide", lambda db: tickets_mod.board_decide(db, self.settings, utcnow())),
@@ -921,6 +996,7 @@ class SocietyWorker:
 
     async def run_forever(self) -> None:
         logger.info("society worker %s starting (enabled=%s provider=%s)", self.worker_id, self.settings.runtime_enabled, self.settings.model_provider)
+        self.start_owner_lane()
         while not self._stop:
             settings = get_settings()  # re-read cheap flags each loop
             self.settings = settings

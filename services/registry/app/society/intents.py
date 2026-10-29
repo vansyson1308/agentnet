@@ -72,6 +72,8 @@ class IntentType(str, enum.Enum):
     DECIDE_DESIGN = "DECIDE_DESIGN"
     #: an action outside the repo that would move a key result goes to the owner's queue (LOW; owner_actions.py)
     PROPOSE_OWNER_ACTION = "PROPOSE_OWNER_ACTION"
+    #: the Governor's one answer to an owner event, shown only on the Owner Console (LOW; owner_thread.py)
+    RESPOND_TO_OWNER = "RESPOND_TO_OWNER"
     EVALUATE_CODE_CANDIDATE = "EVALUATE_CODE_CANDIDATE"
     SECURITY_REVIEW_CANDIDATE = "SECURITY_REVIEW_CANDIDATE"
     REQUEST_STAGING_DEPLOY = "REQUEST_STAGING_DEPLOY"
@@ -413,6 +415,28 @@ class ProposeOwnerActionPayload(_Strict):
     metric_id: str = Field(..., min_length=3, max_length=64)  # a key result of an ACTIVE objective (its objective is derived)
 
 
+#: RESPOND_TO_OWNER's limits, stated in the prompt (cognition.SYSTEM_PROMPT)
+REPLY_MAX, MAX_PLAN_STEPS, STEP_MAX, MAX_REPLY_TICKETS, MAX_OWNER_ACTIONS_NEEDED = 1200, 5, 200, 5, 3
+RESPOND_LIMIT = (f"reply 10-{REPLY_MAX} chars; plan_steps at most {MAX_PLAN_STEPS} items of 3-{STEP_MAX} chars; "
+                 f"ticket_ids at most {MAX_REPLY_TICKETS}; owner_actions_needed at most {MAX_OWNER_ACTIONS_NEEDED} items of 3-{STEP_MAX} chars")
+
+
+class RespondToOwnerPayload(_Strict):
+    """The company's answer to what the owner just said (the owner event of this story): what it
+    understood, what it will do, which tickets carry it and what only the owner can do. Shown to the
+    owner on the Owner Console; it decides nothing and grants nothing."""
+
+    reply: str = Field(..., min_length=10, max_length=REPLY_MAX)
+    plan_steps: List[str] = Field(default_factory=list, max_length=MAX_PLAN_STEPS)
+    ticket_ids: List[uuid.UUID] = Field(default_factory=list, max_length=MAX_REPLY_TICKETS)
+    owner_actions_needed: List[str] = Field(default_factory=list, max_length=MAX_OWNER_ACTIONS_NEEDED)
+
+    @field_validator("plan_steps", "owner_actions_needed")
+    @classmethod
+    def _steps(cls, v: List[str]) -> List[str]:
+        return _short_items(v, hi=STEP_MAX)
+
+
 #: the design-review limits, stated in the prompts (cognition.SYSTEM_PROMPT, design_review.question)
 ITEM_MIN, ITEM_MAX = 3, 300
 MAX_POINTS, MAX_CONSTRAINTS, MAX_CONDITIONS = 5, 4, 5
@@ -651,6 +675,7 @@ PAYLOAD_MODELS: Dict[IntentType, type] = {
     IntentType.REVIEW_DESIGN: ReviewDesignPayload,
     IntentType.DECIDE_DESIGN: DecideDesignPayload,
     IntentType.PROPOSE_OWNER_ACTION: ProposeOwnerActionPayload,
+    IntentType.RESPOND_TO_OWNER: RespondToOwnerPayload,
     IntentType.EVALUATE_CODE_CANDIDATE: CandidateRefPayload,
     IntentType.SECURITY_REVIEW_CANDIDATE: SecurityReviewPayload,
     IntentType.REQUEST_STAGING_DEPLOY: CandidateRefPayload,
