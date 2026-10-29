@@ -13,11 +13,52 @@
     .oc-form input, .oc-form textarea, .oc-form select { width: 100%; box-sizing: border-box; }
     .oc-inline { display: inline; }
     .oc-directive { border-color: var(--accent, #38bdf8); }
+    .oc-msg { border-top: 1px solid rgba(255,255,255,.08); padding: .6rem 0; }
+    .oc-reply { margin: .3rem 0 .3rem 1rem; padding-left: .6rem; border-left: 2px solid var(--accent, #38bdf8); }
+    .oc-steps { margin: .2rem 0 .2rem 1.2rem; font-size: .8rem; }
+    .oc-status-working { color: #fbbf24; }
+    .oc-status-answered { color: #34d399; }
+    .oc-status-no_reply { color: #f87171; }
 </style>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+(function () {
+    // Poll the conversation every 5 s while something is "working"; stop when nothing is, or on a sign-in redirect.
+    var el = document.getElementById('owner-thread');
+    if (!el) return;
+    function tick() {
+        if (el.getAttribute('data-working') !== '1') return;
+        fetch('{{ url_for("owner_thread_fragment") }}', {credentials: 'same-origin'})
+            .then(function (r) { if (!r.ok || r.redirected) throw new Error('stop'); return r.text(); })
+            .then(function (html) {
+                el.innerHTML = html;
+                var inner = el.querySelector('[data-working]');
+                el.setAttribute('data-working', inner ? inner.getAttribute('data-working') : '0');
+                setTimeout(tick, 5000);
+            })
+            .catch(function () {});
+    }
+    setTimeout(tick, 5000);
+})();
+</script>
 {% endblock %}
 {% block content %}
 <h1>Owner Console</h1>
 <p class="oc-muted">Every number and button here is the registry's operator API, with your own sign-in. The agents act through their usual permissions; nothing here grants them more.</p>
+
+<div class="oc-card oc-directive" style="margin-bottom:1rem;">
+    <h2>💬 Talk to the company</h2>
+    <form class="oc-form" method="post" action="{{ url_for('owner_send_message') }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label for="owner-message">Ra lệnh / hỏi công ty — the Governor acknowledges, says what the company will do, and starts (owner input; it grants nothing)</label>
+        <textarea id="owner-message" name="text" rows="2" maxlength="2000" required placeholder="find our first paying external agent this week"></textarea>
+        <button type="submit" class="btn btn-primary btn-sm" style="margin-top:.5rem;">Send</button>
+    </form>
+    <div id="owner-thread" data-working="{{ '1' if d.thread and d.thread.working else '0' }}" style="margin-top:.6rem;">
+        {% with thread = d.thread %}{% include "owner_thread.html" %}{% endwith %}
+    </div>
+</div>
 
 {% set dir = d.directive or {} %}
 <div class="oc-card oc-directive" style="margin-bottom:1rem;">
@@ -52,7 +93,7 @@
         {% endfor %}
     </table>
     {% elif dir.active %}
-    <p class="oc-muted">Nothing yet: the Scout and the Governor see it from their next run; tickets for it appear in the next company cycle's plan.</p>
+    <p class="oc-muted">Nothing yet: the Governor and the Scout start on it now; its tickets are ranked into a plan as soon as they are filed (see the conversation above).</p>
     {% endif %}
 </div>
 
@@ -76,7 +117,7 @@
         {% set plans = (d.plans or {}).plans or [] %}
         {% if plans %}
         {% set p = plans[0] %}
-        <p class="oc-muted">{{ p.plan_date }} · {{ p.status }}{% if p.decided_by %} · decided by {{ p.decided_by }}{% endif %}</p>
+        <p class="oc-muted">{{ p.plan_date }} · {{ p.status }}{% if p.decided_by %} · decided by {{ p.decided_by }}{% endif %}{% if p.directive_id %} · from directive {{ p.directive_id[:8] }}{% elif p.owner_entry_id %} · from your message{% endif %}</p>
         <table>
             {% for r in p.ranking or [] %}
             <tr><td>{{ r.title }}</td><td>{{ r.objective_id }}</td><td>{{ r.score }}</td><td>{% if r.owner_directive %}🧭{% endif %}</td></tr>

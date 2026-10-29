@@ -75,7 +75,7 @@ Measure it with the validator (`PHASE5_PLAN=costs:7`): `costs.cache_decide` / `c
 print, per role+model (or kind+model) and for 24h and 7d, the cache reads, writes and uncached input, the hit rate
 (reads / input) and $ per run; `cache_decide_days` the daily hit rate and $ per run per role (before/after);
 `cache_cadence` each role's median gap between runs and the TTL it implies; `C03` checks the target (>= 50% of the
-input of Sonnet/Opus decide runs read from cache in 24h). Runs written before migration `0027_model_cache_accounting`
+input of Sonnet/Opus decide runs read from cache in 24h). Runs written before migration `0028_model_cache_accounting`
 have no recorded writes (`write_unrecorded`); their reads (`tokens_cached`) and cost are exact. The owner's daily
 report states the 24h decide hit rate and $ per run.
 

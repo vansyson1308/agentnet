@@ -29,6 +29,8 @@ LIVE_STATUSES = ("approved", "building", "ready", "merged")
 BYPASS_SOURCES = ("owner", "incident")
 PLAN_MAX, PER_DEPARTMENT = 3, 2
 MODEL_TICKETS_PER_DEPARTMENT = 2
+#: tickets a model may file in ONE owner story (owner_thread), outside the department's daily cap
+OWNER_STORY_TICKETS = 2
 #: Proofs that are not pytest node ids: a probe metric, a bench task, an owner issue.
 NON_TEST_PROOFS = ("probe:", "bench:", "issue:", "play:")
 #: Supplied tickets (``supply``): backlog source -> (charter department, KR metric). An issue maps to the objective its owner tagged.
@@ -58,9 +60,16 @@ def create(db: Session, *, proposal_id: uuid.UUID, title: str, fields: Dict[str,
     return tid
 
 
-def model_ticket_refusal(db: Session, role: str, has_evidence: bool, now: datetime) -> Optional[str]:
+def model_ticket_refusal(db: Session, role: str, has_evidence: bool, now: datetime, owner_story_tickets: Optional[int] = None) -> Optional[str]:
+    """``owner_story_tickets``: the run is in a story an owner event opened (owner_thread) and its story
+    already filed that many tickets -- the owner asked, so the department's daily cap does not apply,
+    but at most OWNER_STORY_TICKETS per owner event do."""
     if not has_evidence:
         return "a ticket filed by a model must cite evidence (signal, baseline, observed, window, actionable_reason)"
+    if owner_story_tickets is not None:
+        if owner_story_tickets >= OWNER_STORY_TICKETS:
+            return f"this owner request already has {owner_story_tickets} ticket(s) (at most {OWNER_STORY_TICKETS} per owner event)"
+        return None
     dept = DEPARTMENT_BY_ROLE.get(role, "strategy_product")
     n = db.execute(text("SELECT COUNT(*) FROM society_tickets WHERE department = :d AND source IN ('scout', 'department') AND created_at >= :t"),
                    {"d": dept, "t": now.replace(hour=0, minute=0, second=0, microsecond=0)}).scalar() or 0
@@ -258,21 +267,27 @@ def red_slots(db: Session, red_cap: int) -> int:
 
 
 def build_plan(db: Session, cycle_id: Optional[uuid.UUID], now: datetime, *, red_cap: int = 1, plan_max: int = PLAN_MAX,
-               per_department: int = PER_DEPARTMENT) -> Optional[Dict[str, Any]]:
+               per_department: int = PER_DEPARTMENT, ticket_ids: Optional[List[str]] = None, directive_id: Optional[str] = None,
+               owner_entry_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Rank the proposed tickets of ACTIVE objectives (<= 2 per department) into
     one plan of <= 3 that awaits the owner. Nothing in it builds until approved.
     A plan is buildable: it holds at most as many RED tickets as the company can
     still investigate (``red_slots``); non-RED tickets fill the rest. Bench tickets
-    already delivered >= 2/3 close first (``close_satisfied``)."""
+    already delivered >= 2/3 close first (``close_satisfied``). ``ticket_ids`` ranks only those
+    (an owner story's tickets, owner_thread.plan_owner_stories); ``directive_id`` / ``owner_entry_id``
+    say where the plan came from (the owner's directive or message)."""
     from . import goals  # noqa: PLC0415
 
     close_satisfied(db)
     north_star = goals.enabled()
     directive = directives.active(db)
     active = {o["id"]: o for o in charter.objectives(db) if o["status"] == "active"}
-    rows = db.execute(text("SELECT * FROM society_tickets WHERE status = 'proposed' AND plan_id IS NULL AND source NOT IN :bypass "
-                           "AND created_at >= :since ORDER BY created_at").bindparams(bindparam("bypass", expanding=True)),
-                      {"bypass": list(BYPASS_SOURCES), "since": now - timedelta(days=7)}).mappings().all()
+    only = " AND id::text IN :only" if ticket_ids else ""
+    q = text("SELECT * FROM society_tickets WHERE status = 'proposed' AND plan_id IS NULL AND source NOT IN :bypass "
+             f"AND created_at >= :since{only} ORDER BY created_at").bindparams(bindparam("bypass", expanding=True))  # noqa: S608 -- a fixed clause
+    if ticket_ids:
+        q = q.bindparams(bindparam("only", expanding=True))
+    rows = db.execute(q, {"bypass": list(BYPASS_SOURCES), "since": now - timedelta(days=7), **({"only": [str(t) for t in ticket_ids]} if ticket_ids else {})}).mappings().all()
     ranked = sorted(((score(dict(r), active[r["objective_id"]], north_star=north_star, directive=directive), dict(r)) for r in rows if r["objective_id"] in active), key=lambda x: -x[0])
     chosen, per_dep, slots, red_skipped = [], {}, red_slots(db, red_cap), 0
     for sc, t in ranked:
@@ -298,8 +313,10 @@ def build_plan(db: Session, cycle_id: Optional[uuid.UUID], now: datetime, *, red
             why = f"{len(ranked)} proposed ticket(s) scored 0 (key result already met or effect in the wrong direction)"
         return {"id": None, "empty_reason": why}
     pid = uuid.uuid4()
-    db.execute(text("INSERT INTO society_daily_plans (id, cycle_id, plan_date, ticket_ids, ranking) VALUES (:id, :c, :d, CAST(:t AS JSONB), CAST(:r AS JSONB))"),
-               {"id": pid, "c": cycle_id, "d": now.date(), "t": json.dumps([c["ticket_id"] for c in chosen]), "r": json.dumps(chosen)})
+    db.execute(text("INSERT INTO society_daily_plans (id, cycle_id, plan_date, ticket_ids, ranking, directive_id, owner_entry_id) "
+                    "VALUES (:id, :c, :d, CAST(:t AS JSONB), CAST(:r AS JSONB), CAST(:dir AS UUID), CAST(:own AS UUID))"),
+               {"id": pid, "c": cycle_id, "d": now.date(), "t": json.dumps([c["ticket_id"] for c in chosen]), "r": json.dumps(chosen),
+                "dir": directive_id, "own": owner_entry_id})
     for c in chosen:
         set_status(db, c["ticket_id"], "planned", plan_id=pid)
     return {"id": str(pid), "status": "awaiting_owner", "ranking": chosen}
@@ -554,7 +571,8 @@ def last_empty_reason(db: Session) -> Optional[str]:
 
 
 def plans_view(db: Session, limit: int = 14) -> List[Dict[str, Any]]:
-    rows = db.execute(text("SELECT id, plan_date, status, ranking, decided_by, board_note, decided_at, created_at FROM society_daily_plans ORDER BY created_at DESC LIMIT :n"), {"n": limit}).mappings().all()
+    rows = db.execute(text("SELECT id, plan_date, status, ranking, decided_by, board_note, decided_at, created_at, directive_id, owner_entry_id "
+                           "FROM society_daily_plans ORDER BY created_at DESC LIMIT :n"), {"n": limit}).mappings().all()
     return [{k: (str(v) if isinstance(v, (uuid.UUID, date)) else v) for k, v in r.items()} for r in rows]
 
 

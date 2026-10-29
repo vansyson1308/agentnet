@@ -460,7 +460,10 @@ def _create_improvement(ctx: ExecContext) -> ExecOutcome:
         if ctx.settings.company_cycle_enabled:
             # The backlog supplies tickets deterministically (tickets.supply); a model may
             # only ADD, with evidence, at most MODEL_TICKETS_PER_DEPARTMENT a day per department.
-            refused = tickets.model_ticket_refusal(ctx.db, ctx.grant.role, p.evidence is not None, ctx.now)
+            from . import owner_thread  # noqa: PLC0415
+
+            story = owner_thread.story_ticket_count(ctx.db, ctx.run.correlation_id)
+            refused = tickets.model_ticket_refusal(ctx.db, ctx.grant.role, p.evidence is not None, ctx.now, owner_story_tickets=story)
             if refused:
                 raise ExecutionError(refused)
         src = "backlog" if ctx.event.event_type == EventType.BACKLOG_ITEM else "scout" if ctx.grant.role == "scout" else "department"
@@ -793,6 +796,22 @@ def _propose_owner_action(ctx: ExecContext) -> ExecOutcome:
         return ExecOutcome(result={"duplicate": True})
     ev = _emit(ctx, EventType.OWNER_ACTION_PROPOSED, {"owner_action_id": made["id"], "objective_id": made["objective_id"], "metric_id": p.metric_id})
     return ExecOutcome(result={"owner_action_id": made["id"]}, events=[str(ev.id)])
+
+
+def _respond_to_owner(ctx: ExecContext) -> ExecOutcome:
+    """The Governor's one answer to the owner event that opened this story (owner_thread.py). It is
+    stored for the Owner Console only; nothing is sent, decided or granted."""
+    from . import owner_thread  # noqa: PLC0415
+
+    p = ctx.validated.payload
+    try:
+        made = owner_thread.answer(ctx.db, correlation_id=ctx.run.correlation_id, agent_id=ctx.agent.id, reply=p.reply, plan_steps=list(p.plan_steps),
+                                   ticket_ids=[str(t) for t in p.ticket_ids], owner_actions_needed=list(p.owner_actions_needed),
+                                   credentials=(ctx.settings.model_api_key,), now=utcnow())
+    except ValueError as exc:
+        raise ExecutionError(str(exc)) from exc
+    ev = _emit(ctx, EventType.OWNER_REPLIED, {"owner_entry_id": made["owner_entry_id"], "reply_id": made["reply_id"], "tickets": len(made["ticket_ids"])})
+    return ExecOutcome(result=made, events=[str(ev.id)])
 
 
 def _design_review_call(ctx: ExecContext, fn: Callable[[], Dict[str, Any]], what: str) -> ExecOutcome:
@@ -2001,6 +2020,7 @@ HANDLERS: Dict[IntentType, Callable[[ExecContext], ExecOutcome]] = {
     IntentType.DECLINE_CODE_CANDIDATE: _decline_code_candidate,
     IntentType.TICKET_NEEDS_INFO: _ticket_needs_info,
     IntentType.PROPOSE_OWNER_ACTION: _propose_owner_action,
+    IntentType.RESPOND_TO_OWNER: _respond_to_owner,
     IntentType.PROPOSE_DESIGN: _propose_design,
     IntentType.REVIEW_DESIGN: _review_design,
     IntentType.DECIDE_DESIGN: _decide_design,

@@ -1,7 +1,7 @@
 """Society: prompt-cache accounting per run
 
-Revision ID: 0027_model_cache_accounting
-Revises: 0026_owner_directives
+Revision ID: 0028_model_cache_accounting
+Revises: 0027_owner_conversation
 Create Date: 2026-10-29
 
 Additive: ``agent_runs.tokens_cache_write`` and ``agent_runs.tokens_cache_write_1h``
@@ -13,8 +13,8 @@ import sys
 
 from alembic import op
 
-revision = "0027_model_cache_accounting"
-down_revision = "0026_owner_directives"
+revision = "0028_model_cache_accounting"
+down_revision = "0027_owner_conversation"
 branch_labels = None
 depends_on = None
 
