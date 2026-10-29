@@ -249,7 +249,7 @@ def red_slots(db: Session, red_cap: int) -> int:
     """RED work the company can still take on: the high-risk cap minus open RED candidates
     and approved RED tickets still waiting for their design."""
     open_red = db.execute(text("SELECT COUNT(*) FROM code_candidates WHERE risk_tier IN ('red', 'never') "
-                               "AND status NOT IN ('ready', 'rejected', 'failed', 'abandoned')")).scalar() or 0
+                               "AND status NOT IN ('ready', 'merged', 'rejected', 'failed', 'abandoned')")).scalar() or 0
     waiting = sum(1 for (proof,) in db.execute(text("SELECT proof FROM society_tickets WHERE status = 'approved' AND candidate_id IS NULL")).all()
                   if is_red({"proof": proof}))
     return max(0, int(red_cap) - int(open_red) - waiting)

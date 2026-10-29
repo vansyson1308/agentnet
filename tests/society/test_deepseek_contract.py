@@ -155,7 +155,7 @@ def test_malformed_json_is_not_retried(monkeypatch):
 
     with pytest.raises(DecisionValidationError):
         asyncio.run(OpenAICompatibleModel(s, transport=transport).decide(_context()))
-    assert calls["n"] == 1
+    assert calls["n"] == 2, "not a transport retry: ONE corrective turn (cognition.CORRECTIVE_TURNS), then invalid"
 
 
 @pytest.mark.parametrize("status", [429, 500, 502, 503])

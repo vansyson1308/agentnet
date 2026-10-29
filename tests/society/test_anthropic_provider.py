@@ -188,10 +188,12 @@ def test_one_fence_around_the_whole_reply_is_framing(monkeypatch):
 
 def test_prose_around_json_is_still_rejected(monkeypatch):
     s = _settings(monkeypatch)
-    m = AnthropicModel(s, transport=_transport([_reply("Here you go: " + json.dumps(GOOD))], []))
+    seen = []
+    m = AnthropicModel(s, transport=_transport([_reply("Here you go: " + json.dumps(GOOD)), _reply("Sure: " + json.dumps(GOOD))], seen))
     with pytest.raises(ModelOutputInvalid) as exc:
         asyncio.run(m.decide(_context()))
     assert exc.value.attempt.provider == "anthropic" and exc.value.attempt.cost_usd > 0
+    assert len(seen) == 2, "one corrective turn, then the run fails: prose is never repaired"
 
 
 def test_refusal_is_not_replayed(monkeypatch):

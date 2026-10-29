@@ -46,6 +46,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .events import EventType, emit_event, utcnow
+from .intents import CONDITIONS_LIMIT, CONSTRAINTS_LIMIT, POINTS_LIMIT, RATIONALE_LIMIT
 
 logger = logging.getLogger(__name__)
 
@@ -148,11 +149,11 @@ def _question(stage: str, role: str, review: Dict[str, Any], title: str, deadlin
     if stage == "reviewing":
         return (f"{role.capitalize()}: {REVIEW_FOCUS.get(role, 'does this proposal hold up')}? Answer with ONE REVIEW_DESIGN "
                 f"{{review_id, stance: support|concern|object|abstain, points}} about THIS proposal before {deadline}; "
-                + ("name what the spec must carry in constraints (an object needs one); " if role == "security" else "")
-                + 
-                "abstain (the reason as a point) when you have nothing specific -- silence is recorded as silent.")
+                f"points: {POINTS_LIMIT}; "
+                + (f"name what the spec must carry in constraints ({CONSTRAINTS_LIMIT}; an object needs one); " if role == "security" else "")
+                + "abstain (the reason as a point) when you have nothing specific -- silence is recorded as silent.")
     return (f"Governor: decide round {n}/{MAX_ROUNDS} of '{title}' with ONE DECIDE_DESIGN {{review_id, verdict: go|revise|drop, "
-            f"rationale, conditions}} before {deadline}; a Security object rules out go" + ("; this round has no revise." if n >= MAX_ROUNDS else "."))
+            f"rationale, conditions}} before {deadline} (rationale {RATIONALE_LIMIT}; conditions {CONDITIONS_LIMIT}); a Security object rules out go" + ("; this round has no revise." if n >= MAX_ROUNDS else "."))
 
 
 def _wake(db: Session, review: Dict[str, Any], *, extra: Optional[Dict[str, Any]] = None, rewake: bool = False, causation: Any = None,
@@ -443,8 +444,10 @@ def context_view(db: Session, correlation_id: Any) -> Dict[str, Any]:
         return {}
     t = _ticket(db, review)
     step = {"proposing": "Architect: PROPOSE_DESIGN {review_id, approach, files, proof, risks, acceptance_tests, test_first, unchanged, carries} (spec gate first)",
-            "reviewing": "Scout, QA, Security: REVIEW_DESIGN {review_id, stance: support|concern|object|abstain, points, constraints (Security)} -- once each",
-            "deciding": "Governor: DECIDE_DESIGN {review_id, verdict: go|revise|drop, rationale, conditions} -- Security object bars go; "
+            "reviewing": f"Scout, QA, Security: REVIEW_DESIGN {{review_id, stance: support|concern|object|abstain, points ({POINTS_LIMIT}), "
+                         f"constraints (Security; {CONSTRAINTS_LIMIT})}} -- once each",
+            "deciding": f"Governor: DECIDE_DESIGN {{review_id, verdict: go|revise|drop, rationale ({RATIONALE_LIMIT}), conditions ({CONDITIONS_LIMIT})}} "
+                        "-- Security object bars go; "
                         f"round {MAX_ROUNDS} has no revise" + (f"; missing: {', '.join(_missing(review))} (decide with what you have)" if _missing(review) else "")
                         + (f"; silent: {', '.join(_silent(review))} (woken twice, said nothing)" if _silent(review) else "")
             }.get(review["status"], "nothing: the review is settled")

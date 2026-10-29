@@ -292,6 +292,7 @@ class SocietyWorker:
                 # A READY candidate whose promotion request was refused (a change
                 # budget) or never made is re-offered to the Governor while there is
                 # capacity, once a day (promotion_queue.py).
+                promotion_queue_mod.settle_ended(db)
                 promotion_queue_mod.retry_deferred(db, self.settings)
                 # The owner's read-only daily digest to the one operator chat (boardroom.py; off by default).
                 boardroom_mod.maybe_send_digest(db, self.settings, boardroom_telegram.sender(self.settings))

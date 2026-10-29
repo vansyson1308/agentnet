@@ -14,12 +14,12 @@ from typing import Any, Dict, Optional
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
-from . import goals, owner_actions, promotion_queue
+from . import goals, owner_actions, promotion_queue, rejections
 from .config import get_settings
 from .events import utcnow
 
 #: a candidate past these has a committed head: the build delivered
-DELIVERED = ("built", "qa_running", "qa_passed", "qa_failed", "security_review", "ready")
+DELIVERED = ("built", "qa_running", "qa_passed", "qa_failed", "security_review", "ready", "merged")
 
 
 def build(db: Session, now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -37,7 +37,8 @@ def build(db: Session, now: Optional[datetime] = None) -> Dict[str, Any]:
     data = {"window_hours": 24, "cycles": cycles, "spend_usd_by_role": by_role, "spend_usd_total": round(sum(by_role.values()), 4),
             "builds": {"attempted": attempted, "delivered": delivered}, "ready": ready, "design_reviews": {k: int(v) for k, v in reviews.items()},
             "north_star": card.get("north_star"), "owner_actions_open": owner_actions.open_count(db),
-            "ready_without_pr": [{k: b[k] for k in ("candidate", "reason", "requests")} for b in promotion_queue.ready_backlog(db, get_settings(), now)]}
+            "ready_without_pr": [{k: b[k] for k in ("candidate", "reason", "requests")} for b in promotion_queue.ready_backlog(db, get_settings(), now)],
+            "change_budget": promotion_queue.caps(db, get_settings(), now), "rejections": rejections.breakdown(db)}
     return {"data": data, "text": render(data, card, owner_actions.summary_lines(db))}
 
 
@@ -45,9 +46,13 @@ def render(d: Dict[str, Any], card: Dict[str, Any], actions: list) -> str:
     roles = ", ".join(f"{r} ${c:.2f}" for r, c in d["spend_usd_by_role"].items()) or "none"
     reviews = ", ".join(f"{k} {v}" for k, v in sorted(d["design_reviews"].items())) or "none"
     waiting = ", ".join(f"{b['candidate']} ({b['reason']})" for b in d.get("ready_without_pr") or []) or "none"
+    cb = d.get("change_budget") or {}
     lines = [f"Last 24h: {d['cycles']} cycle(s); model spend ${d['spend_usd_total']:.2f} ({roles})",
              f"Builds: {d['builds']['delivered']} delivered / {d['builds']['attempted']} attempted; READY: {', '.join(d['ready']) or 'none'}",
              f"READY without a PR: {waiting}",
+             f"Change budget: {cb.get('promotions_today')}/{cb.get('max_promotions_per_day')} promotions today, {cb.get('open_prs')}/{cb.get('max_open_autonomous_prs')} autonomous PRs open"
+             f" (provider {cb.get('provider')}, auto-merge {'on' if cb.get('auto_merge_enabled') else 'off'})",
+             rejections.summary(d["rejections"]) if d.get("rejections") else "Rejected: n/a",
              f"Design reviews: {reviews}",
              goals.summary(card) if card.get("north_star") else "no north star in the charter",
              f"Owner actions waiting: {d['owner_actions_open']}"] + actions

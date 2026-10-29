@@ -228,18 +228,20 @@ def _classify(db: Session, rows: list, settings: SocietySettings, now: datetime)
                 .all()
             ):
                 latest_promo[cid] = _status_value(st)
-        open_ids = [c for lst in cands.values() for c, st in lst if st not in _CANDIDATE_ENDED]
+        open_ids = [c for lst in cands.values() for c, st in lst if st not in _CANDIDATE_ENDED and st != CodeCandidateStatus.MERGED.value]
         stalled = candidate_health.stalled_ids(db, settings, open_ids, now)
         task_ids = [r.converted_task_id for r in rows if r.converted_task_id is not None]
         if task_ids:
             tasks = {tid: _status_value(st) for tid, st in db.query(TaskSession.id, TaskSession.status).filter(TaskSession.id.in_(task_ids)).all()}
 
     def ended(cid: uuid.UUID, status: str) -> bool:
-        if status in _CANDIDATE_ENDED:
+        if status in _CANDIDATE_ENDED or status == CodeCandidateStatus.MERGED.value:
             return True
         return status == CodeCandidateStatus.READY.value and latest_promo.get(cid) in _PROMOTION_ENDED
 
     def merged(cid: uuid.UUID, status: str) -> bool:
+        if status == CodeCandidateStatus.MERGED.value:
+            return True
         return status == CodeCandidateStatus.READY.value and latest_promo.get(cid) == PromotionStatus.MERGED.value
 
     out: Dict[str, Tuple[str, Optional[str]]] = {}
@@ -297,7 +299,7 @@ def active_hypothesis_count(db: Session, settings: SocietySettings, now: Optiona
 def _portfolio(db: Session, settings: SocietySettings) -> Dict[str, Any]:
     accounting = portfolio_accounting(db, settings)
     active = len(accounting["active"])
-    closed = [CodeCandidateStatus.READY, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED]
+    closed = [CodeCandidateStatus.READY, CodeCandidateStatus.MERGED, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED]
     red = db.query(func.count(CodeCandidate.id)).filter(CodeCandidate.risk_tier == RiskTier.RED.value, CodeCandidate.status.notin_(closed)).scalar() or 0
     return {
         "active_hypotheses": active,

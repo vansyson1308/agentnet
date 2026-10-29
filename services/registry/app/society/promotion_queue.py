@@ -8,27 +8,35 @@ sat READY with no PR and no word why.
 Now, deterministically:
 - :func:`ready_backlog` names, for every READY candidate without an active promotion, ONE reason
   code (our words): ``promotion_<status>`` (a promotion ended, e.g. the owner closed the PR),
-  ``provider_disabled``, ``cap_promotions_per_day``, ``cap_open_prs``, ``refused`` (the last
-  request's refusal) or ``awaiting_request``;
+  ``provider_disabled``, ``stale_base`` (its base is no longer an ancestor of main: it cannot be
+  promoted and needs a rebuild), ``cap_promotions_per_day``, ``cap_open_prs``, ``refused`` (the
+  last request's refusal) or ``awaiting_request``; with how far its base is behind main;
 - :func:`retry_deferred` re-wakes the Governor for the oldest such candidates while there is
   capacity, at most once per candidate per UTC day, with the original READY payload in a fresh
   system story. It adds no authority: the same role gets the same wake, and the request still goes
   through policy, the change budgets and the controller. A candidate whose promotion ended is
-  never re-offered (the owner's close stands)."""
+  never re-offered (the owner's close stands);
+- :func:`settle_ended` moves a READY row whose promotion already ended to its terminal status
+  (MERGED, or REJECTED when the owner closed the PR) -- the controller does this on every new end
+  (promotion._settle_candidate); this catches rows that ended before it did (staging 2026-10-29:
+  4 of 6 "READY" were merged or closed);
+- :func:`caps` names the change budget in effect (for the heartbeat, the report and the validator)."""
 
 from __future__ import annotations
 
 import logging
+import pathlib
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from ..models import AgentIntent, CodeCandidate, CodeCandidateStatus, CodePromotion, SocietyEvent
+from ..models import AgentIntent, CodeCandidate, CodeCandidateStatus, CodePromotion, PromotionStatus, SocietyEvent
 from .config import SocietySettings
+from .engineering import workspace as ws_mod
 from .events import EventType, emit_event, utcnow
-from .promotion import ACTIVE_STATUSES, active_promotion_for, open_prs, promotions_today
+from .promotion import ACTIVE_STATUSES, CLOSED_BY_OWNER, active_promotion_for, open_prs, promotions_today
 
 logger = logging.getLogger("agentnet.society.promotion_queue")
 
@@ -57,6 +65,60 @@ def capacity(db: Session, settings: SocietySettings, now: Optional[datetime] = N
             "open_pr_slots": max(0, settings.max_open_autonomous_prs - open_prs(db))}
 
 
+def caps(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """The change budget in effect and what is spent of it (numbers only)."""
+    return {"max_promotions_per_day": settings.max_promotions_per_day, "promotions_today": promotions_today(db, now),
+            "max_open_autonomous_prs": settings.max_open_autonomous_prs, "open_prs": open_prs(db),
+            "provider": settings.promotion_provider, "auto_merge_enabled": bool(settings.auto_merge_enabled)}
+
+
+#: a promotion that ended with one of these failure reasons was closed by the owner (older rows say the latter)
+_CLOSED_REASONS = (CLOSED_BY_OWNER, "pull request closed without merge")
+
+
+def settle_ended(db: Session) -> int:
+    """READY rows whose LATEST promotion already ended: MERGED -> MERGED, closed by the owner -> REJECTED.
+    Status and reason only (no task, wallet or event). Commits when it changed a row."""
+    n = 0
+    for cand in db.query(CodeCandidate).filter(CodeCandidate.status == CodeCandidateStatus.READY).all():
+        last = db.query(CodePromotion).filter(CodePromotion.candidate_id == cand.id).order_by(CodePromotion.created_at.desc()).first()
+        if last is None:
+            continue
+        status = _ev(last.status)
+        if status == PromotionStatus.MERGED.value:
+            cand.status = CodeCandidateStatus.MERGED
+        elif status == PromotionStatus.REJECTED.value and (last.failure_reason or "").startswith(_CLOSED_REASONS):
+            cand.status = CodeCandidateStatus.REJECTED
+            cand.error = f"{CLOSED_BY_OWNER}: pull request closed without merge (PR #{last.external_pr_number or '?'})"
+        else:
+            continue
+        n += 1
+        logger.info("promotion queue: candidate %s settled as %s (promotion %s %s)", str(cand.id)[:8], _ev(cand.status), str(last.id)[:8], status)
+    if n:
+        db.commit()
+    return n
+
+
+def _base(settings: SocietySettings, base_sha: Optional[str]) -> Dict[str, Any]:
+    """Where a candidate's base stands against main in the worker's checkout: ``{"ancestor", "behind"}``,
+    or {} where there is no checkout (the API process) or git cannot say."""
+    root = pathlib.Path(settings.repo_root or "")
+    if not base_sha or not (root / ".git").exists():
+        return {}
+    try:
+        ws_mod._git(["cat-file", "-e", f"{base_sha}^{{commit}}"], cwd=root)
+    except ws_mod.WorkspaceError:
+        return {}  # a commit this checkout does not have says nothing about main
+    try:
+        ws_mod._git(["merge-base", "--is-ancestor", base_sha, "HEAD"], cwd=root)
+    except ws_mod.WorkspaceError:
+        return {"ancestor": False, "behind": None}
+    try:
+        return {"ancestor": True, "behind": int(ws_mod._git(["rev-list", "--count", f"{base_sha}..HEAD"], cwd=root).strip() or 0)}
+    except (ws_mod.WorkspaceError, ValueError):
+        return {"ancestor": True, "behind": None}
+
+
 def ready_backlog(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """Every READY candidate without an active promotion, oldest first, with one reason code."""
     now = now or utcnow()
@@ -67,11 +129,14 @@ def ready_backlog(db: Session, settings: SocietySettings, now: Optional[datetime
             continue
         ended = db.query(CodePromotion).filter(CodePromotion.candidate_id == cand.id, CodePromotion.status.notin_(ACTIVE_STATUSES)).order_by(CodePromotion.created_at.desc()).first()
         req = _last_request(db, cand.id)
+        base = _base(settings, cand.base_sha)
         detail = ""
         if ended is not None:
             reason, detail = f"promotion_{_ev(ended.status)}", (ended.failure_reason or "")[:200]
         elif settings.promotion_provider == "disabled":
             reason = "provider_disabled"
+        elif base.get("ancestor") is False:
+            reason, detail = "stale_base", f"base {str(cand.base_sha)[:10]} is not an ancestor of main: rebuild on the current base"
         elif cap["promotions_left_today"] <= 0:
             reason, detail = "cap_promotions_per_day", f"SOCIETY_MAX_PROMOTIONS_PER_DAY={settings.max_promotions_per_day}"
         elif cap["open_pr_slots"] <= 0:
@@ -81,7 +146,8 @@ def ready_backlog(db: Session, settings: SocietySettings, now: Optional[datetime
         else:
             reason = "awaiting_request"
         out.append({"candidate": str(cand.id)[:8], "candidate_id": str(cand.id), "title": cand.title, "reason": reason, "detail": detail,
-                    "ready_since": cand.updated_at.isoformat() if cand.updated_at else None, "requests": _request_count(db, cand.id)})
+                    "ready_since": cand.updated_at.isoformat() if cand.updated_at else None, "requests": _request_count(db, cand.id),
+                    "base_behind_main": base.get("behind")})
     return out
 
 
@@ -117,4 +183,4 @@ def retry_deferred(db: Session, settings: SocietySettings, now: Optional[datetim
     return sent
 
 
-__all__ = ["capacity", "ready_backlog", "retry_deferred"]
+__all__ = ["capacity", "caps", "ready_backlog", "retry_deferred", "settle_ended"]

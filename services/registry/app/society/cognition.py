@@ -973,10 +973,11 @@ Rules:
   each earlier Security constraint "S<n>" is in "carries" ("S<n>: how"), and after a Builder's decline ("rescope") its
   blocking paths are in "files" or "unchanged". Scout (evidence and value), QA (can the proof fail before and pass
   after?), Security (what could this break or expose?): REVIEW_DESIGN {{"review_id", "stance": "support"|"concern"|"object"|
-  "abstain", "points", "constraints" (Security only: what the spec must carry; an "object" names one)}} once each,
+  "abstain", "points" (1-5 items, each 3-300 chars), "constraints" (Security only, at most 4 items of 3-300 chars: what
+  the spec must carry; an "object" names one)}} once each,
   specific to THIS proposal; "object" only for a real defect, "abstain" (the reason as a
   point) when you have nothing specific. Governor: DECIDE_DESIGN {{"review_id", "verdict": "go"|"revise"|"drop",
-  "rationale", "conditions"}} weighing the positions in its event; a Security "object" rules out "go". A "go" wakes the
+  "rationale" (10-800 chars), "conditions" (at most 5 items of 3-300 chars)}} weighing the positions in its event; a Security "object" rules out "go". A "go" wakes the
   Architect to design the ticket with REQUEST_CODE_CHANGE, the minutes in its event ("design_review"). Your wake's
   "question" is addressed to you, with a "deadline", and only its answer is on offer: answer it. Silence is never
   consent -- each stage wakes you once more, then no proposal returns the ticket, a reviewer is recorded "silent", and
@@ -1398,54 +1399,73 @@ class OpenAICompatibleModel:
             self.negotiation_log.append("empty content -> retry")
         raise AssertionError("unreachable")  # pragma: no cover
 
+    #: one corrective turn when a reply is not a decision (staging 2026-10-28: an Architect run went
+    #: DEAD on a reply that began with '<'); the reply itself is never echoed back to the model.
+    CORRECTIVE_TURNS = 1
+    CORRECTIVE_NOTE = ("\n\nYOUR PREVIOUS REPLY WAS REJECTED: {error}. Reply again with ONLY the decision as ONE JSON object -- "
+                       "the first character '{{', the last '}}', no markup, no prose, no code fence.")
+
     async def decide(self, context: AgentContext, *, model_name: Optional[str] = None) -> ModelResponse:
         chosen_model = model_name or self.model_name
         fmt = self._initial_format()
-        payload = self.build_chat_request(
-            messages=self._messages(context),
-            max_tokens=self.settings.model_max_output_tokens,
-            response_format=self._response_format(fmt),
-            model_name=chosen_model,
-            temperature=0.2,
-        )
+        messages = self._messages(context)
         stats = {"requests": 0, "retries": 0, "timeouts": 0, "format_fallbacks": 0, "empty_retries": 0, "format": fmt}
-        outcome = await self.complete_json(payload, stats)
-        used_format = str(stats.get("format") or fmt)
-        tokens_in, tokens_out = outcome.tokens_in, outcome.tokens_out
-        cost = self.outcome_cost(outcome.served_model or chosen_model, outcome)
-        # retried attempts that returned nothing still cost input tokens at the
-        # provider; account conservatively for them.
-        if stats["retries"]:
-            cost += self.cost_usd(outcome.served_model or chosen_model, tokens_in, 0) * stats["retries"]
-        content = outcome.content
-        try:
-            decision = parse_decision(content, max_intents=int(context.permissions.get("max_intents_per_run") or 5))
-        except DecisionValidationError as exc:
-            attempt = ModelAttempt(
-                provider=self.provider,
+        tokens_in = tokens_out = 0
+        cost = Decimal("0")
+        for turn in range(self.CORRECTIVE_TURNS + 1):
+            payload = self.build_chat_request(
+                messages=messages,
+                max_tokens=self.settings.model_max_output_tokens,
+                response_format=self._response_format(str(stats.get("format") or fmt)),
                 model_name=chosen_model,
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                cost_usd=cost.quantize(Decimal("0.000001")),
-                requests=stats["requests"],
-                retries=stats["retries"],
-                timeouts=stats["timeouts"],
-                output_format=used_format,
-                format_fallbacks=stats["format_fallbacks"],
-                finish_reason=outcome.finish_reason,
+                temperature=0.2,
             )
-            if outcome.finish_reason == "length":
+            retries_before = stats["retries"]
+            outcome = await self.complete_json(payload, stats)
+            used_format = str(stats.get("format") or fmt)
+            tokens_in, tokens_out = tokens_in + outcome.tokens_in, tokens_out + outcome.tokens_out
+            cost += self.outcome_cost(outcome.served_model or chosen_model, outcome)
+            # retried attempts that returned nothing still cost input tokens at the
+            # provider; account conservatively for them.
+            if stats["retries"] > retries_before:
+                cost += self.cost_usd(outcome.served_model or chosen_model, outcome.tokens_in, 0) * (stats["retries"] - retries_before)
+            content = outcome.content
+            try:
+                decision = parse_decision(content, max_intents=int(context.permissions.get("max_intents_per_run") or 5))
+                break
+            except DecisionValidationError as exc:
+                if turn < self.CORRECTIVE_TURNS and outcome.finish_reason != "length":
+                    # the same request once more, told why (structural: the parser's words, never the reply)
+                    note = self.CORRECTIVE_NOTE.format(error=str(exc).split(":", 1)[0][:120])
+                    messages = [*messages[:-1], {**messages[-1], "content": messages[-1]["content"] + note}]
+                    stats["corrective_turns"] = int(stats.get("corrective_turns", 0)) + 1
+                    logger.warning("model reply was not a decision (%s); one corrective turn", str(exc).split(":", 1)[0][:120])
+                    continue
+                attempt = ModelAttempt(
+                    provider=self.provider,
+                    model_name=chosen_model,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                    cost_usd=cost.quantize(Decimal("0.000001")),
+                    requests=stats["requests"],
+                    retries=stats["retries"],
+                    timeouts=stats["timeouts"],
+                    output_format=used_format,
+                    format_fallbacks=stats["format_fallbacks"],
+                    finish_reason=outcome.finish_reason,
+                )
+                if outcome.finish_reason == "length":
+                    raise ModelOutputInvalid(
+                        f"provider output truncated at max_tokens={self.settings.model_max_output_tokens} (finish_reason=length)"
+                        + (" while reasoning was present; set SOCIETY_MODEL_THINKING_MODE=disabled for structured output" if outcome.reasoning_present else "")
+                        + f": {exc}",
+                        attempt=attempt,
+                    ) from exc
                 raise ModelOutputInvalid(
-                    f"provider output truncated at max_tokens={self.settings.model_max_output_tokens} (finish_reason=length)"
-                    + (" while reasoning was present; set SOCIETY_MODEL_THINKING_MODE=disabled for structured output" if outcome.reasoning_present else "")
-                    + f": {exc}",
+                    f"{exc} [{json_error_detail(content, exc.__cause__)}; format={used_format}; "
+                    f"finish_reason={outcome.finish_reason or 'unknown'}; corrective_turns={stats.get('corrective_turns', 0)}]",
                     attempt=attempt,
                 ) from exc
-            raise ModelOutputInvalid(
-                f"{exc} [{json_error_detail(content, exc.__cause__)}; format={used_format}; "
-                f"finish_reason={outcome.finish_reason or 'unknown'}]",
-                attempt=attempt,
-            ) from exc
         return ModelResponse(
             decision=decision,
             provider=self.provider,

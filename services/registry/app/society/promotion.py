@@ -90,7 +90,10 @@ TRANSITIONS: Dict[PromotionStatus, set] = {
     # the new head. Going backwards here is the point -- a promotion that has
     # already passed CI has NOT passed it on the commit that would now be merged.
     PromotionStatus.CI_PASSED: {PromotionStatus.AWAITING_APPROVAL, PromotionStatus.MERGE_ELIGIBLE, PromotionStatus.CI_PENDING, PromotionStatus.CI_FAILED, PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED, PromotionStatus.MERGED},
-    PromotionStatus.CI_FAILED: {PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED},
+    # A red PR is still a PR: the controller keeps reading it (staging 2026-10-28: #115 was closed
+    # by the owner while ci_failed and held the only open-PR slot for 40h). A close ends it, a
+    # human merge is recorded, a re-run that is no longer red waits for CI again.
+    PromotionStatus.CI_FAILED: {PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED, PromotionStatus.MERGED, PromotionStatus.CI_PENDING},
     PromotionStatus.AWAITING_APPROVAL: {PromotionStatus.MERGE_ELIGIBLE, PromotionStatus.MERGED, PromotionStatus.CI_PENDING, PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED, PromotionStatus.CI_FAILED},
     PromotionStatus.MERGE_ELIGIBLE: {PromotionStatus.MERGED, PromotionStatus.REJECTED, PromotionStatus.SUPERSEDED, PromotionStatus.AWAITING_APPROVAL, PromotionStatus.CI_PENDING, PromotionStatus.CI_FAILED},
     PromotionStatus.MERGED: set(),
@@ -107,6 +110,9 @@ TRANSITIONS: Dict[PromotionStatus, set] = {
 }
 #: Truly final: nothing, and no evidence, ever reopens these.
 FINAL_STATUSES = (PromotionStatus.MERGED, PromotionStatus.REJECTED)
+#: The reason a promotion ends when its PR is closed without a merge: the owner said no. The
+#: candidate is then REJECTED (and a merged one MERGED), so READY counts only work still waiting.
+CLOSED_BY_OWNER = "closed_by_owner"
 
 _STATUS_EVENT = {
     PromotionStatus.REQUESTED: EventType.PROMOTION_REQUESTED,
@@ -505,11 +511,11 @@ _CLAIM_SQL = text(
     """
     WITH candidate AS (
         SELECT id FROM code_promotions
-        WHERE (status IN ('requested','validating','branch_ready','pr_open','ci_pending','ci_passed','awaiting_approval','merge_eligible','blocked_external')
+        WHERE (status IN ('requested','validating','branch_ready','pr_open','ci_pending','ci_passed','ci_failed','awaiting_approval','merge_eligible','blocked_external')
                OR (status = 'superseded'
                    AND (evidence -> 'base_reconcile_pending' IS NOT NULL OR evidence -> 'base_reconcile_error' IS NOT NULL)))
           AND (lease_expires_at IS NULL OR lease_expires_at < :now)
-          AND (status NOT IN ('pr_open','ci_pending','awaiting_approval','merge_eligible','blocked_external','superseded')
+          AND (status NOT IN ('pr_open','ci_pending','ci_failed','awaiting_approval','merge_eligible','blocked_external','superseded')
                OR updated_at <= :not_after)
         ORDER BY updated_at
         LIMIT 1
@@ -550,6 +556,7 @@ def _transition(db: Session, promotion: CodePromotion, candidate: CodeCandidate,
     if reason:
         promotion.failure_reason = reason[:2000]
     promotion.updated_at = utcnow()
+    _settle_candidate(promotion, candidate, new_status, reason)
     db.flush()
     cause = db.query(SocietyEvent).filter(SocietyEvent.subject_type == "code_promotion", SocietyEvent.subject_id == promotion.id).order_by(SocietyEvent.created_at.desc()).first()
     # The key carries the VALIDATED SHA, not just the status. Since a base
@@ -572,6 +579,18 @@ def _transition(db: Session, promotion: CodePromotion, candidate: CodeCandidate,
         idempotency_key=f"promotion:{promotion.id}:{new_status.value}:{(promotion.candidate_sha or '-')[:40]}",
         notify=True,
     )
+
+
+def _settle_candidate(promotion: CodePromotion, candidate: CodeCandidate, new_status: PromotionStatus, reason: str) -> None:
+    """A READY candidate follows its promotion's end: MERGED when it merged, REJECTED when the
+    owner closed its PR. Status and reason only -- no task, wallet or event is touched here."""
+    if getattr(candidate.status, "value", candidate.status) != CodeCandidateStatus.READY.value:
+        return
+    if new_status == PromotionStatus.MERGED:
+        candidate.status = CodeCandidateStatus.MERGED
+    elif new_status == PromotionStatus.REJECTED and reason.startswith(CLOSED_BY_OWNER):
+        candidate.status = CodeCandidateStatus.REJECTED
+        candidate.error = f"{reason} (PR #{promotion.external_pr_number or '?'})"[:2000]
 
 
 def _release(db: Session, promotion: CodePromotion) -> None:
@@ -1146,7 +1165,7 @@ def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvid
                 _decline_recovery(promotion, "head is not a merge commit the controller requested")
             _release(db, promotion)
             return PromotionStatus.SUPERSEDED.value
-        if status in (PromotionStatus.PR_OPEN, PromotionStatus.CI_PENDING, PromotionStatus.CI_PASSED, PromotionStatus.AWAITING_APPROVAL, PromotionStatus.MERGE_ELIGIBLE):
+        if status in (PromotionStatus.PR_OPEN, PromotionStatus.CI_PENDING, PromotionStatus.CI_PASSED, PromotionStatus.CI_FAILED, PromotionStatus.AWAITING_APPROVAL, PromotionStatus.MERGE_ELIGIBLE):
             state = provider.get_pr_state(promotion)
             promotion.ci_state = state.ci
             if state.merged:
@@ -1156,7 +1175,7 @@ def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvid
                 _release(db, promotion)
                 return PromotionStatus.MERGED.value
             if state.closed:
-                _transition(db, promotion, candidate, PromotionStatus.REJECTED, reason="pull request closed without merge")
+                _transition(db, promotion, candidate, PromotionStatus.REJECTED, reason=f"{CLOSED_BY_OWNER}: pull request closed without merge")
                 _release(db, promotion)
                 return PromotionStatus.REJECTED.value
             if state.head_sha and state.head_sha != promotion.candidate_sha:
@@ -1186,9 +1205,10 @@ def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvid
                 _transition(db, promotion, candidate, PromotionStatus.CI_FAILED, reason=state.detail or "CI failed")
                 _release(db, promotion)
                 return PromotionStatus.CI_FAILED.value
-            if state.ci in ("pending", "unknown"):
-                if status == PromotionStatus.PR_OPEN:
-                    _transition(db, promotion, candidate, PromotionStatus.CI_PENDING)
+            if state.ci in ("pending", "unknown") or status == PromotionStatus.CI_FAILED:
+                # a red PR whose checks re-run (or turned green) waits for CI again before anything else
+                if status in (PromotionStatus.PR_OPEN, PromotionStatus.CI_FAILED):
+                    _transition(db, promotion, candidate, PromotionStatus.CI_PENDING, reason="" if status == PromotionStatus.PR_OPEN else f"checks re-run: {state.ci}")
                 _release(db, promotion)
                 return promotion.status.value if isinstance(promotion.status, PromotionStatus) else str(promotion.status)
             # CI passed
@@ -1317,6 +1337,7 @@ __all__ = [
     "PRState",
     "TRANSITIONS",
     "ACTIVE_STATUSES",
+    "CLOSED_BY_OWNER",
     "TERMINAL_STATUSES",
     "get_promotion_provider",
     "request_promotion",
