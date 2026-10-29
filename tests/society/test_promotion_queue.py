@@ -222,12 +222,12 @@ def test_stale_ready_rows_are_settled_to_their_terminal_status(db, society_setti
 
 
 def test_a_base_that_left_main_is_named_stale_and_never_reoffered(db, society_settings, temp_repo, monkeypatch, grants_with_no_cooldown):
-    import subprocess
+    from .conftest import _git
 
     report = seed_society(db)
     grants_with_no_cooldown()
     on = _settings(monkeypatch, SOCIETY_PROMOTION_PROVIDER="fake", SOCIETY_MAX_OPEN_AUTONOMOUS_PRS=3, SOCIETY_REPO_ROOT=str(temp_repo))
-    git = lambda *a: subprocess.run(["git", *a], cwd=temp_repo, check=True, capture_output=True, text=True).stdout.strip()  # noqa: E731
+    git = lambda *a: _git(list(a), temp_repo).strip()  # noqa: E731 -- carries a committer identity (CI has none)
     main = git("rev-parse", "HEAD")
     git("checkout", "-q", "-b", "elsewhere")
     git("commit", "-q", "--allow-empty", "-m", "off main")
