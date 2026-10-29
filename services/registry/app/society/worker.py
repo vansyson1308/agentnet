@@ -416,7 +416,11 @@ class SocietyWorker:
         run.model_requests = int(run.model_requests or 0) + int(getattr(response, "requests", 1) or 1)
         run.model_retries = int(run.model_retries or 0) + int(getattr(response, "retries", 0) or 0)
         run.model_timeouts = int(run.model_timeouts or 0) + int(getattr(response, "timeouts", 0) or 0)
-        run.tokens_cached = getattr(response, "tokens_cached", None)
+        cached = getattr(response, "tokens_cached", None)
+        if cached is not None:
+            run.tokens_cached = int(run.tokens_cached or 0) + int(cached)
+        run.tokens_cache_write = int(run.tokens_cache_write or 0) + int(getattr(response, "tokens_cache_write", 0) or 0)
+        run.tokens_cache_write_1h = int(run.tokens_cache_write_1h or 0) + int(getattr(response, "tokens_cache_write_1h", 0) or 0)
         run.output_format = getattr(response, "output_format", None)
         run.format_fallbacks = int(run.format_fallbacks or 0) + int(getattr(response, "format_fallbacks", 0) or 0)
         run.sleep_until = utcnow() + timedelta(seconds=int(response.decision.sleep_for_seconds or 0))
