@@ -26,7 +26,7 @@ import asyncio
 import importlib.util
 import json
 import pathlib
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -44,7 +44,7 @@ from services.registry.app.society.config import (
 )
 from services.registry.app.society.context import AgentContext
 
-from .test_anthropic_provider import GOOD, _reply, _settings, _transport
+from .test_anthropic_provider import _reply, _settings, _transport
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc)
