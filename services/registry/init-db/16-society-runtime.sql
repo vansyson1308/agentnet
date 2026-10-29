@@ -652,3 +652,8 @@ ALTER TABLE society_company_cycles ADD COLUMN IF NOT EXISTS directive_id UUID;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_society_company_cycles_directive ON society_company_cycles (directive_id) WHERE directive_id IS NOT NULL;
 ALTER TABLE society_daily_plans ADD COLUMN IF NOT EXISTS directive_id UUID;
 ALTER TABLE society_daily_plans ADD COLUMN IF NOT EXISTS owner_entry_id UUID;
+
+-- Prompt-cache accounting per run (anthropic): cache writes of every TTL, and the 1-hour part of
+-- them, next to tokens_cached (reads). All three are part of tokens_in; cost_usd prices each.
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tokens_cache_write INTEGER;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tokens_cache_write_1h INTEGER;

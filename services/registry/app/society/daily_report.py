@@ -34,13 +34,27 @@ def build(db: Session, now: Optional[datetime] = None) -> Dict[str, Any]:
     reviews = dict(db.execute(text("SELECT status, COUNT(*) FROM society_design_reviews WHERE updated_at >= :t GROUP BY 1"), {"t": t}).all())
     cycles = int(db.execute(text("SELECT COUNT(*) FROM society_company_cycles WHERE created_at >= :t"), {"t": t}).scalar() or 0)
     card = goals.scorecard(db, now)
+    tin, read, usd, n = db.execute(text(
+        "SELECT COALESCE(SUM(tokens_in), 0), COALESCE(SUM(tokens_cached), 0), COALESCE(SUM(cost_usd), 0), COUNT(*) FROM agent_runs r "
+        "WHERE created_at >= :t AND model_provider = 'anthropic' AND cost_usd > 0 AND NOT EXISTS "
+        "(SELECT 1 FROM agent_intents i WHERE i.run_id = r.id AND i.intent_type = 'BUILD_CODE_CANDIDATE')"), {"t": t}).one()
+    cache = {"runs": int(n), "input": int(tin), "cache_read": int(read), "hit_rate": round(int(read) / int(tin), 4) if tin else None,
+             "usd_per_run": round(float(usd) / int(n), 4) if n else None}
     data = {"window_hours": 24, "cycles": cycles, "spend_usd_by_role": by_role, "spend_usd_total": round(sum(by_role.values()), 4),
             "builds": {"attempted": attempted, "delivered": delivered}, "ready": ready, "design_reviews": {k: int(v) for k, v in reviews.items()},
             "north_star": card.get("north_star"), "owner_actions_open": owner_actions.open_count(db),
             "ready_without_pr": [{k: b[k] for k in ("candidate", "reason", "requests")} for b in promotion_queue.ready_backlog(db, get_settings(), now, from_worker=True)],
             "change_budget": promotion_queue.worker_view_caps(db, get_settings(), now), "rejections": rejections.breakdown(db),
-            "ready_candidates": promotion_queue.ready_view(db, get_settings(), now)}
+            "ready_candidates": promotion_queue.ready_view(db, get_settings(), now), "prompt_cache": cache}
     return {"data": data, "text": render(data, card, owner_actions.summary_lines(db))}
+
+
+def cache_line(c: Dict[str, Any]) -> str:
+    """Decide runs only (a build is a multi-turn loop, cached on its own)."""
+    if not c.get("runs") or not c.get("input"):
+        return "Prompt cache (24h, decide runs): no priced runs"
+    return (f"Prompt cache (24h, decide runs): {c['hit_rate'] * 100:.1f}% of {c['input']:,} input tokens read from cache; "
+            f"${c['usd_per_run']:.3f} per run")
 
 
 def render(d: Dict[str, Any], card: Dict[str, Any], actions: list) -> str:
@@ -49,6 +63,7 @@ def render(d: Dict[str, Any], card: Dict[str, Any], actions: list) -> str:
     waiting = ", ".join(f"{b['candidate']} ({b['reason']})" for b in d.get("ready_without_pr") or []) or "none"
     cb = d.get("change_budget") or {}
     lines = [f"Last 24h: {d['cycles']} cycle(s); model spend ${d['spend_usd_total']:.2f} ({roles})",
+             cache_line(d.get("prompt_cache") or {}),
              f"Builds: {d['builds']['delivered']} delivered / {d['builds']['attempted']} attempted; READY: {', '.join(d['ready']) or 'none'}",
              f"READY without a PR: {waiting}",
              f"Change budget: {cb.get('promotions_today')}/{cb.get('max_promotions_per_day')} promotions today, {cb.get('open_prs')}/{cb.get('max_open_autonomous_prs')} autonomous PRs open"
