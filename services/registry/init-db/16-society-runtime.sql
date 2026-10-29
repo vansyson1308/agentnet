@@ -612,3 +612,8 @@ DROP TRIGGER IF EXISTS trg_society_owner_directives_append_only ON society_owner
 CREATE TRIGGER trg_society_owner_directives_append_only
     BEFORE UPDATE OR DELETE ON society_owner_directives
     FOR EACH ROW EXECUTE FUNCTION society_owner_directives_append_only();
+
+-- Prompt-cache accounting per run (anthropic): cache writes of every TTL, and the 1-hour part of
+-- them, next to tokens_cached (reads). All three are part of tokens_in; cost_usd prices each.
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tokens_cache_write INTEGER;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tokens_cache_write_1h INTEGER;

@@ -1067,6 +1067,8 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
     ctx.run.tokens_in = int(ctx.run.tokens_in or 0) + out.result.tokens_in
     ctx.run.tokens_out = int(ctx.run.tokens_out or 0) + out.result.tokens_out
     ctx.run.cost_usd = Decimal(str(ctx.run.cost_usd or 0)) + out.result.cost_usd
+    ctx.run.tokens_cached = int(ctx.run.tokens_cached or 0) + out.result.tokens_cached
+    ctx.run.tokens_cache_write = int(ctx.run.tokens_cache_write or 0) + out.result.tokens_cache_write
     ticket = tickets.for_proposal(ctx.db, cand.proposal_id)
     if ticket is not None:
         tickets.add_cost(ctx.db, ticket["id"], out.result.cost_usd)

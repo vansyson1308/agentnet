@@ -111,10 +111,13 @@ DEEPSEEK_REASONING_EFFORTS = ("auto", "none", "low", "high", "max")
 ANTHROPIC_REASONING_EFFORTS = ("auto", "low", "medium", "high", "xhigh", "max")
 ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
 # First-party list prices, USD per 1K tokens (input, output), for budget
-# accounting of the anthropic provider. Cache reads and 5-minute cache writes
-# are priced as multiples of the input rate (ANTHROPIC_CACHE_READ_X /
-# ANTHROPIC_CACHE_WRITE_X). A model missing here falls back to
-# SOCIETY_MODEL_USD_PER_1K_* with every input token at the full rate.
+# accounting of the anthropic provider. Cache reads and cache writes are priced
+# as multiples of the input rate (ANTHROPIC_CACHE_READ_X, ANTHROPIC_CACHE_WRITE_X
+# for 5-minute writes, ANTHROPIC_CACHE_WRITE_1H_X for 1-hour writes), as the
+# official price table states them
+# (https://platform.claude.com/docs/en/about-claude/pricing, "Prompt caching").
+# A model missing here falls back to SOCIETY_MODEL_USD_PER_1K_* with every
+# input token at the full rate.
 ANTHROPIC_USD_PER_1K = {
     "claude-fable-5-1": ("0.010", "0.050"),
     "claude-opus-5-5": ("0.004", "0.020"),
@@ -125,8 +128,15 @@ ANTHROPIC_USD_PER_1K = {
     "claude-haiku-5-5": ("0.0001", "0.0005"),
 }
 ANTHROPIC_CACHE_WRITE_X = "1.25"
-ANTHROPIC_CACHE_READ_X = {"claude-fable-5-1": "0.025", "claude-opus-5-5": "0.05"}  # every other listed model: 0.1
+ANTHROPIC_CACHE_WRITE_1H_X = "2"
+ANTHROPIC_CACHE_READ_X = {"claude-fable-5-1": "0.025", "claude-opus-5-5": "0.05", "claude-sonnet-5-5": "0.05"}  # every other listed model: 0.1
 ANTHROPIC_CACHE_READ_X_DEFAULT = "0.1"
+# Shortest prefix the API caches for every model in ANTHROPIC_USD_PER_1K (a
+# shorter one is silently not cached; prompt-caching docs, "Cache limitations").
+ANTHROPIC_MIN_CACHEABLE_TOKENS = 512
+# SOCIETY_MODEL_CACHE_TTL: the TTL of a decide run's stable prompt prefix.
+# auto = by the agent's cadence (1h when its runs are usually > 5 minutes apart).
+MODEL_CACHE_TTLS = ("auto", "5m", "1h", "off")
 # Models the API may re-run on a fallback model when they decline a request
 # (``fallbacks: "default"``); Haiku has no server-side fallback.
 ANTHROPIC_FALLBACK_MODELS = ("claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5")
@@ -189,6 +199,8 @@ class SocietySettings:
     model_reasoning_effort: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_REASONING_EFFORT", "auto").strip().lower())
     # anthropic only: let the API re-run a declined request on a fallback model
     model_refusal_fallback: bool = field(default_factory=lambda: _bool("SOCIETY_MODEL_REFUSAL_FALLBACK", True))
+    # anthropic only: prompt-cache TTL of a decide run's stable prefix (MODEL_CACHE_TTLS)
+    model_cache_ttl: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_CACHE_TTL", "auto").strip().lower())
     # Model router: logical tiers -> provider model names (never hard-coded in
     # business logic). Empty strong name = single-tier deployment.
     model_fast_name: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_FAST_NAME") or os.getenv("SOCIETY_MODEL_NAME") or os.getenv("LLM_MODEL_NAME", "gpt-4o-mini"))
@@ -525,6 +537,8 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
         problems.append("SOCIETY_GITHUB_APP_PRIVATE_KEY_FILE must be a file path, never key material")
     if s.model_capability_profile not in CAPABILITY_PROFILES:
         problems.append(f"SOCIETY_MODEL_CAPABILITY_PROFILE must be one of {'|'.join(CAPABILITY_PROFILES)}")
+    if s.model_cache_ttl not in MODEL_CACHE_TTLS:
+        problems.append(f"SOCIETY_MODEL_CACHE_TTL must be one of {'|'.join(MODEL_CACHE_TTLS)}")
     if s.model_thinking_mode not in THINKING_MODES:
         problems.append(f"SOCIETY_MODEL_THINKING_MODE must be one of {'|'.join(THINKING_MODES)}")
     if s.model_reasoning_effort not in REASONING_EFFORTS:

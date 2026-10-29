@@ -46,7 +46,7 @@ done
 
 cd "$(dirname "$0")/.."
 INIT_DIR="services/registry/init-db"
-EXPECTED_HEAD="0026_owner_directives"
+EXPECTED_HEAD="0027_model_cache_accounting"
 PG_USER="${POSTGRES_USER:-agentnet}"
 PG_HOST="${POSTGRES_HOST:-127.0.0.1}"
 PG_PORT="${POSTGRES_PORT:-5432}"

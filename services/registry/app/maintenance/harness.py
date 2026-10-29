@@ -535,6 +535,7 @@ async def author_patch(ws, payload: Dict[str, Any], *, files_allowed: Sequence[s
     if len(runs) > 1:
         res.turns, res.tokens_in, res.tokens_out = sum(r.turns for r, _ in runs), sum(r.tokens_in for r, _ in runs), sum(r.tokens_out for r, _ in runs)
         res.cost_usd = sum((r.cost_usd for r, _ in runs), type(cost_cap)(0))
+        res.tokens_cached, res.tokens_cache_write = sum(r.tokens_cached for r, _ in runs), sum(r.tokens_cache_write for r, _ in runs)
         res.turn_log = [t for k, (r, _) in enumerate(runs) for t in ([{"turn": 0, "action": f"sample:{k + 1}"}] if k else []) + list(r.turn_log)]
     return PatchRun(res, state, samples)
 

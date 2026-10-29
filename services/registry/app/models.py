@@ -982,6 +982,9 @@ class AgentRun(Base):
     model_tier = Column(String(16))
     route_reason = Column(String(255))
     tokens_cached = Column(Integer)
+    # prompt-cache writes (every TTL) and their 1-hour part; reads are tokens_cached
+    tokens_cache_write = Column(Integer)
+    tokens_cache_write_1h = Column(Integer)
     output_format = Column(String(16))
     format_fallbacks = Column(Integer, nullable=False, default=0)
     error = Column(Text)
