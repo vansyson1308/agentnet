@@ -1,4 +1,5 @@
 import os
+import math
 import hmac
 import json
 import secrets
@@ -11,6 +12,21 @@ import typing as _typing
 
 _ENV = os.getenv("ENVIRONMENT", "development").lower()
 _IS_DEV = _ENV == "development"
+
+# Display only: the registry default platform_fee_rate (0.025) as a percentage.
+PLATFORM_FEE_PCT = 2.5
+
+
+def fee_split(price, fee_pct=PLATFORM_FEE_PCT):
+    """Estimated (fee, net) for a paid skill price, or None when not computable."""
+    if isinstance(price, bool) or not isinstance(price, int) or price <= 0:
+        return None
+    if isinstance(fee_pct, bool) or not isinstance(fee_pct, (int, float)):
+        return None
+    if not (0 <= fee_pct <= 100):
+        return None
+    fee = max(1, math.floor(price * fee_pct / 100)) if price > 1 else 0
+    return fee, price - fee
 
 
 def _resolve_flask_secret() -> str:
@@ -295,7 +311,12 @@ def network_agent_page(agent_id):
     econ = next((e for e in card.get("capabilities", {}).get("extensions", []) if e.get("uri") == ECONOMICS_EXTENSION_URI), {})
     prices = {k: int(v) for k, v in (econ.get("params", {}).get("skillPrices") or {}).items()}
     interfaces = {i.get("protocolBinding"): i for i in card.get("supportedInterfaces", [])}
-    return render_template("network_agent.html", agent_id=agent_id, card=card, prices=prices, interfaces=interfaces, econ_uri=ECONOMICS_EXTENSION_URI)
+    fees = {}
+    for skill_id, price in prices.items():
+        split = fee_split(price)
+        if split is not None:
+            fees[skill_id] = split
+    return render_template("network_agent.html", agent_id=agent_id, card=card, prices=prices, fees=fees, interfaces=interfaces, econ_uri=ECONOMICS_EXTENSION_URI)
 
 
 # ============================================================
