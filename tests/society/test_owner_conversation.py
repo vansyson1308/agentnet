@@ -318,7 +318,7 @@ def test_only_an_operator_talks_to_the_company(db, api_client, user_token):
     assert r.status_code == 201 and r.json()["status"] == "received"
     view = api_client.get("/v1/society/company/owner-thread", headers=auth(op)).json()
     assert view["entries"][0]["text"] == "what blocks the first paid task?" and view["entries"][0]["status"] == "received" and view["working"] is True
-    assert set(view["slo"]) == {"window_days", "first_run_start", "reply", "first_work", "directive_to_plan"}
+    assert set(view["slo"]) == {"window_days", "first_run_start", "reply", "first_work", "directive_to_plan", "message_to_plan", "without_work_rewakes"}
     routes = (ROOT / "services/registry/app/api/routes/society.py").read_text(encoding="utf-8")
     for path in ('@router.post("/company/owner-messages"', '@router.get("/company/owner-thread"'):
         assert "Depends(require_operator)" in routes[routes.index(path):].split("@router.", 2)[1]

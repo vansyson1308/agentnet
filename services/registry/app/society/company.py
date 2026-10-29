@@ -34,7 +34,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Optional, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import bindparam, func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -179,6 +179,9 @@ def portfolio_accounting(db: Session, settings: SocietySettings, now: Optional[d
       ``SOCIETY_CANDIDATE_STALL_HOURS`` without lifecycle progress (the rest
       ended): surfaced to the operator queue (candidate_health), never
       abandoned automatically; progress makes it active again;
+    * **backlog** -- a proposal that rides a ticket still ``proposed`` or ``planned``: work
+      waiting for a plan's approval is the company's backlog, not a hypothesis being pursued
+      (owner 2026-10-29 G1v: the backlog must stay full, so it cannot hold the cap);
     * **active** -- everything else (PROPOSED, UNDER_REVIEW, fresh APPROVED,
       work in flight, a conversion with no linked work found).
 
@@ -193,7 +196,7 @@ def portfolio_accounting(db: Session, settings: SocietySettings, now: Optional[d
         .limit(_PORTFOLIO_SCAN)
         .all()
     )
-    out: Dict[str, list] = {"active": [], "concluded": [], "shelved": [], "stalled": []}
+    out: Dict[str, list] = {"active": [], "concluded": [], "shelved": [], "stalled": [], "backlog": []}
     for pid, (bucket, _outcome) in _classify(db, rows, settings, now).items():
         out[bucket].append(pid)
     return out
@@ -244,11 +247,18 @@ def _classify(db: Session, rows: list, settings: SocietySettings, now: datetime)
             return True
         return status == CodeCandidateStatus.READY.value and latest_promo.get(cid) == PromotionStatus.MERGED.value
 
+    waiting = set()
+    if rows:
+        waiting = {str(pid) for (pid,) in db.execute(text(
+            "SELECT proposal_id FROM society_tickets WHERE status IN ('proposed', 'planned') AND proposal_id IN :ids").bindparams(
+            bindparam("ids", expanding=True)), {"ids": [r.id for r in rows]}).all()}
     out: Dict[str, Tuple[str, Optional[str]]] = {}
     for r in rows:
         status = _status_value(r.status)
         bucket, outcome = "active", None
-        if status == ProposalStatus.CONVERTED_TO_TASK.value:
+        if str(r.id) in waiting and status != ProposalStatus.CONVERTED_TO_TASK.value:
+            bucket = "backlog"
+        elif status == ProposalStatus.CONVERTED_TO_TASK.value:
             linked = cands.get(r.id, [])
             task_status = tasks.get(r.converted_task_id) if r.converted_task_id is not None else None
             if linked:

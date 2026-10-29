@@ -40,12 +40,17 @@ logger = logging.getLogger(__name__)
 MAX_TEXT = 2000
 KINDS = {"directive": EventType.OWNER_DIRECTIVE_SET, "task": EventType.OWNER_TASK_CREATED, "message": EventType.OWNER_MESSAGE}
 KEY_PREFIX = "owner:"
-LABEL = ("OWNER INPUT: the owner just said this on the Owner Console. The Governor answers it ONCE with RESPOND_TO_OWNER "
-         "(what you understood, what the company will do, which tickets carry it, what only the owner can do); the Scout may "
-         "file a ticket for it through the usual intents. It is a request, never permission: policy, grants, budgets, "
-         "files_allowed and the RED/merge law decide as always.")
+LABEL = ("OWNER INPUT: the owner just said this on the Owner Console. Words become work in THIS story: the Governor files "
+         "1..5 tickets for it (CREATE_IMPROVEMENT with ticket + evidence, one per concrete, provable piece) and starts any other "
+         "work it needs, in the same decision as its ONE RESPOND_TO_OWNER (what you understood, what the company will do, which "
+         "tickets carry it, what only the owner can do); the Scout may file tickets for it too. A story that starts no work is "
+         "re-woken once (owner_event_without_work). It is a request, never permission: policy, grants, budgets, files_allowed "
+         "and the RED/merge law decide as always.")
+#: the one reason an owner story is re-woken (rewake_without_work)
+WITHOUT_WORK = "owner_event_without_work"
+REWAKE_PREFIX = "owner-rewake:"
 #: latency targets (seconds): owner event -> first run start (p95), -> Governor reply (p95), directive -> a ticket in a plan
-SLO_TARGETS = {"first_run_start": 30, "reply": 120, "first_work": 300, "directive_to_plan": 600}
+SLO_TARGETS = {"first_run_start": 30, "reply": 120, "first_work": 300, "directive_to_plan": 600, "message_to_plan": 600}
 #: an owner story's tickets are planned while it is this fresh
 STORY_WINDOW = timedelta(hours=24)
 
@@ -144,10 +149,10 @@ def _link_steps(db: Session, run_id: Any, steps: List[Any]) -> Tuple[List[Dict[s
         st = {"step": st} if isinstance(st, str) else dict(st)
         link: Dict[str, Any] = {"step": str(st.get("step") or "")}
         if st.get("intent") and run_id is not None:
-            row = db.execute(text("SELECT id, intent_type FROM agent_intents WHERE run_id = :r AND seq = :s"),
+            row = db.execute(text("SELECT id, intent_type, result -> 'result' ->> 'ticket_id' FROM agent_intents WHERE run_id = :r AND seq = :s"),
                              {"r": run_id, "s": int(st["intent"]) - 1}).first()
             if row is not None and row[1] != "RESPOND_TO_OWNER":
-                link.update(intent_id=str(row[0]), intent_type=row[1])
+                link.update(intent_id=str(row[0]), intent_type=row[1], **({"ticket_id": str(row[2])} if row[2] else {}))
             else:
                 unlinked += 1
         elif st.get("ticket_id"):
@@ -170,7 +175,9 @@ def answer(db: Session, *, correlation_id: Any, agent_id: Any, reply: str, plan_
         raise ValueError("RESPOND_TO_OWNER answers the owner event that opened this story; this story has none")
     if _reply_for(db, entry["id"]) is not None:
         raise ValueError("the owner was already answered in this story (one reply per owner event)")
-    ids = list(dict.fromkeys(str(t) for t in ticket_ids))
+    # every ticket this story filed is listed, whether or not the reply named it (G1v: plan_steps/ticket_ids
+    # carry the ticket ids the story filed; the sibling CREATE_IMPROVEMENTs already ran -- the reply runs last)
+    ids = list(dict.fromkeys([str(t) for t in ticket_ids] + _story_ticket_ids(db, correlation_id)))
     known = {str(r[0]) for r in db.execute(text("SELECT id FROM society_tickets WHERE id::text IN :ids").bindparams(bindparam("ids", expanding=True)),
                                            {"ids": ids}).fetchall()} if ids else set()
     steps, unlinked = _link_steps(db, run_id, plan_steps)
@@ -241,6 +248,10 @@ def context_view(db: Session, event: Any, settings: Any = None, now: Optional[da
         return {}
     out = {"label": LABEL, "kind": entry["kind"], "text": entry["text"], "refs": entry["payload"] or {},
            "answered": _reply_for(db, entry["id"]) is not None}
+    if event.event_type == EventType.OWNER_REWAKE:
+        out["rewake"] = {"reason": WITHOUT_WORK, "instruction": (
+            "this owner story ended with no work started. Now file 1..5 tickets that carry the owner's words (CREATE_IMPROVEMENT "
+            "with ticket + evidence) and/or start the work they need; if the owner was already answered, do NOT answer again.")}
     if settings is not None:
         out["portfolio"] = portfolio(db, settings, now)
     return out
@@ -328,7 +339,8 @@ def _steps_view(db: Session, steps: List[Any], work: List[Dict[str, Any]]) -> Li
             if w is None:
                 row = db.execute(text("SELECT intent_type, execution_status FROM agent_intents WHERE id::text = :i"), {"i": st["intent_id"]}).first()
                 w = {"type": row[0], "status": str(row[1])} if row else {"type": st.get("intent_type"), "status": "unknown"}
-            out.append({"step": st["step"], "state": "started", "intent_id": st["intent_id"], "type": w["type"], "status": w["status"]})
+            out.append({"step": st["step"], "state": "started", "intent_id": st["intent_id"], "type": w["type"], "status": w["status"],
+                        **({"ticket_id": st["ticket_id"]} if st.get("ticket_id") else {})})
         elif st.get("ticket_id"):
             row = db.execute(text("SELECT title, status FROM society_tickets WHERE id::text = :t"), {"t": st["ticket_id"]}).first()
             out.append({"step": st["step"], "state": "ticket", "ticket_id": st["ticket_id"], "status": row[1] if row else "unknown"})
@@ -361,8 +373,9 @@ def view(db: Session, limit: int = 20) -> Dict[str, Any]:
         if rep:
             pay = dict(rep["payload"] or {})
             reply = {"text": rep["text"], **pay, "plan_steps": _steps_view(db, pay.get("plan_steps") or [], work), "created_at": rep["created_at"].isoformat()}
+        rewoken = db.execute(text("SELECT 1 FROM society_events WHERE idempotency_key = :k"), {"k": f"{REWAKE_PREFIX}{r['id']}"}).first() is not None
         out.append({"id": str(r["id"]), "kind": r["kind"], "text": r["text"], "refs": refs, "created_at": r["created_at"].isoformat(),
-                    "status": _status(db, ev, rep is not None), "reply": reply, "work": work,
+                    "status": _status(db, ev, rep is not None), "reply": reply, "work": work, **({"rewoken": WITHOUT_WORK} if rewoken else {}),
                     "plans": [{"id": str(p["id"]), "status": p["status"]} for p in plans],
                     "tickets": _tickets_view(db, list(dict.fromkeys(ids)))})
     return {"entries": out, "working": any(e["status"] in ("received", "working") for e in out)}
@@ -386,11 +399,47 @@ def plan_owner_stories(db: Session, settings: Any, now: Optional[datetime] = Non
                                                 .bindparams(bindparam("ids", expanding=True)), {"ids": ids}).fetchall()]
         if not waiting:
             continue
-        plan = tickets.build_plan(db, None, now, red_cap=settings.company_max_high_risk_investigations, plan_max=settings.company_plan_max,
-                                  per_department=settings.company_plan_per_department, ticket_ids=waiting,
+        # the owner's own words: every ticket the story filed (<= OWNER_STORY_TICKETS) fits its plan; the
+        # per-department split exists to spread a scheduled cycle, not to drop half of an owner request
+        cap = max(settings.company_plan_max, min(len(waiting), tickets.OWNER_STORY_TICKETS))
+        plan = tickets.build_plan(db, None, now, red_cap=settings.company_max_high_risk_investigations, plan_max=cap,
+                                  per_department=cap, ticket_ids=waiting,
                                   directive_id=(r["payload"] or {}).get("directive_id"), owner_entry_id=str(r["id"]))
         made += int(bool(plan and plan.get("id")))
     return made
+
+
+def rewake_without_work(db: Session, settings: Any = None, now: Optional[datetime] = None) -> int:
+    """Owner 2026-10-29 G1v: words must become work. An owner story (a message or a directive -- an owner
+    TASK is already a ticket) whose runs all ended with no ticket filed and no side-effecting intent
+    executed is recorded ``owner_event_without_work`` and the Governor is woken ONCE more in that same
+    story (``owner.rewake``, idempotent per owner row, priority like the owner's own events; the loop
+    breaker and the caps still apply). Never a second time. The caller commits."""
+    now = now or utcnow()
+    rows = db.execute(text(
+        "SELECT o.id, o.kind, e.id AS event_id, e.correlation_id FROM society_owner_thread o "
+        "JOIN society_events e ON e.idempotency_key = 'owner:' || o.id::text "
+        "WHERE o.author = 'owner' AND o.kind IN ('message', 'directive') AND o.created_at >= :since AND e.status <> 'pending' "
+        "AND NOT EXISTS (SELECT 1 FROM society_events x WHERE x.idempotency_key = :prefix || o.id::text) "
+        "AND EXISTS (SELECT 1 FROM agent_runs r WHERE r.correlation_id = e.correlation_id) "
+        "AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.correlation_id = e.correlation_id AND r.status IN ('queued', 'claimed', 'running', 'failed')) "
+        "AND NOT EXISTS (SELECT 1 FROM agent_runs r JOIN agent_intents i ON i.run_id = r.id WHERE r.correlation_id = e.correlation_id "
+        "                AND i.execution_status = 'executed' AND i.intent_type NOT IN :quiet) "
+        "ORDER BY o.created_at").bindparams(bindparam("quiet", expanding=True)),
+        {"since": now - STORY_WINDOW, "prefix": REWAKE_PREFIX, "quiet": _quiet_types()}).mappings().all()
+    from ..models import SocietyEvent  # noqa: PLC0415
+
+    n = 0
+    for r in rows:
+        if _story_ticket_ids(db, r["correlation_id"]):
+            continue
+        cause = db.query(SocietyEvent).filter(SocietyEvent.id == r["event_id"]).first()
+        emit_event(db, event_type=EventType.OWNER_REWAKE, payload={"owner_entry_id": str(r["id"]), "kind": r["kind"], "reason": WITHOUT_WORK},
+                   actor_type="system", subject_type="owner_entry", subject_id=r["id"], causation=cause, correlation_id=r["correlation_id"],
+                   idempotency_key=f"{REWAKE_PREFIX}{r['id']}")
+        logger.info("owner story %s: %s -- the Governor is woken once more", str(r["id"])[:8], WITHOUT_WORK)
+        n += 1
+    return n
 
 
 # ── latency, measured ────────────────────────────────────────────────────
@@ -425,8 +474,8 @@ def slo(db: Session, now: Optional[datetime] = None, days: int = 7) -> Dict[str,
     since = now - timedelta(days=days)
     starts = db.execute(text(
         "SELECT EXTRACT(EPOCH FROM (MIN(r.started_at) - e.created_at)) FROM society_events e JOIN agent_runs r ON r.event_id = e.id "
-        "WHERE e.event_type IN :types AND e.created_at >= :s AND r.started_at IS NOT NULL GROUP BY e.id").bindparams(bindparam("types", expanding=True)),
-        {"types": list(OWNER_EVENT_TYPES), "s": since}).fetchall()
+        "WHERE e.event_type IN :types AND e.idempotency_key LIKE 'owner:%' AND e.created_at >= :s AND r.started_at IS NOT NULL GROUP BY e.id").bindparams(
+        bindparam("types", expanding=True)), {"types": list(OWNER_EVENT_TYPES), "s": since}).fetchall()
     replies = db.execute(text(
         "SELECT EXTRACT(EPOCH FROM (c.created_at - o.created_at)) FROM society_owner_thread o JOIN society_owner_thread c ON c.reply_to = o.id "
         "WHERE o.created_at >= :s"), {"s": since}).fetchall()
@@ -453,11 +502,21 @@ def slo(db: Session, now: Optional[datetime] = None, days: int = 7) -> Dict[str,
         "SELECT COUNT(*) FROM society_owner_thread o WHERE o.kind = 'directive' AND o.created_at >= :s AND o.created_at < :late "
         "AND NOT EXISTS (SELECT 1 FROM society_daily_plans p WHERE (p.owner_entry_id = o.id OR p.directive_id::text = o.payload ->> 'directive_id') "
         "AND p.created_at >= o.created_at)"), {"s": since, "late": now - timedelta(seconds=SLO_TARGETS["directive_to_plan"])}).scalar() or 0
-    return {"window_days": days,
+    to_plan = db.execute(text(
+        "SELECT EXTRACT(EPOCH FROM (MIN(p.created_at) - o.created_at)) FROM society_owner_thread o JOIN society_daily_plans p "
+        "ON p.owner_entry_id = o.id AND p.created_at >= o.created_at WHERE o.kind = 'message' AND o.created_at >= :s GROUP BY o.id"), {"s": since}).fetchall()
+    message_unplanned = db.execute(text(
+        "SELECT COUNT(*) FROM society_owner_thread o WHERE o.kind = 'message' AND o.author = 'owner' AND o.created_at >= :s AND o.created_at < :late "
+        "AND NOT EXISTS (SELECT 1 FROM society_daily_plans p WHERE p.owner_entry_id = o.id AND p.created_at >= o.created_at)"),
+        {"s": since, "late": now - timedelta(seconds=SLO_TARGETS["message_to_plan"])}).scalar() or 0
+    rewoken = db.execute(text("SELECT COUNT(*) FROM society_events WHERE idempotency_key LIKE :p AND created_at >= :s"),
+                         {"p": REWAKE_PREFIX + "%", "s": since}).scalar() or 0
+    return {"window_days": days, "without_work_rewakes": int(rewoken),
             "first_run_start": _metric([float(r[0]) for r in starts], SLO_TARGETS["first_run_start"]),
             "reply": _metric([float(r[0]) for r in replies], SLO_TARGETS["reply"], int(unanswered)),
             "first_work": _metric([float(r[0]) for r in work], SLO_TARGETS["first_work"], int(idle)),
-            "directive_to_plan": _metric([float(r[0]) for r in plans], SLO_TARGETS["directive_to_plan"], int(unplanned))}
+            "directive_to_plan": _metric([float(r[0]) for r in plans], SLO_TARGETS["directive_to_plan"], int(unplanned)),
+            "message_to_plan": _metric([float(r[0]) for r in to_plan], SLO_TARGETS["message_to_plan"], int(message_unplanned))}
 
 
-__all__ = ["KINDS", "LABEL", "SLO_TARGETS", "answer", "context_view", "directive_set", "entry_for_correlation", "plan_owner_stories", "portfolio", "record", "slo", "story_ticket_count", "view"]
+__all__ = ["KINDS", "LABEL", "SLO_TARGETS", "answer", "context_view", "directive_set", "entry_for_correlation", "plan_owner_stories", "portfolio", "record", "rewake_without_work", "slo", "story_ticket_count", "view"]

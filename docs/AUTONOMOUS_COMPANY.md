@@ -524,9 +524,10 @@ intents and nothing here grants anything.
 - **The Governor answers.** `RESPOND_TO_OWNER {reply <= 1200 chars, plan_steps <= 5, ticket_ids <= 5,
   owner_actions_needed <= 3}` is Governor-only, LOW, valid only in the story an owner event opened, at
   most one per owner event (a unique index; a second one fails). Shown ONLY on `/owner`.
-- **Tickets for the owner are planned in minutes.** In an owner story the Scout may file up to 2
-  tickets (`CREATE_IMPROVEMENT` with `ticket` + `evidence`) outside its department's daily cap; the
-  owner lane and the company controllers rank them into a plan of their own (`owner_entry_id`).
+- **Tickets for the owner are planned in minutes.** In an owner story the Governor (and the Scout) file
+  up to 5 tickets in all (`CREATE_IMPROVEMENT` with `ticket` + `evidence`) outside the department's
+  daily cap; the owner lane ranks them into a plan of their own (`owner_entry_id`) in the same pass.
+  See "Never out of work" below.
 - **The panel** shows each owner message, its status (received → working → answered, or no_reply when
   every run ended without one), the reply, and what came from it (tickets, plans, design reviews,
   candidates, PRs). `/owner` polls `/owner/thread` every 5 s while something is working.
@@ -563,3 +564,45 @@ intents and nothing here grants anything.
   ("everything x2 = no priority"); it is still saved, the registry decides.
 - The READY list on `/owner` and the daily report judge "no PR" with the WORKER's provider and caps
   (its last heartbeat's `change_budget`, the `P05` source), not the registry's own env.
+
+### Never out of work (owner 2026-10-29, G1v)
+
+At full throttle ($80/day) the company spent ~$7.7 in 3.5 h: the Builder skipped 16 runs as idle, the
+newest plan was empty and the directive produced 0 tickets in 6 h. The cause was supply, so supply is
+now deterministic plumbing. No new authority: policy, budgets, files_allowed, the spec gate, QA and
+Security, the RED/merge law and auto-merge are unchanged.
+
+- **Owner words → tickets, in the same story.** The Governor decomposes a directive or message into
+  1..5 `CREATE_IMPROVEMENT` tickets (objective + KR + expected effect + proof, `evidence.signal =
+  owner_request`) in the decision that answers it. It is granted `CREATE_IMPROVEMENT` for this alone:
+  outside a story an owner event opened, or without a `ticket`, the executor refuses it. At most 5 per
+  owner event (Governor and Scout together). The tickets carry `source = owner_story` and the owner lane
+  ranks ALL of them into one plan of their own in the same pass (the per-department split spreads a
+  scheduled cycle, it does not drop half an owner request). `RESPOND_TO_OWNER`'s `ticket_ids` and the
+  started `plan_steps` list the tickets the story filed.
+- **A story without work is re-woken once.** An owner message or directive whose runs all ended with no
+  ticket and no executed side-effecting intent is recorded `owner_event_without_work`: `owner.rewake`
+  (key `owner-rewake:<row>`, an owner event: priority lane, owner reserve) wakes the Governor again in
+  the same story with that reason. Never twice. The console shows it; validator `owner:slo` counts it
+  (`L06`).
+- **SLO** owner message → ticket in a plan p95 < 10 min (`message_to_plan`, validator `L05`).
+- **Tickets waiting for a plan are backlog**, not hypotheses: a model-filed proposal whose ticket is
+  `proposed`/`planned` no longer counts toward `SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES` (it did, so the
+  portfolio filled with tickets nobody had approved and every further ticket was refused).
+- **An approved ticket nobody designs wakes the Architect again** (`tickets.wake_undesigned`): no
+  candidate, no open design review, and no run queued or moving in its stories for 10 min → the
+  `company.ticket_approved` wake is re-sent (payload `rewake: n`, at most 2). A wake is not an
+  approval: the design-failure count and the 6 h stale sweep still run from the real approval. The
+  Architect's heartbeat precheck counts "approved ticket(s) without a design" as work.
+- **READY → PR happens or says why** (`promotion_queue.settle_reoffers`). A re-offered READY candidate
+  the Governor did not request within its wake gets `promotion.reoffer_settled` with a structured reason
+  (`governor_did_not_request`, `governor_not_woken`, `governor_run_skipped`, `governor_run_dead`) shown
+  as `not_requested` on `/owner`. With `SOCIETY_READY_FALLBACK_ENABLED=true` (default false) and
+  capacity free, the runtime then requests the promotion as the Governor's run in that story, through
+  the Governor's own policy verdict (an approval gate stays a human gate: `policy_approval_required`),
+  the same change budget, Builder independence and the same controller; otherwise the reason it did
+  not (`no_capacity`, `stale_base`, `provider_disabled`, ...) is recorded.
+- **Throughput limits are reachable.** Validator `runs:<role>:<n>` sets a grant's
+  `max_runs_per_hour` (1-200); a re-seed keeps the larger of it and the role default. The Governor may
+  return up to 7 intents a run (5 tickets + the reply + one more); `SOCIETY_MAX_INTENTS_PER_RUN` (global,
+  default 7) still caps every grant.

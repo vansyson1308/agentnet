@@ -220,7 +220,7 @@ class SocietySettings:
     owner_reserve_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_OWNER_RESERVE_USD", "0"))
     max_causation_depth: int = field(default_factory=lambda: _int("SOCIETY_MAX_CAUSATION_DEPTH", 24, minimum=1))
     max_runs_per_correlation: int = field(default_factory=lambda: _int("SOCIETY_MAX_RUNS_PER_CORRELATION", 40, minimum=1))
-    max_intents_per_run: int = field(default_factory=lambda: _int("SOCIETY_MAX_INTENTS_PER_RUN", 5, minimum=1))
+    max_intents_per_run: int = field(default_factory=lambda: _int("SOCIETY_MAX_INTENTS_PER_RUN", 7, minimum=1))
     repeat_message_window_seconds: int = field(
         default_factory=lambda: _int("SOCIETY_REPEAT_MESSAGE_WINDOW_SECONDS", 3600, minimum=0)
     )
@@ -294,6 +294,10 @@ class SocietySettings:
     max_autonomous_candidates_per_day: int = field(default_factory=lambda: _int("SOCIETY_MAX_AUTONOMOUS_CANDIDATES_PER_DAY", 10, minimum=0))
     max_promotions_per_day: int = field(default_factory=lambda: _int("SOCIETY_MAX_PROMOTIONS_PER_DAY", 10, minimum=0))
     max_open_autonomous_prs: int = field(default_factory=lambda: _int("SOCIETY_MAX_OPEN_AUTONOMOUS_PRS", 3, minimum=0))
+    # READY -> PR fallback (promotion_queue.settle_reoffers): a re-offered READY candidate the Governor
+    # did not request gets the runtime's request on the Governor's own grant, through the same policy,
+    # change budgets and controller. Off: the reason is still recorded, nothing is requested.
+    ready_fallback_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_READY_FALLBACK_ENABLED", False))
     # Autonomous MERGES are budgeted separately from promotions: opening a PR is
     # reversible, landing one on main is not. Starts at one per day. Agents
     # cannot raise it -- MODIFY_BUDGET is a forbidden HIGH intent with no

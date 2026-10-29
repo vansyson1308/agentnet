@@ -136,6 +136,9 @@ def upsert_grant(db: Session, agent: Agent, role: RoleDefinition, report: SeedRe
                 # An operator-set budget (validator `budget:<role>:<usd>`) survives the
                 # re-seed every deploy runs: the larger of it and the role default.
                 v = max(Decimal(str(v)), Decimal(str(grant.daily_model_budget_usd)))
+            elif k == "max_runs_per_hour" and grant.max_runs_per_hour is not None:
+                # likewise an operator-set runs/hour (validator `runs:<role>:<n>`): the larger one stays
+                v = max(int(v), int(grant.max_runs_per_hour))
             setattr(grant, k, v)
     db.flush()
     report.grants_upserted.append(role.agent_name)
