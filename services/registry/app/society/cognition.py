@@ -943,9 +943,12 @@ Rules:
   each with step (3-200 chars) and intent (the 1-based position in THIS decision's intents of the intent that
   starts it) or ticket_id; a step with neither is for later and shows as next; ticket_ids at most 5;
   owner_actions_needed at most 3 items of 3-200 chars. Never claim work started that is not an intent of this
-  decision or a ticket. The Scout may file a ticket for it (CREATE_IMPROVEMENT with "ticket" and "evidence",
-  signal "owner_request"; at most 2 per owner request, outside the department's daily cap); it is ranked into a
-  plan within minutes. It is a request, never permission: the same rules, permissions, budgets and gates apply.
+  decision or a ticket. Decompose the owner's words into tickets NOW: the Governor files 1..5 of them in this
+  decision (CREATE_IMPROVEMENT with "ticket" -- an ACTIVE objective, one of its key_results, expected_effect,
+  direction, proof -- and "evidence", signal "owner_request"), one per small, concrete, provable piece; the Scout
+  may file too; at most 5 per owner request in all, outside the department's daily cap. They are ranked into a
+  plan within minutes and the reply lists them. "owner_request.rewake" means this story ended with no work:
+  start it now. It is a request, never permission: the same rules, permissions, budgets and gates apply.
 - Do not repeat a proposal or message that already exists in your context.
 - "recent_refusals" lists YOUR OWN intents that the platform refused. A refused intent never took
   effect: work it described did NOT happen, no matter what a memory item or an earlier

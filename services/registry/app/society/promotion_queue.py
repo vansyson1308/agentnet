@@ -20,6 +20,13 @@ Now, deterministically:
   (MERGED, or REJECTED when the owner closed the PR) -- the controller does this on every new end
   (promotion._settle_candidate); this catches rows that ended before it did (staging 2026-10-29:
   4 of 6 "READY" were merged or closed);
+- :func:`settle_reoffers` (owner 2026-10-29 G1v, "READY -> PR must actually happen"): once a re-offer's
+  story ended, records WHY no request came (``governor_did_not_request``, ``governor_run_<status>``,
+  ``governor_request_refused``, ...) as ``promotion.reoffer_settled``; with
+  ``SOCIETY_READY_FALLBACK_ENABLED`` and free capacity, the runtime then requests the promotion itself
+  on the Governor's own grant -- the same policy verdict (``policy.evaluate_intent``), the same change
+  budgets and the same controller as the Governor's REQUEST_PR_PROMOTION; a refusal is recorded, never
+  retried around;
 - :func:`caps` names the change budget in effect (for the heartbeat, the report and the validator)."""
 
 from __future__ import annotations
@@ -179,10 +186,14 @@ def ready_backlog(db: Session, settings: SocietySettings, now: Optional[datetime
             reason, detail = "cap_promotions_per_day", f"SOCIETY_MAX_PROMOTIONS_PER_DAY={settings.max_promotions_per_day}"
         elif cap["open_pr_slots"] <= 0:
             reason, detail = "cap_open_prs", f"SOCIETY_MAX_OPEN_AUTONOMOUS_PRS={settings.max_open_autonomous_prs}"
-        elif req is not None and _ev(req.execution_status) in ("failed", "denied"):
+        elif req is not None and _ev(req.execution_status) in ("failed", "denied") and not _settled_after(db, cand.id, req.created_at):
             reason, detail = "refused", (req.error or req.policy_reason or "")[:200]
         else:
-            reason = "awaiting_request"
+            settled = _last_settled(db, cand.id)
+            if settled is not None and (req is None or settled.created_at >= req.created_at):
+                reason, detail = "not_requested", f"{settled.payload.get('reason')}: {settled.payload.get('fallback')}"[:200]
+            else:
+                reason = "awaiting_request"
         out.append({"candidate": str(cand.id)[:8], "candidate_id": str(cand.id), "title": cand.title, "reason": reason, "detail": detail,
                     "ready_since": cand.updated_at.isoformat() if cand.updated_at else None, "requests": _request_count(db, cand.id),
                     "base_behind_main": base.get("behind")})
@@ -205,6 +216,117 @@ def ready_view(db: Session, settings: SocietySettings, now: Optional[datetime] =
                     "promotion": _ev(last.status) if last is not None else None, "pr_number": last.external_pr_number if last is not None else None,
                     "pr_url": last.external_pr_url if last is not None else None, "reason": b.get("reason"), "detail": b.get("detail")})
     return out
+
+
+def _last_settled(db: Session, cand_id) -> Optional[SocietyEvent]:
+    return (db.query(SocietyEvent).filter(SocietyEvent.event_type == EventType.READY_REOFFER_SETTLED, SocietyEvent.subject_id == cand_id)
+            .order_by(SocietyEvent.created_at.desc()).first())
+
+
+def _settled_after(db: Session, cand_id, when: datetime) -> bool:
+    last = _last_settled(db, cand_id)
+    return last is not None and last.created_at >= when
+
+
+SETTLE_PREFIX = "reoffer-settled:"
+#: the reasons a re-offer produced no request that leave the decision to the runtime (nobody said no)
+FALLBACK_REASONS = ("governor_did_not_request", "governor_not_woken", "governor_run_skipped", "governor_run_dead")
+_OPEN_RUN = ("queued", "claimed", "running", "failed")
+
+
+def _why_not(db: Session, event: SocietyEvent, cand: CodeCandidate) -> tuple:
+    """(reason, detail, the Governor's run) for a finished re-offer story. Structural codes only."""
+    from ..models import AgentRun  # noqa: PLC0415
+
+    runs = db.query(AgentRun).filter(AgentRun.event_id == event.id, AgentRun.role == "governor").order_by(AgentRun.created_at).all()
+    if not runs:
+        return "governor_not_woken", f"event {_ev(event.status)}", None
+    asks = (db.query(AgentIntent).filter(AgentIntent.run_id.in_([r.id for r in runs]), AgentIntent.intent_type == "REQUEST_PR_PROMOTION",
+                                         AgentIntent.payload["candidate_id"].astext == str(cand.id)).all())
+    if any(_ev(a.execution_status) == "executed" for a in asks):
+        return "requested", "", runs[-1]
+    if asks:
+        a = asks[-1]
+        return "governor_request_refused", (a.error or a.policy_reason or "")[:200], runs[-1]
+    last = runs[-1]
+    if _ev(last.status) != "completed":
+        return f"governor_run_{_ev(last.status)}", (last.error or "")[:200], last
+    return "governor_did_not_request", "", last
+
+
+def _fallback(db: Session, settings: SocietySettings, cand: CodeCandidate, run: Any, event: SocietyEvent, reason: str, now: datetime) -> tuple:
+    """The runtime's request on the Governor's grant: (outcome, promotion id or None)."""
+    from ..models import Agent, AgentCapabilityGrant  # noqa: PLC0415
+    from . import policy  # noqa: PLC0415
+    from .intents import PAYLOAD_MODELS, IntentType, ValidatedIntent  # noqa: PLC0415
+    from .promotion import request_promotion  # noqa: PLC0415
+
+    if not settings.ready_fallback_enabled:
+        return "off", None
+    if settings.promotion_provider == "disabled":
+        return "provider_disabled", None
+    cap = capacity(db, settings, now)
+    if min(cap["promotions_left_today"], cap["open_pr_slots"]) <= 0:
+        return "no_capacity", None
+    if _base(settings, cand.base_sha).get("ancestor") is False:
+        return "stale_base", None
+    if run is None:
+        return "no_governor_run", None
+    grant = db.query(AgentCapabilityGrant).filter(AgentCapabilityGrant.agent_id == run.agent_id).first()
+    agent = db.query(Agent).filter(Agent.id == run.agent_id).first()
+    intent = ValidatedIntent(seq=0, type_name=IntentType.REQUEST_PR_PROMOTION.value, intent_type=IntentType.REQUEST_PR_PROMOTION, valid=True,
+                             payload=PAYLOAD_MODELS[IntentType.REQUEST_PR_PROMOTION](candidate_id=cand.id), idempotency_key=f"{SETTLE_PREFIX}{event.id}")
+    verdict = policy.evaluate_intent(intent, grant=grant, settings=settings, agent=agent)
+    if not verdict.allowed:
+        return f"policy_{_ev(verdict.decision)}: {verdict.reason}"[:200], None
+    if agent.id == cand.builder_agent_id:
+        return "promotion independence: the Builder cannot request its own candidate", None
+    try:
+        promo, _created = request_promotion(db, settings=settings, candidate=cand, agent=agent, run=run, causation=event, source_run_id=run.id)
+    except ValueError as exc:
+        return f"refused: {exc}"[:200], None
+    promo.evidence = {**(promo.evidence or {}), "runtime_fallback": True, "reason": reason, "reoffer_event_id": str(event.id)}
+    return "requested", promo.id
+
+
+def settle_reoffers(db: Session, settings: SocietySettings, now: Optional[datetime] = None, *, lookback: timedelta = timedelta(hours=48)) -> int:
+    """Each re-offer (:func:`retry_deferred`) whose story ended gets ONE ``promotion.reoffer_settled``
+    record: why no request came, and -- when nobody said no, the fallback is on and there is
+    capacity -- the runtime's own request (:func:`_fallback`). Commits when it settled one."""
+    from ..models import AgentRun  # noqa: PLC0415
+
+    now = now or utcnow()
+    n = 0
+    reoffers = (db.query(SocietyEvent).filter(SocietyEvent.event_type == EventType.CODE_CANDIDATE_READY, SocietyEvent.payload.has_key("promotion_retry"),
+                                               SocietyEvent.created_at >= now - lookback, SocietyEvent.status != "pending")
+                .order_by(SocietyEvent.created_at).all())
+    for ev in reoffers:
+        key = f"{SETTLE_PREFIX}{ev.id}"
+        if db.query(SocietyEvent.id).filter(SocietyEvent.idempotency_key == key).first() is not None:
+            continue
+        if db.query(AgentRun.id).filter(AgentRun.event_id == ev.id, AgentRun.status.in_(_OPEN_RUN)).first() is not None:
+            continue  # the story is still running
+        cand = db.query(CodeCandidate).filter(CodeCandidate.id == ev.subject_id).first()
+        if cand is None:
+            continue
+        fallback, promo_id = "none", None
+        if _ev(cand.status) != CodeCandidateStatus.READY.value:
+            reason, detail = f"candidate_{_ev(cand.status)}", ""
+        elif active_promotion_for(db, cand.id) is not None:
+            reason, detail = "requested", ""
+        else:
+            reason, detail, run = _why_not(db, ev, cand)
+            if reason in FALLBACK_REASONS:
+                fallback, promo_id = _fallback(db, settings, cand, run, ev, reason, now)
+        emit_event(db, event_type=EventType.READY_REOFFER_SETTLED, actor_type="system", subject_type="code_candidate", subject_id=cand.id, causation=ev,
+                   payload={"candidate_id": str(cand.id), "reoffer_event_id": str(ev.id), "reason": reason, "detail": detail, "fallback": fallback,
+                            "promotion_id": str(promo_id) if promo_id else None},
+                   idempotency_key=key)
+        logger.info("promotion re-offer settled: candidate %s %s (fallback %s)", str(cand.id)[:8], reason, fallback)
+        n += 1
+    if n:
+        db.commit()
+    return n
 
 
 def capacity_token(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> str:
@@ -248,4 +370,4 @@ def retry_deferred(db: Session, settings: SocietySettings, now: Optional[datetim
     return sent
 
 
-__all__ = ["capacity", "capacity_token", "caps", "ready_backlog", "ready_view", "retry_deferred", "settle_ended", "worker_caps", "worker_view_caps"]
+__all__ = ["capacity", "capacity_token", "caps", "ready_backlog", "ready_view", "retry_deferred", "settle_ended", "settle_reoffers", "worker_caps", "worker_view_caps"]

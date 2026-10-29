@@ -393,6 +393,13 @@ def _every_attempt_failed(ctx: ExecContext, proposal: ImprovementProposal) -> bo
 def _create_improvement(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
     _require_ref(ctx, TaskSession, p.source_task_id, "source_task_id")
+    from . import owner_thread  # noqa: PLC0415
+
+    story = owner_thread.story_ticket_count(ctx.db, getattr(ctx.run, "correlation_id", None))
+    if ctx.grant.role == "governor" and (story is None or p.ticket is None):
+        # The chair files tickets ONLY for the owner, in the story an owner event opened (G1v):
+        # everywhere else the Scout and the backlog supply work, as before.
+        raise ExecutionError("the Governor files CREATE_IMPROVEMENT only in an owner story, and only with a ticket")
     if ctx.event.event_type in WORLD_SIGNAL_EVENTS and p.evidence is None:
         # An event existing is not evidence. Signal-driven proposals must say
         # what was observed, against what baseline, over what window, and why
@@ -460,13 +467,11 @@ def _create_improvement(ctx: ExecContext) -> ExecOutcome:
         if ctx.settings.company_cycle_enabled:
             # The backlog supplies tickets deterministically (tickets.supply); a model may
             # only ADD, with evidence, at most MODEL_TICKETS_PER_DEPARTMENT a day per department.
-            from . import owner_thread  # noqa: PLC0415
-
-            story = owner_thread.story_ticket_count(ctx.db, ctx.run.correlation_id)
             refused = tickets.model_ticket_refusal(ctx.db, ctx.grant.role, p.evidence is not None, ctx.now, owner_story_tickets=story)
             if refused:
                 raise ExecutionError(refused)
-        src = "backlog" if ctx.event.event_type == EventType.BACKLOG_ITEM else "scout" if ctx.grant.role == "scout" else "department"
+        src = ("owner_story" if story is not None else "backlog" if ctx.event.event_type == EventType.BACKLOG_ITEM
+               else "scout" if ctx.grant.role == "scout" else "department")
         ticket_id = tickets.create(ctx.db, proposal_id=proposal.id, title=p.title, fields=p.ticket.model_dump(), source=src, role=ctx.grant.role, importance=p.importance)
     ev = _emit(
         ctx,

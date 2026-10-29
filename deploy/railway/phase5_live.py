@@ -73,7 +73,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes", "costs", "budget", "routes", "owner", "funnel")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes", "costs", "budget", "routes", "owner", "funnel", "runs")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -158,6 +158,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("costs[:<days>[:<daily-budget-usd>]]")
         if name == "budget" and (len(args) != 2 or not re.fullmatch(r"[a-z_]{2,32}", args[0]) or not re.fullmatch(r"\d{1,2}(\.\d{1,2})?", args[1]) or float(args[1]) <= 0):
             raise ValueError("budget:<role>:<usd> (0 < usd < 100, two decimals)")
+        if name == "runs" and (len(args) != 2 or not re.fullmatch(r"[a-z_]{2,32}", args[0]) or not re.fullmatch(r"\d{1,3}", args[1]) or not 1 <= int(args[1]) <= 200):
+            raise ValueError("runs:<role>:<n> (1 <= n <= 200 runs per hour)")
         if name == "routes" and (len(args) > 1 or (args and not re.fullmatch(r"\d{1,3}", args[0]))):
             raise ValueError("routes[:<limit>]")
         if name == "owner" and args != ["slo"] and (len(args) != 2 or args[0] != "grant" or not OWNER_EMAIL_RE.fullmatch(args[1])):
@@ -1105,7 +1107,8 @@ def step_owner_grant(out: Out, base: str, token: str, conn, email: str) -> None:
 
 
 OWNER_SLO_NAMES = (("first_run_start", "L01", "owner event -> first run start"), ("reply", "L02", "owner event -> Governor reply"),
-                   ("directive_to_plan", "L03", "directive -> first ticket in a plan"), ("first_work", "L04", "owner event -> first side-effecting intent executed"))
+                   ("directive_to_plan", "L03", "directive -> first ticket in a plan"), ("first_work", "L04", "owner event -> first side-effecting intent executed"),
+                   ("message_to_plan", "L05", "owner message -> first ticket in a plan"))
 
 
 def step_owner_slo(out: Out, base: str, token: str) -> None:
@@ -1122,6 +1125,8 @@ def step_owner_slo(out: Out, base: str, token: str) -> None:
             out.info("owner", f"{code} no data yet -- {detail}")
         else:
             out.check("owner", code, bool(m.get("ok")), detail)
+    if slo.get("without_work_rewakes"):
+        out.info("owner", f"L06 {slo['without_work_rewakes']} owner stor(y/ies) ended with no work and were re-woken once (owner_event_without_work)")
     out.json("owner", "slo", slo)
     out.json("owner", "thread", [{"kind": e.get("kind"), "status": e.get("status"), "created_at": e.get("created_at"), "replied": bool(e.get("reply")),
                                   "tickets": len(e.get("tickets") or []), "plans": len(e.get("plans") or [])} for e in body.get("entries") or []])
@@ -1388,6 +1393,21 @@ def step_budget(out: Out, conn, role: str, usd: str) -> None:
         conn.commit()
         after = _rows(cur, "SELECT daily_model_budget_usd FROM agent_capability_grants WHERE id = %s", (gid,))[0][0]
     out.check("budget", "B01", float(after) == float(usd), f"role={role.lower()} daily_model_budget_usd {float(before)} -> {float(after)}")
+
+
+def step_runs(out: Out, conn, role: str, n: str) -> None:
+    """Operator command: one role's grant max_runs_per_hour (a re-seed keeps the larger of it and the role default).
+    The global SOCIETY_MAX_RUNS_PER_HOUR still caps the fleet."""
+    with conn.cursor() as cur:
+        row = _rows(cur, "SELECT id, max_runs_per_hour FROM agent_capability_grants WHERE role = %s", (role.lower(),))
+        if not row:
+            out.check("runs", "R01", False, f"no grant for role {role!r}")
+            return
+        gid, before = row[0]
+        cur.execute("UPDATE agent_capability_grants SET max_runs_per_hour = %s, updated_at = now() WHERE id = %s", (int(n), gid))
+        conn.commit()
+        after = _rows(cur, "SELECT max_runs_per_hour FROM agent_capability_grants WHERE id = %s", (gid,))[0][0]
+    out.check("runs", "R01", int(after) == int(n), f"role={role.lower()} max_runs_per_hour {before} -> {after}")
 
 
 ROUTES_SQL = (
@@ -2124,7 +2144,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if conn is None and (name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes", "costs", "budget", "routes")
+            if conn is None and (name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes", "costs", "budget", "runs", "routes")
                                  or (name == "owner" and args[0] == "grant")):
                 conn = vs.db_connect()
             if name == "status":
@@ -2167,6 +2187,8 @@ def main() -> int:
                 step_costs(out, conn, int(args[0]) if args else 7, float(args[1]) if len(args) > 1 else 6.0)
             elif name == "budget":
                 step_budget(out, conn, args[0], args[1])
+            elif name == "runs":
+                step_runs(out, conn, args[0], args[1])
             elif name == "routes":
                 step_routes(out, conn, int(args[0]) if args else 20)
             elif name == "funnel":
