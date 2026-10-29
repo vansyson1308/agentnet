@@ -72,7 +72,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes", "costs", "budget", "routes")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes", "costs", "budget", "routes", "owner")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -159,6 +159,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("budget:<role>:<usd> (0 < usd < 100, two decimals)")
         if name == "routes" and (len(args) > 1 or (args and not re.fullmatch(r"\d{1,3}", args[0]))):
             raise ValueError("routes[:<limit>]")
+        if name == "owner" and (len(args) != 2 or args[0] != "grant" or not OWNER_EMAIL_RE.fullmatch(args[1])):
+            raise ValueError("owner:grant:<email> (an account that already registered on the dashboard)")
         if name == "freezes" and args != ["lift-recovered"]:
             raise ValueError("freezes:lift-recovered")
         if name == "company" and not _company_args_ok(args):
@@ -1063,6 +1065,42 @@ def _by_source(rows: Sequence[Tuple]) -> Dict[str, int]:
     return out
 
 
+OWNER_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}")
+
+
+def _production() -> bool:
+    return "production" in (vs.env("ENVIRONMENT", "") + " " + vs.env("RAILWAY_ENVIRONMENT_NAME", "")).lower()
+
+
+def step_owner_grant(out: Out, base: str, token: str, conn, email: str) -> None:
+    """Make an EXISTING account an operator (staging has no SMTP, so the owner cannot verify by email).
+    The owner registers on the dashboard with their own password first; this step never creates a user
+    and never reads or writes a password. It marks the account verified on the database (like O01b) and
+    assigns the durable ``operator`` role through the operator API (POST /v1/society/operators ->
+    operator_auth.assign_role). Prints only {email prefix, existed, verified, role}. On production it runs
+    only when OWNER_GRANT_CONFIRM names the same email (never automatically)."""
+    prefix = email.split("@")[0]
+    if _production() and vs.env("OWNER_GRANT_CONFIRM", "").strip().lower() != email.lower():
+        out.check("owner", "G00", False, f"production: owner:grant:{prefix}@... runs only with OWNER_GRANT_CONFIRM set to the same email")
+        return
+    with conn.cursor() as cur:
+        row = _rows(cur, "SELECT id, email, is_email_verified FROM users WHERE lower(email) = lower(%s)", (email,))
+        if not row:
+            conn.rollback()
+            out.check("owner", "G01", False, f"no account for {prefix}@...: register on the dashboard first (this step never creates one)")
+            out.json("owner", "grant", {"email": prefix, "existed": False, "verified": False, "role": None})
+            return
+        user_id, stored_email, verified_before = row[0]
+        if not verified_before:
+            cur.execute("UPDATE users SET is_email_verified = TRUE WHERE id = %s", (user_id,))
+    conn.commit()
+    out.check("owner", "G01", True, f"account {prefix}@... exists; email verified on the database ({'already' if verified_before else 'now'})")
+    st, body = api("POST", f"{base}/v1/society/operators", token, {"email": stored_email, "role": "operator"})
+    role = body.get("role") if st == 200 and isinstance(body, dict) else None
+    out.check("owner", "G02", role == "operator", f"durable role via operator_auth.assign_role: HTTP {st}, role={role}")
+    out.json("owner", "grant", {"email": prefix, "existed": True, "verified": True, "role": role})
+
+
 def step_freezes(out: Out, base: str, token: str, conn) -> None:
     """Lift, through the operator API, ONLY the open freezes that outlived their cause
     (``OUTLIVED_FREEZES_SQL``). Any other freeze is never touched. Idempotent: a second run
@@ -1954,7 +1992,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes", "costs", "budget", "routes") and conn is None:
+            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes", "costs", "budget", "routes", "owner") and conn is None:
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -1998,6 +2036,8 @@ def main() -> int:
                 step_budget(out, conn, args[0], args[1])
             elif name == "routes":
                 step_routes(out, conn, int(args[0]) if args else 20)
+            elif name == "owner":
+                step_owner_grant(out, base, token, conn, args[1])
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence
             if conn is not None:
                 try:

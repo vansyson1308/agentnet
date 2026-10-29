@@ -102,6 +102,19 @@
       "intent": "Human signup form (the registry sends the verification email)."
     },
     {
+      "name": "owner_console",
+      "origin": "ui",
+      "path": "/owner",
+      "auth": "operator",
+      "initial_status": [302, 303],
+      "final_status": 200,
+      "final_path": "/login",
+      "markers": ["Sign In", "name=\"password\""],
+      "severity": "major",
+      "monitor": true,
+      "intent": "The Owner Console (auth required): operators only, decided by the registry's require_operator; anyone else signed in gets 403, an anonymous visitor the login page."
+    },
+    {
       "name": "api_health",
       "origin": "api",
       "path": "/healthz",

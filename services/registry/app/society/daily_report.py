@@ -38,7 +38,8 @@ def build(db: Session, now: Optional[datetime] = None) -> Dict[str, Any]:
             "builds": {"attempted": attempted, "delivered": delivered}, "ready": ready, "design_reviews": {k: int(v) for k, v in reviews.items()},
             "north_star": card.get("north_star"), "owner_actions_open": owner_actions.open_count(db),
             "ready_without_pr": [{k: b[k] for k in ("candidate", "reason", "requests")} for b in promotion_queue.ready_backlog(db, get_settings(), now)],
-            "change_budget": promotion_queue.caps(db, get_settings(), now), "rejections": rejections.breakdown(db)}
+            "change_budget": promotion_queue.caps(db, get_settings(), now), "rejections": rejections.breakdown(db),
+            "ready_candidates": promotion_queue.ready_view(db, get_settings(), now)}
     return {"data": data, "text": render(data, card, owner_actions.summary_lines(db))}
 
 

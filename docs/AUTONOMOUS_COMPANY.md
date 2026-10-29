@@ -464,3 +464,35 @@ decision path: a command runs the very code behind the operator routes.
   again), so a backlog never fires after an outage.
 - What is kept: a `boardroom.command` event with the command, the outcome, the id prefix and the
   operator's user id. The message text is never stored and never reaches the Society.
+
+## Owner Console and the directive ("Kim chỉ nam")
+
+Owner 2026-10-29: the Telegram boardroom is parked (flags stay off, code kept); the owner works from
+ONE dashboard page, `/owner`.
+
+- **Who**: operators only. The page calls the registry's operator routes with the signed-in user's
+  own token; `require_operator` (durable `users.society_role`) decides. Anonymous visitors go to
+  `/login`, anyone else signed in gets 403. The page itself makes no role decision and compares no
+  email. Every POST carries the session's CSRF token.
+- **What**: the north-star scorecard and the daily report; today's plan with Approve/Reject; owner
+  actions with Done/Dismiss; READY candidates with their PR link or the reason there is none, and the
+  change budget; open freezes with Lift; model budget and spend; a "New task" form
+  (`POST /company/tickets`, an owner ticket). All existing operator routes.
+- **The directive** (`society/directives.py`, `society_owner_directives`, migration
+  `0026_owner_directives`): the owner writes the company's direction in plain text and may pick the
+  objectives it serves (`POST /v1/society/company/directive`, operator; `GET` shows it, the earlier
+  ones and what came from it). Append-only (a DB trigger refuses rewrites and deletes), one active.
+  Every role sees it in its context as `owner_directive`, labelled owner input, after the policy text;
+  the daily plan multiplies the score of a ticket of its objectives by `1 + directives.WEIGHT` (1.0).
+  It grants nothing: grants, budgets, flags, `files_allowed`, the RED/merge law and auto-merge are
+  untouched, and no intent can write it. Scout and Governor turn it into tickets and owner actions
+  through the existing intents; the console lists the tickets of its objectives since it was set,
+  with their review, candidate and PR.
+- **The owner's account**: staging has no SMTP. The owner registers on the dashboard with their own
+  password, then the validator step `owner:grant:<email>` (`PHASE5_PLAN=owner:grant:<email>`) checks
+  the account exists (it never creates one or touches a password), marks it verified on the database
+  and assigns the durable `operator` role through `POST /v1/society/operators`
+  (`operator_auth.assign_role`). It prints only the email prefix, existed, verified and role. On
+  production it refuses unless `OWNER_GRANT_CONFIRM` names the same email: never automatic.
+- The public-surface contract names `/owner` (`owner_console`, auth required: an anonymous request
+  ends on the login page).

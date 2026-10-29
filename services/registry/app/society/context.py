@@ -54,6 +54,7 @@ from ..models import (
     Wallet,
     WalletOwnerType,
 )
+from . import directives
 from .config import SocietySettings
 from .engineering.docs_contract import (
     DOCS_ACCEPTANCE_TEST,
@@ -154,6 +155,9 @@ class AgentContext:
     # being worked on?" -- derived from durable intent/proposal rows, never
     # from what an agent remembers (_signal_coverage).
     signal_coverage: Dict[str, Any] = field(default_factory=dict)
+    # Owner Console: the owner's active directive ("Kim chi nam", directives.py), labelled owner
+    # input. Shown to every role after the policy text (restrictions); it grants nothing.
+    owner_directive: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -1220,5 +1224,6 @@ def build_context(
         promotions=_promotions(db, event),
         federation=_federation(db, grant),
         signal_coverage=_signal_coverage(db, agent, event, settings, now),
+        owner_directive=directives.context_view(db),
     )
     return ctx

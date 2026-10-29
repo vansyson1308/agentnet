@@ -1,0 +1,137 @@
+"""The Owner Console (/owner): operators only, decided by the registry.
+
+The page makes no role decision of its own: it calls the registry's operator routes with the
+signed-in user's token and turns the registry's 401/403 into sign-in/403. Every action is an
+existing operator route; a POST needs the session's CSRF token. The registry is stubbed at
+``ApiClient._request`` (no network)."""
+
+from __future__ import annotations
+
+import pathlib
+import re
+
+import pytest
+
+DASH = pathlib.Path(__file__).resolve().parents[1] / "app"
+PLAN_ID = "11111111-1111-4111-8111-111111111111"
+ACTION_ID = "22222222-2222-4222-8222-222222222222"
+INCIDENT_ID = "33333333-3333-4333-8333-333333333333"
+
+OPERATOR_DATA = {
+    "/v1/society/company/directive": {
+        "active": {"id": "d1", "text": "first paid USDC task on staging this week; focus on O4", "objective_ids": ["O4"], "created_at": "2026-10-29T08:00:00+00:00"},
+        "history": [], "weight": 1.0,
+        "following": [{"ticket_id": "t1", "title": "Quote and accept a paid USDC task", "objective_id": "O4", "status": "planned", "planned": True,
+                       "review": "reviewing", "candidate": None, "promotion": None, "pr_url": None}],
+        "objectives": [{"id": "O4", "title": "Revenue", "status": "active", "key_results": [{"metric_id": "paid_usdc_tasks_30d", "direction": "up"}]}],
+    },
+    "/v1/society/company/north-star": {"summary_text": "North star: $0.00 / $1,000,000"},
+    "/v1/society/company/report": {"text": "Last 24h: 1 cycle(s)", "data": {
+        "ready_candidates": [{"candidate": "feb64aa6", "title": "O4 doc", "promotion": "pr_open", "pr_number": 121, "pr_url": "https://github.com/o/r/pull/121", "reason": None}],
+        "change_budget": {"promotions_today": 1, "max_promotions_per_day": 3, "open_prs": 1, "max_open_autonomous_prs": 3, "auto_merge_enabled": False}}},
+    "/v1/society/company/plans": {"plans": [{"id": PLAN_ID, "plan_date": "2026-10-29", "status": "awaiting_owner",
+                                             "ranking": [{"title": "Quote and accept a paid USDC task", "objective_id": "O4", "score": 2.0, "owner_directive": "d1"}]}]},
+    "/v1/society/company/owner-actions": {"owner_actions": [{"id": ACTION_ID, "objective_id": "O4", "title": "Post the offer", "reason": "public post"}]},
+    "/v1/society/incidents": {"incidents": [{"id": INCIDENT_ID, "source": "fitness", "reason": "regressed", "openedAt": "2026-10-28", "liftedAt": None}]},
+    "/v1/society/budget": {"model_spend_today_usd": "1.20", "daily_model_budget_usd": "10", "remaining_usd": "8.80", "by_agent": []},
+}
+
+
+@pytest.fixture()
+def console(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    from services.dashboard.app import api_client as client_mod
+    from services.dashboard.app import main
+
+    calls = []
+    state = {"role": "operator"}
+
+    def stub(self, method, path, **kwargs):
+        auth = (kwargs.get("headers") or {}).get("Authorization")
+        calls.append((method, path, auth, kwargs.get("json")))
+        if path.startswith("/v1/society"):
+            if auth != "Bearer user-jwt":
+                raise client_mod.APIError("unauthorized", 401)
+            if state["role"] != "operator":
+                raise client_mod.APIError("forbidden", 403, "society operator role required")
+            if method == "GET" and path in OPERATOR_DATA:
+                return OPERATOR_DATA[path]
+            if method == "POST":
+                return {}
+        raise client_mod.APIError(f"not stubbed: {method} {path}", 404)
+
+    monkeypatch.setattr(client_mod.ApiClient, "_request", stub)
+    main.app.config.update(TESTING=True)
+    with main.app.test_client() as c:
+        yield c, calls, state
+
+
+def _sign_in(c):
+    with c.session_transaction() as s:
+        s["access_token"] = "user-jwt"
+
+
+def _csrf(c):
+    with c.session_transaction() as s:
+        return s.get("owner_csrf")
+
+
+def test_anonymous_visitors_are_sent_to_sign_in(console):
+    c, calls, _ = console
+    r = c.get("/owner")
+    assert r.status_code in (302, 303) and r.headers["Location"].endswith("/login")
+    assert not calls, "nothing is asked of the registry without a session"
+
+
+def test_a_signed_in_non_operator_gets_403_from_the_registry_decision(console):
+    c, calls, state = console
+    state["role"] = None
+    _sign_in(c)
+    r = c.get("/owner")
+    assert r.status_code == 403 and b"operators only" in r.data
+    assert calls and calls[0][2] == "Bearer user-jwt", "the registry decided, with the user's own token"
+
+
+def test_an_operator_sees_every_section_from_the_operator_api(console):
+    c, calls, _ = console
+    _sign_in(c)
+    r = c.get("/owner")
+    html = r.data.decode()
+    assert r.status_code == 200 and "Owner Console" in html
+    for marker in ("Kim chỉ nam", "first paid USDC task on staging", "What came from it", "North star", "Today's plan", "Approve",
+                   "Owner actions", "Post the offer", "READY candidates", "PR #121", "Open freezes", "Lift", "Budget and spend", "New task"):
+        assert marker in html, marker
+    assert {p for m, p, _, _ in calls if m == "GET"} == set(OPERATOR_DATA), "only the existing operator routes (+ the directive)"
+
+
+def test_actions_post_to_operator_routes_with_the_users_token_and_csrf(console):
+    c, calls, _ = console
+    _sign_in(c)
+    c.get("/owner")
+    token = _csrf(c)
+    calls.clear()
+    assert c.post("/owner/directive", data={"csrf": "wrong", "text": "x"}).status_code == 302
+    assert not calls, "a POST without the session's CSRF token reaches nothing"
+    c.post("/owner/directive", data={"csrf": token, "text": "focus on O4", "objective_ids": ["O4"]})
+    c.post(f"/owner/plans/{PLAN_ID}/approve", data={"csrf": token})
+    c.post(f"/owner/owner-actions/{ACTION_ID}/done", data={"csrf": token, "note": "posted"})
+    c.post(f"/owner/incidents/{INCIDENT_ID}/lift", data={"csrf": token})
+    c.post("/owner/tickets", data={"csrf": token, "title": "T", "problem": "P", "objective_id": "O4", "metric_id": "paid_usdc_tasks_30d",
+                                   "expected_effect": "1", "direction": "up", "proof": "tests/test_x.py::test_y"})
+    posts = [(p, body) for m, p, auth, body in calls if m == "POST" and auth == "Bearer user-jwt"]
+    assert posts == [
+        ("/v1/society/company/directive", {"text": "focus on O4", "objective_ids": ["O4"]}),
+        (f"/v1/society/company/plans/{PLAN_ID}/approve", {}),
+        (f"/v1/society/company/owner-actions/{ACTION_ID}/done", {"note": "posted"}),
+        (f"/v1/society/incidents/{INCIDENT_ID}/lift", {"reason": "lifted by the owner from the Owner Console"}),
+        ("/v1/society/company/tickets", {"title": "T", "problem": "P", "objective_id": "O4", "metric_id": "paid_usdc_tasks_30d",
+                                        "expected_effect": 1.0, "direction": "up", "proof": ["tests/test_x.py::test_y"]}),
+    ]
+
+
+def test_the_console_makes_no_role_decision_of_its_own():
+    """No client-side checks, no email comparisons: authority is the registry's require_operator."""
+    src = (DASH / "main.py").read_text(encoding="utf-8")
+    console_src = "\n".join(line for line in src[src.index("OWNER CONSOLE"):].splitlines() if not line.lstrip().startswith("#"))
+    assert not re.search(r"email|society_role|is_operator|OPERATOR_EMAILS|BOOTSTRAP", console_src, re.IGNORECASE)
+    assert "Authorization" not in src.split("OWNER CONSOLE")[0], "the token is never put on shared headers"
