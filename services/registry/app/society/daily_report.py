@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
-from . import goals, owner_actions, promotion_queue, rejections
+from . import funnel, goals, owner_actions, promotion_queue, rejections
 from .config import get_settings
 from .events import utcnow
 
@@ -39,7 +39,7 @@ def build(db: Session, now: Optional[datetime] = None) -> Dict[str, Any]:
             "north_star": card.get("north_star"), "owner_actions_open": owner_actions.open_count(db),
             "ready_without_pr": [{k: b[k] for k in ("candidate", "reason", "requests")} for b in promotion_queue.ready_backlog(db, get_settings(), now, from_worker=True)],
             "change_budget": promotion_queue.worker_view_caps(db, get_settings(), now), "rejections": rejections.breakdown(db),
-            "ready_candidates": promotion_queue.ready_view(db, get_settings(), now)}
+            "ready_candidates": promotion_queue.ready_view(db, get_settings(), now), "funnel": funnel.funnel(db, now, hours=24)}
     return {"data": data, "text": render(data, card, owner_actions.summary_lines(db))}
 
 
@@ -55,6 +55,7 @@ def render(d: Dict[str, Any], card: Dict[str, Any], actions: list) -> str:
              f" (provider {cb.get('provider')}, auto-merge {'on' if cb.get('auto_merge_enabled') else 'off'})",
              rejections.summary(d["rejections"]) if d.get("rejections") else "Rejected: n/a",
              f"Design reviews: {reviews}",
+             funnel.summary(d["funnel"]) if d.get("funnel") else "Funnel: n/a",
              goals.summary(card) if card.get("north_star") else "no north star in the charter",
              f"Owner actions waiting: {d['owner_actions_open']}"] + actions
     return "\n".join(lines)

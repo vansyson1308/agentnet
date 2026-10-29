@@ -65,6 +65,9 @@
     <h2>🧭 Kim chỉ nam — the company's direction</h2>
     {% if dir.active %}
     <p class="oc-pre">{{ dir.active.text }}</p>
+    {% if dir.active.objective_ids and dir.active.objective_ids|length > 2 %}
+    <div class="alert alert-warning">{{ dir.active.objective_ids|length }} objectives selected: everything ×2 = no priority. Pick at most 2.</div>
+    {% endif %}
     <p class="oc-muted">Since {{ dir.active.created_at }}{% if dir.active.objective_ids %} · objectives {{ dir.active.objective_ids | join(", ") }} (their tickets rank ×{{ 1 + (dir.weight or 0) }} in the plan){% else %} · no objective picked{% endif %}</p>
     {% elif d.directive is none %}
     <p class="oc-muted">The directive is unavailable right now.</p>
@@ -94,6 +97,31 @@
     </table>
     {% elif dir.active %}
     <p class="oc-muted">Nothing yet: the Governor and the Scout start on it now; its tickets are ranked into a plan as soon as they are filed (see the conversation above).</p>
+    {% endif %}
+</div>
+
+{% set f = d.funnel %}
+<div class="oc-card" style="margin-bottom:1rem;">
+    <h2>🏭 Throughput funnel ({{ f.window_hours if f else 24 }}h)</h2>
+    {% if f %}
+    <p class="oc-muted">Spend ${{ "%.2f"|format(f.spend_usd) }} · runs {% for r, n in (f.runs_by_role or {}).items() %}{{ r }} {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}
+        · $/READY {{ f.usd_per_ready if f.usd_per_ready is not none else "n/a" }} · $/PR {{ f.usd_per_pr if f.usd_per_pr is not none else "n/a" }}</p>
+    <table>
+        <tr><th>Tickets created</th><th>Approved</th><th>Designs go</th><th>Returned</th><th>Builds delivered / attempted</th><th>READY</th><th>PRs</th><th>CI green</th><th>Merged</th></tr>
+        <tr><td>{{ f.tickets_created }}</td><td>{{ f.tickets_approved }}</td><td>{{ f.designs_go }}</td><td>{{ f.designs_returned }}</td>
+            <td>{{ f.builds_delivered }} / {{ f.builds_attempted }}</td><td>{{ f.ready }}</td><td>{{ f.prs_opened }}</td><td>{{ f.ci_green }}</td><td>{{ f.merged }}</td></tr>
+    </table>
+    {% if f.bottleneck %}<p><strong>Bottleneck now:</strong> {{ f.bottleneck.stage }} — {{ f.bottleneck.waiting }} waiting, median {{ f.bottleneck.median_h }}h, oldest {{ f.bottleneck.oldest_h }}h</p>{% endif %}
+    {% if f.rejections %}<p class="oc-muted">Rejected: {% for k, v in f.rejections.items() %}{{ k }} {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+    <table>
+        <tr><th>2h from</th><th>$</th><th>Tickets</th><th>Approved</th><th>Go</th><th>Built</th><th>READY</th><th>PRs</th><th>Merged</th></tr>
+        {% for b in f.by_2h or [] %}
+        <tr><td>{{ b["from"][11:16] }}</td><td>{{ "%.2f"|format(b.spend_usd) }}</td><td>{{ b.tickets_created }}</td><td>{{ b.tickets_approved }}</td><td>{{ b.designs_go }}</td>
+            <td>{{ b.builds_delivered }}</td><td>{{ b.ready }}</td><td>{{ b.prs_opened }}</td><td>{{ b.merged }}</td></tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p class="oc-muted">The funnel is unavailable right now.</p>
     {% endif %}
 </div>
 

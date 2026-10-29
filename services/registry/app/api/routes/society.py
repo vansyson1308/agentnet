@@ -923,6 +923,15 @@ def get_owner_thread(db: Session = Depends(get_db), operator: User = Depends(req
     return {**owner_thread.view(db, limit), "slo": owner_thread.slo(db)}
 
 
+@router.get("/company/funnel")
+def get_company_funnel(db: Session = Depends(get_db), operator: User = Depends(require_operator), hours: int = Query(24, ge=2, le=168)):
+    """The throughput funnel (society/funnel.py): spend, runs by role, tickets, designs, builds, READY,
+    PRs, CI, merges, rejections, $/READY, $/PR, 2-hour buckets and the current bottleneck."""
+    from ...society import funnel
+
+    return funnel.funnel(db, hours=hours)
+
+
 @router.get("/company/tickets")
 def list_tickets(db: Session = Depends(get_db), operator: User = Depends(require_operator), limit: int = Query(50, ge=1, le=200)):
     from sqlalchemy import text

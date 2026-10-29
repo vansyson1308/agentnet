@@ -805,9 +805,9 @@ def _respond_to_owner(ctx: ExecContext) -> ExecOutcome:
 
     p = ctx.validated.payload
     try:
-        made = owner_thread.answer(ctx.db, correlation_id=ctx.run.correlation_id, agent_id=ctx.agent.id, reply=p.reply, plan_steps=list(p.plan_steps),
+        made = owner_thread.answer(ctx.db, correlation_id=ctx.run.correlation_id, agent_id=ctx.agent.id, reply=p.reply, plan_steps=[st.model_dump() for st in p.plan_steps],
                                    ticket_ids=[str(t) for t in p.ticket_ids], owner_actions_needed=list(p.owner_actions_needed),
-                                   credentials=(ctx.settings.model_api_key,), now=utcnow())
+                                   credentials=(ctx.settings.model_api_key,), now=utcnow(), run_id=ctx.run.id)
     except ValueError as exc:
         raise ExecutionError(str(exc)) from exc
     ev = _emit(ctx, EventType.OWNER_REPLIED, {"owner_entry_id": made["owner_entry_id"], "reply_id": made["reply_id"], "tickets": len(made["ticket_ids"])})

@@ -315,7 +315,10 @@ OWNER_SECTIONS = {
     "incidents": "/incidents",
     "budget": "/budget",
     "thread": "/company/owner-thread",
+    "funnel": "/company/funnel",
 }
+#: a direction that selects more objectives than this sets no priority (owner 2026-10-29)
+DIRECTIVE_FOCUS = 2
 
 
 def _owner_token() -> str:
@@ -382,6 +385,9 @@ def _owner_action(path: str, body: dict, done: str):
 @app.route("/owner/directive", methods=["POST"])
 def owner_set_directive():
     text = (request.form.get("text") or "").strip()
+    picked = request.form.getlist("objective_ids")
+    if len(picked) > DIRECTIVE_FOCUS:
+        flash(f"{len(picked)} objectives selected: everything x2 = no priority. Pick at most {DIRECTIVE_FOCUS} to give the plan a direction.", "warning")
     return _owner_action("/company/directive", {"text": text, "objective_ids": request.form.getlist("objective_ids")}, "Directive set: the company is starting on it now -- the Governor answers below.")
 
 

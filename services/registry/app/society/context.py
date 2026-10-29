@@ -1228,6 +1228,6 @@ def build_context(
         federation=_federation(db, grant),
         signal_coverage=_signal_coverage(db, agent, event, settings, now),
         owner_directive=directives.context_view(db),
-        owner_request=owner_thread.context_view(db, event),
+        owner_request=owner_thread.context_view(db, event, settings, now),
     )
     return ctx
