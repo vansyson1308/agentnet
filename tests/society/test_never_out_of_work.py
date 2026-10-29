@@ -89,6 +89,7 @@ def test_the_governor_turns_an_owner_message_into_tickets_planned_in_minutes(db,
     rows = db.execute(text("SELECT title, source, status, plan_id FROM society_tickets ORDER BY created_at")).mappings().all()
     assert [r["title"] for r in rows] == titles, _intents(db)
     assert {r["source"] for r in rows} == {"owner_story"}, "an owner story's tickets say so (the funnel counts them by source)"
+    assert {o for (o,) in db.execute(text("SELECT origin FROM society_tickets")).all()} == {"message"}, "and what the owner said: a message (or a directive)"
     assert all(r["status"] == "planned" and r["plan_id"] for r in rows), ("ranked into a plan in the same lane pass", [dict(r) for r in rows], settings.company_cycle_enabled)
     assert company_mod.active_hypothesis_count(db, settings) == 0, "a ticket waiting for its plan is backlog, not a hypothesis holding the cap"
     e = owner_thread.view(db)["entries"][0]

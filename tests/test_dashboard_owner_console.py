@@ -54,6 +54,8 @@ OPERATOR_DATA = {
     "/v1/society/company/funnel": {"window_hours": 24, "as_of": "2026-10-29T12:00:00+00:00", "spend_usd": 42.5, "runs_by_role": {"builder": 30, "governor": 12},
                                    "tickets_created": 9, "tickets_approved": 7, "designs_go": 5, "designs_returned": 2, "builds_attempted": 6, "builds_delivered": 4,
                                    "ready": 3, "prs_opened": 2, "ci_green": 1, "merged": 0, "usd_per_ready": 14.17, "usd_per_pr": 21.25,
+                                   "usd_per_hour": 1.77, "budget_usd": 80.0, "spend_pct_of_budget": 53.1, "tickets_by_source": {"generator": 5, "directive": 3, "owner": 1},
+                                   "roles": {"builder": {"worked": 30, "idle": 6, "idle_pct": 16.7, "queued": 2, "spend_usd": 30.0}},
                                    "rejections": {"spec_outside_files_allowed": 2}, "stages": [],
                                    "bottleneck": {"stage": "qa_security", "waiting": 3, "oldest_h": 5.0, "median_h": 3.5},
                                    "by_2h": [{"from": "2026-10-29T10:00:00+00:00", "to": "2026-10-29T12:00:00+00:00", "spend_usd": 6.0, "tickets_created": 2,
@@ -128,7 +130,8 @@ def test_an_operator_sees_every_section_from_the_operator_api(console):
                    "file the O4 ticket", "Needs you: post the offer", "from this directive", "p95 70.0s / 120s", "no data",
                    "→ ticket t1aaaaaa (planned)", "→ REQUEST_PR_PROMOTION (executed)", "· next", "Work started", "promotion_id=44444444",
                    "→ first work started p95 95.0s / 300s", "Throughput funnel (24h)", "Spend $42.50", "$/READY 14.17", "$/PR 21.25",
-                   "Bottleneck now:</strong> qa_security", "spec_outside_files_allowed 2"):
+                   "Bottleneck now:</strong> qa_security", "spec_outside_files_allowed 2", "$1.77/hour", "53.1% of the window", "Tickets by source: generator 5, directive 3",
+                   "<td>builder</td><td>30</td><td>6</td><td>16.7</td><td>2</td>"):
         assert marker in html, marker
     assert {p for m, p, _, _ in calls if m == "GET"} == set(OPERATOR_DATA), "only the existing operator routes (+ the directive)"
 

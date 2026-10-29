@@ -105,7 +105,18 @@
     <h2>🏭 Throughput funnel ({{ f.window_hours if f else 24 }}h)</h2>
     {% if f %}
     <p class="oc-muted">Spend ${{ "%.2f"|format(f.spend_usd) }} · runs {% for r, n in (f.runs_by_role or {}).items() %}{{ r }} {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}
-        · $/READY {{ f.usd_per_ready if f.usd_per_ready is not none else "n/a" }} · $/PR {{ f.usd_per_pr if f.usd_per_pr is not none else "n/a" }}</p>
+        · $/READY {{ f.usd_per_ready if f.usd_per_ready is not none else "n/a" }} · $/PR {{ f.usd_per_pr if f.usd_per_pr is not none else "n/a" }}
+        {% if f.get("usd_per_hour") is not none %}· ${{ "%.2f"|format(f.usd_per_hour) }}/hour{% endif %}
+        {% if f.get("budget_usd") %}· {{ f.spend_pct_of_budget }}% of the window's budget (${{ "%.2f"|format(f.budget_usd) }}){% endif %}</p>
+    {% if f.get("tickets_by_source") %}<p class="oc-muted">Tickets by source: {% for k, v in f.tickets_by_source.items() %}{{ k }} {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+    {% if f.get("roles") %}
+    <table>
+        <tr><th>Role</th><th>Runs worked</th><th>Idle wakes</th><th>Idle %</th><th>Queue now</th><th>$</th></tr>
+        {% for r, v in f.roles|dictsort %}
+        <tr><td>{{ r }}</td><td>{{ v.worked }}</td><td>{{ v.idle }}</td><td>{{ v.idle_pct if v.idle_pct is not none else "–" }}</td><td>{{ v.queued }}</td><td>{{ "%.2f"|format(v.spend_usd) }}</td></tr>
+        {% endfor %}
+    </table>
+    {% endif %}
     <table>
         <tr><th>Tickets created</th><th>Approved</th><th>Designs go</th><th>Returned</th><th>Builds delivered / attempted</th><th>READY</th><th>PRs</th><th>CI green</th><th>Merged</th></tr>
         <tr><td>{{ f.tickets_created }}</td><td>{{ f.tickets_approved }}</td><td>{{ f.designs_go }}</td><td>{{ f.designs_returned }}</td>
