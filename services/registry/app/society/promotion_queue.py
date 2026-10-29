@@ -12,8 +12,8 @@ Now, deterministically:
   promoted and needs a rebuild), ``cap_promotions_per_day``, ``cap_open_prs``, ``refused`` (the
   last request's refusal) or ``awaiting_request``; with how far its base is behind main;
 - :func:`retry_deferred` re-wakes the Governor for the oldest such candidates while there is
-  capacity, at most once per candidate per UTC day, with the original READY payload in a fresh
-  system story. It adds no authority: the same role gets the same wake, and the request still goes
+  capacity, once per candidate per capacity change (:func:`capacity_token`: a cap raised, a
+  promotion ended, a new UTC day), with the original READY payload in a fresh system story. It adds no authority: the same role gets the same wake, and the request still goes
   through policy, the change budgets and the controller. A candidate whose promotion ended is
   never re-offered (the owner's close stands);
 - :func:`settle_ended` moves a READY row whose promotion already ended to its terminal status
@@ -207,11 +207,23 @@ def ready_view(db: Session, settings: SocietySettings, now: Optional[datetime] =
     return out
 
 
+def capacity_token(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> str:
+    """Changes exactly when promotion capacity can have appeared: a cap raised, a promotion ended (a PR
+    closed, merged or failed: ``ended`` counts them), or a new UTC day (the per-day cap resets)."""
+    now = now or utcnow()
+    ended = int(db.query(CodePromotion).filter(CodePromotion.status.notin_(ACTIVE_STATUSES)).count())
+    return f"{now.date().isoformat()}/d{settings.max_promotions_per_day}/o{settings.max_open_autonomous_prs}/e{ended}"
+
+
 def retry_deferred(db: Session, settings: SocietySettings, now: Optional[datetime] = None) -> int:
-    """Re-offer the oldest waiting READY candidates to the Governor while capacity lasts. Commits when it emitted."""
+    """Re-offer the oldest waiting READY candidates to the Governor while capacity lasts -- once per
+    candidate per :func:`capacity_token`, i.e. as soon as capacity can have appeared (owner 2026-10-29:
+    not once per UTC day). A wake younger than RETRY_AFTER is still the Governor's unless capacity
+    changed since it was sent. Commits when it emitted."""
     now = now or utcnow()
     cap = capacity(db, settings, now)
     slots = min(cap["promotions_left_today"], cap["open_pr_slots"])
+    token = capacity_token(db, settings, now)
     sent = 0
     for item in ready_backlog(db, settings, now):
         if sent >= slots:
@@ -219,20 +231,21 @@ def retry_deferred(db: Session, settings: SocietySettings, now: Optional[datetim
         if item["reason"] not in ("awaiting_request", "refused"):
             continue
         last = _last_wake(db, item["candidate_id"])
-        if last is not None and last.created_at > now - RETRY_AFTER:
-            continue  # the Governor still has its wake
-        payload = {k: v for k, v in dict((last.payload if last is not None else None) or {}).items() if k not in ("redelivered_from", "promotion_retry")}
+        if last is not None and last.created_at > now - RETRY_AFTER and (last.payload or {}).get("capacity_token") in (None, token):
+            continue  # the Governor still has its wake, and capacity did not change since
+        payload = {k: v for k, v in dict((last.payload if last is not None else None) or {}).items()
+                   if k not in ("redelivered_from", "promotion_retry", "capacity_token")}
         payload.setdefault("candidate_id", item["candidate_id"])
-        new = emit_event(db, event_type=EventType.CODE_CANDIDATE_READY, payload={**payload, "promotion_retry": item["reason"]}, actor_type="system",
-                         subject_type="code_candidate", subject_id=uuid.UUID(item["candidate_id"]),
-                         idempotency_key=f"{KEY_PREFIX}{item['candidate_id']}:{now.date().isoformat()}")
+        new = emit_event(db, event_type=EventType.CODE_CANDIDATE_READY, payload={**payload, "promotion_retry": item["reason"], "capacity_token": token},
+                         actor_type="system", subject_type="code_candidate", subject_id=uuid.UUID(item["candidate_id"]),
+                         idempotency_key=f"{KEY_PREFIX}{item['candidate_id']}:{token}")
         if getattr(new, "deduplicated", False):
             continue
         sent += 1
-        logger.info("promotion retry: candidate %s re-offered to the Governor (%s)", item["candidate"], item["reason"])
+        logger.info("promotion retry: candidate %s re-offered to the Governor (%s, capacity %s)", item["candidate"], item["reason"], token)
     if sent:
         db.commit()
     return sent
 
 
-__all__ = ["capacity", "caps", "ready_backlog", "ready_view", "retry_deferred", "settle_ended", "worker_caps", "worker_view_caps"]
+__all__ = ["capacity", "capacity_token", "caps", "ready_backlog", "ready_view", "retry_deferred", "settle_ended", "worker_caps", "worker_view_caps"]

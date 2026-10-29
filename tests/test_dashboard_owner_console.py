@@ -36,16 +36,28 @@ OPERATOR_DATA = {
     "/v1/society/budget": {"model_spend_today_usd": "1.20", "daily_model_budget_usd": "10", "remaining_usd": "8.80", "by_agent": []},
     "/v1/society/company/owner-thread": {"working": True, "entries": [
         {"id": "e2", "kind": "message", "text": "find our first paying external agent", "refs": {}, "created_at": "2026-10-29T09:30:00+00:00",
-         "status": "working", "reply": None, "plans": [], "tickets": []},
+         "status": "working", "reply": None, "plans": [], "tickets": [], "work": []},
         {"id": "e1", "kind": "directive", "text": "focus on O4", "refs": {"directive_id": "d1"}, "created_at": "2026-10-29T09:21:00+00:00",
-         "status": "answered", "reply": {"text": "Understood: O4 first. The Scout files the quote ticket now.", "plan_steps": ["file the O4 ticket", "design review"],
+         "status": "answered", "reply": {"text": "Understood: O4 first. The Scout files the quote ticket now.", "plan_steps": [{"step": "file the O4 ticket", "state": "ticket", "ticket_id": "t1aaaaaa-x", "status": "planned"},
+                                                                                                                                  {"step": "request the PR", "state": "started", "type": "REQUEST_PR_PROMOTION", "status": "executed"},
+                                                                                                                                  {"step": "design review", "state": "next"}],
                                          "ticket_ids": ["t1"], "owner_actions_needed": ["post the offer"], "created_at": "2026-10-29T09:22:10+00:00"},
+         "work": [{"type": "REQUEST_PR_PROMOTION", "role": "governor", "status": "executed", "policy": "allowed",
+                   "result": {"promotion_id": "44444444-4444-4444-8444-444444444444"}, "error": None}],
          "plans": [{"id": PLAN_ID, "status": "awaiting_owner"}],
          "tickets": [{"ticket_id": "t1", "title": "Quote and accept a paid USDC task", "objective_id": "O4", "status": "planned", "planned": True,
                       "review": None, "candidate": None, "promotion": None, "pr_url": None}]}],
         "slo": {"window_days": 7, "first_run_start": {"n": 2, "p95_s": 4.2, "target_s": 30, "late_unanswered": 0, "ok": True},
                 "reply": {"n": 1, "p95_s": 70.0, "target_s": 120, "late_unanswered": 0, "ok": True},
+                "first_work": {"n": 1, "p95_s": 95.0, "target_s": 300, "late_unanswered": 0, "ok": True},
                 "directive_to_plan": {"n": 0, "p95_s": None, "target_s": 600, "late_unanswered": 0, "ok": None}}},
+    "/v1/society/company/funnel": {"window_hours": 24, "as_of": "2026-10-29T12:00:00+00:00", "spend_usd": 42.5, "runs_by_role": {"builder": 30, "governor": 12},
+                                   "tickets_created": 9, "tickets_approved": 7, "designs_go": 5, "designs_returned": 2, "builds_attempted": 6, "builds_delivered": 4,
+                                   "ready": 3, "prs_opened": 2, "ci_green": 1, "merged": 0, "usd_per_ready": 14.17, "usd_per_pr": 21.25,
+                                   "rejections": {"spec_outside_files_allowed": 2}, "stages": [],
+                                   "bottleneck": {"stage": "qa_security", "waiting": 3, "oldest_h": 5.0, "median_h": 3.5},
+                                   "by_2h": [{"from": "2026-10-29T10:00:00+00:00", "to": "2026-10-29T12:00:00+00:00", "spend_usd": 6.0, "tickets_created": 2,
+                                              "tickets_approved": 1, "designs_go": 1, "builds_delivered": 1, "ready": 1, "prs_opened": 1, "merged": 0}]},
 }
 
 
@@ -113,7 +125,10 @@ def test_an_operator_sees_every_section_from_the_operator_api(console):
     for marker in ("Kim chỉ nam", "first paid USDC task on staging", "What came from it", "North star", "Today's plan", "Approve",
                    "Owner actions", "Post the offer", "READY candidates", "PR #121", "Open freezes", "Lift", "Budget and spend", "New task",
                    "Ra lệnh / hỏi công ty", "find our first paying external agent", "⚙️ working", "✅ answered", "Understood: O4 first.",
-                   "file the O4 ticket", "Needs you: post the offer", "from this directive", "p95 70.0s / 120s", "no data"):
+                   "file the O4 ticket", "Needs you: post the offer", "from this directive", "p95 70.0s / 120s", "no data",
+                   "→ ticket t1aaaaaa (planned)", "→ REQUEST_PR_PROMOTION (executed)", "· next", "Work started", "promotion_id=44444444",
+                   "→ first work started p95 95.0s / 300s", "Throughput funnel (24h)", "Spend $42.50", "$/READY 14.17", "$/PR 21.25",
+                   "Bottleneck now:</strong> qa_security", "spec_outside_files_allowed 2"):
         assert marker in html, marker
     assert {p for m, p, _, _ in calls if m == "GET"} == set(OPERATOR_DATA), "only the existing operator routes (+ the directive)"
 
@@ -173,3 +188,37 @@ def test_the_console_makes_no_role_decision_of_its_own():
     console_src = "\n".join(line for line in src[src.index("OWNER CONSOLE"):].splitlines() if not line.lstrip().startswith("#"))
     assert not re.search(r"email|society_role|is_operator|OPERATOR_EMAILS|BOOTSTRAP", console_src, re.IGNORECASE)
     assert "Authorization" not in src.split("OWNER CONSOLE")[0], "the token is never put on shared headers"
+
+
+def test_a_direction_with_more_than_two_objectives_is_flagged_as_no_priority(console):
+    """Owner 2026-10-29: 'everything x2 = no priority' -- the console warns, the registry still decides."""
+    c, calls, _ = console
+    _sign_in(c)
+    c.get("/owner")
+    token = _csrf(c)
+    calls.clear()
+    r = c.post("/owner/directive", data={"csrf": token, "text": "do it all", "objective_ids": ["O1", "O2", "O4"]}, follow_redirects=True)
+    assert "3 objectives selected: everything x2 = no priority" in r.data.decode()
+    assert ("POST", "/v1/society/company/directive") in [(m, p) for m, p, _, _ in calls], "a warning, not a block"
+    calls.clear()
+    c.post("/owner/directive", data={"csrf": token, "text": "focus", "objective_ids": ["O4", "O2"]})
+    assert "no priority" not in c.get("/owner").data.decode()
+    active = OPERATOR_DATA["/v1/society/company/directive"]["active"]
+    OPERATOR_DATA["/v1/society/company/directive"]["active"] = dict(active, objective_ids=["O1", "O2", "O3"])
+    try:
+        assert "3 objectives selected: everything ×2 = no priority" in c.get("/owner").data.decode(), "the active direction is flagged too"
+    finally:
+        OPERATOR_DATA["/v1/society/company/directive"]["active"] = active
+
+
+def test_an_answer_with_no_work_says_words_only(console):
+    c, _, _ = console
+    _sign_in(c)
+    thread = OPERATOR_DATA["/v1/society/company/owner-thread"]
+    answered = dict(thread["entries"][1], work=[])
+    OPERATOR_DATA["/v1/society/company/owner-thread"] = dict(thread, entries=[answered])
+    try:
+        html = c.get("/owner/thread").data.decode()
+    finally:
+        OPERATOR_DATA["/v1/society/company/owner-thread"] = thread
+    assert "No work started yet: words only." in html and "Work started</th>" not in html

@@ -73,7 +73,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes", "costs", "budget", "routes", "owner")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes", "costs", "budget", "routes", "owner", "funnel")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -162,6 +162,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("routes[:<limit>]")
         if name == "owner" and args != ["slo"] and (len(args) != 2 or args[0] != "grant" or not OWNER_EMAIL_RE.fullmatch(args[1])):
             raise ValueError("owner:grant:<email> (an account that already registered on the dashboard) | owner:slo")
+        if name == "funnel" and (len(args) > 1 or (args and not re.fullmatch(r"\d{1,3}", args[0])) or (args and not 2 <= int(args[0]) <= 168)):
+            raise ValueError("funnel[:<hours 2..168>]")
         if name == "freezes" and args != ["lift-recovered"]:
             raise ValueError("freezes:lift-recovered")
         if name == "company" and not _company_args_ok(args):
@@ -1103,7 +1105,7 @@ def step_owner_grant(out: Out, base: str, token: str, conn, email: str) -> None:
 
 
 OWNER_SLO_NAMES = (("first_run_start", "L01", "owner event -> first run start"), ("reply", "L02", "owner event -> Governor reply"),
-                   ("directive_to_plan", "L03", "directive -> first ticket in a plan"))
+                   ("directive_to_plan", "L03", "directive -> first ticket in a plan"), ("first_work", "L04", "owner event -> first side-effecting intent executed"))
 
 
 def step_owner_slo(out: Out, base: str, token: str) -> None:
@@ -1123,6 +1125,22 @@ def step_owner_slo(out: Out, base: str, token: str) -> None:
     out.json("owner", "slo", slo)
     out.json("owner", "thread", [{"kind": e.get("kind"), "status": e.get("status"), "created_at": e.get("created_at"), "replied": bool(e.get("reply")),
                                   "tickets": len(e.get("tickets") or []), "plans": len(e.get("plans") or [])} for e in body.get("entries") or []])
+
+
+def step_funnel(out: Out, base: str, token: str, hours: int) -> None:
+    """Read-only: the throughput funnel (society/funnel.py) from the operator API -- spend, runs by role,
+    tickets, designs, builds, READY, PRs, CI, merges, rejections, $/READY, $/PR, 2-hour buckets and the
+    stage where work waits longest. Counts only."""
+    st, body = api("GET", f"{base}/v1/society/company/funnel?hours={hours}", token)
+    if not out.check("funnel", "F00", st == 200 and isinstance(body, dict), f"GET company/funnel?hours={hours} HTTP {st}"):
+        return
+    b = body.get("bottleneck") or {}
+    out.info("funnel", f"{hours}h: ${body.get('spend_usd')} | tickets {body.get('tickets_created')}/{body.get('tickets_approved')} | designs go {body.get('designs_go')} "
+                       f"returned {body.get('designs_returned')} | builds {body.get('builds_delivered')}/{body.get('builds_attempted')} | READY {body.get('ready')} | "
+                       f"PRs {body.get('prs_opened')} CI green {body.get('ci_green')} merged {body.get('merged')} | $/READY {body.get('usd_per_ready')} $/PR {body.get('usd_per_pr')} | "
+                       f"bottleneck {b.get('stage', 'none')} ({b.get('waiting', 0)} waiting, median {b.get('median_h')}h)")
+    out.check("funnel", "F01", len(body.get("by_2h") or []) >= 1 and isinstance(body.get("stages"), list), f"{len(body.get('by_2h') or [])} 2h bucket(s), {len(body.get('stages') or [])} stages")
+    out.json("funnel", "funnel", body)
 
 
 def step_freezes(out: Out, base: str, token: str, conn) -> None:
@@ -2151,6 +2169,8 @@ def main() -> int:
                 step_budget(out, conn, args[0], args[1])
             elif name == "routes":
                 step_routes(out, conn, int(args[0]) if args else 20)
+            elif name == "funnel":
+                step_funnel(out, base, token, int(args[0]) if args else 24)
             elif name == "owner" and args == ["slo"]:
                 step_owner_slo(out, base, token)
             elif name == "owner":

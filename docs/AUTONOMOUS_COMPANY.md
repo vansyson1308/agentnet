@@ -386,8 +386,11 @@ Each cycle wakes the roles that subscribe to `company.cycle` once, so more cycle
   promotion has one reason -- `promotion_<status>` (ended, e.g. the owner closed the PR; never
   re-offered), `provider_disabled`, `cap_promotions_per_day`, `cap_open_prs`, `refused`,
   `awaiting_request`. While capacity lasts the oldest waiting ones are re-offered to the Governor
-  (a fresh system `code_candidate.ready`, once per candidate per UTC day, after its last wake is
-  1h old). The request still goes through policy, the change budgets and the controller. The daily
+  (a fresh system `code_candidate.ready`) once per candidate per `capacity_token` -- the UTC day, the
+  two caps and the number of ended promotions -- so a re-offer goes out as soon as capacity can have
+  appeared (a cap raised, a PR closed or merged, a promotion ended), not the next day (owner
+  2026-10-29). A wake younger than 1h is still the Governor's unless capacity changed since it was
+  sent. The request still goes through policy, the change budgets and the controller. The daily
   report lists them (`READY without a PR`), the validator in `promotions` (`P04`).
 - **A red PR is still a PR** (staging 2026-10-28: #115, `ci_failed` and closed by the owner, held
   the only open-PR slot for 40h and both real READY candidates were refused). The controller keeps
@@ -530,5 +533,33 @@ intents and nothing here grants anything.
 - **SLOs** (`owner_thread.slo`, on `/owner` and validator step `owner:slo`): owner event → first run
   start p95 < 30 s; → Governor reply p95 < 2 min; directive → first ticket in a plan < 10 min. An owner
   row left unanswered (or a directive unplanned) past its target counts against it.
+- **Live truth, not memory** (owner 2026-10-29: the Governor said "1 PR open" and "only e14a7bb1" while
+  `/owner` showed 0/5 open and 3 READY). Every role's context in an owner story carries
+  `owner_request.portfolio` (`owner_thread.portfolio`), read from the DB at run time and labelled
+  LIVE DATA: READY candidates with their promotion reason (`promotion_queue.ready_view`, the worker's
+  caps), the change budget (promotions today, open PRs, caps), today's plan, tickets by status and in
+  flight, candidates in flight, and the model budget left (daily, owner reserve, per role). The prompt
+  says a count or status stated to the owner comes from this block, never from memory. Structural
+  only: ids, titles, statuses, numbers; no payloads, no secrets.
+- **Words → work.** In an owner story the Governor's decision carries its normal intents
+  (`REQUEST_PR_PROMOTION`, `CREATE_IMPROVEMENT`, `DECIDE_DESIGN`, `PROPOSE_OWNER_ACTION`, ...)
+  together with `RESPOND_TO_OWNER`; the reply runs last, so each `plan_steps` item
+  `{step, intent | ticket_id}` is linked to the sibling intent (1-based position in the decision) or
+  ticket that started it, with that intent's real status. A step with neither is shown as `next`; a
+  reference that names nothing is counted (`unlinked_steps`), never shown as started. Each message on
+  `/owner` lists the side-effecting intents its story executed and their results ("Work started"), or
+  "No work started yet: words only." Nothing here adds authority: each intent still goes through
+  policy, budgets and the controller.
+- **SLO first work**: owner message → first side-effecting intent EXECUTED in its story, p95 < 5 min
+  (`first_work`, validator `L04`); a row older than 5 min with no work counts against it.
+- **Throughput funnel** (`society/funnel.py`, `GET /company/funnel?hours=` operator-only, the
+  `/owner` card, the daily report line, a `society.funnel` worker log line every 2 h, validator
+  `funnel:<hours>`): spend and runs by role, tickets created/approved, designs go/returned, builds
+  attempted/delivered, fresh READY, PRs opened, CI green, merged, rejections by reason, $/READY and
+  $/PR, the same numbers in 2-hour buckets, and the bottleneck: the stage (ticket proposed → plan
+  awaiting owner → approved awaiting design → design review → build → QA/Security → READY awaiting PR
+  → PR CI → PR awaiting merge) whose waiting work has the highest median wait right now.
+- **Focus warning**: a directive that selects more than 2 objectives gets a warning on `/owner`
+  ("everything x2 = no priority"); it is still saved, the registry decides.
 - The READY list on `/owner` and the daily report judge "no PR" with the WORKER's provider and caps
   (its last heartbeat's `change_budget`, the `P05` source), not the registry's own env.

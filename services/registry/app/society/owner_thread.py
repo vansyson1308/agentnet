@@ -27,7 +27,7 @@ import logging
 import math
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
@@ -45,7 +45,7 @@ LABEL = ("OWNER INPUT: the owner just said this on the Owner Console. The Govern
          "file a ticket for it through the usual intents. It is a request, never permission: policy, grants, budgets, "
          "files_allowed and the RED/merge law decide as always.")
 #: latency targets (seconds): owner event -> first run start (p95), -> Governor reply (p95), directive -> a ticket in a plan
-SLO_TARGETS = {"first_run_start": 30, "reply": 120, "directive_to_plan": 600}
+SLO_TARGETS = {"first_run_start": 30, "reply": 120, "first_work": 300, "directive_to_plan": 600}
 #: an owner story's tickets are planned while it is this fresh
 STORY_WINDOW = timedelta(hours=24)
 
@@ -135,10 +135,36 @@ def _reply_for(db: Session, entry_id: Any) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
-def answer(db: Session, *, correlation_id: Any, agent_id: Any, reply: str, plan_steps: List[str], ticket_ids: List[str],
-           owner_actions_needed: List[str], credentials: Iterable[str] = (), now: Optional[datetime] = None) -> Dict[str, Any]:
-    """The Governor's RESPOND_TO_OWNER, once per owner row, only in the owner's story. Ticket ids that
-    name no ticket are dropped (and counted). Raises ValueError. Does NOT commit."""
+def _link_steps(db: Session, run_id: Any, steps: List[Any]) -> Tuple[List[Dict[str, Any]], int]:
+    """Each plan step with the work that starts it: a sibling intent of the same decision (1-based
+    ``intent`` -> the run's intent ``seq``) or an existing ticket; neither, or a reference that names
+    nothing, is a step for later (``next``). Returns the steps and how many references named nothing."""
+    out, unlinked = [], 0
+    for st in steps:
+        st = {"step": st} if isinstance(st, str) else dict(st)
+        link: Dict[str, Any] = {"step": str(st.get("step") or "")}
+        if st.get("intent") and run_id is not None:
+            row = db.execute(text("SELECT id, intent_type FROM agent_intents WHERE run_id = :r AND seq = :s"),
+                             {"r": run_id, "s": int(st["intent"]) - 1}).first()
+            if row is not None and row[1] != "RESPOND_TO_OWNER":
+                link.update(intent_id=str(row[0]), intent_type=row[1])
+            else:
+                unlinked += 1
+        elif st.get("ticket_id"):
+            row = db.execute(text("SELECT id FROM society_tickets WHERE id::text = :t"), {"t": str(st["ticket_id"])}).first()
+            if row is not None:
+                link["ticket_id"] = str(row[0])
+            else:
+                unlinked += 1
+        out.append(link)
+    return out, unlinked
+
+
+def answer(db: Session, *, correlation_id: Any, agent_id: Any, reply: str, plan_steps: List[Any], ticket_ids: List[str],
+           owner_actions_needed: List[str], credentials: Iterable[str] = (), now: Optional[datetime] = None, run_id: Any = None) -> Dict[str, Any]:
+    """The Governor's RESPOND_TO_OWNER, once per owner row, only in the owner's story. Each plan step
+    is linked to the sibling intent (``run_id``'s) or ticket that starts it (:func:`_link_steps`);
+    ticket ids that name no ticket are dropped (and counted). Raises ValueError. Does NOT commit."""
     entry = entry_for_correlation(db, correlation_id)
     if entry is None:
         raise ValueError("RESPOND_TO_OWNER answers the owner event that opened this story; this story has none")
@@ -147,23 +173,77 @@ def answer(db: Session, *, correlation_id: Any, agent_id: Any, reply: str, plan_
     ids = list(dict.fromkeys(str(t) for t in ticket_ids))
     known = {str(r[0]) for r in db.execute(text("SELECT id FROM society_tickets WHERE id::text IN :ids").bindparams(bindparam("ids", expanding=True)),
                                            {"ids": ids}).fetchall()} if ids else set()
-    payload = {"plan_steps": list(plan_steps), "ticket_ids": [t for t in ids if t in known], "owner_actions_needed": list(owner_actions_needed),
-               **({"unknown_ticket_ids": len([t for t in ids if t not in known])} if len(known) < len(ids) else {})}
+    steps, unlinked = _link_steps(db, run_id, plan_steps)
+    payload = {"plan_steps": steps, "ticket_ids": [t for t in ids if t in known], "owner_actions_needed": list(owner_actions_needed),
+               **({"unknown_ticket_ids": len([t for t in ids if t not in known])} if len(known) < len(ids) else {}),
+               **({"unlinked_steps": unlinked} if unlinked else {})}
     rid = uuid.uuid4()
     _insert(db, entry_id=rid, author="company", kind="reply", body=_clean(" ".join(reply.split()), "reply", credentials),
             payload=_clean(payload, "payload", credentials), agent_id=agent_id, reply_to=entry["id"], now=now or utcnow())
-    return {"reply_id": str(rid), "owner_entry_id": str(entry["id"]), "ticket_ids": payload["ticket_ids"]}
+    return {"reply_id": str(rid), "owner_entry_id": str(entry["id"]), "ticket_ids": payload["ticket_ids"],
+            "started": [st["intent_type"] for st in steps if st.get("intent_id")], "unlinked_steps": unlinked}
 
 
-def context_view(db: Session, event: Any) -> Dict[str, Any]:
-    """What a role sees in an owner story (``AgentContext.owner_request``): the owner's words, labelled."""
+PORTFOLIO_LABEL = ("LIVE DATA read from the database when this run started -- not memory, not earlier messages. Every id, "
+                   "count or status you state to the owner comes from this block; where memory or an earlier reply disagrees, "
+                   "this block is right. A READY candidate listed here can be promoted (REQUEST_PR_PROMOTION) when "
+                   "change_budget has room; the controller still decides.")
+#: rows per list in the live block (it rides every run of an owner story)
+PORTFOLIO_LIMIT = 8
+#: candidate statuses still moving (not READY, not terminal)
+IN_FLIGHT = ("requested", "building", "built", "qa_running", "qa_passed", "qa_failed", "security_review")
+
+
+def portfolio(db: Session, settings: Any, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """The company's live state for an owner story (owner 2026-10-29: the Governor reasoned from
+    stale memory -- "only e14a7bb1", "1 PR open" -- while /owner showed 3 READY and 0/5 PRs). Read
+    from the database at run time with the same code /owner uses; structural fields and our own
+    labels only."""
+    from . import policy, promotion_queue  # noqa: PLC0415
+
+    now = now or utcnow()
+    ready = [{k: r.get(k) for k in ("candidate_id", "title", "risk_tier", "promotion", "pr_number", "reason", "detail")}
+             for r in promotion_queue.ready_view(db, settings, now, limit=PORTFOLIO_LIMIT)]
+    caps = promotion_queue.worker_view_caps(db, settings, now)
+    plan = db.execute(text("SELECT id, plan_date, status, ranking FROM society_daily_plans ORDER BY created_at DESC LIMIT 1")).mappings().first()
+    by_status = {r[0]: int(r[1]) for r in db.execute(text(
+        "SELECT status, COUNT(*) FROM society_tickets WHERE status NOT IN ('merged', 'closed', 'refused', 'already_satisfied') GROUP BY 1")).all()}
+    tickets_ = [{"ticket_id": str(r[0]), "title": r[1], "status": r[2], "objective_id": r[3]} for r in db.execute(text(
+        "SELECT id, title, status, objective_id FROM society_tickets WHERE status IN ('proposed', 'planned', 'approved', 'building') "
+        "ORDER BY updated_at DESC LIMIT :n"), {"n": PORTFOLIO_LIMIT}).all()]
+    cands = [{"candidate_id": str(r[0]), "title": r[1], "status": r[2]} for r in db.execute(text(
+        "SELECT id, title, status FROM code_candidates WHERE status IN :s ORDER BY updated_at DESC LIMIT :n").bindparams(
+        bindparam("s", expanding=True)), {"s": list(IN_FLIGHT), "n": PORTFOLIO_LIMIT}).all()]
+    spent = policy.spend_today_usd(db, now=now)
+    reserve = float(getattr(settings, "owner_reserve_usd", 0) or 0)
+    roles = [{"role": r[0], "spent_usd": round(float(r[2] or 0), 4), "budget_usd": float(r[1] or 0)} for r in db.execute(text(
+        "SELECT g.role, g.daily_model_budget_usd, (SELECT COALESCE(SUM(r.cost_usd), 0) FROM agent_runs r WHERE r.agent_id = g.agent_id AND r.created_at >= :d) "
+        "FROM agent_capability_grants g ORDER BY g.role"), {"d": now.replace(hour=0, minute=0, second=0, microsecond=0)}).all()]
+    return {"label": PORTFOLIO_LABEL, "as_of": now.isoformat(),
+            "ready_candidates": ready,
+            "change_budget": {k: caps.get(k) for k in ("promotions_today", "max_promotions_per_day", "open_prs", "max_open_autonomous_prs", "provider", "auto_merge_enabled")},
+            "today_plan": ({"plan_id": str(plan["id"]), "plan_date": str(plan["plan_date"]), "status": plan["status"],
+                            "tickets": [{"ticket_id": t.get("ticket_id"), "title": t.get("title")} for t in (plan["ranking"] or [])][:PORTFOLIO_LIMIT]} if plan else None),
+            "tickets_by_status": by_status, "tickets_in_flight": tickets_, "candidates_in_flight": cands,
+            "budget": {"daily_model_budget_usd": float(settings.daily_model_budget_usd), "spent_today_usd": round(float(spent), 4),
+                       "left_usd": round(max(0.0, float(settings.daily_model_budget_usd) - float(spent)), 4),
+                       **({"owner_reserve_left_usd": round(max(0.0, reserve - float(policy.owner_spend_today_usd(db, now))), 4)} if reserve > 0 else {}),
+                       "roles": roles}}
+
+
+def context_view(db: Session, event: Any, settings: Any = None, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """What a role sees in an owner story (``AgentContext.owner_request``): the owner's words, labelled,
+    and -- with ``settings`` -- the live portfolio (:func:`portfolio`)."""
     if event is None or event.correlation_id is None:
         return {}
     entry = entry_for_correlation(db, event.correlation_id)
     if entry is None:
         return {}
-    return {"label": LABEL, "kind": entry["kind"], "text": entry["text"], "refs": entry["payload"] or {},
-            "answered": _reply_for(db, entry["id"]) is not None}
+    out = {"label": LABEL, "kind": entry["kind"], "text": entry["text"], "refs": entry["payload"] or {},
+           "answered": _reply_for(db, entry["id"]) is not None}
+    if settings is not None:
+        out["portfolio"] = portfolio(db, settings, now)
+    return out
 
 
 # ── what came from it ────────────────────────────────────────────────────
@@ -214,9 +294,53 @@ def _status(db: Session, ev: Optional[Dict[str, Any]], replied: bool) -> str:
     return "no_reply"
 
 
+#: result keys worth showing per intent on the Owner Console (ids and statuses, never text)
+_RESULT_KEYS = ("proposal_id", "ticket_id", "promotion_id", "candidate_id", "owner_action_id", "review_id", "status", "duplicate", "did")
+
+
+def _work(db: Session, correlation_id: Any, limit: int = 12) -> List[Dict[str, Any]]:
+    """The side-effecting intents of an owner story (RESPOND_TO_OWNER aside), oldest first, with
+    their CURRENT status and the ids/statuses they produced."""
+    from .memory_grounding import is_side_effecting  # noqa: PLC0415
+
+    rows = db.execute(text(
+        "SELECT i.id, i.intent_type, i.execution_status, i.policy_decision, i.result, i.error, i.executed_at, r.role "
+        "FROM agent_intents i JOIN agent_runs r ON r.id = i.run_id WHERE r.correlation_id = :c AND i.intent_type <> 'RESPOND_TO_OWNER' "
+        "ORDER BY i.created_at, i.seq"), {"c": correlation_id}).all()
+    out = []
+    for iid, itype, status, decision, result, error, executed_at, role in rows:
+        if not is_side_effecting(itype):
+            continue
+        res = (result or {}).get("result") if isinstance(result, dict) else None
+        out.append({"intent_id": str(iid), "type": itype, "role": role, "status": str(status), "policy": str(decision),
+                    "result": {k: res[k] for k in _RESULT_KEYS if isinstance(res, dict) and k in res},
+                    "error": (error or "")[:200] or None, "executed_at": executed_at.isoformat() if executed_at else None})
+    return out[:limit]
+
+
+def _steps_view(db: Session, steps: List[Any], work: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    by_id = {w["intent_id"]: w for w in work}
+    out = []
+    for st in steps or []:
+        st = {"step": st} if isinstance(st, str) else dict(st)
+        if st.get("intent_id"):
+            w = by_id.get(st["intent_id"])
+            if w is None:
+                row = db.execute(text("SELECT intent_type, execution_status FROM agent_intents WHERE id::text = :i"), {"i": st["intent_id"]}).first()
+                w = {"type": row[0], "status": str(row[1])} if row else {"type": st.get("intent_type"), "status": "unknown"}
+            out.append({"step": st["step"], "state": "started", "intent_id": st["intent_id"], "type": w["type"], "status": w["status"]})
+        elif st.get("ticket_id"):
+            row = db.execute(text("SELECT title, status FROM society_tickets WHERE id::text = :t"), {"t": st["ticket_id"]}).first()
+            out.append({"step": st["step"], "state": "ticket", "ticket_id": st["ticket_id"], "status": row[1] if row else "unknown"})
+        else:
+            out.append({"step": st["step"], "state": "next"})
+    return out
+
+
 def view(db: Session, limit: int = 20) -> Dict[str, Any]:
     """The Owner Console's conversation, newest first: each owner row, its status, the company's reply
-    and what came from it (tickets, plans, design reviews, candidates, PRs)."""
+    (each plan step with the intent or ticket that started it, or ``next``), the intents the story
+    executed and their results, and what came from it (tickets, plans, design reviews, candidates, PRs)."""
     rows = db.execute(text("SELECT id, kind, text, payload, created_at FROM society_owner_thread WHERE author = 'owner' ORDER BY created_at DESC LIMIT :n"),
                       {"n": int(limit)}).mappings().all()
     out = []
@@ -227,14 +351,18 @@ def view(db: Session, limit: int = 20) -> Dict[str, Any]:
         ids = [str(refs["ticket_id"])] if refs.get("ticket_id") else []
         if rep:
             ids += list((rep["payload"] or {}).get("ticket_ids") or [])
+        work = _work(db, ev["correlation_id"]) if ev is not None else []
         if ev is not None:
             ids += _story_ticket_ids(db, ev["correlation_id"])
         plans = db.execute(text("SELECT id, status, ticket_ids FROM society_daily_plans WHERE owner_entry_id = :e ORDER BY created_at"), {"e": r["id"]}).mappings().all()
         for p in plans:
             ids += [str(t) for t in (p["ticket_ids"] or [])]
+        reply = None
+        if rep:
+            pay = dict(rep["payload"] or {})
+            reply = {"text": rep["text"], **pay, "plan_steps": _steps_view(db, pay.get("plan_steps") or [], work), "created_at": rep["created_at"].isoformat()}
         out.append({"id": str(r["id"]), "kind": r["kind"], "text": r["text"], "refs": refs, "created_at": r["created_at"].isoformat(),
-                    "status": _status(db, ev, rep is not None),
-                    "reply": ({"text": rep["text"], **(rep["payload"] or {}), "created_at": rep["created_at"].isoformat()} if rep else None),
+                    "status": _status(db, ev, rep is not None), "reply": reply, "work": work,
                     "plans": [{"id": str(p["id"]), "status": p["status"]} for p in plans],
                     "tickets": _tickets_view(db, list(dict.fromkeys(ids)))})
     return {"entries": out, "working": any(e["status"] in ("received", "working") for e in out)}
@@ -281,8 +409,16 @@ def _metric(xs: List[float], target: int, late: int = 0) -> Dict[str, Any]:
             "ok": None if p95 is None and not late else bool(p95 is not None and p95 < target and not late)}
 
 
+def _quiet_types() -> List[str]:
+    """Intent types that start no work: the reply itself and the non-side-effecting ones."""
+    from .memory_grounding import NON_SIDE_EFFECT_TYPES  # noqa: PLC0415
+
+    return sorted(NON_SIDE_EFFECT_TYPES | {"RESPOND_TO_OWNER"})
+
+
 def slo(db: Session, now: Optional[datetime] = None, days: int = 7) -> Dict[str, Any]:
-    """Owner event -> first run start (p95 < 30 s), -> Governor reply (p95 < 2 min), directive ->
+    """Owner event -> first run start (p95 < 30 s), -> Governor reply (p95 < 2 min), -> first
+    side-effecting intent executed (p95 < 5 min: words -> work), directive ->
     first ticket in a plan (< 10 min), over ``days``. A still-unanswered owner row older than a target
     counts against it."""
     now = now or utcnow()
@@ -298,6 +434,17 @@ def slo(db: Session, now: Optional[datetime] = None, days: int = 7) -> Dict[str,
         "SELECT COUNT(*) FROM society_owner_thread o WHERE o.author = 'owner' AND o.created_at >= :s AND o.created_at < :late "
         "AND NOT EXISTS (SELECT 1 FROM society_owner_thread c WHERE c.reply_to = o.id)"),
         {"s": since, "late": now - timedelta(seconds=SLO_TARGETS["reply"])}).scalar() or 0
+    work = db.execute(text(
+        "SELECT EXTRACT(EPOCH FROM (MIN(i.executed_at) - o.created_at)) FROM society_owner_thread o "
+        "JOIN society_events e ON e.idempotency_key = 'owner:' || o.id::text JOIN agent_runs r ON r.correlation_id = e.correlation_id "
+        "JOIN agent_intents i ON i.run_id = r.id WHERE o.author = 'owner' AND o.created_at >= :s AND i.execution_status = 'executed' "
+        "AND i.intent_type NOT IN :quiet GROUP BY o.id").bindparams(bindparam("quiet", expanding=True)), {"s": since, "quiet": _quiet_types()}).fetchall()
+    idle = db.execute(text(
+        "SELECT COUNT(*) FROM society_owner_thread o JOIN society_events e ON e.idempotency_key = 'owner:' || o.id::text "
+        "WHERE o.author = 'owner' AND o.created_at >= :s AND o.created_at < :late AND NOT EXISTS ("
+        " SELECT 1 FROM agent_runs r JOIN agent_intents i ON i.run_id = r.id WHERE r.correlation_id = e.correlation_id "
+        " AND i.execution_status = 'executed' AND i.intent_type NOT IN :quiet)").bindparams(bindparam("quiet", expanding=True)),
+        {"s": since, "late": now - timedelta(seconds=SLO_TARGETS["first_work"]), "quiet": _quiet_types()}).scalar() or 0
     plans = db.execute(text(
         "SELECT EXTRACT(EPOCH FROM (MIN(p.created_at) - o.created_at)) FROM society_owner_thread o JOIN society_daily_plans p "
         "ON (p.owner_entry_id = o.id OR p.directive_id::text = o.payload ->> 'directive_id') AND p.created_at >= o.created_at "
@@ -309,7 +456,8 @@ def slo(db: Session, now: Optional[datetime] = None, days: int = 7) -> Dict[str,
     return {"window_days": days,
             "first_run_start": _metric([float(r[0]) for r in starts], SLO_TARGETS["first_run_start"]),
             "reply": _metric([float(r[0]) for r in replies], SLO_TARGETS["reply"], int(unanswered)),
+            "first_work": _metric([float(r[0]) for r in work], SLO_TARGETS["first_work"], int(idle)),
             "directive_to_plan": _metric([float(r[0]) for r in plans], SLO_TARGETS["directive_to_plan"], int(unplanned))}
 
 
-__all__ = ["KINDS", "LABEL", "SLO_TARGETS", "answer", "context_view", "directive_set", "entry_for_correlation", "plan_owner_stories", "record", "slo", "story_ticket_count", "view"]
+__all__ = ["KINDS", "LABEL", "SLO_TARGETS", "answer", "context_view", "directive_set", "entry_for_correlation", "plan_owner_stories", "portfolio", "record", "slo", "story_ticket_count", "view"]

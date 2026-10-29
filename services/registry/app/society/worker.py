@@ -61,6 +61,7 @@ from . import fitness as fitness_mod
 from . import memory_grounding
 from . import outcomes as outcomes_mod
 from . import owner_thread as owner_thread_mod
+from . import funnel as funnel_mod
 from . import tickets as tickets_mod
 from . import design_review as design_review_mod
 from ..a2a.federation import directory as a2a_directory
@@ -269,6 +270,7 @@ class SocietyWorker:
         # owner is answered in seconds even while this loop is inside a long build or controller pass.
         self._listen_dsn = listen_dsn
         self._owner_thread = None
+        self._funnel_logged_at = float("-inf")  # the first loop logs the funnel
 
     # ── dispatch ───────────────────────────────────────────────────────
 
@@ -299,9 +301,17 @@ class SocietyWorker:
                 candidate_health_mod.sweep(db, self.settings)
                 # A READY candidate whose promotion request was refused (a change
                 # budget) or never made is re-offered to the Governor while there is
-                # capacity, once a day (promotion_queue.py).
+                # capacity, once per capacity change (promotion_queue.py).
                 promotion_queue_mod.settle_ended(db)
                 promotion_queue_mod.retry_deferred(db, self.settings)
+                # The throughput funnel, one structural log line every 2 h (funnel.py).
+                if time.monotonic() - self._funnel_logged_at >= funnel_mod.BUCKET.total_seconds():
+                    self._funnel_logged_at = time.monotonic()
+                    try:
+                        funnel_mod.log_snapshot(db)
+                    except Exception:  # noqa: BLE001 -- a report never blocks the loop
+                        db.rollback()
+                        logger.exception("society.funnel snapshot failed")
                 # The owner's read-only daily digest to the one operator chat (boardroom.py; off by default).
                 boardroom_mod.maybe_send_digest(db, self.settings, boardroom_telegram.sender(self.settings))
                 # A linked operator's commands from that chat run the operator API's code (boardroom_commands.py; off by default).
