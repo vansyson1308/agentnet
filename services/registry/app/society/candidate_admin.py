@@ -37,6 +37,7 @@ MAX_REASON_CHARS = 1000
 TERMINAL_STATUSES = (
     CodeCandidateStatus.REJECTED,
     CodeCandidateStatus.FAILED,
+    CodeCandidateStatus.MERGED,
 )
 #: A promotion in any of these states put the change somewhere real.
 PROMOTED_STATUSES = (PromotionStatus.MERGED.value,)

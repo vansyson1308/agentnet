@@ -37,7 +37,7 @@ FAILS_OF_3 = 1
 #: Where a bench gap is fixed: the builder harness the bench measures (never the task's files).
 HARNESS_PATHS = ("services/registry/app/maintenance/harness.py", "services/registry/app/maintenance/activities.py",
                  "services/registry/app/maintenance/repo_tools.py", "services/registry/app/society/engineering/build_engine.py")
-_OPEN = (CodeCandidateStatus.READY, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED)
+_OPEN = (CodeCandidateStatus.READY, CodeCandidateStatus.MERGED, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED)
 
 
 def running_revision(settings: SocietySettings) -> str:

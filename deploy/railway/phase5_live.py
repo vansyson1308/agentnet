@@ -1412,6 +1412,59 @@ def step_candidates(out: Out, conn, limit: int) -> None:
         )
     out.check("candidates", "N01", True, f"{len(view)} candidate(s); statuses={sorted({v['status'] for v in view})}")
     out.json("candidates", "records", view)
+    with conn.cursor() as cur:
+        rej = rejection_breakdown(cur)
+    out.check("candidates", "R01", True, f"rejected since {rej['since'][:16]}Z: {rej['rejected']} -- "
+              + (", ".join(f"{k} {v}" for k, v in rej["by_reason"].items()) or "none") + f"; spec gate refused {rej['spec_gate_refusals']} design(s) before a build")
+    out.json("candidates", "rejections", rej)
+
+
+# ── rejections by structured reason: a VERBATIM copy of services/registry/app/society/rejections.py
+# (classify + its tables); tests/society/test_rejections.py asserts the two agree. ──
+SINCE_SPEC_GATE = datetime(2026, 10, 27, 4, 47, tzinfo=timezone.utc)
+QA_CHECKS = {"no_self_judging": "no_self_judging", "allow_list": "outside_files_allowed", "test_first_red_on_base": "test_first_red",
+             "test_first_green_on_head": "test_first_green", "ci_collects_new_tests": "ci_orphan", "test_first_intact": "test_first_tampered",
+             "acceptance_tests": "acceptance_failed", "acceptance_tests_exist": "acceptance_failed"}
+
+
+def classify_rejection(event: Optional[Dict[str, Any]], qa_failures: Optional[Sequence[str]], security_verdict: Optional[str], error: Optional[str]) -> str:
+    event = event if isinstance(event, dict) else {}
+    if (error or "").startswith("closed_by_owner"):
+        return "closed_by_owner"
+    if event.get("declined"):
+        # the Builder could not meet the spec inside files_allowed: the design was out of scope
+        return "outside_files_allowed" if event.get("reason_code") == "spec_outside_files_allowed" else "declined"
+    if event.get("build_attempts_exhausted"):
+        return "build_attempts_exhausted"
+    if event.get("already_satisfied"):
+        return "already_satisfied"
+    if event.get("red_on_base") is not None:
+        return "red_on_base"
+    if event.get("test_first_green") is not None:
+        return "test_first_red"
+    if event.get("busywork"):
+        return "busywork"
+    if security_verdict == "fail":
+        return "security"
+    names = [str(f).split(":", 1)[0].strip() for f in (qa_failures or [])]
+    for name in names:
+        if name in QA_CHECKS:
+            return QA_CHECKS[name]
+    return "qa_other" if names else "other"
+
+
+def rejection_breakdown(cur, since: datetime = SINCE_SPEC_GATE) -> Dict[str, Any]:
+    rows = _rows(cur, """
+        SELECT c.qa_report -> 'failures', c.security_report ->> 'verdict', c.error,
+               (SELECT e.payload FROM society_events e WHERE e.subject_id = c.id AND e.event_type = 'code_candidate.rejected' ORDER BY e.created_at DESC LIMIT 1)
+        FROM code_candidates c WHERE c.status::text = 'rejected' AND c.updated_at >= %s""", (since,))
+    by: Dict[str, int] = {}
+    for failures, verdict, error, payload in rows:
+        reason = classify_rejection(payload, failures if isinstance(failures, list) else [], verdict, error)
+        by[reason] = by.get(reason, 0) + 1
+    gate = _rows(cur, """SELECT COUNT(*) FROM agent_intents WHERE created_at >= %s AND ((intent_type = 'PROPOSE_DESIGN' AND result ->> 'did' = 'gate_refused')
+                         OR error LIKE 'spec gate:%%')""", (since,))[0][0]
+    return {"since": since.isoformat(), "rejected": len(rows), "by_reason": dict(sorted(by.items(), key=lambda kv: (-kv[1], kv[0]))), "spec_gate_refusals": int(gate or 0)}
 
 
 def step_promotions(out: Out, conn, limit: int) -> None:
@@ -1481,6 +1534,29 @@ def step_promotions(out: Out, conn, limit: int) -> None:
               + "".join(f"; [{w['candidate']}] requests={w['requests']} last={w['last_request']} {w['last_error'] or ''} ended={w['ended_promotion'] or '-'} wakes={w['ready_wakes']}"
                         for w in waiting[:5]))
     out.json("promotions", "ready_without_promotion", waiting)
+    with conn.cursor() as cur:
+        budget = change_budget(cur)
+    out.check("promotions", "P05", budget["caps"] is not None,
+              f"change budget in effect: {budget['caps']} (heartbeat {budget['at'] or '-'}); counted open PRs now {budget['open_prs']}; "
+              f"ci_failed promotions {budget['ci_failed']}, READY rows whose promotion already ended {budget['ready_ended']}")
+    out.json("promotions", "change_budget", budget)
+
+
+#: promotion.OPEN_PR_STATUSES as text
+OPEN_PR = ("pr_open", "ci_pending", "ci_passed", "ci_failed", "awaiting_approval", "merge_eligible")
+
+
+def change_budget(cur) -> Dict[str, Any]:
+    """The worker's change budget as its last heartbeat reported it (promotion_queue.caps), and what the rows count now."""
+    hb = _rows(cur, "SELECT payload, created_at FROM society_events WHERE event_type IN ('society.heartbeat', 'society.heartbeat.idle') "
+                    "AND payload -> 'change_budget' IS NOT NULL ORDER BY created_at DESC LIMIT 1")
+    open_now = _rows(cur, "SELECT COUNT(*) FROM code_promotions WHERE status::text = ANY(%s)", (list(OPEN_PR),))[0][0]
+    ci_failed = _rows(cur, "SELECT COUNT(*) FROM code_promotions WHERE status::text = 'ci_failed'")[0][0]
+    ended = _rows(cur, """SELECT COUNT(*) FROM code_candidates c WHERE c.status::text = 'ready' AND EXISTS (
+                              SELECT 1 FROM code_promotions p WHERE p.candidate_id = c.id AND p.status::text IN ('merged', 'rejected')
+                              AND p.created_at = (SELECT max(q.created_at) FROM code_promotions q WHERE q.candidate_id = c.id))""")[0][0]
+    return {"caps": (hb[0][0] or {}).get("change_budget") if hb else None, "at": hb[0][1].isoformat() if hb else None,
+            "open_prs": int(open_now or 0), "ci_failed": int(ci_failed or 0), "ready_ended": int(ended or 0)}
 
 
 #: promotion.ACTIVE_STATUSES as text (tests/society/test_promotion_queue.py asserts they are identical).

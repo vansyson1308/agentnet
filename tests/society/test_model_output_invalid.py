@@ -118,9 +118,10 @@ def test_invalid_output_carries_the_call_accounting(monkeypatch):
         asyncio.run(OpenAICompatibleModel(settings, transport=transport).decide(_context()))
     a = err.value.attempt
     assert a.provider == "openai_compatible" and a.model_name == "test-model"
-    assert a.tokens_in == 1000 and a.tokens_out == 200 and a.requests == 1
-    # 1000 * 0.01/1K + 200 * 0.03/1K
-    assert a.cost_usd == Decimal("0.016000")
+    # the reply and its one corrective turn, both billed
+    assert a.tokens_in == 2000 and a.tokens_out == 400 and a.requests == 2
+    # 2 x (1000 * 0.01/1K + 200 * 0.03/1K)
+    assert a.cost_usd == Decimal("0.032000")
     assert a.output_format == "json_object" and a.finish_reason == "stop"
     # still the strict validation error the worker already handles
     assert isinstance(err.value, DecisionValidationError)
@@ -173,3 +174,35 @@ def test_shape_masks_letters_and_digits_and_keeps_json_structure():
     assert detail.startswith(f"char {MALFORMED.index('no_high_value_change')} of {len(MALFORMED)}; shape ")
     assert len(detail) < 80  # bounded
     assert json_error_detail("not json", ValueError("x")) == "8 chars"
+
+
+def test_one_corrective_turn_before_a_run_goes_dead(monkeypatch):
+    """Staging 2026-10-28: an Architect run went DEAD on a reply that began with '<'. The model gets
+    ONE more turn, told why in our words (never its own reply echoed back); the second answer counts."""
+    settings = _settings(monkeypatch)
+    sent = []
+    replies = iter(["<thinking>let me plan</thinking>", '{"decision_summary": "ok", "intents": []}'])
+
+    async def transport(payload):
+        sent.append(payload["messages"][-1]["content"])
+        return _answer(next(replies), prompt_tokens=1000, completion_tokens=200)
+
+    model = OpenAICompatibleModel(settings, transport=transport)
+    resp = asyncio.run(model.decide(_context()))
+    assert resp.decision.decision_summary == "ok" and resp.requests == 2
+    assert resp.tokens_in == 2000 and resp.tokens_out == 400 and resp.cost_usd == Decimal("0.032000"), "both turns are billed"
+    assert "YOUR PREVIOUS REPLY WAS REJECTED" not in sent[0] and "YOUR PREVIOUS REPLY WAS REJECTED" in sent[1]
+    assert "thinking" not in sent[1] and "let me plan" not in sent[1], "the rejected reply is never sent back"
+
+
+def test_the_corrective_turn_is_bounded_to_one(monkeypatch):
+    settings = _settings(monkeypatch)
+    calls = []
+
+    async def transport(payload):
+        calls.append(1)
+        return _answer("<html>no</html>")
+
+    with pytest.raises(ModelOutputInvalid, match="corrective_turns=1"):
+        asyncio.run(OpenAICompatibleModel(settings, transport=transport).decide(_context()))
+    assert len(calls) == 2

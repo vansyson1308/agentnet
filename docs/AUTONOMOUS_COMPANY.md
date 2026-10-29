@@ -389,6 +389,32 @@ Each cycle wakes the roles that subscribe to `company.cycle` once, so more cycle
   (a fresh system `code_candidate.ready`, once per candidate per UTC day, after its last wake is
   1h old). The request still goes through policy, the change budgets and the controller. The daily
   report lists them (`READY without a PR`), the validator in `promotions` (`P04`).
+- **A red PR is still a PR** (staging 2026-10-28: #115, `ci_failed` and closed by the owner, held
+  the only open-PR slot for 40h and both real READY candidates were refused). The controller keeps
+  reading `ci_failed` promotions at the poll interval: a closed PR ends the promotion `rejected`
+  (`closed_by_owner: ...`) and its candidate `rejected`; a human merge ends both `merged` (a new
+  candidate status: the change is on main); checks that re-run go back to `ci_pending`.
+  `promotion_queue.settle_ended` moves older READY rows whose promotion already ended the same way,
+  so `ready=N` counts only work still waiting. `stale_base` names a READY candidate whose base is no
+  longer an ancestor of main (it needs a rebuild and is not re-offered); a base merely behind main
+  is fine -- the open PR is reconciled with GitHub's update-branch. The change budget in effect
+  (`promotion_queue.caps`: per-day and open-PR caps, what is spent, provider, auto-merge) is in
+  every heartbeat payload, the daily report and the validator (`P05`). Raising the open-PR cap is
+  the owner's env change (`SOCIETY_MAX_OPEN_AUTONOMOUS_PRS`, default 3), never an intent.
+- **Rejections by reason** (`society/rejections.py`): every candidate rejected since #114 gets one
+  structured reason from what the runtime recorded (`closed_by_owner`, `declined`,
+  `outside_files_allowed`, `build_attempts_exhausted`, `already_satisfied`, `red_on_base`,
+  `test_first_red`, `busywork`, `security`, `no_self_judging`, `test_first_green`, `ci_orphan`,
+  `test_first_tampered`, `acceptance_failed`, `qa_other`), with the designs the spec gate refused
+  before a build beside them. Same numbers in the daily report, the digest and the validator
+  (`candidates`, `R01`).
+- **Design-review limits**: the prompts state the exact limits (points 1-5 items of 3-300 chars,
+  constraints at most 4, conditions at most 5, rationale 10-800 chars). Before validation
+  `intents.normalize_payload` fits a reviewer's `points` (drops items under 3 chars, cuts at 300,
+  keeps the first 5) and cuts over-long constraint/condition items and the rationale; a Security
+  constraint or a Governor condition is never dropped (too many stays a schema violation). A reply
+  that is not a decision gets ONE corrective turn (told the parser's reason, never its own text
+  echoed) before the run fails; both turns are billed.
 
 ## Telegram boardroom (G2, step 1: read-only digest)
 

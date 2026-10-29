@@ -98,14 +98,18 @@ def emit_heartbeat(db: Session, settings: SocietySettings, *, now: Optional[date
         return False
     items = backlog.collect(db, settings, provider)
     backlog.publish(db, settings, items)
+    from .promotion_queue import caps  # noqa: PLC0415 -- promotion imports the engineering stack
+
     if not items and backlog.open_candidates(db) == 0:
-        emit_event(db, event_type=EventType.SOCIETY_HEARTBEAT_IDLE, payload={"bucket": bucket, "at": now.isoformat()}, actor_type="system", idempotency_key=f"heartbeat-idle:{bucket}")
+        emit_event(db, event_type=EventType.SOCIETY_HEARTBEAT_IDLE, payload={"bucket": bucket, "at": now.isoformat(), "change_budget": caps(db, settings, now)},
+                   actor_type="system", idempotency_key=f"heartbeat-idle:{bucket}")
         db.commit()
         return False
     emit_event(
         db,
         event_type=EventType.SOCIETY_HEARTBEAT,
-        payload={"bucket": bucket, "interval_seconds": interval, "at": now.isoformat()},
+        # the change budget in effect, as numbers: the validator reports it (P05) and Governor sees it
+        payload={"bucket": bucket, "interval_seconds": interval, "at": now.isoformat(), "change_budget": caps(db, settings, now)},
         actor_type="system",
         idempotency_key=key,
     )

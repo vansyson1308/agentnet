@@ -870,7 +870,7 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
             ctx.db.query(CodeCandidate)
             .filter(
                 CodeCandidate.risk_tier == RiskTier.RED.value,
-                CodeCandidate.status.notin_([CodeCandidateStatus.READY, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED]),
+                CodeCandidate.status.notin_([CodeCandidateStatus.READY, CodeCandidateStatus.MERGED, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED]),
             )
             .count()
         )

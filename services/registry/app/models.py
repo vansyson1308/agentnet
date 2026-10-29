@@ -901,6 +901,7 @@ class CodeCandidateStatus(str, enum.Enum):
     QA_FAILED = "qa_failed"
     SECURITY_REVIEW = "security_review"
     READY = "ready"              # QA (and security, if required) passed — human may merge
+    MERGED = "merged"            # its promotion merged (society/promotion.py): the change is on main
     REJECTED = "rejected"
     FAILED = "failed"
     ABANDONED = "abandoned"
