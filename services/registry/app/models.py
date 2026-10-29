@@ -1307,6 +1307,8 @@ class CompanyCycle(Base):
     # the scheduled slot of its day (SOCIETY_COMPANY_CYCLES_PER_DAY); 0 for operator cycles
     slot = Column(SmallInteger, nullable=False, server_default=text("0"))
     event_id = Column(UUID(as_uuid=True))
+    # the owner's directive this operator cycle was started for (one cycle per directive; owner_thread.py)
+    directive_id = Column(UUID(as_uuid=True))
     evidence = Column(PG_JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     outcome = Column(String(32))
     outcome_detail = Column(PG_JSONB, nullable=False, server_default=text("'{}'::jsonb"))

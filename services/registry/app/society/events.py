@@ -144,6 +144,17 @@ class EventType:
     DEPLOYMENT_REQUESTED = "deployment.requested"
     DEPLOYMENT_BLOCKED = "deployment.blocked"
     DEPLOYMENT_REFUSED = "deployment.refused"
+    # The owner spoke on the Owner Console (owner_thread.py): PRIORITY events -- dispatched and
+    # claimed before any other, spending the owner reserve (SOCIETY_OWNER_RESERVE_USD).
+    OWNER_DIRECTIVE_SET = "owner.directive_set"
+    OWNER_TASK_CREATED = "owner.task_created"
+    OWNER_MESSAGE = "owner.message"
+    #: the Governor answered the owner (RESPOND_TO_OWNER; no subscriber, the Owner Console shows it)
+    OWNER_REPLIED = "company.owner_replied"
+
+
+#: the owner's own events (EventType.OWNER_*): first in the queue, never a heartbeat
+OWNER_EVENT_TYPES = (EventType.OWNER_DIRECTIVE_SET, EventType.OWNER_TASK_CREATED, EventType.OWNER_MESSAGE)
 
 
 # ── rehearsal (canary) provenance ──────────────────────────────────────

@@ -159,8 +159,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("budget:<role>:<usd> (0 < usd < 100, two decimals)")
         if name == "routes" and (len(args) > 1 or (args and not re.fullmatch(r"\d{1,3}", args[0]))):
             raise ValueError("routes[:<limit>]")
-        if name == "owner" and (len(args) != 2 or args[0] != "grant" or not OWNER_EMAIL_RE.fullmatch(args[1])):
-            raise ValueError("owner:grant:<email> (an account that already registered on the dashboard)")
+        if name == "owner" and args != ["slo"] and (len(args) != 2 or args[0] != "grant" or not OWNER_EMAIL_RE.fullmatch(args[1])):
+            raise ValueError("owner:grant:<email> (an account that already registered on the dashboard) | owner:slo")
         if name == "freezes" and args != ["lift-recovered"]:
             raise ValueError("freezes:lift-recovered")
         if name == "company" and not _company_args_ok(args):
@@ -1101,6 +1101,29 @@ def step_owner_grant(out: Out, base: str, token: str, conn, email: str) -> None:
     out.json("owner", "grant", {"email": prefix, "existed": True, "verified": True, "role": role})
 
 
+OWNER_SLO_NAMES = (("first_run_start", "L01", "owner event -> first run start"), ("reply", "L02", "owner event -> Governor reply"),
+                   ("directive_to_plan", "L03", "directive -> first ticket in a plan"))
+
+
+def step_owner_slo(out: Out, base: str, token: str) -> None:
+    """The Owner Console's latency SLOs, read from the operator API (owner_thread.slo): p95 under its
+    target and no owner row left late. A metric with no sample in the window is reported, not failed."""
+    st, body = api("GET", f"{base}/v1/society/company/owner-thread?limit=5", token)
+    if not out.check("owner", "L00", st == 200 and isinstance(body, dict), f"GET company/owner-thread HTTP {st}"):
+        return
+    slo = body.get("slo") or {}
+    for key, code, label in OWNER_SLO_NAMES:
+        m = slo.get(key) or {}
+        detail = f"{label}: p95 {m.get('p95_s')}s / target {m.get('target_s')}s over {m.get('n', 0)} sample(s), {m.get('late_unanswered', 0)} late"
+        if m.get("ok") is None:
+            out.info("owner", f"{code} no data yet -- {detail}")
+        else:
+            out.check("owner", code, bool(m.get("ok")), detail)
+    out.json("owner", "slo", slo)
+    out.json("owner", "thread", [{"kind": e.get("kind"), "status": e.get("status"), "created_at": e.get("created_at"), "replied": bool(e.get("reply")),
+                                  "tickets": len(e.get("tickets") or []), "plans": len(e.get("plans") or [])} for e in body.get("entries") or []])
+
+
 def step_freezes(out: Out, base: str, token: str, conn) -> None:
     """Lift, through the operator API, ONLY the open freezes that outlived their cause
     (``OUTLIVED_FREEZES_SQL``). Any other freeze is never touched. Idempotent: a second run
@@ -1992,7 +2015,8 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes", "costs", "budget", "routes", "owner") and conn is None:
+            if conn is None and (name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes", "costs", "budget", "routes")
+                                 or (name == "owner" and args[0] == "grant")):
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -2036,6 +2060,8 @@ def main() -> int:
                 step_budget(out, conn, args[0], args[1])
             elif name == "routes":
                 step_routes(out, conn, int(args[0]) if args else 20)
+            elif name == "owner" and args == ["slo"]:
+                step_owner_slo(out, base, token)
             elif name == "owner":
                 step_owner_grant(out, base, token, conn, args[1])
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence

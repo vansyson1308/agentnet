@@ -34,6 +34,18 @@ OPERATOR_DATA = {
     "/v1/society/company/owner-actions": {"owner_actions": [{"id": ACTION_ID, "objective_id": "O4", "title": "Post the offer", "reason": "public post"}]},
     "/v1/society/incidents": {"incidents": [{"id": INCIDENT_ID, "source": "fitness", "reason": "regressed", "openedAt": "2026-10-28", "liftedAt": None}]},
     "/v1/society/budget": {"model_spend_today_usd": "1.20", "daily_model_budget_usd": "10", "remaining_usd": "8.80", "by_agent": []},
+    "/v1/society/company/owner-thread": {"working": True, "entries": [
+        {"id": "e2", "kind": "message", "text": "find our first paying external agent", "refs": {}, "created_at": "2026-10-29T09:30:00+00:00",
+         "status": "working", "reply": None, "plans": [], "tickets": []},
+        {"id": "e1", "kind": "directive", "text": "focus on O4", "refs": {"directive_id": "d1"}, "created_at": "2026-10-29T09:21:00+00:00",
+         "status": "answered", "reply": {"text": "Understood: O4 first. The Scout files the quote ticket now.", "plan_steps": ["file the O4 ticket", "design review"],
+                                         "ticket_ids": ["t1"], "owner_actions_needed": ["post the offer"], "created_at": "2026-10-29T09:22:10+00:00"},
+         "plans": [{"id": PLAN_ID, "status": "awaiting_owner"}],
+         "tickets": [{"ticket_id": "t1", "title": "Quote and accept a paid USDC task", "objective_id": "O4", "status": "planned", "planned": True,
+                      "review": None, "candidate": None, "promotion": None, "pr_url": None}]}],
+        "slo": {"window_days": 7, "first_run_start": {"n": 2, "p95_s": 4.2, "target_s": 30, "late_unanswered": 0, "ok": True},
+                "reply": {"n": 1, "p95_s": 70.0, "target_s": 120, "late_unanswered": 0, "ok": True},
+                "directive_to_plan": {"n": 0, "p95_s": None, "target_s": 600, "late_unanswered": 0, "ok": None}}},
 }
 
 
@@ -99,7 +111,9 @@ def test_an_operator_sees_every_section_from_the_operator_api(console):
     html = r.data.decode()
     assert r.status_code == 200 and "Owner Console" in html
     for marker in ("Kim chỉ nam", "first paid USDC task on staging", "What came from it", "North star", "Today's plan", "Approve",
-                   "Owner actions", "Post the offer", "READY candidates", "PR #121", "Open freezes", "Lift", "Budget and spend", "New task"):
+                   "Owner actions", "Post the offer", "READY candidates", "PR #121", "Open freezes", "Lift", "Budget and spend", "New task",
+                   "Ra lệnh / hỏi công ty", "find our first paying external agent", "⚙️ working", "✅ answered", "Understood: O4 first.",
+                   "file the O4 ticket", "Needs you: post the offer", "from this directive", "p95 70.0s / 120s", "no data"):
         assert marker in html, marker
     assert {p for m, p, _, _ in calls if m == "GET"} == set(OPERATOR_DATA), "only the existing operator routes (+ the directive)"
 
@@ -118,6 +132,7 @@ def test_actions_post_to_operator_routes_with_the_users_token_and_csrf(console):
     c.post(f"/owner/incidents/{INCIDENT_ID}/lift", data={"csrf": token})
     c.post("/owner/tickets", data={"csrf": token, "title": "T", "problem": "P", "objective_id": "O4", "metric_id": "paid_usdc_tasks_30d",
                                    "expected_effect": "1", "direction": "up", "proof": "tests/test_x.py::test_y"})
+    c.post("/owner/messages", data={"csrf": token, "text": "  what is the company doing about O4?  "})
     posts = [(p, body) for m, p, auth, body in calls if m == "POST" and auth == "Bearer user-jwt"]
     assert posts == [
         ("/v1/society/company/directive", {"text": "focus on O4", "objective_ids": ["O4"]}),
@@ -126,7 +141,30 @@ def test_actions_post_to_operator_routes_with_the_users_token_and_csrf(console):
         (f"/v1/society/incidents/{INCIDENT_ID}/lift", {"reason": "lifted by the owner from the Owner Console"}),
         ("/v1/society/company/tickets", {"title": "T", "problem": "P", "objective_id": "O4", "metric_id": "paid_usdc_tasks_30d",
                                         "expected_effect": 1.0, "direction": "up", "proof": ["tests/test_x.py::test_y"]}),
+        ("/v1/society/company/owner-messages", {"text": "what is the company doing about O4?"}),
     ]
+
+
+def test_the_conversation_polls_every_5s_only_while_something_is_working(console):
+    c, calls, state = console
+    _sign_in(c)
+    html = c.get("/owner").data.decode()
+    assert 'id="owner-thread" data-working="1"' in html and "setTimeout(tick, 5000)" in html and "/owner/thread" in html
+    calls.clear()
+    frag = c.get("/owner/thread")
+    assert frag.status_code == 200 and 'data-working="1"' in frag.data.decode() and "<html" not in frag.data.decode()
+    assert [(m, p, a) for m, p, a, _ in calls] == [("GET", "/v1/society/company/owner-thread", "Bearer user-jwt")], "one operator route, the user's token"
+    idle = dict(OPERATOR_DATA["/v1/society/company/owner-thread"], working=False)
+    OPERATOR_DATA["/v1/society/company/owner-thread"], saved = idle, OPERATOR_DATA["/v1/society/company/owner-thread"]
+    try:
+        assert 'data-working="0"' in c.get("/owner/thread").data.decode(), "nothing working: the poll stops"
+    finally:
+        OPERATOR_DATA["/v1/society/company/owner-thread"] = saved
+    state["role"] = None
+    assert c.get("/owner/thread").status_code == 403, "the registry decides the fragment too"
+    with c.session_transaction() as s:
+        s.pop("access_token", None)
+    assert c.get("/owner/thread").status_code in (302, 303)
 
 
 def test_the_console_makes_no_role_decision_of_its_own():

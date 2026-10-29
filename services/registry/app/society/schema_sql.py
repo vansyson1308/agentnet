@@ -680,4 +680,46 @@ CREATE TRIGGER trg_society_owner_directives_append_only
     FOR EACH ROW EXECUTE FUNCTION society_owner_directives_append_only();
 """
 
-SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL + SOCIETY_COMPANY_PLAN_SQL + SOCIETY_COMPANY_BOARD_SQL + SOCIETY_DESIGN_REVIEW_SQL + SOCIETY_HARNESS_SQL + SOCIETY_REVENUE_SQL + SOCIETY_COMPANY_SLOTS_SQL + SOCIETY_OWNER_ACTIONS_SQL + SOCIETY_TELEGRAM_LINKS_SQL + SOCIETY_OWNER_DIRECTIVES_SQL
+SOCIETY_OWNER_THREAD_SQL = r"""
+-- The owner's conversation with the company (Owner Console, society/owner_thread.py). An ``owner``
+-- row is what the owner said (a directive, a task, a message; its owner event's idempotency key is
+-- ``owner:<id>``); a
+-- ``company`` row is the Governor's RESPOND_TO_OWNER to it -- at most ONE per owner row. Append-only;
+-- text is redacted before it is written. Shown only on the operator page; it grants nothing.
+CREATE TABLE IF NOT EXISTS society_owner_thread (
+    id          UUID PRIMARY KEY,
+    author      VARCHAR(8) NOT NULL,
+    kind        VARCHAR(16) NOT NULL,
+    text        TEXT NOT NULL,
+    reply_to    UUID REFERENCES society_owner_thread(id),
+    payload     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    user_id     UUID,
+    agent_id    UUID,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_society_owner_thread_author CHECK (author IN ('owner', 'company')),
+    CONSTRAINT ck_society_owner_thread_kind CHECK (kind IN ('directive', 'task', 'message', 'reply')),
+    CONSTRAINT ck_society_owner_thread_text CHECK (char_length(text) BETWEEN 1 AND 2000),
+    CONSTRAINT ck_society_owner_thread_reply CHECK ((author = 'company') = (reply_to IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_society_owner_thread_one_reply ON society_owner_thread (reply_to) WHERE reply_to IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_society_owner_thread_created ON society_owner_thread (created_at DESC);
+
+CREATE OR REPLACE FUNCTION society_owner_thread_append_only() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'society_owner_thread is append-only (attempted %)', TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_society_owner_thread_append_only ON society_owner_thread;
+CREATE TRIGGER trg_society_owner_thread_append_only
+    BEFORE UPDATE OR DELETE ON society_owner_thread
+    FOR EACH ROW EXECUTE FUNCTION society_owner_thread_append_only();
+
+-- A directive starts ONE operator cycle at once (idempotent per directive), and a plan says where it came from.
+ALTER TABLE society_company_cycles ADD COLUMN IF NOT EXISTS directive_id UUID;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_society_company_cycles_directive ON society_company_cycles (directive_id) WHERE directive_id IS NOT NULL;
+ALTER TABLE society_daily_plans ADD COLUMN IF NOT EXISTS directive_id UUID;
+ALTER TABLE society_daily_plans ADD COLUMN IF NOT EXISTS owner_entry_id UUID;
+"""
+
+SOCIETY_RUNTIME_SQL = SOCIETY_RUNTIME_SQL + SOCIETY_PHASE2_SQL + SOCIETY_PHASE3_SQL + SOCIETY_PHASE6_SQL + SOCIETY_PHASE8_SQL + SOCIETY_BENCH_SQL + SOCIETY_COMPANY_SQL + SOCIETY_COMPANY_PLAN_SQL + SOCIETY_COMPANY_BOARD_SQL + SOCIETY_DESIGN_REVIEW_SQL + SOCIETY_HARNESS_SQL + SOCIETY_REVENUE_SQL + SOCIETY_COMPANY_SLOTS_SQL + SOCIETY_OWNER_ACTIONS_SQL + SOCIETY_TELEGRAM_LINKS_SQL + SOCIETY_OWNER_DIRECTIVES_SQL + SOCIETY_OWNER_THREAD_SQL
