@@ -195,7 +195,7 @@ def test_the_governor_answers_an_owner_message_once_even_past_the_heartbeat_prec
     rows = db.query(AgentIntent).filter(AgentIntent.intent_type == "RESPOND_TO_OWNER").order_by(AgentIntent.created_at).all()
     assert [_ev(r.execution_status) for r in rows] == ["executed", "failed"] and "already answered" in rows[1].error
     replies = db.execute(text("SELECT text, payload, reply_to FROM society_owner_thread WHERE author = 'company'")).mappings().all()
-    assert len(replies) == 1 and str(replies[0]["reply_to"]) == entry["id"] and replies[0]["payload"]["plan_steps"] == ["Scout files the ticket", "rank it into a plan"]
+    assert len(replies) == 1 and str(replies[0]["reply_to"]) == entry["id"] and replies[0]["payload"]["plan_steps"] == [{"step": "Scout files the ticket"}, {"step": "rank it into a plan"}]
     assert db.query(SocietyEvent).filter(SocietyEvent.event_type == EventType.OWNER_REPLIED).count() == 1
     view = owner_thread.view(db)
     assert view["entries"][0]["status"] == "answered" and view["entries"][0]["reply"]["text"].startswith("Understood") and view["working"] is False
@@ -318,7 +318,7 @@ def test_only_an_operator_talks_to_the_company(db, api_client, user_token):
     assert r.status_code == 201 and r.json()["status"] == "received"
     view = api_client.get("/v1/society/company/owner-thread", headers=auth(op)).json()
     assert view["entries"][0]["text"] == "what blocks the first paid task?" and view["entries"][0]["status"] == "received" and view["working"] is True
-    assert set(view["slo"]) == {"window_days", "first_run_start", "reply", "directive_to_plan"}
+    assert set(view["slo"]) == {"window_days", "first_run_start", "reply", "first_work", "directive_to_plan", "message_to_plan", "without_work_rewakes"}
     routes = (ROOT / "services/registry/app/api/routes/society.py").read_text(encoding="utf-8")
     for path in ('@router.post("/company/owner-messages"', '@router.get("/company/owner-thread"'):
         assert "Depends(require_operator)" in routes[routes.index(path):].split("@router.", 2)[1]

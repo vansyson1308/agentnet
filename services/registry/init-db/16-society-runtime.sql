@@ -652,3 +652,15 @@ ALTER TABLE society_company_cycles ADD COLUMN IF NOT EXISTS directive_id UUID;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_society_company_cycles_directive ON society_company_cycles (directive_id) WHERE directive_id IS NOT NULL;
 ALTER TABLE society_daily_plans ADD COLUMN IF NOT EXISTS directive_id UUID;
 ALTER TABLE society_daily_plans ADD COLUMN IF NOT EXISTS owner_entry_id UUID;
+
+-- Prompt-cache accounting per run (anthropic): cache writes of every TTL, and the 1-hour part of
+-- them, next to tokens_cached (reads). All three are part of tokens_in; cost_usd prices each.
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tokens_cache_write INTEGER;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tokens_cache_write_1h INTEGER;
+
+-- Where a ticket came from (owner 2026-10-29 G1v, the funnel by source): an owner story's ticket,
+-- the standing work generator, a rescoped follow-up of a rejected candidate; origin names the
+-- generator's sub-source (surface, directive, kr_gap, docs, tests, todo, rescope).
+ALTER TABLE society_tickets DROP CONSTRAINT IF EXISTS society_tickets_source_check;
+ALTER TABLE society_tickets ADD CONSTRAINT society_tickets_source_check CHECK (source IN ('owner', 'scout', 'incident', 'backlog', 'department', 'owner_story', 'generator', 'rescope'));
+ALTER TABLE society_tickets ADD COLUMN IF NOT EXISTS origin VARCHAR(48);

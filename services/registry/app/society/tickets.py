@@ -29,10 +29,12 @@ LIVE_STATUSES = ("approved", "building", "ready", "merged")
 BYPASS_SOURCES = ("owner", "incident")
 PLAN_MAX, PER_DEPARTMENT = 3, 2
 MODEL_TICKETS_PER_DEPARTMENT = 2
-#: tickets a model may file in ONE owner story (owner_thread), outside the department's daily cap
-OWNER_STORY_TICKETS = 2
-#: Proofs that are not pytest node ids: a probe metric, a bench task, an owner issue.
-NON_TEST_PROOFS = ("probe:", "bench:", "issue:", "play:")
+#: tickets the models may file in ONE owner story (owner_thread), outside the department's daily cap (G1v: 1..5 per owner event)
+OWNER_STORY_TICKETS = 5
+#: Proofs that are not pytest node ids: a probe metric, a bench task, an owner issue, and the work
+#: generator's evidence (work_generator.py: a surface check, a directive theme, a lever idea, a repo
+#: finding, the rejected candidate a rescope follows up).
+NON_TEST_PROOFS = ("probe:", "bench:", "issue:", "play:", "surface:", "directive:", "idea:", "repo:", "rescope:")
 #: Supplied tickets (``supply``): backlog source -> (charter department, KR metric). An issue maps to the objective its owner tagged.
 SUPPLY = {"bench": ("engineering", "bench_holdout_pass_at_1"), "maintenance_incident": ("sre_release", "core_journey_success_rate"),
           "github_issue": ("strategy_product", None), "kr_gap": ("strategy_product", None)}
@@ -368,7 +370,8 @@ def _ticket_ref(db: Session, ref: Any) -> Optional[Dict[str, Any]]:
 
 
 def _approved_at(db: Session, ticket_id: Any) -> Optional[datetime]:
-    return db.execute(text("SELECT MAX(created_at) FROM society_events WHERE event_type = :t AND payload ->> 'ticket_id' = :id"),
+    """The ticket's latest APPROVAL (a re-sent Architect wake, wake_undesigned, is not one)."""
+    return db.execute(text("SELECT MAX(created_at) FROM society_events WHERE event_type = :t AND payload ->> 'ticket_id' = :id AND NOT (payload ? 'rewake')"),
                       {"t": EventType.COMPANY_TICKET_APPROVED, "id": str(ticket_id)}).scalar()
 
 
@@ -436,12 +439,15 @@ def sweep_stale_designs(db: Session, now: datetime) -> int:
     had DEAD runs in that quiet period: then it waits, uncounted, and says so. The caller commits."""
     rows = db.execute(text(
         "SELECT DISTINCT ON (t.id) t.id, e.created_at AS approved_at, e.correlation_id AS corr FROM society_tickets t "
-        "JOIN society_events e ON e.event_type = :ev AND e.payload ->> 'ticket_id' = t.id::text "
+        "JOIN society_events e ON e.event_type = :ev AND e.payload ->> 'ticket_id' = t.id::text AND NOT (e.payload ? 'rewake') "
         "WHERE t.status = 'approved' AND t.candidate_id IS NULL AND NOT EXISTS (SELECT 1 FROM society_design_reviews r "
         "WHERE r.ticket_id = t.id AND r.status IN ('proposing', 'reviewing', 'deciding')) ORDER BY t.id, e.created_at DESC"), {"ev": EventType.COMPANY_TICKET_APPROVED}).mappings().all()
     n = 0
     for r in rows:
-        last = db.execute(text("SELECT MAX(created_at) FROM agent_runs WHERE correlation_id = :c"), {"c": r["corr"]}).scalar()
+        # design activity in the approval's story or in a re-sent wake's story (wake_undesigned)
+        last = db.execute(text("SELECT MAX(created_at) FROM agent_runs WHERE correlation_id = :c OR correlation_id IN (SELECT correlation_id FROM society_events "
+                               "WHERE event_type = :ev AND payload ->> 'ticket_id' = :id AND created_at >= :a)"),
+                          {"c": r["corr"], "ev": EventType.COMPANY_TICKET_APPROVED, "id": str(r["id"]), "a": r["approved_at"]}).scalar()
         quiet_since = max(x for x in (r["approved_at"], last) if x is not None)
         periods = int((now - quiet_since) / DESIGN_STALE_AFTER)  # one failed attempt per quiet period
         if periods >= 1:
@@ -451,6 +457,48 @@ def sweep_stale_designs(db: Session, now: datetime) -> int:
             if dead:
                 why += f": the society worker had {dead} DEAD run(s) then ({' '.join(str(err).split())[:80]}), not a design refusal"
             n += bool(record_design_failure(db, r["id"], why, key=f"stale:{quiet_since.isoformat()}:{periods}", counted=not dead))
+    return n
+
+
+#: owner 2026-10-29 G1v ("never idle while work exists"): an approved ticket with no design, no open
+#: review and no run moving in its design story for this long gets its Architect wake again ...
+DESIGN_REWAKE_AFTER = timedelta(minutes=10)
+#: ... at most this many times per approval; then sweep_stale_designs counts the failed attempt as before
+MAX_DESIGN_REWAKES = 2
+
+
+def wake_undesigned(db: Session, now: datetime) -> int:
+    """Re-send ``company.ticket_approved`` (same payload and minutes, ``rewake`` = n) for an approved
+    ticket nobody is designing: no candidate, no open design review, and no run queued or moving in
+    the stories of its wakes for DESIGN_REWAKE_AFTER (a skipped run, a lost wake, an Architect that
+    ended without a design). A wake is not an approval (``_approved_at``), so the design-failure count
+    and DESIGN_STALE_AFTER are unchanged. The caller commits."""
+    from . import design_review  # noqa: PLC0415
+
+    rows = db.execute(text(
+        "SELECT t.* FROM society_tickets t WHERE t.status = 'approved' AND t.candidate_id IS NULL AND NOT EXISTS ("
+        "SELECT 1 FROM society_design_reviews r WHERE r.ticket_id = t.id AND r.status IN ('proposing', 'reviewing', 'deciding'))")).mappings().all()
+    n = 0
+    for t in rows:
+        since = _approved_at(db, t["id"])
+        if since is None:
+            continue  # approved without a wake: the design review owns it (design_review.sweep)
+        wakes = db.execute(text("SELECT id, payload, correlation_id, created_at FROM society_events WHERE event_type = :ev AND payload ->> 'ticket_id' = :id "
+                                "AND created_at >= :a ORDER BY created_at"), {"ev": EventType.COMPANY_TICKET_APPROVED, "id": str(t["id"]), "a": since}).mappings().all()
+        last = wakes[-1]
+        rewakes = len(wakes) - 1
+        if rewakes >= MAX_DESIGN_REWAKES or last["created_at"] > now - DESIGN_REWAKE_AFTER:
+            continue
+        moving = db.execute(text("SELECT MAX(COALESCE(completed_at, created_at)), BOOL_OR(status IN ('queued', 'claimed', 'running', 'failed')) FROM agent_runs "
+                                 "WHERE correlation_id IN :c").bindparams(bindparam("c", expanding=True)), {"c": [w["correlation_id"] for w in wakes]}).one()
+        if moving[1] or (moving[0] is not None and moving[0] > now - DESIGN_REWAKE_AFTER):
+            continue
+        if design_review.enabled() and t["source"] not in BYPASS_SOURCES and not (last["payload"] or {}).get("design_review"):
+            continue  # a reviewed ticket is woken with its minutes only (after the review's go)
+        emit_event(db, event_type=EventType.COMPANY_TICKET_APPROVED, actor_type="system", subject_type="proposal", subject_id=t["proposal_id"],
+                   payload={**(last["payload"] or {}), "rewake": rewakes + 1}, idempotency_key=f"company.ticket_approved:{t['id']}:rewake:{last['id']}"[:160])
+        logger.info("ticket %s: approved, no design moving for %s -- Architect woken again (%d/%d)", str(t["id"])[:8], DESIGN_REWAKE_AFTER, rewakes + 1, MAX_DESIGN_REWAKES)
+        n += 1
     return n
 
 

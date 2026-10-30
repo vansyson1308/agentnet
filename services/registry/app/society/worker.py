@@ -61,6 +61,7 @@ from . import fitness as fitness_mod
 from . import memory_grounding
 from . import outcomes as outcomes_mod
 from . import owner_thread as owner_thread_mod
+from . import funnel as funnel_mod
 from . import tickets as tickets_mod
 from . import design_review as design_review_mod
 from ..a2a.federation import directory as a2a_directory
@@ -269,6 +270,7 @@ class SocietyWorker:
         # owner is answered in seconds even while this loop is inside a long build or controller pass.
         self._listen_dsn = listen_dsn
         self._owner_thread = None
+        self._funnel_logged_at = float("-inf")  # the first loop logs the funnel
 
     # ── dispatch ───────────────────────────────────────────────────────
 
@@ -299,9 +301,20 @@ class SocietyWorker:
                 candidate_health_mod.sweep(db, self.settings)
                 # A READY candidate whose promotion request was refused (a change
                 # budget) or never made is re-offered to the Governor while there is
-                # capacity, once a day (promotion_queue.py).
+                # capacity, once per capacity change (promotion_queue.py).
                 promotion_queue_mod.settle_ended(db)
                 promotion_queue_mod.retry_deferred(db, self.settings)
+                # ... and a re-offer that produced no request says why; with the fallback on and room,
+                # the runtime requests it on the Governor's grant (same policy/budgets/controller).
+                promotion_queue_mod.settle_reoffers(db, self.settings)
+                # The throughput funnel, one structural log line every 2 h (funnel.py).
+                if time.monotonic() - self._funnel_logged_at >= funnel_mod.BUCKET.total_seconds():
+                    self._funnel_logged_at = time.monotonic()
+                    try:
+                        funnel_mod.log_snapshot(db, daily_budget_usd=float(self.settings.daily_model_budget_usd))
+                    except Exception:  # noqa: BLE001 -- a report never blocks the loop
+                        db.rollback()
+                        logger.exception("society.funnel snapshot failed")
                 # The owner's read-only daily digest to the one operator chat (boardroom.py; off by default).
                 boardroom_mod.maybe_send_digest(db, self.settings, boardroom_telegram.sender(self.settings))
                 # A linked operator's commands from that chat run the operator API's code (boardroom_commands.py; off by default).
@@ -406,7 +419,11 @@ class SocietyWorker:
         run.model_requests = int(run.model_requests or 0) + int(getattr(response, "requests", 1) or 1)
         run.model_retries = int(run.model_retries or 0) + int(getattr(response, "retries", 0) or 0)
         run.model_timeouts = int(run.model_timeouts or 0) + int(getattr(response, "timeouts", 0) or 0)
-        run.tokens_cached = getattr(response, "tokens_cached", None)
+        cached = getattr(response, "tokens_cached", None)
+        if cached is not None:
+            run.tokens_cached = int(run.tokens_cached or 0) + int(cached)
+        run.tokens_cache_write = int(run.tokens_cache_write or 0) + int(getattr(response, "tokens_cache_write", 0) or 0)
+        run.tokens_cache_write_1h = int(run.tokens_cache_write_1h or 0) + int(getattr(response, "tokens_cache_write_1h", 0) or 0)
         run.output_format = getattr(response, "output_format", None)
         run.format_fallbacks = int(run.format_fallbacks or 0) + int(getattr(response, "format_fallbacks", 0) or 0)
         run.sleep_until = utcnow() + timedelta(seconds=int(response.decision.sleep_for_seconds or 0))
@@ -748,16 +765,18 @@ class SocietyWorker:
                 break
             await self.process_run(run_id, stats)
             processed += 1
-        if self.settings.company_cycle_enabled:
-            db = self.session_factory()
-            try:
+        db = self.session_factory()
+        try:
+            if self.settings.company_cycle_enabled:
                 owner_thread_mod.plan_owner_stories(db, self.settings)
-                db.commit()
-            except Exception:  # noqa: BLE001 -- planning never stops the lane
-                db.rollback()
-                logger.exception("owner lane: planning the owner's stories failed")
-            finally:
-                db.close()
+            # a story that ended with no work wakes the Governor once more (owner_event_without_work)
+            owner_thread_mod.rewake_without_work(db, self.settings)
+            db.commit()
+        except Exception:  # noqa: BLE001 -- planning never stops the lane
+            db.rollback()
+            logger.exception("owner lane: planning the owner's stories failed")
+        finally:
+            db.close()
         return processed
 
     def _owner_lane_main(self) -> None:  # pragma: no cover -- thread entrypoint; owner_lane_once is tested
@@ -820,6 +839,7 @@ class SocietyWorker:
             steps += [("owner_stories", lambda db: owner_thread_mod.plan_owner_stories(db, self.settings, utcnow())),
                       ("relabel_dead_worker_refusals", tickets_mod.relabel_dead_worker_refusals),
                       ("close_satisfied", tickets_mod.close_satisfied),
+                      ("wake_undesigned", lambda db: tickets_mod.wake_undesigned(db, utcnow())),
                       ("sweep_stale_designs", lambda db: tickets_mod.sweep_stale_designs(db, utcnow())),
                       ("board_decide", lambda db: tickets_mod.board_decide(db, self.settings, utcnow())),
                       ("design_review_sweep", lambda db: design_review_mod.sweep(db, utcnow()))]

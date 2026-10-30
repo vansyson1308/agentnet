@@ -35,7 +35,8 @@ never stops the plan so the evidence of the later steps is still recorded):
     autonomy[:<days>]             does the company run without the owner? plans decided by the board vs the owner and how long they
                                   waited, design reviews and their conversation, growth tickets, merged work, the federated network (default 7 d)
     costs[:<days>[:<budget>]]     model spend p50/p95 per role+model (decide runs), per build, per maintenance activity, per day;
-                                  the caps it implies inside <budget> USD/day (default 7 d, 6.0) -- a recommendation, never applied
+                                  the caps it implies inside <budget> USD/day (default 7 d, 6.0) -- a recommendation, never applied;
+                                  prompt cache per role/model/activity (24h, 7d): reads/writes/uncached, hit rate, $ per run, cadence
     budget:<role>:<usd>           operator command: that role's grant daily_model_budget_usd (a re-seed keeps the larger of it and the default)
     freezes:lift-recovered        lift (operator API) ONLY the open freezes that outlived their cause (maintenance incident recovered/closed,
                                   or public surface recovered >= 6 h ago and green now); others untouched
@@ -72,7 +73,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes", "costs", "budget", "routes", "owner")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes", "costs", "budget", "routes", "owner", "funnel", "runs")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -157,10 +158,15 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("costs[:<days>[:<daily-budget-usd>]]")
         if name == "budget" and (len(args) != 2 or not re.fullmatch(r"[a-z_]{2,32}", args[0]) or not re.fullmatch(r"\d{1,2}(\.\d{1,2})?", args[1]) or float(args[1]) <= 0):
             raise ValueError("budget:<role>:<usd> (0 < usd < 100, two decimals)")
+        if name == "runs" and (len(args) != 2 or not re.fullmatch(r"[a-z_]{2,32}", args[0]) or not re.fullmatch(r"\d{1,3}", args[1]) or not 1 <= int(args[1]) <= 200):
+            raise ValueError("runs:<role>:<n> (1 <= n <= 200 runs per hour)")
         if name == "routes" and (len(args) > 1 or (args and not re.fullmatch(r"\d{1,3}", args[0]))):
             raise ValueError("routes[:<limit>]")
         if name == "owner" and args != ["slo"] and (len(args) != 2 or args[0] != "grant" or not OWNER_EMAIL_RE.fullmatch(args[1])):
             raise ValueError("owner:grant:<email> (an account that already registered on the dashboard) | owner:slo")
+        if name == "funnel" and (len(args) > 2 or (args and not re.fullmatch(r"\d{1,3}", args[0])) or (args and not 2 <= int(args[0]) <= 168)
+                                 or (len(args) == 2 and args[1] != "proof")):
+            raise ValueError("funnel[:<hours 2..168>[:proof]]")
         if name == "freezes" and args != ["lift-recovered"]:
             raise ValueError("freezes:lift-recovered")
         if name == "company" and not _company_args_ok(args):
@@ -1102,7 +1108,8 @@ def step_owner_grant(out: Out, base: str, token: str, conn, email: str) -> None:
 
 
 OWNER_SLO_NAMES = (("first_run_start", "L01", "owner event -> first run start"), ("reply", "L02", "owner event -> Governor reply"),
-                   ("directive_to_plan", "L03", "directive -> first ticket in a plan"))
+                   ("directive_to_plan", "L03", "directive -> first ticket in a plan"), ("first_work", "L04", "owner event -> first side-effecting intent executed"),
+                   ("message_to_plan", "L05", "owner message -> first ticket in a plan"))
 
 
 def step_owner_slo(out: Out, base: str, token: str) -> None:
@@ -1119,9 +1126,42 @@ def step_owner_slo(out: Out, base: str, token: str) -> None:
             out.info("owner", f"{code} no data yet -- {detail}")
         else:
             out.check("owner", code, bool(m.get("ok")), detail)
+    if slo.get("without_work_rewakes"):
+        out.info("owner", f"L06 {slo['without_work_rewakes']} owner stor(y/ies) ended with no work and were re-woken once (owner_event_without_work)")
     out.json("owner", "slo", slo)
     out.json("owner", "thread", [{"kind": e.get("kind"), "status": e.get("status"), "created_at": e.get("created_at"), "replied": bool(e.get("reply")),
                                   "tickets": len(e.get("tickets") or []), "plans": len(e.get("plans") or [])} for e in body.get("entries") or []])
+
+
+#: owner 2026-10-29 G1v live proof at full throttle (12 h): (code, label, funnel key or callable, minimum or None, maximum or None)
+G1V_PROOF = (("G01", "new tickets", "tickets_created", 20, None), ("G02", "designs go", "designs_go", 8, None),
+             ("G03", "builds delivered", "builds_delivered", 5, None), ("G04", "PRs opened", "prs_opened", 3, None),
+             ("G05", "Builder idle %", lambda b: ((b.get("roles") or {}).get("builder") or {}).get("idle_pct"), None, 30),
+             ("G06", "spend USD", "spend_usd", 30, None))
+
+
+def step_funnel(out: Out, base: str, token: str, hours: int, proof: bool = False) -> None:
+    """Read-only: the throughput funnel (society/funnel.py) from the operator API -- spend, runs by role,
+    tickets, designs, builds, READY, PRs, CI, merges, rejections, $/READY, $/PR, 2-hour buckets and the
+    stage where work waits longest. Counts only."""
+    st, body = api("GET", f"{base}/v1/society/company/funnel?hours={hours}", token)
+    if not out.check("funnel", "F00", st == 200 and isinstance(body, dict), f"GET company/funnel?hours={hours} HTTP {st}"):
+        return
+    b = body.get("bottleneck") or {}
+    out.info("funnel", f"{hours}h: ${body.get('spend_usd')} | tickets {body.get('tickets_created')}/{body.get('tickets_approved')} | designs go {body.get('designs_go')} "
+                       f"returned {body.get('designs_returned')} | builds {body.get('builds_delivered')}/{body.get('builds_attempted')} | READY {body.get('ready')} | "
+                       f"PRs {body.get('prs_opened')} CI green {body.get('ci_green')} merged {body.get('merged')} | $/READY {body.get('usd_per_ready')} $/PR {body.get('usd_per_pr')} | "
+                       f"bottleneck {b.get('stage', 'none')} ({b.get('waiting', 0)} waiting, median {b.get('median_h')}h)")
+    out.check("funnel", "F01", len(body.get("by_2h") or []) >= 1 and isinstance(body.get("stages"), list), f"{len(body.get('by_2h') or [])} 2h bucket(s), {len(body.get('stages') or [])} stages")
+    roles = body.get("roles") or {}
+    out.info("funnel", f"tickets by source: {body.get('tickets_by_source') or {}} | $/hour {body.get('usd_per_hour')} | budget {body.get('budget_usd')} "
+                       f"({body.get('spend_pct_of_budget')}%) | idle %: " + ", ".join(f"{r} {v.get('idle_pct')} (queue {v.get('queued')})" for r, v in sorted(roles.items())))
+    if proof:  # G1v: structural numbers, not claims
+        for code, label, key, lo, hi in G1V_PROOF:
+            v = key(body) if callable(key) else body.get(key)
+            ok = v is not None and (lo is None or float(v) >= lo) and (hi is None or float(v) < hi)
+            out.check("funnel", code, ok, f"{label} {v} (needs {'>= ' + str(lo) if lo is not None else '< ' + str(hi)}) in {hours}h")
+    out.json("funnel", "funnel", body)
 
 
 def step_freezes(out: Out, base: str, token: str, conn) -> None:
@@ -1167,6 +1207,20 @@ COST_DECIDE_SQL = (
 COST_ACTIVITY_SQL = (
     "SELECT kind, COALESCE(model_name, '?'), cost_usd, (started_at AT TIME ZONE 'UTC')::date, status = 'succeeded', error_class = 'cost_budget' "
     "FROM repair_activities WHERE started_at >= NOW() - (%s * INTERVAL '1 day') AND model_provider = ANY(%s) AND cost_usd > 0")
+#: prompt cache per run (24h and 7d windows): input = uncached + cache reads + cache writes; writes are
+#: NULL on rows written before migration 0027 (counted as "write_unrecorded", never guessed)
+COST_CACHE_SQL = (
+    "SELECT r.role, COALESCE(r.model_name, '?'), "
+    "EXISTS (SELECT 1 FROM agent_intents i WHERE i.run_id = r.id AND i.intent_type = %s), "
+    "r.created_at, COALESCE(r.tokens_in, 0), COALESCE(r.tokens_cached, 0), r.tokens_cache_write, r.cost_usd "
+    "FROM agent_runs r WHERE r.created_at >= NOW() - (%s * INTERVAL '1 day') AND r.model_provider = ANY(%s) AND r.cost_usd > 0")
+COST_CACHE_ACTIVITY_SQL = (
+    "SELECT kind, COALESCE(model_name, '?'), started_at, tokens_in, "
+    "COALESCE((SELECT SUM((t->>'cache_read')::int) FROM jsonb_array_elements(turn_log) t), 0), "
+    "(SELECT SUM((t->>'cache_write')::int) FROM jsonb_array_elements(turn_log) t), cost_usd "
+    "FROM repair_activities WHERE started_at >= NOW() - (%s * INTERVAL '1 day') AND model_provider = ANY(%s) AND cost_usd > 0")
+#: the owner's target (2026-10-29): >= 50% of the input tokens of Sonnet/Opus decide runs read from cache
+CACHE_TARGET = {"goal": 0.5, "min_runs": 10, "models": ("sonnet", "opus")}
 #: what the recommendation plans for: builds/day, the minimum caps, the share of the daily budget one build may take
 COST_PLAN = {"builds_per_day": 2, "min_case_cap": 0.50, "max_case_share": 0.25, "min_role_budget": 0.25, "headroom": 1.5, "story_decides": 6}
 
@@ -1219,6 +1273,69 @@ def cost_summary(runs: Sequence[Tuple], activities: Sequence[Tuple]) -> Dict[str
     }
 
 
+def ttl_for_gap(p50_gap_min: Optional[float]) -> str:
+    """The cache TTL a cadence implies: a read refreshes an entry, so runs <= 5 minutes apart keep the
+    5-minute cache warm; up to an hour apart only the 1-hour cache survives; further apart neither does."""
+    if p50_gap_min is None:
+        return "1h"
+    return "5m" if p50_gap_min <= 5 else "1h" if p50_gap_min <= 60 else "cold"
+
+
+def cache_summary(runs: Sequence[Tuple], activities: Sequence[Tuple], now: datetime) -> Dict[str, Any]:
+    """runs: (role, model, is_build, created_at, tokens_in, cache_read, cache_write|None, cost);
+    activities: (kind, model, started_at, tokens_in, cache_read, cache_write|None, cost).
+    Per role+model (decide runs), per model (builds), per kind+model (activities), each for 24h and 7d:
+    cache reads / writes / uncached input, hit rate (reads / input) and $ per run; per day and role the
+    decide hit rate and $ per run (before/after); per role the cadence and the TTL it implies."""
+    windows = {"24h": now - timedelta(days=1), "7d": now - timedelta(days=7)}
+
+    def stats(rows: List[Tuple]) -> Dict[str, Any]:
+        tin = sum(int(r[0]) for r in rows)
+        read = sum(int(r[1]) for r in rows)
+        write = sum(int(r[2]) for r in rows if r[2] is not None)
+        usd = sum(float(r[3] or 0) for r in rows)
+        return {"runs": len(rows), "input": tin, "cache_read": read, "cache_write": write, "write_unrecorded": sum(1 for r in rows if r[2] is None),
+                "uncached": tin - read - write, "hit_rate": round(read / tin, 4) if tin else None, "usd": round(usd, 4),
+                "usd_per_run": round(usd / len(rows), 4) if rows else None}
+
+    def by_window(groups: Dict[str, List[Tuple]]) -> Dict[str, Any]:
+        return {k: {w: stats([r[1:] for r in v if r[0] >= since]) for w, since in windows.items()} for k, v in sorted(groups.items())}
+
+    decide: Dict[str, List[Tuple]] = {}
+    builds: Dict[str, List[Tuple]] = {}
+    days: Dict[str, Dict[str, List[Tuple]]] = {}
+    times: Dict[str, List[datetime]] = {}
+    target: List[Tuple] = []
+    for role, model, is_build, at, tin, read, write, cost in runs:
+        row = (at, tin, read, write, cost)
+        if is_build:
+            builds.setdefault(str(model), []).append(row)
+            continue
+        decide.setdefault(f"{role}/{model}", []).append(row)
+        days.setdefault(str(at.date()), {}).setdefault(str(role), []).append(row[1:])
+        times.setdefault(str(role), []).append(at)
+        if at >= windows["24h"] and write is not None and any(m in str(model) for m in CACHE_TARGET["models"]):
+            target.append(row[1:])
+    acts: Dict[str, List[Tuple]] = {}
+    for kind, model, at, tin, read, write, cost in activities:
+        acts.setdefault(f"{kind}/{model}", []).append((at, tin, read, write, cost))
+    cadence = {}
+    for role, ts in sorted(times.items()):
+        ts = sorted(ts)
+        gaps = [(b - a).total_seconds() / 60 for a, b in zip(ts, ts[1:])]
+        p50 = _pct(gaps, 0.5)
+        cadence[role] = {"runs": len(ts), "p50_gap_min": round(p50, 1) if p50 is not None else None, "ttl": ttl_for_gap(p50)}
+    t = stats(target)
+    return {
+        "decide": by_window(decide),
+        "builds": by_window(builds),
+        "activities": by_window(acts),
+        "decide_days": {d: {r: {k: stats(v)[k] for k in ("runs", "hit_rate", "usd_per_run")} for r, v in sorted(roles.items())} for d, roles in sorted(days.items())},
+        "cadence": cadence,
+        "target": {"runs": t["runs"], "hit_rate": t["hit_rate"], "goal": CACHE_TARGET["goal"]},
+    }
+
+
 def recommend_costs(summary: Dict[str, Any], daily_budget: float, plan: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Deterministic caps from measured spend (every rule is printed with its inputs):
     case cap = p95 build x1.25 (x2 when builds hit the cap: the sample is censored), within
@@ -1265,6 +1382,19 @@ def step_costs(out: Out, conn, days: int, daily_budget: float) -> None:
     out.json("costs", "recommend", rec)
     out.check("costs", "C01", bool(runs), f"{len(runs)} priced live runs and {len(acts)} activities in {days}d")
     out.check("costs", "C02", rec["fits_daily_budget"], f"recommended grants sum {rec['grants_total']} within the daily budget {daily_budget}")
+    with conn.cursor() as cur:
+        cruns = _rows(cur, COST_CACHE_SQL, (BUILD_INTENT, max(days, 7), list(LIVE_PROVIDERS)))
+        cacts = _rows(cur, COST_CACHE_ACTIVITY_SQL, (max(days, 7), list(LIVE_PROVIDERS)))
+    conn.rollback()
+    cache = cache_summary(cruns, cacts, _now())
+    for key in ("decide", "builds", "activities", "decide_days", "cadence", "target"):
+        out.json("costs", f"cache_{key}", cache[key])
+    tgt = cache["target"]
+    if tgt["runs"] >= CACHE_TARGET["min_runs"]:
+        out.check("costs", "C03", (tgt["hit_rate"] or 0) >= tgt["goal"],
+                  f"{tgt['hit_rate']} of Sonnet/Opus decide input read from cache in 24h ({tgt['runs']} runs; goal {tgt['goal']})")
+    else:
+        out.info("costs", f"C03 n/a: {tgt['runs']} Sonnet/Opus decide runs with recorded cache writes in 24h (< {CACHE_TARGET['min_runs']})")
 
 
 def step_budget(out: Out, conn, role: str, usd: str) -> None:
@@ -1279,6 +1409,21 @@ def step_budget(out: Out, conn, role: str, usd: str) -> None:
         conn.commit()
         after = _rows(cur, "SELECT daily_model_budget_usd FROM agent_capability_grants WHERE id = %s", (gid,))[0][0]
     out.check("budget", "B01", float(after) == float(usd), f"role={role.lower()} daily_model_budget_usd {float(before)} -> {float(after)}")
+
+
+def step_runs(out: Out, conn, role: str, n: str) -> None:
+    """Operator command: one role's grant max_runs_per_hour (a re-seed keeps the larger of it and the role default).
+    The global SOCIETY_MAX_RUNS_PER_HOUR still caps the fleet."""
+    with conn.cursor() as cur:
+        row = _rows(cur, "SELECT id, max_runs_per_hour FROM agent_capability_grants WHERE role = %s", (role.lower(),))
+        if not row:
+            out.check("runs", "R01", False, f"no grant for role {role!r}")
+            return
+        gid, before = row[0]
+        cur.execute("UPDATE agent_capability_grants SET max_runs_per_hour = %s, updated_at = now() WHERE id = %s", (int(n), gid))
+        conn.commit()
+        after = _rows(cur, "SELECT max_runs_per_hour FROM agent_capability_grants WHERE id = %s", (gid,))[0][0]
+    out.check("runs", "R01", int(after) == int(n), f"role={role.lower()} max_runs_per_hour {before} -> {after}")
 
 
 ROUTES_SQL = (
@@ -2015,7 +2160,7 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if conn is None and (name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes", "costs", "budget", "routes")
+            if conn is None and (name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes", "costs", "budget", "runs", "routes")
                                  or (name == "owner" and args[0] == "grant")):
                 conn = vs.db_connect()
             if name == "status":
@@ -2058,8 +2203,12 @@ def main() -> int:
                 step_costs(out, conn, int(args[0]) if args else 7, float(args[1]) if len(args) > 1 else 6.0)
             elif name == "budget":
                 step_budget(out, conn, args[0], args[1])
+            elif name == "runs":
+                step_runs(out, conn, args[0], args[1])
             elif name == "routes":
                 step_routes(out, conn, int(args[0]) if args else 20)
+            elif name == "funnel":
+                step_funnel(out, base, token, int(args[0]) if args else 24, proof=len(args) == 2)
             elif name == "owner" and args == ["slo"]:
                 step_owner_slo(out, base, token)
             elif name == "owner":

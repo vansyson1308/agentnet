@@ -417,23 +417,41 @@ class ProposeOwnerActionPayload(_Strict):
 
 #: RESPOND_TO_OWNER's limits, stated in the prompt (cognition.SYSTEM_PROMPT)
 REPLY_MAX, MAX_PLAN_STEPS, STEP_MAX, MAX_REPLY_TICKETS, MAX_OWNER_ACTIONS_NEEDED = 1200, 5, 200, 5, 3
-RESPOND_LIMIT = (f"reply 10-{REPLY_MAX} chars; plan_steps at most {MAX_PLAN_STEPS} items of 3-{STEP_MAX} chars; "
-                 f"ticket_ids at most {MAX_REPLY_TICKETS}; owner_actions_needed at most {MAX_OWNER_ACTIONS_NEEDED} items of 3-{STEP_MAX} chars")
+RESPOND_LIMIT = (f"reply 10-{REPLY_MAX} chars; plan_steps at most {MAX_PLAN_STEPS} items, each with step (3-{STEP_MAX} chars) "
+                 f"and intent (the 1-based position in THIS decision's intents of the intent that starts it) or ticket_id; "
+                 f"a step with neither is for later and shows as next; ticket_ids at most {MAX_REPLY_TICKETS}; "
+                 f"owner_actions_needed at most {MAX_OWNER_ACTIONS_NEEDED} items of 3-{STEP_MAX} chars")
+
+
+class PlanStep(_Strict):
+    """One step of the company's answer, linked to the work that starts it: ``intent`` is the 1-based
+    position of a sibling intent in the same decision, ``ticket_id`` an existing ticket; neither = next."""
+
+    step: str = Field(..., min_length=3, max_length=STEP_MAX)
+    intent: Optional[int] = Field(None, ge=1, le=10)
+    ticket_id: Optional[uuid.UUID] = None
 
 
 class RespondToOwnerPayload(_Strict):
     """The company's answer to what the owner just said (the owner event of this story): what it
-    understood, what it will do, which tickets carry it and what only the owner can do. Shown to the
-    owner on the Owner Console; it decides nothing and grants nothing."""
+    understood, what it STARTED in this same decision (plan_steps linked to those intents or
+    tickets), which tickets carry it and what only the owner can do. Shown to the owner on the Owner
+    Console; it decides nothing and grants nothing."""
 
     reply: str = Field(..., min_length=10, max_length=REPLY_MAX)
-    plan_steps: List[str] = Field(default_factory=list, max_length=MAX_PLAN_STEPS)
+    plan_steps: List[PlanStep] = Field(default_factory=list, max_length=MAX_PLAN_STEPS)
     ticket_ids: List[uuid.UUID] = Field(default_factory=list, max_length=MAX_REPLY_TICKETS)
     owner_actions_needed: List[str] = Field(default_factory=list, max_length=MAX_OWNER_ACTIONS_NEEDED)
 
-    @field_validator("plan_steps", "owner_actions_needed")
+    @field_validator("plan_steps", mode="before")
     @classmethod
-    def _steps(cls, v: List[str]) -> List[str]:
+    def _plain_steps(cls, v: Any) -> Any:
+        # a plain string is a step for later ("next"); the model need not link every step
+        return [{"step": item} if isinstance(item, str) else item for item in v] if isinstance(v, list) else v
+
+    @field_validator("owner_actions_needed")
+    @classmethod
+    def _actions(cls, v: List[str]) -> List[str]:
         return _short_items(v, hi=STEP_MAX)
 
 
