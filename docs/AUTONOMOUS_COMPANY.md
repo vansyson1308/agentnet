@@ -606,3 +606,34 @@ Security, the RED/merge law and auto-merge are unchanged.
   `max_runs_per_hour` (1-200); a re-seed keeps the larger of it and the role default. The Governor may
   return up to 7 intents a run (5 tickets + the reply + one more); `SOCIETY_MAX_INTENTS_PER_RUN` (global,
   default 7) still caps every grant.
+
+#### The standing work generator (G1v, PR B)
+
+`society/work_generator.py`, run by every company cycle when `SOCIETY_WORK_GENERATOR_ENABLED=true`
+(default false). Deterministic: no model, no event, no new authority. It tops up each ACTIVE
+objective's PROPOSED tickets to `SOCIETY_WORK_GENERATOR_MIN_BACKLOG` (5), at most
+`SOCIETY_WORK_GENERATOR_MAX_PER_CYCLE` (10) new tickets per cycle (both 0..20), source `generator`
+(or `rescope`) with an `origin`:
+
+| origin | evidence (proof) | what it asks |
+|---|---|---|
+| `rescope` | a candidate REJECTED in 7 days whose ticket is closed (not closed by the owner, not already satisfied, not busywork); the original proof + `rescope:<id>` | a smaller design on the same key result that avoids the rejection reason, once |
+| `directive` | the active directive's themes (fixed keyword map: UI, traffic, signup, agents; none -> UI) x the public pages of `public_surface_contract.json`; `surface:<page>` + `directive:<id>:<theme>` | one small change per page, for the directive's objectives. Titles are system-written; the owner's text is matched, never copied |
+| `surface` | the latest trusted observation (24 h) of a public page failed and NO open maintenance incident covers it; `surface:<page>` | make the page pass its contract check. Maintenance incidents never enter the innovation portfolio |
+| `tests` | a pytest node id named by a failed promotion CI in 7 days, still on base (the node id is the acceptance proof) | make it pass; never skip or weaken it |
+| `kr_lever` | every off-target KR of an active objective with product levers (`work_packet.METRIC_LEVERS`), every cycle; `probe:<metric>` + `idea:<metric>:<n>` | one ticket per product idea |
+| `docs_sdk` | read-only: SDK client methods missing from the SDK README (5 per ticket), public SDK methods without a docstring, example agents without a README; `repo:...` | document it |
+| `todo` | TODO/FIXME in owned product code (`repo_intel.search`, bounded; the trusted base is not scanned); `repo:todo:<path>` | do it or remove it |
+
+A ticket whose title or proof matches one that is open or was created in the last 7 days is refused.
+Each item goes to the active objective with the largest deficit whose key result it moves (and which is
+still off target). Every generated ticket still goes through the plan, the board/owner, the design
+review, the spec gate, files_allowed, QA/Security and the RED/merge law. The cycle records
+`tickets_generated`, `generated_by_origin` and `generator_duplicates` in its evidence.
+
+**Funnel by source** (`funnel.py`, `/owner`, the daily report, the 2-hourly `society.funnel` line,
+validator `funnel:<h>[:proof]`): tickets created by source (owner, directive, generator, kr_gap,
+rescope, bench, backlog, incident, agents), per-role runs worked, idle wakes, idle % and queue now,
+$/hour, and spend vs the window's share of the WORKER's daily budget (its heartbeat). `funnel:12:proof`
+checks the G1v live proof from these numbers: >= 20 tickets, >= 8 designs go, >= 5 builds delivered,
+>= 3 PRs, Builder idle < 30%, spend >= $30.

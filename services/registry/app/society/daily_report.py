@@ -45,7 +45,7 @@ def build(db: Session, now: Optional[datetime] = None) -> Dict[str, Any]:
             "north_star": card.get("north_star"), "owner_actions_open": owner_actions.open_count(db),
             "ready_without_pr": [{k: b[k] for k in ("candidate", "reason", "requests")} for b in promotion_queue.ready_backlog(db, get_settings(), now, from_worker=True)],
             "change_budget": promotion_queue.worker_view_caps(db, get_settings(), now), "rejections": rejections.breakdown(db),
-            "ready_candidates": promotion_queue.ready_view(db, get_settings(), now), "funnel": funnel.funnel(db, now, hours=24)}
+            "ready_candidates": promotion_queue.ready_view(db, get_settings(), now), "funnel": funnel.funnel(db, now, hours=24, daily_budget_usd=funnel.worker_budget(db, float(get_settings().daily_model_budget_usd)))}
     return {"data": data, "text": render(data, card, owner_actions.summary_lines(db))}
 
 

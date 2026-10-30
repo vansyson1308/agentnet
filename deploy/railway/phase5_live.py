@@ -164,8 +164,9 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("routes[:<limit>]")
         if name == "owner" and args != ["slo"] and (len(args) != 2 or args[0] != "grant" or not OWNER_EMAIL_RE.fullmatch(args[1])):
             raise ValueError("owner:grant:<email> (an account that already registered on the dashboard) | owner:slo")
-        if name == "funnel" and (len(args) > 1 or (args and not re.fullmatch(r"\d{1,3}", args[0])) or (args and not 2 <= int(args[0]) <= 168)):
-            raise ValueError("funnel[:<hours 2..168>]")
+        if name == "funnel" and (len(args) > 2 or (args and not re.fullmatch(r"\d{1,3}", args[0])) or (args and not 2 <= int(args[0]) <= 168)
+                                 or (len(args) == 2 and args[1] != "proof")):
+            raise ValueError("funnel[:<hours 2..168>[:proof]]")
         if name == "freezes" and args != ["lift-recovered"]:
             raise ValueError("freezes:lift-recovered")
         if name == "company" and not _company_args_ok(args):
@@ -1132,7 +1133,14 @@ def step_owner_slo(out: Out, base: str, token: str) -> None:
                                   "tickets": len(e.get("tickets") or []), "plans": len(e.get("plans") or [])} for e in body.get("entries") or []])
 
 
-def step_funnel(out: Out, base: str, token: str, hours: int) -> None:
+#: owner 2026-10-29 G1v live proof at full throttle (12 h): (code, label, funnel key or callable, minimum or None, maximum or None)
+G1V_PROOF = (("G01", "new tickets", "tickets_created", 20, None), ("G02", "designs go", "designs_go", 8, None),
+             ("G03", "builds delivered", "builds_delivered", 5, None), ("G04", "PRs opened", "prs_opened", 3, None),
+             ("G05", "Builder idle %", lambda b: ((b.get("roles") or {}).get("builder") or {}).get("idle_pct"), None, 30),
+             ("G06", "spend USD", "spend_usd", 30, None))
+
+
+def step_funnel(out: Out, base: str, token: str, hours: int, proof: bool = False) -> None:
     """Read-only: the throughput funnel (society/funnel.py) from the operator API -- spend, runs by role,
     tickets, designs, builds, READY, PRs, CI, merges, rejections, $/READY, $/PR, 2-hour buckets and the
     stage where work waits longest. Counts only."""
@@ -1145,6 +1153,14 @@ def step_funnel(out: Out, base: str, token: str, hours: int) -> None:
                        f"PRs {body.get('prs_opened')} CI green {body.get('ci_green')} merged {body.get('merged')} | $/READY {body.get('usd_per_ready')} $/PR {body.get('usd_per_pr')} | "
                        f"bottleneck {b.get('stage', 'none')} ({b.get('waiting', 0)} waiting, median {b.get('median_h')}h)")
     out.check("funnel", "F01", len(body.get("by_2h") or []) >= 1 and isinstance(body.get("stages"), list), f"{len(body.get('by_2h') or [])} 2h bucket(s), {len(body.get('stages') or [])} stages")
+    roles = body.get("roles") or {}
+    out.info("funnel", f"tickets by source: {body.get('tickets_by_source') or {}} | $/hour {body.get('usd_per_hour')} | budget {body.get('budget_usd')} "
+                       f"({body.get('spend_pct_of_budget')}%) | idle %: " + ", ".join(f"{r} {v.get('idle_pct')} (queue {v.get('queued')})" for r, v in sorted(roles.items())))
+    if proof:  # G1v: structural numbers, not claims
+        for code, label, key, lo, hi in G1V_PROOF:
+            v = key(body) if callable(key) else body.get(key)
+            ok = v is not None and (lo is None or float(v) >= lo) and (hi is None or float(v) < hi)
+            out.check("funnel", code, ok, f"{label} {v} (needs {'>= ' + str(lo) if lo is not None else '< ' + str(hi)}) in {hours}h")
     out.json("funnel", "funnel", body)
 
 
@@ -2192,7 +2208,7 @@ def main() -> int:
             elif name == "routes":
                 step_routes(out, conn, int(args[0]) if args else 20)
             elif name == "funnel":
-                step_funnel(out, base, token, int(args[0]) if args else 24)
+                step_funnel(out, base, token, int(args[0]) if args else 24, proof=len(args) == 2)
             elif name == "owner" and args == ["slo"]:
                 step_owner_slo(out, base, token)
             elif name == "owner":

@@ -31,8 +31,10 @@ PLAN_MAX, PER_DEPARTMENT = 3, 2
 MODEL_TICKETS_PER_DEPARTMENT = 2
 #: tickets the models may file in ONE owner story (owner_thread), outside the department's daily cap (G1v: 1..5 per owner event)
 OWNER_STORY_TICKETS = 5
-#: Proofs that are not pytest node ids: a probe metric, a bench task, an owner issue.
-NON_TEST_PROOFS = ("probe:", "bench:", "issue:", "play:")
+#: Proofs that are not pytest node ids: a probe metric, a bench task, an owner issue, and the work
+#: generator's evidence (work_generator.py: a surface check, a directive theme, a lever idea, a repo
+#: finding, the rejected candidate a rescope follows up).
+NON_TEST_PROOFS = ("probe:", "bench:", "issue:", "play:", "surface:", "directive:", "idea:", "repo:", "rescope:")
 #: Supplied tickets (``supply``): backlog source -> (charter department, KR metric). An issue maps to the objective its owner tagged.
 SUPPLY = {"bench": ("engineering", "bench_holdout_pass_at_1"), "maintenance_incident": ("sre_release", "core_journey_success_rate"),
           "github_issue": ("strategy_product", None), "kr_gap": ("strategy_product", None)}

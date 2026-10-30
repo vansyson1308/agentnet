@@ -403,6 +403,12 @@ def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Op
 
     supplied = tickets.supply(db, backlog.collect(db, settings, provider) + backlog.kr_gap_items(db, now), now)
     cycle.evidence = {**(cycle.evidence or {}), "tickets_supplied": len(supplied)}
+    if settings.work_generator_enabled:  # the standing work generator tops every active objective's backlog up (G1v)
+        from . import work_generator  # noqa: PLC0415
+
+        gen = work_generator.generate(db, settings, now)
+        cycle.evidence = {**cycle.evidence, "tickets_generated": len(gen["created"]), "generated_by_origin": gen["by_origin"],
+                          "generator_duplicates": gen["duplicates"]}
     from . import goals, owner_actions  # noqa: PLC0415
 
     if goals.enabled(settings):  # outside actions of the active north-star objectives wait in the owner's queue

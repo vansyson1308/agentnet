@@ -473,6 +473,9 @@ def _create_improvement(ctx: ExecContext) -> ExecOutcome:
         src = ("owner_story" if story is not None else "backlog" if ctx.event.event_type == EventType.BACKLOG_ITEM
                else "scout" if ctx.grant.role == "scout" else "department")
         ticket_id = tickets.create(ctx.db, proposal_id=proposal.id, title=p.title, fields=p.ticket.model_dump(), source=src, role=ctx.grant.role, importance=p.importance)
+        if story is not None:  # the funnel counts owner tickets by what the owner said: a directive or a message
+            entry = owner_thread.entry_for_correlation(ctx.db, getattr(ctx.run, "correlation_id", None)) or {}
+            ctx.db.execute(text("UPDATE society_tickets SET origin = :o WHERE id = :id"), {"o": str(entry.get("kind") or "message")[:48], "id": ticket_id})
     ev = _emit(
         ctx,
         EventType.PROPOSAL_CREATED,

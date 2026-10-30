@@ -929,7 +929,7 @@ def get_company_funnel(db: Session = Depends(get_db), operator: User = Depends(r
     PRs, CI, merges, rejections, $/READY, $/PR, 2-hour buckets and the current bottleneck."""
     from ...society import funnel
 
-    return funnel.funnel(db, hours=hours)
+    return funnel.funnel(db, hours=hours, daily_budget_usd=funnel.worker_budget(db, float(get_settings().daily_model_budget_usd)))
 
 
 @router.get("/company/tickets")

@@ -311,7 +311,7 @@ class SocietyWorker:
                 if time.monotonic() - self._funnel_logged_at >= funnel_mod.BUCKET.total_seconds():
                     self._funnel_logged_at = time.monotonic()
                     try:
-                        funnel_mod.log_snapshot(db)
+                        funnel_mod.log_snapshot(db, daily_budget_usd=float(self.settings.daily_model_budget_usd))
                     except Exception:  # noqa: BLE001 -- a report never blocks the loop
                         db.rollback()
                         logger.exception("society.funnel snapshot failed")

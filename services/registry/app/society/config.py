@@ -349,6 +349,12 @@ class SocietySettings:
     # The Chief of Staff's plan size (tickets.build_plan): at most this many tickets, this many per department.
     company_plan_max: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_PLAN_MAX", 3, minimum=1))
     company_plan_per_department: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_PLAN_PER_DEPARTMENT", 2, minimum=1))
+    # The standing work generator (work_generator.py, owner 2026-10-29 G1v): each company cycle tops the
+    # backlog of every ACTIVE objective up to MIN_BACKLOG proposed tickets, at most MAX_PER_CYCLE new ones,
+    # deterministic and deduplicated (title/proof). Off by default.
+    work_generator_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_WORK_GENERATOR_ENABLED", False))
+    work_generator_min_backlog: int = field(default_factory=lambda: _int("SOCIETY_WORK_GENERATOR_MIN_BACKLOG", 5, minimum=0))
+    work_generator_max_per_cycle: int = field(default_factory=lambda: _int("SOCIETY_WORK_GENERATOR_MAX_PER_CYCLE", 10, minimum=0))
     company_max_active_hypotheses: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES", 3, minimum=0))
     company_max_high_risk_investigations: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_MAX_HIGH_RISK_INVESTIGATIONS", 1, minimum=0))
     # An APPROVED hypothesis nobody started within this window is SHELVED: it
@@ -498,6 +504,8 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
         problems.append("SOCIETY_COMPANY_CYCLES_PER_DAY must be 1..24")
     if s.company_plan_max > 10 or s.company_plan_per_department > s.company_plan_max:
         problems.append("SOCIETY_COMPANY_PLAN_MAX must be 1..10 and SOCIETY_COMPANY_PLAN_PER_DEPARTMENT <= it")
+    if s.work_generator_min_backlog > 20 or s.work_generator_max_per_cycle > 20:
+        problems.append("SOCIETY_WORK_GENERATOR_MIN_BACKLOG and SOCIETY_WORK_GENERATOR_MAX_PER_CYCLE must be 0..20 (the generator is bounded)")
     if s.telegram_digest_hour_utc > 23:
         problems.append("SOCIETY_TELEGRAM_DIGEST_HOUR_UTC must be 0..23")
     if s.telegram_enabled and not re.fullmatch(r"-?\d{1,20}", s.telegram_chat_id):
