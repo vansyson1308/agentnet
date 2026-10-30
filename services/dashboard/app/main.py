@@ -1,7 +1,9 @@
 import os
+import hmac
 import json
+import secrets
 import uuid
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
+from flask import Flask, abort, render_template, request, redirect, url_for, flash, session, jsonify
 from werkzeug.middleware.proxy_fix import ProxyFix
 from .api_client import api_client, APIError, AuthRequiredError
 import pathlib
@@ -294,3 +296,145 @@ def network_agent_page(agent_id):
     prices = {k: int(v) for k, v in (econ.get("params", {}).get("skillPrices") or {}).items()}
     interfaces = {i.get("protocolBinding"): i for i in card.get("supportedInterfaces", [])}
     return render_template("network_agent.html", agent_id=agent_id, card=card, prices=prices, interfaces=interfaces, econ_uri=ECONOMICS_EXTENSION_URI)
+
+
+# ============================================================
+# OWNER CONSOLE -- operators only; the registry decides
+# ============================================================
+# Every read and every action is an EXISTING operator route of the registry,
+# called with the signed-in user's own token. Authority is the registry's
+# require_operator (durable users.society_role): this page makes no role
+# decision of its own and compares no email. 401 -> sign in; 403 -> 403.
+
+OWNER_SECTIONS = {
+    "directive": "/company/directive",
+    "north_star": "/company/north-star",
+    "report": "/company/report",
+    "plans": "/company/plans",
+    "owner_actions": "/company/owner-actions",
+    "incidents": "/incidents",
+    "budget": "/budget",
+    "thread": "/company/owner-thread",
+    "funnel": "/company/funnel",
+}
+#: a direction that selects more objectives than this sets no priority (owner 2026-10-29)
+DIRECTIVE_FOCUS = 2
+
+
+def _owner_token() -> str:
+    token = session.get("access_token")
+    if not token:
+        raise AuthRequiredError()
+    return token
+
+
+def _owner_refused(e: APIError):
+    """The registry's answer, as the page's: 401 -> sign in again, 403 -> 403."""
+    if e.status_code == 401:
+        session.pop("access_token", None)
+        raise AuthRequiredError()
+    if e.status_code == 403:
+        abort(403)
+
+
+def _csrf_token() -> str:
+    if not session.get("owner_csrf"):
+        session["owner_csrf"] = secrets.token_urlsafe(32)
+    return session["owner_csrf"]
+
+
+def _csrf_ok() -> bool:
+    sent, kept = request.form.get("csrf") or "", session.get("owner_csrf") or ""
+    return bool(kept) and hmac.compare_digest(sent, kept)
+
+
+@app.errorhandler(403)
+def handle_forbidden(e):
+    return render_template("error.html", title="Forbidden", error="The Owner Console is for operators only."), 403
+
+
+@app.route("/owner")
+def owner_console():
+    token = _owner_token()
+    data = {}
+    for key, path in OWNER_SECTIONS.items():
+        try:
+            data[key] = api_client.operator_get(token, path)
+        except APIError as e:
+            _owner_refused(e)
+            app.logger.warning("owner console: %s unavailable (%s)", key, e.status_code)
+            data[key] = None
+    return render_template("owner.html", d=data, csrf=_csrf_token())
+
+
+def _owner_action(path: str, body: dict, done: str):
+    """POST one operator action with the user's token, then back to the console."""
+    token = _owner_token()
+    if not _csrf_ok():
+        flash("The form expired: reload the Owner Console and try again.", "warning")
+        return redirect(url_for("owner_console"))
+    try:
+        api_client.operator_post(token, path, body)
+        flash(done, "success")
+    except APIError as e:
+        _owner_refused(e)
+        flash(f"Refused: {e.detail or 'the registry refused the request'}", "danger")
+    return redirect(url_for("owner_console"))
+
+
+@app.route("/owner/directive", methods=["POST"])
+def owner_set_directive():
+    text = (request.form.get("text") or "").strip()
+    picked = request.form.getlist("objective_ids")
+    if len(picked) > DIRECTIVE_FOCUS:
+        flash(f"{len(picked)} objectives selected: everything x2 = no priority. Pick at most {DIRECTIVE_FOCUS} to give the plan a direction.", "warning")
+    return _owner_action("/company/directive", {"text": text, "objective_ids": request.form.getlist("objective_ids")}, "Directive set: the company is starting on it now -- the Governor answers below.")
+
+
+@app.route("/owner/messages", methods=["POST"])
+def owner_send_message():
+    text = (request.form.get("text") or "").strip()
+    return _owner_action("/company/owner-messages", {"text": text}, "Received: the Governor answers here within minutes.")
+
+
+@app.route("/owner/thread")
+def owner_thread_fragment():
+    """The conversation panel alone, for the page's 5 s poll while something is working."""
+    token = _owner_token()
+    try:
+        thread = api_client.operator_get(token, OWNER_SECTIONS["thread"])
+    except APIError as e:
+        _owner_refused(e)
+        thread = None
+    return render_template("owner_thread.html", thread=thread)
+
+
+@app.route("/owner/plans/<uuid:plan_id>/<any(approve, reject):decision>", methods=["POST"])
+def owner_decide_plan(plan_id, decision):
+    return _owner_action(f"/company/plans/{plan_id}/{decision}", {}, f"Plan {decision}d.")
+
+
+@app.route("/owner/owner-actions/<uuid:action_id>/<any(done, dismissed):decision>", methods=["POST"])
+def owner_decide_action(action_id, decision):
+    note = (request.form.get("note") or "").strip()[:300] or None
+    return _owner_action(f"/company/owner-actions/{action_id}/{decision}", {"note": note}, f"Owner action marked {decision}.")
+
+
+@app.route("/owner/incidents/<uuid:incident_id>/lift", methods=["POST"])
+def owner_lift_incident(incident_id):
+    reason = (request.form.get("reason") or "").strip()[:255] or "lifted by the owner from the Owner Console"
+    return _owner_action(f"/incidents/{incident_id}/lift", {"reason": reason}, "Freeze lifted.")
+
+
+@app.route("/owner/tickets", methods=["POST"])
+def owner_new_ticket():
+    f = request.form
+    try:
+        effect = float(f.get("expected_effect") or "")
+    except ValueError:
+        flash("Expected effect must be a number.", "danger")
+        return redirect(url_for("owner_console"))
+    body = {"title": (f.get("title") or "").strip(), "problem": (f.get("problem") or "").strip(), "objective_id": (f.get("objective_id") or "").strip(),
+            "metric_id": (f.get("metric_id") or "").strip(), "expected_effect": effect, "direction": f.get("direction") or "up",
+            "proof": [p.strip() for p in (f.get("proof") or "").splitlines() if p.strip()][:10]}
+    return _owner_action("/company/tickets", body, "Task created: approved at once; the Governor answers in the conversation above.")

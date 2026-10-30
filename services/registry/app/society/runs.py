@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Set
 
-from sqlalchemy import func, text
+from sqlalchemy import case, func, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -42,7 +42,7 @@ from ..models import (
     SocietyEventStatus,
 )
 from .config import SocietySettings
-from .events import EventType, emit_event, expire_stale_events, utcnow
+from .events import OWNER_EVENT_TYPES, EventType, emit_event, expire_stale_events, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -130,18 +130,21 @@ def dispatch_pending_events(
     settings: SocietySettings,
     routing: Dict[str, List[str]],
     now: Optional[datetime] = None,
+    owner_only: bool = False,
 ) -> DispatchStats:
-    """Route PENDING events to agent runs. Commits."""
+    """Route PENDING events to agent runs, the owner's events first (``owner_only``: only them,
+    the worker's owner lane). Commits."""
     now = now or utcnow()
     stats = DispatchStats()
 
     expired = expire_stale_events(db, ttl_seconds=settings.event_ttl_seconds, now=now)
     stats.events_expired = expired
 
+    q = db.query(SocietyEvent).filter(SocietyEvent.status == SocietyEventStatus.PENDING)
+    if owner_only:
+        q = q.filter(SocietyEvent.event_type.in_(OWNER_EVENT_TYPES))
     events = (
-        db.query(SocietyEvent)
-        .filter(SocietyEvent.status == SocietyEventStatus.PENDING)
-        .order_by(SocietyEvent.created_at)
+        q.order_by(case((SocietyEvent.event_type.in_(OWNER_EVENT_TYPES), 0), else_=1), SocietyEvent.created_at)
         .limit(settings.dispatch_batch_size)
         .with_for_update(skip_locked=True)
         .all()
@@ -160,6 +163,9 @@ def dispatch_pending_events(
             event.processed_at = now
             stats.events_ignored += 1
             stats.loop_breaks += 1
+            # one structural line per trip (the audit's L01 names the same facts from the DB)
+            logger.warning("loop_breaker.tripped correlation=%s kind=%s event_type=%s depth=%s subject=%s:%s", str(event.correlation_id)[:8],
+                           "depth" if "depth" in note else "runs", event.event_type, event.causation_depth, event.subject_type, str(event.subject_id or "")[:8])
             # One breaker event per correlation, never chained (no causation, depth 0),
             # so it cannot itself trip the breaker.
             emit_event(
@@ -223,13 +229,15 @@ def dispatch_pending_events(
     return stats
 
 
-_CLAIM_SQL = text(
-    """
+#: a run woken by one of the owner's events (events.OWNER_EVENT_TYPES) is claimed before any other
+_OWNER_RUN = ("EXISTS (SELECT 1 FROM society_events e WHERE e.id = agent_runs.event_id "
+              "AND e.event_type IN ('" + "', '".join(OWNER_EVENT_TYPES) + "'))")
+_CLAIM_TEMPLATE = """
     WITH candidate AS (
         SELECT id FROM agent_runs
-        WHERE (status = 'queued' AND (not_before IS NULL OR not_before <= :now))
-           OR (status IN ('claimed', 'running') AND lease_expires_at IS NOT NULL AND lease_expires_at < :now)
-        ORDER BY created_at
+        WHERE ((status = 'queued' AND (not_before IS NULL OR not_before <= :now))
+           OR (status IN ('claimed', 'running') AND lease_expires_at IS NOT NULL AND lease_expires_at < :now)){only}
+        ORDER BY {owner} DESC, created_at
         LIMIT 1
         FOR UPDATE SKIP LOCKED
     )
@@ -243,14 +251,16 @@ _CLAIM_SQL = text(
      WHERE r.id = candidate.id
  RETURNING r.id
     """
-)
+_CLAIM_SQL = text(_CLAIM_TEMPLATE.format(only="", owner=_OWNER_RUN))
+_CLAIM_OWNER_SQL = text(_CLAIM_TEMPLATE.format(only=" AND " + _OWNER_RUN, owner=_OWNER_RUN))
 
 
-def claim_next_run(db: Session, *, worker_id: str, lease_seconds: int, now: Optional[datetime] = None) -> Optional[AgentRun]:
-    """Atomically claim one claimable run. Commits. Returns None if nothing is claimable."""
+def claim_next_run(db: Session, *, worker_id: str, lease_seconds: int, now: Optional[datetime] = None, owner_only: bool = False) -> Optional[AgentRun]:
+    """Atomically claim one claimable run, an owner event's run first (``owner_only``: only those).
+    Commits. Returns None if nothing is claimable."""
     now = now or utcnow()
     row = db.execute(
-        _CLAIM_SQL,
+        _CLAIM_OWNER_SQL if owner_only else _CLAIM_SQL,
         {"now": now, "worker_id": worker_id, "lease_until": now + timedelta(seconds=lease_seconds)},
     ).fetchone()
     db.commit()

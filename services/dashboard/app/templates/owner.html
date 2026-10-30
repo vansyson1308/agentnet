@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+{% block title %}Owner Console — AgentNet{% endblock %}
+{% block extra_head %}
+<style>
+    .oc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1rem; }
+    .oc-card { background: var(--glass-bg); border: 1px solid var(--border-glow); border-radius: 12px; padding: 1rem 1.2rem; }
+    .oc-card h2 { font-size: 1.05rem; margin: 0 0 .6rem; }
+    .oc-card table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    .oc-card td, .oc-card th { padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,.06); text-align: left; vertical-align: top; }
+    .oc-muted { color: var(--text-secondary); font-size: .8rem; }
+    .oc-pre { white-space: pre-wrap; font-size: .8rem; margin: 0; }
+    .oc-form label { display: block; font-size: .78rem; margin-top: .4rem; }
+    .oc-form input, .oc-form textarea, .oc-form select { width: 100%; box-sizing: border-box; }
+    .oc-inline { display: inline; }
+    .oc-directive { border-color: var(--accent, #38bdf8); }
+    .oc-msg { border-top: 1px solid rgba(255,255,255,.08); padding: .6rem 0; }
+    .oc-reply { margin: .3rem 0 .3rem 1rem; padding-left: .6rem; border-left: 2px solid var(--accent, #38bdf8); }
+    .oc-steps { margin: .2rem 0 .2rem 1.2rem; font-size: .8rem; }
+    .oc-status-working { color: #fbbf24; }
+    .oc-status-answered { color: #34d399; }
+    .oc-status-no_reply { color: #f87171; }
+</style>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+(function () {
+    // Poll the conversation every 5 s while something is "working"; stop when nothing is, or on a sign-in redirect.
+    var el = document.getElementById('owner-thread');
+    if (!el) return;
+    function tick() {
+        if (el.getAttribute('data-working') !== '1') return;
+        fetch('{{ url_for("owner_thread_fragment") }}', {credentials: 'same-origin'})
+            .then(function (r) { if (!r.ok || r.redirected) throw new Error('stop'); return r.text(); })
+            .then(function (html) {
+                el.innerHTML = html;
+                var inner = el.querySelector('[data-working]');
+                el.setAttribute('data-working', inner ? inner.getAttribute('data-working') : '0');
+                setTimeout(tick, 5000);
+            })
+            .catch(function () {});
+    }
+    setTimeout(tick, 5000);
+})();
+</script>
+{% endblock %}
+{% block content %}
+<h1>Owner Console</h1>
+<p class="oc-muted">Every number and button here is the registry's operator API, with your own sign-in. The agents act through their usual permissions; nothing here grants them more.</p>
+
+<div class="oc-card oc-directive" style="margin-bottom:1rem;">
+    <h2>💬 Talk to the company</h2>
+    <form class="oc-form" method="post" action="{{ url_for('owner_send_message') }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label for="owner-message">Ra lệnh / hỏi công ty — the Governor acknowledges, says what the company will do, and starts (owner input; it grants nothing)</label>
+        <textarea id="owner-message" name="text" rows="2" maxlength="2000" required placeholder="find our first paying external agent this week"></textarea>
+        <button type="submit" class="btn btn-primary btn-sm" style="margin-top:.5rem;">Send</button>
+    </form>
+    <div id="owner-thread" data-working="{{ '1' if d.thread and d.thread.working else '0' }}" style="margin-top:.6rem;">
+        {% with thread = d.thread %}{% include "owner_thread.html" %}{% endwith %}
+    </div>
+</div>
+
+{% set dir = d.directive or {} %}
+<div class="oc-card oc-directive" style="margin-bottom:1rem;">
+    <h2>🧭 Kim chỉ nam — the company's direction</h2>
+    {% if dir.active %}
+    <p class="oc-pre">{{ dir.active.text }}</p>
+    {% if dir.active.objective_ids and dir.active.objective_ids|length > 2 %}
+    <div class="alert alert-warning">{{ dir.active.objective_ids|length }} objectives selected: everything ×2 = no priority. Pick at most 2.</div>
+    {% endif %}
+    <p class="oc-muted">Since {{ dir.active.created_at }}{% if dir.active.objective_ids %} · objectives {{ dir.active.objective_ids | join(", ") }} (their tickets rank ×{{ 1 + (dir.weight or 0) }} in the plan){% else %} · no objective picked{% endif %}</p>
+    {% elif d.directive is none %}
+    <p class="oc-muted">The directive is unavailable right now.</p>
+    {% else %}
+    <p class="oc-muted">No directive yet: write one below.</p>
+    {% endif %}
+    <form class="oc-form" method="post" action="{{ url_for('owner_set_directive') }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label for="directive-text">New direction (supersedes the current one; every agent sees it as owner input)</label>
+        <textarea id="directive-text" name="text" rows="3" maxlength="2000" required placeholder="first paid USDC task on staging this week; focus on O4"></textarea>
+        {% if dir.objectives %}
+        <label>Objectives it serves</label>
+        {% for o in dir.objectives %}
+        <label class="oc-inline"><input type="checkbox" name="objective_ids" value="{{ o.id }}" style="width:auto;" {% if dir.active and o.id in dir.active.objective_ids %}checked{% endif %}> {{ o.id }} {{ o.title }} ({{ o.status }})</label><br>
+        {% endfor %}
+        {% endif %}
+        <button type="submit" class="btn btn-primary btn-sm" style="margin-top:.5rem;">Set direction</button>
+    </form>
+    {% if dir.following %}
+    <h2 style="margin-top:1rem;">What came from it</h2>
+    <table>
+        <tr><th>Ticket</th><th>Objective</th><th>Status</th><th>Review</th><th>Candidate</th><th>PR</th></tr>
+        {% for t in dir.following %}
+        <tr><td>{{ t.title }}</td><td>{{ t.objective_id }}</td><td>{{ t.status }}{% if t.planned %} · planned{% endif %}</td><td>{{ t.review or "-" }}</td>
+            <td>{{ t.candidate or "-" }}</td><td>{% if t.pr_url %}<a href="{{ t.pr_url }}" rel="noopener" target="_blank">{{ t.promotion }}</a>{% else %}{{ t.promotion or "-" }}{% endif %}</td></tr>
+        {% endfor %}
+    </table>
+    {% elif dir.active %}
+    <p class="oc-muted">Nothing yet: the Governor and the Scout start on it now; its tickets are ranked into a plan as soon as they are filed (see the conversation above).</p>
+    {% endif %}
+</div>
+
+{% set f = d.funnel %}
+<div class="oc-card" style="margin-bottom:1rem;">
+    <h2>🏭 Throughput funnel ({{ f.window_hours if f else 24 }}h)</h2>
+    {% if f %}
+    <p class="oc-muted">Spend ${{ "%.2f"|format(f.spend_usd) }} · runs {% for r, n in (f.runs_by_role or {}).items() %}{{ r }} {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}
+        · $/READY {{ f.usd_per_ready if f.usd_per_ready is not none else "n/a" }} · $/PR {{ f.usd_per_pr if f.usd_per_pr is not none else "n/a" }}
+        {% if f.get("usd_per_hour") is not none %}· ${{ "%.2f"|format(f.usd_per_hour) }}/hour{% endif %}
+        {% if f.get("budget_usd") %}· {{ f.spend_pct_of_budget }}% of the window's budget (${{ "%.2f"|format(f.budget_usd) }}){% endif %}</p>
+    {% if f.get("tickets_by_source") %}<p class="oc-muted">Tickets by source: {% for k, v in f.tickets_by_source.items() %}{{ k }} {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+    {% if f.get("roles") %}
+    <table>
+        <tr><th>Role</th><th>Runs worked</th><th>Idle wakes</th><th>Idle %</th><th>Queue now</th><th>$</th></tr>
+        {% for r, v in f.roles|dictsort %}
+        <tr><td>{{ r }}</td><td>{{ v.worked }}</td><td>{{ v.idle }}</td><td>{{ v.idle_pct if v.idle_pct is not none else "–" }}</td><td>{{ v.queued }}</td><td>{{ "%.2f"|format(v.spend_usd) }}</td></tr>
+        {% endfor %}
+    </table>
+    {% endif %}
+    <table>
+        <tr><th>Tickets created</th><th>Approved</th><th>Designs go</th><th>Returned</th><th>Builds delivered / attempted</th><th>READY</th><th>PRs</th><th>CI green</th><th>Merged</th></tr>
+        <tr><td>{{ f.tickets_created }}</td><td>{{ f.tickets_approved }}</td><td>{{ f.designs_go }}</td><td>{{ f.designs_returned }}</td>
+            <td>{{ f.builds_delivered }} / {{ f.builds_attempted }}</td><td>{{ f.ready }}</td><td>{{ f.prs_opened }}</td><td>{{ f.ci_green }}</td><td>{{ f.merged }}</td></tr>
+    </table>
+    {% if f.bottleneck %}<p><strong>Bottleneck now:</strong> {{ f.bottleneck.stage }} — {{ f.bottleneck.waiting }} waiting, median {{ f.bottleneck.median_h }}h, oldest {{ f.bottleneck.oldest_h }}h</p>{% endif %}
+    {% if f.rejections %}<p class="oc-muted">Rejected: {% for k, v in f.rejections.items() %}{{ k }} {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+    <table>
+        <tr><th>2h from</th><th>$</th><th>Tickets</th><th>Approved</th><th>Go</th><th>Built</th><th>READY</th><th>PRs</th><th>Merged</th></tr>
+        {% for b in f.by_2h or [] %}
+        <tr><td>{{ b["from"][11:16] }}</td><td>{{ "%.2f"|format(b.spend_usd) }}</td><td>{{ b.tickets_created }}</td><td>{{ b.tickets_approved }}</td><td>{{ b.designs_go }}</td>
+            <td>{{ b.builds_delivered }}</td><td>{{ b.ready }}</td><td>{{ b.prs_opened }}</td><td>{{ b.merged }}</td></tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p class="oc-muted">The funnel is unavailable right now.</p>
+    {% endif %}
+</div>
+
+<div class="oc-grid">
+    <div class="oc-card">
+        <h2>⭐ North star</h2>
+        {% if d.north_star and d.north_star.summary_text %}
+        <p class="oc-pre">{{ d.north_star.summary_text }}</p>
+        {% else %}
+        <p class="oc-muted">No north-star scorecard available.</p>
+        {% endif %}
+    </div>
+
+    <div class="oc-card">
+        <h2>📋 Daily report</h2>
+        {% if d.report %}<p class="oc-pre">{{ d.report.text }}</p>{% else %}<p class="oc-muted">Unavailable.</p>{% endif %}
+    </div>
+
+    <div class="oc-card">
+        <h2>🗓️ Today's plan</h2>
+        {% set plans = (d.plans or {}).plans or [] %}
+        {% if plans %}
+        {% set p = plans[0] %}
+        <p class="oc-muted">{{ p.plan_date }} · {{ p.status }}{% if p.decided_by %} · decided by {{ p.decided_by }}{% endif %}{% if p.directive_id %} · from directive {{ p.directive_id[:8] }}{% elif p.owner_entry_id %} · from your message{% endif %}</p>
+        <table>
+            {% for r in p.ranking or [] %}
+            <tr><td>{{ r.title }}</td><td>{{ r.objective_id }}</td><td>{{ r.score }}</td><td>{% if r.owner_directive %}🧭{% endif %}</td></tr>
+            {% endfor %}
+        </table>
+        {% if p.status == "awaiting_owner" %}
+        <form class="oc-inline" method="post" action="{{ url_for('owner_decide_plan', plan_id=p.id, decision='approve') }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-primary btn-sm">Approve</button></form>
+        <form class="oc-inline" method="post" action="{{ url_for('owner_decide_plan', plan_id=p.id, decision='reject') }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-secondary btn-sm">Reject</button></form>
+        {% endif %}
+        {% else %}
+        <p class="oc-muted">No plan yet{% if d.plans and d.plans.empty_reason %}: {{ d.plans.empty_reason }}{% endif %}.</p>
+        {% endif %}
+    </div>
+
+    <div class="oc-card">
+        <h2>✋ Owner actions</h2>
+        {% set actions = (d.owner_actions or {}).owner_actions or [] %}
+        {% if actions %}
+        <table>
+            {% for a in actions %}
+            <tr><td>[{{ a.objective_id }}] {{ a.title }}<div class="oc-muted">why you: {{ a.reason }}</div></td>
+                <td style="white-space:nowrap;">
+                    <form class="oc-inline" method="post" action="{{ url_for('owner_decide_action', action_id=a.id, decision='done') }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-primary btn-sm">Done</button></form>
+                    <form class="oc-inline" method="post" action="{{ url_for('owner_decide_action', action_id=a.id, decision='dismissed') }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-secondary btn-sm">Dismiss</button></form>
+                </td></tr>
+            {% endfor %}
+        </table>
+        {% else %}
+        <p class="oc-muted">Nothing waits for you.</p>
+        {% endif %}
+    </div>
+
+    <div class="oc-card">
+        <h2>🚀 READY candidates</h2>
+        {% set ready = ((d.report or {}).data or {}).ready_candidates or [] %}
+        {% set budget = ((d.report or {}).data or {}).change_budget or {} %}
+        {% if budget %}<p class="oc-muted">Change budget: {{ budget.promotions_today }}/{{ budget.max_promotions_per_day }} promotions today, {{ budget.open_prs }}/{{ budget.max_open_autonomous_prs }} autonomous PRs open (auto-merge {{ "on" if budget.auto_merge_enabled else "off" }})</p>{% endif %}
+        {% if ready %}
+        <table>
+            {% for c in ready %}
+            <tr><td>{{ c.candidate }} {{ c.title }}</td>
+                <td>{% if c.pr_url %}<a href="{{ c.pr_url }}" rel="noopener" target="_blank">PR #{{ c.pr_number }}</a> ({{ c.promotion }}){% elif c.promotion %}{{ c.promotion }}{% else %}no PR{% endif %}{% if c.reason %}<div class="oc-muted">{{ c.reason }}</div>{% endif %}</td></tr>
+            {% endfor %}
+        </table>
+        {% else %}
+        <p class="oc-muted">No READY candidate.</p>
+        {% endif %}
+    </div>
+
+    <div class="oc-card">
+        <h2>🧊 Open freezes</h2>
+        {% set open_freezes = [] %}
+        {% for i in (d.incidents or {}).incidents or [] %}{% if not i.liftedAt %}{% set _ = open_freezes.append(i) %}{% endif %}{% endfor %}
+        {% if open_freezes %}
+        <table>
+            {% for i in open_freezes %}
+            <tr><td>{{ i.source }}: {{ i.reason }}<div class="oc-muted">since {{ i.openedAt }}</div></td>
+                <td><form method="post" action="{{ url_for('owner_lift_incident', incident_id=i.id) }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="cause recovered: lifted by the owner from the Owner Console"><button class="btn btn-secondary btn-sm">Lift</button></form></td></tr>
+            {% endfor %}
+        </table>
+        {% else %}
+        <p class="oc-muted">No open freeze.</p>
+        {% endif %}
+    </div>
+
+    <div class="oc-card">
+        <h2>💵 Budget and spend today</h2>
+        {% if d.budget %}
+        <p>Model spend ${{ d.budget.model_spend_today_usd }} of ${{ d.budget.daily_model_budget_usd }} (left ${{ d.budget.remaining_usd }})</p>
+        <table>
+            {% for a in d.budget.by_agent or [] %}
+            <tr><td>{{ a.agent }}</td><td>${{ a.spend_usd }}</td><td>{{ a.runs }} runs</td></tr>
+            {% endfor %}
+        </table>
+        {% else %}
+        <p class="oc-muted">Unavailable.</p>
+        {% endif %}
+    </div>
+
+    <div class="oc-card">
+        <h2>➕ New task</h2>
+        <form class="oc-form" method="post" action="{{ url_for('owner_new_ticket') }}">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <label for="t-title">Title</label><input id="t-title" name="title" maxlength="255" required>
+            <label for="t-problem">Problem</label><textarea id="t-problem" name="problem" rows="3" maxlength="4000" required></textarea>
+            <label for="t-objective">Objective</label>
+            <select id="t-objective" name="objective_id" required>
+                {% for o in dir.objectives or [] %}<option value="{{ o.id }}">{{ o.id }} {{ o.title }} ({{ o.status }})</option>{% endfor %}
+            </select>
+            <label for="t-metric">Key result (metric id)</label>
+            <select id="t-metric" name="metric_id" required>
+                {% for o in dir.objectives or [] %}{% for kr in o.key_results %}<option value="{{ kr.metric_id }}">{{ o.id }} · {{ kr.metric_id }} ({{ kr.direction }})</option>{% endfor %}{% endfor %}
+            </select>
+            <label for="t-effect">Expected effect (number)</label><input id="t-effect" name="expected_effect" required>
+            <label for="t-direction">Direction</label>
+            <select id="t-direction" name="direction"><option value="up">up</option><option value="down">down</option></select>
+            <label for="t-proof">Proof: acceptance test node ids, one per line</label><textarea id="t-proof" name="proof" rows="2" required></textarea>
+            <button type="submit" class="btn btn-primary btn-sm" style="margin-top:.5rem;">Create task</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

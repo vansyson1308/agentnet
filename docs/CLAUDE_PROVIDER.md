@@ -39,14 +39,45 @@ request policy is what you configured. Any other verdict names the problem.
 ## What changes and what does not
 
 * Same retries, parsing, budgets, policy and approvals: the adapter translates at the wire and reuses the existing loop.
-* The system prompt is cached between runs of the same role (cheaper input). The conversation prefix is cached only
-  for maintenance/build activities (multi-turn tool loops); a one-shot decide would pay the 1.25x write for nothing.
-* Spend is priced with prompt caching: cache reads at 0.1x the input rate (0.05x on Opus 5.5, 0.025x on Fable 5.1),
-  5-minute cache writes at 1.25x. A model missing from `ANTHROPIC_USD_PER_1K` keeps every input token at full rate.
+* Prompt caching (see "Prompt caching" below): the decide prompt is laid out most stable first and cached at
+  breakpoints; maintenance/build activities (multi-turn tool loops) also cache their conversation prefix.
+* Spend is priced with prompt caching, per the official price table
+  (https://platform.claude.com/docs/en/about-claude/pricing, "Prompt caching"): cache reads at 0.1x the input rate
+  (0.05x on Opus 5.5 and Sonnet 5.5, 0.025x on Fable 5.1), 5-minute cache writes at 1.25x, 1-hour writes at 2x. A model
+  missing from `ANTHROPIC_USD_PER_1K` keeps every input token at full rate.
 * A declined request (`stop_reason=refusal`) is re-run once on a fallback model by the API
   (`SOCIETY_MODEL_REFUSAL_FALLBACK=true`), otherwise it fails the run without a retry.
 * Optional, off by default: `MAINTENANCE_HARNESS2_ENABLED=true` turns on the Harness² Propose-Probe-Compose step for
   the Builder (ADR-0011, `maintenance/harness2.py`).
+
+## Prompt caching
+
+Caching is a prefix match: any changed byte invalidates everything after it. A decide run therefore sends the same
+information as before in this order (`cognition._messages`):
+
+1. **Static system block** -- the rules and the intent schema doc. Identical for every agent, role and run, so the
+   whole fleet shares one entry (~4.5k tokens, far above the 512-token minimum of the Claude 5 models). Breakpoint,
+   1-hour TTL.
+2. Who the agent is (name, role, mission, its intent types and limit), then the context JSON -- still ONE object,
+   its top-level keys tiered by `cognition.CONTEXT_TIERS`: **stable** (prompt version, agent, role, mission,
+   restrictions, permissions, society agents, owner directive, goals; breakpoint), **slow** (memory, proposals,
+   promotions, candidates, tasks, messages, refusals, federation; breakpoint only for a hot agent), then
+   **volatile** (event, budget, engineering, signal coverage, repo reads, recent activity, timestamps, run id, and
+   any new field). Nothing per-run precedes a breakpoint.
+
+TTL follows cadence (`SOCIETY_MODEL_CACHE_TTL=auto`): a cache read refreshes an entry, so an agent whose runs are
+usually <= 5 minutes apart (the median gap over its recent runs) keeps the 5-minute cache warm and also caches its
+slow tier; one whose runs are further apart gets the 1-hour cache on its stable prefix (2x write, 0.05x-0.1x reads)
+and no slow-tier write it would rarely read back. `5m`, `1h` and `off` force the choice. Builder harness and
+maintenance activities keep `cache_conversation=True`: every turn re-reads the transcript instead of re-sending it.
+
+Measure it with the validator (`PHASE5_PLAN=costs:7`): `costs.cache_decide` / `cache_builds` / `cache_activities`
+print, per role+model (or kind+model) and for 24h and 7d, the cache reads, writes and uncached input, the hit rate
+(reads / input) and $ per run; `cache_decide_days` the daily hit rate and $ per run per role (before/after);
+`cache_cadence` each role's median gap between runs and the TTL it implies; `C03` checks the target (>= 50% of the
+input of Sonnet/Opus decide runs read from cache in 24h). Runs written before migration `0028_model_cache_accounting`
+have no recorded writes (`write_unrecorded`); their reads (`tokens_cached`) and cost are exact. The owner's daily
+report states the 24h decide hit rate and $ per run.
 
 ## Calibrating the caps from measured spend
 

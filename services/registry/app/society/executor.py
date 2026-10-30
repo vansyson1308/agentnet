@@ -22,6 +22,7 @@ UNIQUE idempotency key so re-execution is still safe.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import pathlib
 import logging
@@ -66,7 +67,7 @@ from ..models import (
     TaskSession,
     TaskStatus,
 )
-from . import candidate_health, design_review, memory_grounding, repo_intel, router, tickets
+from . import candidate_health, design_review, memory_grounding, repo_intel, router, spec_gate, tickets
 from .config import SocietySettings
 from ..maintenance import activities
 from ..maintenance import harness as mharness
@@ -392,6 +393,13 @@ def _every_attempt_failed(ctx: ExecContext, proposal: ImprovementProposal) -> bo
 def _create_improvement(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
     _require_ref(ctx, TaskSession, p.source_task_id, "source_task_id")
+    from . import owner_thread  # noqa: PLC0415
+
+    story = owner_thread.story_ticket_count(ctx.db, getattr(ctx.run, "correlation_id", None))
+    if ctx.grant.role == "governor" and (story is None or p.ticket is None):
+        # The chair files tickets ONLY for the owner, in the story an owner event opened (G1v):
+        # everywhere else the Scout and the backlog supply work, as before.
+        raise ExecutionError("the Governor files CREATE_IMPROVEMENT only in an owner story, and only with a ticket")
     if ctx.event.event_type in WORLD_SIGNAL_EVENTS and p.evidence is None:
         # An event existing is not evidence. Signal-driven proposals must say
         # what was observed, against what baseline, over what window, and why
@@ -459,11 +467,15 @@ def _create_improvement(ctx: ExecContext) -> ExecOutcome:
         if ctx.settings.company_cycle_enabled:
             # The backlog supplies tickets deterministically (tickets.supply); a model may
             # only ADD, with evidence, at most MODEL_TICKETS_PER_DEPARTMENT a day per department.
-            refused = tickets.model_ticket_refusal(ctx.db, ctx.grant.role, p.evidence is not None, ctx.now)
+            refused = tickets.model_ticket_refusal(ctx.db, ctx.grant.role, p.evidence is not None, ctx.now, owner_story_tickets=story)
             if refused:
                 raise ExecutionError(refused)
-        src = "backlog" if ctx.event.event_type == EventType.BACKLOG_ITEM else "scout" if ctx.grant.role == "scout" else "department"
+        src = ("owner_story" if story is not None else "backlog" if ctx.event.event_type == EventType.BACKLOG_ITEM
+               else "scout" if ctx.grant.role == "scout" else "department")
         ticket_id = tickets.create(ctx.db, proposal_id=proposal.id, title=p.title, fields=p.ticket.model_dump(), source=src, role=ctx.grant.role, importance=p.importance)
+        if story is not None:  # the funnel counts owner tickets by what the owner said: a directive or a message
+            entry = owner_thread.entry_for_correlation(ctx.db, getattr(ctx.run, "correlation_id", None)) or {}
+            ctx.db.execute(text("UPDATE society_tickets SET origin = :o WHERE id = :id"), {"o": str(entry.get("kind") or "message")[:48], "id": ticket_id})
     ev = _emit(
         ctx,
         EventType.PROPOSAL_CREATED,
@@ -703,23 +715,34 @@ def _spec_rejected(ctx: ExecContext, p, spec: Dict[str, Any], errors: List[Dict[
 
 
 def _acceptance_refusal(ctx: ExecContext, spec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Spec gate (staging 2026-10-14, cb82c1a7): every pytest acceptance file the Architect names
-    must exist on the trusted base, or be in files_allowed (a new test the Builder writes).
-    Otherwise no patch can make it run: refused before any build. Judged against
-    SOCIETY_REPO_ROOT, never a worktree; without one there is nothing to judge (the build decides)."""
+    """Spec gate (staging 2026-10-14, cb82c1a7; 2026-10-26 ffe44239): every pytest acceptance file the
+    Architect names must exist on the trusted base, or be a test_first file of the approved design
+    (spec_gate.py) -- and is never in files_allowed: QA fails a Builder that writes its own judge
+    (no_self_judging). Refused before any build. Judged against SOCIETY_REPO_ROOT, never a
+    worktree; without one there is nothing to judge (the build decides)."""
     root = pathlib.Path(ctx.settings.repo_root) if getattr(ctx.settings, "repo_root", "") else None
     if root is None or not root.is_dir():
         return None
     from . import work_packet  # noqa: PLC0415
 
     # the runtime's own regression list (the bench packet offers it; red ones are dropped later) is not the Architect's claim
-    allowed = set(spec["files_allowed"]) | set(work_packet.REGRESSION_TESTS)
+    first = {f["path"] for f in spec.get("test_first") or []}
     for test in build_engine.pytest_targets(spec):
         path = test.split("::")[0]
-        if path not in allowed and not (root / path).exists():
+        if path in spec["files_allowed"] and path not in work_packet.REGRESSION_TESTS:
+            return {"field": "acceptance_tests", "code": "acceptance_self_judging", "path": path,
+                    "expected": "an acceptance test outside files_allowed: the Builder may not write the test that judges it"}
+        if path not in first and path not in work_packet.REGRESSION_TESTS and not (root / path).exists():
             return {"field": "acceptance_tests", "code": "acceptance_file_missing", "path": path,
-                    "expected": "a test file that exists on the base, or one listed in files_allowed (a new test the Builder writes)"}
+                    "expected": "a test file that exists on the base, or a test_first file of the approved design (the Architect writes it)"}
     return None
+
+
+def _approved_design(ctx: ExecContext, proposal_id: Optional[uuid.UUID]) -> Optional[Dict[str, Any]]:
+    """The design a ticket's review said go to (the PERSISTED minutes, never the model's copy)."""
+    t = tickets.for_proposal(ctx.db, proposal_id) if ctx.settings.company_cycle_enabled else None
+    minutes = design_review.minutes_for_ticket(ctx.db, t["id"]) if t else None
+    return (minutes.get("proposal") or {}) if minutes and minutes.get("verdict") == "go" else None
 
 
 def _bench_ticket_spec(ctx: ExecContext, proposal_id: Optional[uuid.UUID], spec: Dict[str, Any]) -> None:
@@ -783,6 +806,22 @@ def _propose_owner_action(ctx: ExecContext) -> ExecOutcome:
     return ExecOutcome(result={"owner_action_id": made["id"]}, events=[str(ev.id)])
 
 
+def _respond_to_owner(ctx: ExecContext) -> ExecOutcome:
+    """The Governor's one answer to the owner event that opened this story (owner_thread.py). It is
+    stored for the Owner Console only; nothing is sent, decided or granted."""
+    from . import owner_thread  # noqa: PLC0415
+
+    p = ctx.validated.payload
+    try:
+        made = owner_thread.answer(ctx.db, correlation_id=ctx.run.correlation_id, agent_id=ctx.agent.id, reply=p.reply, plan_steps=[st.model_dump() for st in p.plan_steps],
+                                   ticket_ids=[str(t) for t in p.ticket_ids], owner_actions_needed=list(p.owner_actions_needed),
+                                   credentials=(ctx.settings.model_api_key,), now=utcnow(), run_id=ctx.run.id)
+    except ValueError as exc:
+        raise ExecutionError(str(exc)) from exc
+    ev = _emit(ctx, EventType.OWNER_REPLIED, {"owner_entry_id": made["owner_entry_id"], "reply_id": made["reply_id"], "tickets": len(made["ticket_ids"])})
+    return ExecOutcome(result=made, events=[str(ev.id)])
+
+
 def _design_review_call(ctx: ExecContext, fn: Callable[[], Dict[str, Any]], what: str) -> ExecOutcome:
     try:
         review = fn()
@@ -794,7 +833,19 @@ def _design_review_call(ctx: ExecContext, fn: Callable[[], Dict[str, Any]], what
 def _propose_design(ctx: ExecContext) -> ExecOutcome:
     """The Architect's proposal for the review ITS story runs (design_review.py)."""
     p = ctx.validated.payload
-    proposal = {"approach": " ".join(p.approach.split()), "files": list(dict.fromkeys(p.files)), "proof": " ".join(p.proof.split()), "risks": list(p.risks)}
+    proposal = {"approach": " ".join(p.approach.split()), "files": list(dict.fromkeys(p.files)), "proof": " ".join(p.proof.split()), "risks": list(p.risks),
+                "acceptance_tests": list(dict.fromkeys(p.acceptance_tests)), "test_first": [f.model_dump() for f in p.test_first], "unchanged": list(p.unchanged), "carries": list(p.carries)}
+    root = pathlib.Path(ctx.settings.repo_root) if getattr(ctx.settings, "repo_root", "") else None
+    problems = spec_gate.check_design(root, proposal) if root is not None and root.is_dir() else []
+    review = design_review.get(ctx.db, p.review_id)
+    if review is not None:  # what an earlier round left to answer: Security constraints, a Builder's blocking paths
+        problems += spec_gate.check_obligations(proposal, design_review.obligations(review))
+    if problems:  # fixed in the review, before a build is paid for: the Architect is asked again with the reasons
+        try:
+            out = design_review.gate_refuse(ctx.db, review_id=p.review_id, correlation_id=ctx.run.correlation_id, agent=ctx.agent, problems=problems, causation=ctx.event)
+        except design_review.ReviewRefused as exc:
+            raise ExecutionError(str(exc)) from exc
+        return ExecOutcome(result={"review_id": str(p.review_id), "did": "gate_refused", **out})
     return _design_review_call(ctx, lambda: design_review.propose(ctx.db, review_id=p.review_id, correlation_id=ctx.run.correlation_id, agent=ctx.agent,
                                                                   proposal=proposal, causation=ctx.event), "proposed")
 
@@ -802,7 +853,7 @@ def _propose_design(ctx: ExecContext) -> ExecOutcome:
 def _review_design(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
     return _design_review_call(ctx, lambda: design_review.post_position(ctx.db, review_id=p.review_id, correlation_id=ctx.run.correlation_id, agent=ctx.agent,
-                                                                        role=ctx.grant.role, position={"stance": p.stance, "points": list(p.points)},
+                                                                        role=ctx.grant.role, position={"stance": p.stance, "points": list(p.points), "constraints": list(p.constraints)},
                                                                         causation=ctx.event), f"reviewed:{p.stance}")
 
 
@@ -821,9 +872,22 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
             raise ExecutionError(f"spec allows a never-writable path: {f}")
     if len(spec["files_allowed"]) > ctx.settings.max_files_per_candidate:
         raise ExecutionError(f"spec allows {len(spec['files_allowed'])} files; change budget is {ctx.settings.max_files_per_candidate} per candidate")
+    open_t = tickets.for_proposal(ctx.db, p.proposal_id) if ctx.settings.company_cycle_enabled else None
+    if open_t is not None and design_review.open_for_ticket(ctx.db, open_t["id"]):
+        raise ExecutionError("the ticket is being re-designed: its design review is open -- design it after the review's go")
+    design = _approved_design(ctx, p.proposal_id)
+    if design is not None:  # the approved design's test_first files are pinned into the spec and always run
+        spec["test_first"] = spec_gate.pin(design)
+        spec["acceptance_tests"] = list(dict.fromkeys(list(spec["acceptance_tests"]) + [f["path"] for f in spec["test_first"]]))
     missing = _acceptance_refusal(ctx, spec)  # the Architect's own tests, before the runtime adds any (and before the ticket gate)
     if missing:
-        _spec_rejected(ctx, p, spec, [missing], f"acceptance file missing and not allowed: {missing['path']}")
+        _spec_rejected(ctx, p, spec, [missing], f"acceptance file refused ({missing['code']}): {missing['path']}")
+    root = pathlib.Path(ctx.settings.repo_root) if getattr(ctx.settings, "repo_root", "") else None
+    if design is not None and root is not None and root.is_dir():  # the spec meets the same gate as the design it implements
+        problems = spec_gate.check_files(root, spec["files_allowed"], build_engine.pytest_targets(spec), [f["path"] for f in spec["test_first"]],
+                                         design.get("unchanged") or [])
+        if problems:
+            _spec_rejected(ctx, p, spec, [{"field": "files_allowed", "code": "spec_gate", "expected": x} for x in problems[:5]], f"spec gate: {problems[0]}")
     if ctx.settings.company_cycle_enabled and p.task_id is not None and tickets.for_proposal(ctx.db, p.proposal_id) is not None:
         _spec_rejected(ctx, p, spec, [{"field": "task_id", "code": "not_a_task_session", "expected": "omitted: a ticket's design links its proposal_id only"}],
                        "a ticket's design names no task_id: a ticket is not a task session (work_packet.bench_task is a bench task name, "
@@ -833,7 +897,7 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
             ctx.db.query(CodeCandidate)
             .filter(
                 CodeCandidate.risk_tier == RiskTier.RED.value,
-                CodeCandidate.status.notin_([CodeCandidateStatus.READY, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED]),
+                CodeCandidate.status.notin_([CodeCandidateStatus.READY, CodeCandidateStatus.MERGED, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED]),
             )
             .count()
         )
@@ -876,7 +940,10 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
         minutes = (ctx.event.payload or {}).get("design_review") if ctx.event.event_type == EventType.COMPANY_TICKET_APPROVED else None
         minutes = minutes or design_review.minutes_for_ticket(ctx.db, ticket["id"])
         if minutes:  # structural: which meeting decided this design (the PR body shows it)
-            spec["design_review"] = {k: minutes.get(k) for k in ("review_id", "rounds", "verdict", "by", "stances")} | {"conditions": len(minutes.get("conditions") or [])}
+            spec["design_review"] = {k: minutes.get(k) for k in ("review_id", "rounds", "verdict", "by", "stances")} | {"conditions": len(minutes.get("conditions") or []),
+                                                                                                                 "security_constraints": len(minutes.get("security_constraints") or [])}
+            # the PERSISTED constraints Security named in the meeting: the candidate's Security review checks them
+            spec["security_constraints"] = list(minutes.get("security_constraints") or [])
     prelim = assess_risk(list(spec["files_allowed"]), "", spec_kind=str(spec.get("kind") or ""))
     if _candidates_today(ctx) >= ctx.settings.max_autonomous_candidates_per_day:
         raise ExecutionError(f"change budget exhausted: {ctx.settings.max_autonomous_candidates_per_day} autonomous candidates today")
@@ -1008,8 +1075,14 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
         fresh = _already_satisfied(ctx, cand, ws) or _red_on_base(ctx, cand, ws)
         if fresh is not None:
             return fresh
+        bws = ws  # every build starts from here: the base, or the base + the Architect's test_first commit
+        if spec.get("test_first"):
+            bws = dataclasses.replace(ws, base_sha=spec_gate.commit_test_first(ws, spec["test_first"]))
+            fresh = _test_first_green(ctx, cand, bws)
+            if fresh is not None:
+                return fresh
         lessons = harness2.load_lessons(ctx.db, harness2.domain_of(spec.get("files_allowed") or [])) if ms.harness2_enabled else []
-        coro = build_engine.build(ws, spec, title=cand.title, model=model, ms=ms, ss=ctx.settings, cost_cap=cost_cap, feedback=feedback, lessons=lessons)
+        coro = build_engine.build(bws, spec, title=cand.title, model=model, ms=ms, ss=ctx.settings, cost_cap=cost_cap, feedback=feedback, lessons=lessons)
         out = build_engine.run_blocking(coro, heartbeat=ctx.heartbeat, every=ctx.settings.run_lease_seconds / 3)
         if out.record:
             # harnessing-level recursion: only execution contrasts reach the library
@@ -1021,6 +1094,8 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
     ctx.run.tokens_in = int(ctx.run.tokens_in or 0) + out.result.tokens_in
     ctx.run.tokens_out = int(ctx.run.tokens_out or 0) + out.result.tokens_out
     ctx.run.cost_usd = Decimal(str(ctx.run.cost_usd or 0)) + out.result.cost_usd
+    ctx.run.tokens_cached = int(ctx.run.tokens_cached or 0) + out.result.tokens_cached
+    ctx.run.tokens_cache_write = int(ctx.run.tokens_cache_write or 0) + out.result.tokens_cache_write
     ticket = tickets.for_proposal(ctx.db, cand.proposal_id)
     if ticket is not None:
         tickets.add_cost(ctx.db, ticket["id"], out.result.cost_usd)
@@ -1085,7 +1160,8 @@ def _red_on_base(ctx: ExecContext, cand: CodeCandidate, ws) -> Optional[ExecOutc
     spec = cand.spec or {}
     files = set(spec.get("files_allowed") or [])
     proof = set(tickets.proof_tests(ticket or {}))
-    guards = [t for t in build_engine.pytest_targets(spec) if t not in proof and t.split("::")[0] not in files]
+    first = {f["path"] for f in spec.get("test_first") or []}  # meant to be red on base: the design's own judge
+    guards = [t for t in build_engine.pytest_targets(spec) if t not in proof and t.split("::")[0] not in files | first]
     if ticket is None or cand.head_sha or not guards:
         return None
     reset_to_base(ws)
@@ -1105,6 +1181,27 @@ def _red_on_base(ctx: ExecContext, cand: CodeCandidate, ws) -> Optional[ExecOutc
     ev = _emit(ctx, EventType.CODE_CANDIDATE_REJECTED, {"candidate_id": str(cand.id), "title": cand.title, "qa_summary": why[:500], "proposal_id": str(cand.proposal_id),
                                                          "red_on_base": red}, subject_type="code_candidate", subject_id=cand.id, key_suffix="red_on_base")
     return ExecOutcome(result={"candidate_id": str(cand.id), "status": CodeCandidateStatus.REJECTED.value, "red_on_base": red}, events=[str(ev.id)])
+
+
+def _test_first_green(ctx: ExecContext, cand: CodeCandidate, ws) -> Optional[ExecOutcome]:
+    """Before the FIRST build: the Architect's test_first tests run on base + their own commit. Green
+    already -> they cannot judge the change: REJECTED, the ticket goes back to proposed. No model call."""
+    if cand.head_sha:
+        return None
+    paths = [f["path"] for f in (cand.spec or {}).get("test_first") or []]
+    run = mharness.run_targeted_tests(ws, paths, timeout=ctx.settings.qa_test_timeout_seconds)
+    ctx.heartbeat()
+    if not run.passed:
+        return None  # red before the change, as a test-first test must be
+    why = f"test_first {paths} already passes before the change: it cannot judge it"
+    cand.status = CodeCandidateStatus.REJECTED
+    cand.error = why
+    ticket = tickets.for_proposal(ctx.db, cand.proposal_id)
+    if ticket is not None and ticket["status"] == "building":
+        tickets.set_status(ctx.db, ticket["id"], "proposed", f"{why}; the next design needs a test that fails on main", plan_id=None, candidate_id=None)
+    ev = _emit(ctx, EventType.CODE_CANDIDATE_REJECTED, {"candidate_id": str(cand.id), "title": cand.title, "qa_summary": why[:500], "proposal_id": str(cand.proposal_id),
+                                                         "test_first_green": paths}, subject_type="code_candidate", subject_id=cand.id, key_suffix="test_first_green")
+    return ExecOutcome(result={"candidate_id": str(cand.id), "status": CodeCandidateStatus.REJECTED.value, "test_first_green": paths}, events=[str(ev.id)])
 
 
 def _record_build(ctx: ExecContext, cand: CodeCandidate, ws, head: str, *, summary: str, resubmitted: bool, result: Dict[str, Any]) -> ExecOutcome:
@@ -1263,8 +1360,14 @@ def _decline_code_candidate(ctx: ExecContext) -> ExecOutcome:
     cand.status = CodeCandidateStatus.REJECTED
     cand.error = f"declined by {ctx.agent.name} ({p.reason_code}): {p.detail}"[:2000]
     ticket = tickets.for_proposal(ctx.db, cand.proposal_id)
-    if ticket is not None and ticket["status"] == "building":  # as a QA rejection does: closed, with the Builder's reason
-        tickets.set_status(ctx.db, ticket["id"], "closed", f"candidate declined by the Builder ({p.reason_code}): {p.detail}"[:300])
+    rescoped = None
+    if ticket is not None and ticket["status"] == "building":
+        if p.reason_code == "spec_outside_files_allowed":  # the SAME ticket is designed again, covering the blocking paths (once)
+            rescoped = design_review.rescope(ctx.db, ticket, blocking_paths=blocking, detail=p.detail)
+        if rescoped is not None:
+            tickets.set_status(ctx.db, ticket["id"], "approved", f"rescope: the Builder declined ({p.reason_code}), needs {', '.join(blocking)}"[:300], candidate_id=None)
+        else:  # as a QA rejection does: closed, with the Builder's reason
+            tickets.set_status(ctx.db, ticket["id"], "closed", f"candidate declined by the Builder ({p.reason_code}): {p.detail}"[:300])
     ctx.db.flush()
     payload = {
         "candidate_id": str(cand.id),
@@ -1280,6 +1383,7 @@ def _decline_code_candidate(ctx: ExecContext) -> ExecOutcome:
         "blocking_paths": blocking,
         "files_allowed": sorted(allowed),
         "task_refunded": refunded,
+        "rescoped_review_id": str(rescoped) if rescoped else None,
     }
     ev = _emit(ctx, EventType.CODE_CANDIDATE_REJECTED, payload, subject_type="code_candidate", subject_id=cand.id, key_suffix="declined")
     result = {"candidate_id": str(cand.id), "status": CodeCandidateStatus.REJECTED.value, "reason_code": p.reason_code, "task_refunded": refunded}
@@ -1377,7 +1481,8 @@ def _evaluate_code_candidate(ctx: ExecContext) -> ExecOutcome:
         needs_security = bool(cand.requires_security_review) or bool(findings)
         if needs_security:
             cand.status = CodeCandidateStatus.SECURITY_REVIEW
-            ev2 = _emit(ctx, EventType.CODE_CANDIDATE_SECURITY_REVIEW, {"candidate_id": str(cand.id), "title": cand.title, "changed_files": list(cand.changed_files or []), "static_findings": findings, "qa_summary": report.summary}, subject_type="code_candidate", subject_id=cand.id)
+            ev2 = _emit(ctx, EventType.CODE_CANDIDATE_SECURITY_REVIEW, {"candidate_id": str(cand.id), "title": cand.title, "changed_files": list(cand.changed_files or []), "static_findings": findings, "qa_summary": report.summary,
+                                                                              "security_constraints": list((cand.spec or {}).get("security_constraints") or [])}, subject_type="code_candidate", subject_id=cand.id)
             events.append(str(ev2.id))
         else:
             events += _finish_candidate(ctx, cand, ready=True, summary=report.summary)
@@ -1923,6 +2028,7 @@ HANDLERS: Dict[IntentType, Callable[[ExecContext], ExecOutcome]] = {
     IntentType.DECLINE_CODE_CANDIDATE: _decline_code_candidate,
     IntentType.TICKET_NEEDS_INFO: _ticket_needs_info,
     IntentType.PROPOSE_OWNER_ACTION: _propose_owner_action,
+    IntentType.RESPOND_TO_OWNER: _respond_to_owner,
     IntentType.PROPOSE_DESIGN: _propose_design,
     IntentType.REVIEW_DESIGN: _review_design,
     IntentType.DECIDE_DESIGN: _decide_design,
