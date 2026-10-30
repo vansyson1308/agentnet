@@ -579,3 +579,88 @@ CREATE TABLE IF NOT EXISTS society_telegram_links (
     linked_at         TIMESTAMPTZ,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- The owner's direction ("Kim chi nam", Owner Console, society/directives.py): plain text and the
+-- charter objectives it serves. Append-only, at most ONE active row (superseded_at IS NULL); written
+-- only by the operator API (require_operator), never by an intent. It grants nothing: every role sees
+-- it as owner input and the plan score weighs its objectives; grants, budgets, flags, files_allowed,
+-- the RED/merge law and auto-merge are untouched by it.
+CREATE TABLE IF NOT EXISTS society_owner_directives (
+    id             UUID PRIMARY KEY,
+    text           TEXT NOT NULL,
+    objective_ids  JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_by     UUID,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    superseded_at  TIMESTAMPTZ,
+    CONSTRAINT ck_society_owner_directives_text CHECK (char_length(text) BETWEEN 1 AND 2000)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_society_owner_directives_active ON society_owner_directives ((TRUE)) WHERE superseded_at IS NULL;
+
+-- Append-only for every caller: a row is never deleted or rewritten; only superseded_at is set, once.
+CREATE OR REPLACE FUNCTION society_owner_directives_append_only() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' OR OLD.superseded_at IS NOT NULL OR NEW.superseded_at IS NULL
+       OR NEW.id <> OLD.id OR NEW.text <> OLD.text OR NEW.objective_ids <> OLD.objective_ids
+       OR NEW.created_by IS DISTINCT FROM OLD.created_by OR NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'society_owner_directives is append-only (attempted %)', TG_OP;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_society_owner_directives_append_only ON society_owner_directives;
+CREATE TRIGGER trg_society_owner_directives_append_only
+    BEFORE UPDATE OR DELETE ON society_owner_directives
+    FOR EACH ROW EXECUTE FUNCTION society_owner_directives_append_only();
+
+-- The owner's conversation with the company (Owner Console, society/owner_thread.py). An ``owner``
+-- row is what the owner said (a directive, a task, a message; its owner event's idempotency key is
+-- ``owner:<id>``); a
+-- ``company`` row is the Governor's RESPOND_TO_OWNER to it -- at most ONE per owner row. Append-only;
+-- text is redacted before it is written. Shown only on the operator page; it grants nothing.
+CREATE TABLE IF NOT EXISTS society_owner_thread (
+    id          UUID PRIMARY KEY,
+    author      VARCHAR(8) NOT NULL,
+    kind        VARCHAR(16) NOT NULL,
+    text        TEXT NOT NULL,
+    reply_to    UUID REFERENCES society_owner_thread(id),
+    payload     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    user_id     UUID,
+    agent_id    UUID,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_society_owner_thread_author CHECK (author IN ('owner', 'company')),
+    CONSTRAINT ck_society_owner_thread_kind CHECK (kind IN ('directive', 'task', 'message', 'reply')),
+    CONSTRAINT ck_society_owner_thread_text CHECK (char_length(text) BETWEEN 1 AND 2000),
+    CONSTRAINT ck_society_owner_thread_reply CHECK ((author = 'company') = (reply_to IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_society_owner_thread_one_reply ON society_owner_thread (reply_to) WHERE reply_to IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_society_owner_thread_created ON society_owner_thread (created_at DESC);
+
+CREATE OR REPLACE FUNCTION society_owner_thread_append_only() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'society_owner_thread is append-only (attempted %)', TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_society_owner_thread_append_only ON society_owner_thread;
+CREATE TRIGGER trg_society_owner_thread_append_only
+    BEFORE UPDATE OR DELETE ON society_owner_thread
+    FOR EACH ROW EXECUTE FUNCTION society_owner_thread_append_only();
+
+-- A directive starts ONE operator cycle at once (idempotent per directive), and a plan says where it came from.
+ALTER TABLE society_company_cycles ADD COLUMN IF NOT EXISTS directive_id UUID;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_society_company_cycles_directive ON society_company_cycles (directive_id) WHERE directive_id IS NOT NULL;
+ALTER TABLE society_daily_plans ADD COLUMN IF NOT EXISTS directive_id UUID;
+ALTER TABLE society_daily_plans ADD COLUMN IF NOT EXISTS owner_entry_id UUID;
+
+-- Prompt-cache accounting per run (anthropic): cache writes of every TTL, and the 1-hour part of
+-- them, next to tokens_cached (reads). All three are part of tokens_in; cost_usd prices each.
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tokens_cache_write INTEGER;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tokens_cache_write_1h INTEGER;
+
+-- Where a ticket came from (owner 2026-10-29 G1v, the funnel by source): an owner story's ticket,
+-- the standing work generator, a rescoped follow-up of a rejected candidate; origin names the
+-- generator's sub-source (surface, directive, kr_gap, docs, tests, todo, rescope).
+ALTER TABLE society_tickets DROP CONSTRAINT IF EXISTS society_tickets_source_check;
+ALTER TABLE society_tickets ADD CONSTRAINT society_tickets_source_check CHECK (source IN ('owner', 'scout', 'incident', 'backlog', 'department', 'owner_story', 'generator', 'rescope'));
+ALTER TABLE society_tickets ADD COLUMN IF NOT EXISTS origin VARCHAR(48);

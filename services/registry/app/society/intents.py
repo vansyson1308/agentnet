@@ -29,10 +29,13 @@ from __future__ import annotations
 import enum
 import hashlib
 import json
+import logging
 import uuid
 from typing import Any, Dict, List, Literal, Optional, Union, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
 
 MAX_TEXT = 4000
 MAX_TITLE = 255
@@ -69,6 +72,8 @@ class IntentType(str, enum.Enum):
     DECIDE_DESIGN = "DECIDE_DESIGN"
     #: an action outside the repo that would move a key result goes to the owner's queue (LOW; owner_actions.py)
     PROPOSE_OWNER_ACTION = "PROPOSE_OWNER_ACTION"
+    #: the Governor's one answer to an owner event, shown only on the Owner Console (LOW; owner_thread.py)
+    RESPOND_TO_OWNER = "RESPOND_TO_OWNER"
     EVALUATE_CODE_CANDIDATE = "EVALUATE_CODE_CANDIDATE"
     SECURITY_REVIEW_CANDIDATE = "SECURITY_REVIEW_CANDIDATE"
     REQUEST_STAGING_DEPLOY = "REQUEST_STAGING_DEPLOY"
@@ -410,7 +415,57 @@ class ProposeOwnerActionPayload(_Strict):
     metric_id: str = Field(..., min_length=3, max_length=64)  # a key result of an ACTIVE objective (its objective is derived)
 
 
-def _short_items(v: List[str], *, lo: int = 3, hi: int = 300) -> List[str]:
+#: RESPOND_TO_OWNER's limits, stated in the prompt (cognition.SYSTEM_PROMPT)
+REPLY_MAX, MAX_PLAN_STEPS, STEP_MAX, MAX_REPLY_TICKETS, MAX_OWNER_ACTIONS_NEEDED = 1200, 5, 200, 5, 3
+RESPOND_LIMIT = (f"reply 10-{REPLY_MAX} chars; plan_steps at most {MAX_PLAN_STEPS} items, each with step (3-{STEP_MAX} chars) "
+                 f"and intent (the 1-based position in THIS decision's intents of the intent that starts it) or ticket_id; "
+                 f"a step with neither is for later and shows as next; ticket_ids at most {MAX_REPLY_TICKETS}; "
+                 f"owner_actions_needed at most {MAX_OWNER_ACTIONS_NEEDED} items of 3-{STEP_MAX} chars")
+
+
+class PlanStep(_Strict):
+    """One step of the company's answer, linked to the work that starts it: ``intent`` is the 1-based
+    position of a sibling intent in the same decision, ``ticket_id`` an existing ticket; neither = next."""
+
+    step: str = Field(..., min_length=3, max_length=STEP_MAX)
+    intent: Optional[int] = Field(None, ge=1, le=10)
+    ticket_id: Optional[uuid.UUID] = None
+
+
+class RespondToOwnerPayload(_Strict):
+    """The company's answer to what the owner just said (the owner event of this story): what it
+    understood, what it STARTED in this same decision (plan_steps linked to those intents or
+    tickets), which tickets carry it and what only the owner can do. Shown to the owner on the Owner
+    Console; it decides nothing and grants nothing."""
+
+    reply: str = Field(..., min_length=10, max_length=REPLY_MAX)
+    plan_steps: List[PlanStep] = Field(default_factory=list, max_length=MAX_PLAN_STEPS)
+    ticket_ids: List[uuid.UUID] = Field(default_factory=list, max_length=MAX_REPLY_TICKETS)
+    owner_actions_needed: List[str] = Field(default_factory=list, max_length=MAX_OWNER_ACTIONS_NEEDED)
+
+    @field_validator("plan_steps", mode="before")
+    @classmethod
+    def _plain_steps(cls, v: Any) -> Any:
+        # a plain string is a step for later ("next"); the model need not link every step
+        return [{"step": item} if isinstance(item, str) else item for item in v] if isinstance(v, list) else v
+
+    @field_validator("owner_actions_needed")
+    @classmethod
+    def _actions(cls, v: List[str]) -> List[str]:
+        return _short_items(v, hi=STEP_MAX)
+
+
+#: the design-review limits, stated in the prompts (cognition.SYSTEM_PROMPT, design_review.question)
+ITEM_MIN, ITEM_MAX = 3, 300
+MAX_POINTS, MAX_CONSTRAINTS, MAX_CONDITIONS = 5, 4, 5
+RATIONALE_MIN, RATIONALE_MAX = 10, 800
+POINTS_LIMIT = f"1-{MAX_POINTS} items, each {ITEM_MIN}-{ITEM_MAX} chars"
+CONSTRAINTS_LIMIT = f"at most {MAX_CONSTRAINTS} items of {ITEM_MIN}-{ITEM_MAX} chars"
+CONDITIONS_LIMIT = f"at most {MAX_CONDITIONS} items of {ITEM_MIN}-{ITEM_MAX} chars"
+RATIONALE_LIMIT = f"{RATIONALE_MIN}-{RATIONALE_MAX} chars"
+
+
+def _short_items(v: List[str], *, lo: int = ITEM_MIN, hi: int = ITEM_MAX) -> List[str]:
     for item in v:
         if not isinstance(item, str) or not lo <= len(item.strip()) <= hi:
             raise ValueError(f"each item must be {lo}..{hi} characters")
@@ -462,8 +517,8 @@ class ReviewDesignPayload(_Strict):
 
     review_id: uuid.UUID
     stance: Literal["support", "concern", "object", "abstain"]
-    points: List[str] = Field(..., min_length=1, max_length=5)
-    constraints: List[str] = Field(default_factory=list, max_length=4)
+    points: List[str] = Field(..., min_length=1, max_length=MAX_POINTS)
+    constraints: List[str] = Field(default_factory=list, max_length=MAX_CONSTRAINTS)
 
     @field_validator("points", "constraints")
     @classmethod
@@ -476,8 +531,8 @@ class DecideDesignPayload(_Strict):
 
     review_id: uuid.UUID
     verdict: Literal["go", "revise", "drop"]
-    rationale: str = Field(..., min_length=10, max_length=800)
-    conditions: List[str] = Field(default_factory=list, max_length=5)
+    rationale: str = Field(..., min_length=RATIONALE_MIN, max_length=RATIONALE_MAX)
+    conditions: List[str] = Field(default_factory=list, max_length=MAX_CONDITIONS)
 
     @field_validator("conditions")
     @classmethod
@@ -638,6 +693,7 @@ PAYLOAD_MODELS: Dict[IntentType, type] = {
     IntentType.REVIEW_DESIGN: ReviewDesignPayload,
     IntentType.DECIDE_DESIGN: DecideDesignPayload,
     IntentType.PROPOSE_OWNER_ACTION: ProposeOwnerActionPayload,
+    IntentType.RESPOND_TO_OWNER: RespondToOwnerPayload,
     IntentType.EVALUATE_CODE_CANDIDATE: CandidateRefPayload,
     IntentType.SECURITY_REVIEW_CANDIDATE: SecurityReviewPayload,
     IntentType.REQUEST_STAGING_DEPLOY: CandidateRefPayload,
@@ -780,6 +836,44 @@ def safe_error_summary(exc: ValidationError, model: Any, limit: int = 3) -> List
     return out
 
 
+def _cut(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
+
+
+def normalize_payload(itype: "IntentType", payload: Any) -> tuple:
+    """Deterministic fit of a design-review payload to its limits, before validation (owner
+    2026-10-29: 23 of 27 invalid intents were a REVIEW_DESIGN point too long or one point too many).
+
+    Only free-text opinion is cut: a reviewer's ``points`` (strip, drop items under ITEM_MIN, cut
+    each at ITEM_MAX, keep the first MAX_POINTS), each item of ``constraints`` / ``conditions`` cut
+    at ITEM_MAX, and the Governor's ``rationale`` cut at RATIONALE_MAX. A Security constraint or a
+    Governor condition is never DROPPED: too many of them stays a schema violation (fail closed).
+    Returns ``(payload, notes)``; ``notes`` names what was changed (structural, never the text)."""
+    if itype not in (IntentType.REVIEW_DESIGN, IntentType.DECIDE_DESIGN) or not isinstance(payload, dict):
+        return payload, []
+    out, notes = dict(payload), []
+
+    def items(key: str) -> Optional[List[str]]:
+        v = out.get(key)
+        return [i.strip() for i in v] if isinstance(v, list) and all(isinstance(i, str) for i in v) else None
+
+    points = items("points") if itype == IntentType.REVIEW_DESIGN else None
+    if points is not None:
+        kept = [_cut(p, ITEM_MAX) for p in points if len(p) >= ITEM_MIN][:MAX_POINTS]
+        if kept and kept != points:
+            notes.append(f"points {len(points)}->{len(kept)} item(s) of at most {ITEM_MAX} chars")
+            out["points"] = kept
+    for key in ("constraints", "conditions"):
+        v = items(key)
+        if v is not None and any(len(i) > ITEM_MAX for i in v):
+            notes.append(f"{key} item(s) cut to {ITEM_MAX} chars")
+            out[key] = [_cut(i, ITEM_MAX) for i in v]
+    if itype == IntentType.DECIDE_DESIGN and isinstance(out.get("rationale"), str) and len(out["rationale"].strip()) > RATIONALE_MAX:
+        notes.append(f"rationale cut to {RATIONALE_MAX} chars")
+        out["rationale"] = _cut(out["rationale"].strip(), RATIONALE_MAX)
+    return out, notes
+
+
 def validate_intents(decision: AgentDecision, run_id: uuid.UUID) -> List[ValidatedIntent]:
     out: List[ValidatedIntent] = []
     for seq, spec in enumerate(decision.intents):
@@ -801,8 +895,11 @@ def validate_intents(decision: AgentDecision, run_id: uuid.UUID) -> List[Validat
             )
             continue
         model = PAYLOAD_MODELS[itype]
+        fitted, notes = normalize_payload(itype, spec.payload)
+        if notes:
+            logger.info("intent %s normalized to its limits: %s", itype.value, "; ".join(notes))
         try:
-            payload = model.model_validate(spec.payload)
+            payload = model.model_validate(fitted)
         except ValidationError as exc:
             out.append(
                 ValidatedIntent(

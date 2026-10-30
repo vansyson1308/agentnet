@@ -124,8 +124,9 @@ def test_messages_request_shape(monkeypatch):
     req = seen[0]
     assert req["model"] == "claude-sonnet-5-5" and req["max_tokens"] == s.model_max_output_tokens
     assert "temperature" not in req and "response_format" not in req  # the Messages API refuses sampling params
-    assert req["system"][0]["cache_control"] == {"type": "ephemeral"} and "json" in req["system"][0]["text"]
-    # a decide run is one-shot: its context is unique, so caching it would only pay the 1.25x write
+    # the static rules block is shared by every run (1-hour TTL); breakpoints, not the whole one-shot
+    # context, are cached (test_prompt_cache.py has the layout)
+    assert req["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"} and "json" in req["system"][0]["text"]
     assert "cache_control" not in req
     assert [t["role"] for t in req["messages"]] == ["user"]
     assert req["output_config"] == {"effort": "high"} and "thinking" not in req
@@ -155,8 +156,8 @@ def test_usage_cache_thinking_and_list_price(monkeypatch):
     assert r.provider == "anthropic" and r.decision.decision_summary == "fine"
     assert (r.tokens_in, r.tokens_out, r.tokens_cached) == (4000, 200, 3000)
     assert r.reasoning_present and r.finish_reason == "stop"
-    # claude-sonnet-5-5: 1000 uncached @ $2 + 3000 cache reads @ $0.20 + 200 out @ $10 per MTok
-    assert r.cost_usd == Decimal("0.004600")
+    # claude-sonnet-5-5: 1000 uncached @ $2 + 3000 cache reads @ $0.10 (0.05x) + 200 out @ $10 per MTok
+    assert r.cost_usd == Decimal("0.004300")
 
 
 def test_cost_follows_the_model_that_answered(monkeypatch):
@@ -188,10 +189,12 @@ def test_one_fence_around_the_whole_reply_is_framing(monkeypatch):
 
 def test_prose_around_json_is_still_rejected(monkeypatch):
     s = _settings(monkeypatch)
-    m = AnthropicModel(s, transport=_transport([_reply("Here you go: " + json.dumps(GOOD))], []))
+    seen = []
+    m = AnthropicModel(s, transport=_transport([_reply("Here you go: " + json.dumps(GOOD)), _reply("Sure: " + json.dumps(GOOD))], seen))
     with pytest.raises(ModelOutputInvalid) as exc:
         asyncio.run(m.decide(_context()))
     assert exc.value.attempt.provider == "anthropic" and exc.value.attempt.cost_usd > 0
+    assert len(seen) == 2, "one corrective turn, then the run fails: prose is never repaired"
 
 
 def test_refusal_is_not_replayed(monkeypatch):
@@ -251,7 +254,7 @@ def test_the_real_sdk_sends_what_the_adapter_built(monkeypatch):
     assert KEY in (captured["headers"].get("x-api-key", "") + captured["headers"].get("authorization", ""))
     assert captured["headers"]["anthropic-version"] and AnthropicModel.FALLBACK_BETA in captured["headers"].get("anthropic-beta", "")
     body = captured["body"]
-    assert "cache_control" not in body and body["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in body and body["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
     assert body["fallbacks"] == "default" and body["output_config"] == {"effort": "medium"} and "temperature" not in body and "betas" not in body
 
 
@@ -267,7 +270,7 @@ def test_maintenance_activities_use_claude(monkeypatch):
     seen = []
     m = activities.LiveActivityModel(s, transport=_transport([_reply('{"action": "submit", "result": {}}')], seen))
     reply = asyncio.run(m.complete([{"role": "system", "content": "json only"}, {"role": "user", "content": "go"}], max_tokens=2000))
-    assert json.loads(reply.content)["action"] == "submit" and reply.cost_usd == Decimal("0.004600")
+    assert json.loads(reply.content)["action"] == "submit" and reply.cost_usd == Decimal("0.004300")
     # an activity is a multi-turn tool loop: it re-sends its transcript, so the conversation prefix is cached
     assert seen[0]["cache_control"] == {"type": "ephemeral"}
 

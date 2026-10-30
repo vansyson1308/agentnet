@@ -111,10 +111,13 @@ DEEPSEEK_REASONING_EFFORTS = ("auto", "none", "low", "high", "max")
 ANTHROPIC_REASONING_EFFORTS = ("auto", "low", "medium", "high", "xhigh", "max")
 ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
 # First-party list prices, USD per 1K tokens (input, output), for budget
-# accounting of the anthropic provider. Cache reads and 5-minute cache writes
-# are priced as multiples of the input rate (ANTHROPIC_CACHE_READ_X /
-# ANTHROPIC_CACHE_WRITE_X). A model missing here falls back to
-# SOCIETY_MODEL_USD_PER_1K_* with every input token at the full rate.
+# accounting of the anthropic provider. Cache reads and cache writes are priced
+# as multiples of the input rate (ANTHROPIC_CACHE_READ_X, ANTHROPIC_CACHE_WRITE_X
+# for 5-minute writes, ANTHROPIC_CACHE_WRITE_1H_X for 1-hour writes), as the
+# official price table states them
+# (https://platform.claude.com/docs/en/about-claude/pricing, "Prompt caching").
+# A model missing here falls back to SOCIETY_MODEL_USD_PER_1K_* with every
+# input token at the full rate.
 ANTHROPIC_USD_PER_1K = {
     "claude-fable-5-1": ("0.010", "0.050"),
     "claude-opus-5-5": ("0.004", "0.020"),
@@ -125,8 +128,15 @@ ANTHROPIC_USD_PER_1K = {
     "claude-haiku-5-5": ("0.0001", "0.0005"),
 }
 ANTHROPIC_CACHE_WRITE_X = "1.25"
-ANTHROPIC_CACHE_READ_X = {"claude-fable-5-1": "0.025", "claude-opus-5-5": "0.05"}  # every other listed model: 0.1
+ANTHROPIC_CACHE_WRITE_1H_X = "2"
+ANTHROPIC_CACHE_READ_X = {"claude-fable-5-1": "0.025", "claude-opus-5-5": "0.05", "claude-sonnet-5-5": "0.05"}  # every other listed model: 0.1
 ANTHROPIC_CACHE_READ_X_DEFAULT = "0.1"
+# Shortest prefix the API caches for every model in ANTHROPIC_USD_PER_1K (a
+# shorter one is silently not cached; prompt-caching docs, "Cache limitations").
+ANTHROPIC_MIN_CACHEABLE_TOKENS = 512
+# SOCIETY_MODEL_CACHE_TTL: the TTL of a decide run's stable prompt prefix.
+# auto = by the agent's cadence (1h when its runs are usually > 5 minutes apart).
+MODEL_CACHE_TTLS = ("auto", "5m", "1h", "off")
 # Models the API may re-run on a fallback model when they decline a request
 # (``fallbacks: "default"``); Haiku has no server-side fallback.
 ANTHROPIC_FALLBACK_MODELS = ("claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5")
@@ -189,6 +199,8 @@ class SocietySettings:
     model_reasoning_effort: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_REASONING_EFFORT", "auto").strip().lower())
     # anthropic only: let the API re-run a declined request on a fallback model
     model_refusal_fallback: bool = field(default_factory=lambda: _bool("SOCIETY_MODEL_REFUSAL_FALLBACK", True))
+    # anthropic only: prompt-cache TTL of a decide run's stable prefix (MODEL_CACHE_TTLS)
+    model_cache_ttl: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_CACHE_TTL", "auto").strip().lower())
     # Model router: logical tiers -> provider model names (never hard-coded in
     # business logic). Empty strong name = single-tier deployment.
     model_fast_name: str = field(default_factory=lambda: os.getenv("SOCIETY_MODEL_FAST_NAME") or os.getenv("SOCIETY_MODEL_NAME") or os.getenv("LLM_MODEL_NAME", "gpt-4o-mini"))
@@ -202,9 +214,13 @@ class SocietySettings:
     # ── global budgets / loop-storm limits ─────────────────────────────
     max_runs_per_hour: int = field(default_factory=lambda: _int("SOCIETY_MAX_RUNS_PER_HOUR", 120, minimum=1))
     daily_model_budget_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_DAILY_MODEL_BUDGET", "2.0"))
+    # Owner events (owner_thread.py) spend this reserve INSIDE the daily budget instead of the role's
+    # budget and wake cooldown; other runs leave its unspent part alone. 0 = no reserve (owner runs
+    # then pass the ordinary role gates, still first in the queue).
+    owner_reserve_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_OWNER_RESERVE_USD", "0"))
     max_causation_depth: int = field(default_factory=lambda: _int("SOCIETY_MAX_CAUSATION_DEPTH", 24, minimum=1))
     max_runs_per_correlation: int = field(default_factory=lambda: _int("SOCIETY_MAX_RUNS_PER_CORRELATION", 40, minimum=1))
-    max_intents_per_run: int = field(default_factory=lambda: _int("SOCIETY_MAX_INTENTS_PER_RUN", 5, minimum=1))
+    max_intents_per_run: int = field(default_factory=lambda: _int("SOCIETY_MAX_INTENTS_PER_RUN", 7, minimum=1))
     repeat_message_window_seconds: int = field(
         default_factory=lambda: _int("SOCIETY_REPEAT_MESSAGE_WINDOW_SECONDS", 3600, minimum=0)
     )
@@ -278,6 +294,10 @@ class SocietySettings:
     max_autonomous_candidates_per_day: int = field(default_factory=lambda: _int("SOCIETY_MAX_AUTONOMOUS_CANDIDATES_PER_DAY", 10, minimum=0))
     max_promotions_per_day: int = field(default_factory=lambda: _int("SOCIETY_MAX_PROMOTIONS_PER_DAY", 10, minimum=0))
     max_open_autonomous_prs: int = field(default_factory=lambda: _int("SOCIETY_MAX_OPEN_AUTONOMOUS_PRS", 3, minimum=0))
+    # READY -> PR fallback (promotion_queue.settle_reoffers): a re-offered READY candidate the Governor
+    # did not request gets the runtime's request on the Governor's own grant, through the same policy,
+    # change budgets and controller. Off: the reason is still recorded, nothing is requested.
+    ready_fallback_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_READY_FALLBACK_ENABLED", False))
     # Autonomous MERGES are budgeted separately from promotions: opening a PR is
     # reversible, landing one on main is not. Starts at one per day. Agents
     # cannot raise it -- MODIFY_BUDGET is a forbidden HIGH intent with no
@@ -329,6 +349,12 @@ class SocietySettings:
     # The Chief of Staff's plan size (tickets.build_plan): at most this many tickets, this many per department.
     company_plan_max: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_PLAN_MAX", 3, minimum=1))
     company_plan_per_department: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_PLAN_PER_DEPARTMENT", 2, minimum=1))
+    # The standing work generator (work_generator.py, owner 2026-10-29 G1v): each company cycle tops the
+    # backlog of every ACTIVE objective up to MIN_BACKLOG proposed tickets, at most MAX_PER_CYCLE new ones,
+    # deterministic and deduplicated (title/proof). Off by default.
+    work_generator_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_WORK_GENERATOR_ENABLED", False))
+    work_generator_min_backlog: int = field(default_factory=lambda: _int("SOCIETY_WORK_GENERATOR_MIN_BACKLOG", 5, minimum=0))
+    work_generator_max_per_cycle: int = field(default_factory=lambda: _int("SOCIETY_WORK_GENERATOR_MAX_PER_CYCLE", 10, minimum=0))
     company_max_active_hypotheses: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES", 3, minimum=0))
     company_max_high_risk_investigations: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_MAX_HIGH_RISK_INVESTIGATIONS", 1, minimum=0))
     # An APPROVED hypothesis nobody started within this window is SHELVED: it
@@ -470,12 +496,16 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
             problems.append("SOCIETY_STAGING_DEPLOY_ENABLED=true is meaningless in production and refused")
     if s.daily_model_budget_usd < 0:
         problems.append("SOCIETY_DAILY_MODEL_BUDGET must be >= 0")
+    if s.owner_reserve_usd < 0 or s.owner_reserve_usd > s.daily_model_budget_usd:
+        problems.append("SOCIETY_OWNER_RESERVE_USD must be 0..SOCIETY_DAILY_MODEL_BUDGET (it is spent inside the daily budget)")
     if s.company_cycle_hour_utc > 23:
         problems.append("SOCIETY_COMPANY_CYCLE_HOUR_UTC must be 0..23")
     if s.company_cycles_per_day > 24:
         problems.append("SOCIETY_COMPANY_CYCLES_PER_DAY must be 1..24")
     if s.company_plan_max > 10 or s.company_plan_per_department > s.company_plan_max:
         problems.append("SOCIETY_COMPANY_PLAN_MAX must be 1..10 and SOCIETY_COMPANY_PLAN_PER_DEPARTMENT <= it")
+    if s.work_generator_min_backlog > 20 or s.work_generator_max_per_cycle > 20:
+        problems.append("SOCIETY_WORK_GENERATOR_MIN_BACKLOG and SOCIETY_WORK_GENERATOR_MAX_PER_CYCLE must be 0..20 (the generator is bounded)")
     if s.telegram_digest_hour_utc > 23:
         problems.append("SOCIETY_TELEGRAM_DIGEST_HOUR_UTC must be 0..23")
     if s.telegram_enabled and not re.fullmatch(r"-?\d{1,20}", s.telegram_chat_id):
@@ -525,6 +555,8 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
         problems.append("SOCIETY_GITHUB_APP_PRIVATE_KEY_FILE must be a file path, never key material")
     if s.model_capability_profile not in CAPABILITY_PROFILES:
         problems.append(f"SOCIETY_MODEL_CAPABILITY_PROFILE must be one of {'|'.join(CAPABILITY_PROFILES)}")
+    if s.model_cache_ttl not in MODEL_CACHE_TTLS:
+        problems.append(f"SOCIETY_MODEL_CACHE_TTL must be one of {'|'.join(MODEL_CACHE_TTLS)}")
     if s.model_thinking_mode not in THINKING_MODES:
         problems.append(f"SOCIETY_MODEL_THINKING_MODE must be one of {'|'.join(THINKING_MODES)}")
     if s.model_reasoning_effort not in REASONING_EFFORTS:

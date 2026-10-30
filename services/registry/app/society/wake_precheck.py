@@ -12,6 +12,8 @@ What counts as work, per role:
 * Builder -- a candidate in a Builder stage (requested, building, qa_failed): the heartbeat exists
   to recover a lost one-shot wake (roles.py).
 * Governor -- an unreviewed improvement proposal, or a READY candidate with no promotion yet.
+* Architect -- an approved ticket with no candidate and no open design review: work waiting for a
+  design (owner 2026-10-29 G1v: never idle while work exists; tickets.wake_undesigned re-sends its wake).
 * every role -- a backlog item published since its last completed run.
 * liveness -- no completed run for ``SOCIETY_HEARTBEAT_MAX_IDLE_HOURS``: the role is woken anyway,
   so a precheck gap can delay work but never strand it.
@@ -50,10 +52,15 @@ def heartbeat_work(db: Session, *, agent_id: Any, role: str, now: datetime, max_
                             "AND NOT EXISTS (SELECT 1 FROM code_promotions p WHERE p.candidate_id = c.id)")).scalar() or 0
         if n:
             return True, f"{n} READY candidate(s) without a promotion"
+    if role == "architect":
+        n = db.execute(text("SELECT COUNT(*) FROM society_tickets t WHERE t.status = 'approved' AND t.candidate_id IS NULL AND NOT EXISTS ("
+                            "SELECT 1 FROM society_design_reviews r WHERE r.ticket_id = t.id AND r.status IN ('proposing', 'reviewing', 'deciding'))")).scalar() or 0
+        if n:
+            return True, f"{n} approved ticket(s) without a design"
     n = db.execute(text("SELECT COUNT(*) FROM society_events WHERE event_type = 'backlog.item' AND created_at > :t"), {"t": last}).scalar() or 0
     if n:
         return True, f"{n} new backlog item(s) since the last run"
-    return False, "nothing to act on (no candidate in its stage, no open proposal, no new backlog item)"
+    return False, "nothing to act on (no candidate in its stage, no open proposal, no ticket to design, no new backlog item)"
 
 
 def savings(db: Session, now: datetime) -> Dict[str, Any]:

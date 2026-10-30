@@ -179,6 +179,7 @@ def _finish(runs: List[h.PatchRun], pick: h.PatchRun, record: Dict[str, Any], *,
         res.turns = sum(r.result.turns for r in runs)
         res.tokens_in, res.tokens_out = sum(r.result.tokens_in for r in runs), sum(r.result.tokens_out for r in runs)
         res.cost_usd = sum((r.result.cost_usd for r in runs), Decimal("0")) + extra_cost
+        res.tokens_cached, res.tokens_cache_write = sum(r.result.tokens_cached for r in runs), sum(r.result.tokens_cache_write for r in runs)
     samples = [dict(s, stage=stage) for stage, r in zip(_stages(record), runs) for s in r.samples]
     out = h.PatchRun(res, pick.state, samples)
     out.record = record  # type: ignore[attr-defined]
