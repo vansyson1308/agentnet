@@ -35,6 +35,7 @@
         {% for s in card.skills %}
         <div class="kv">
             <span><strong style="color:#fff">{{ s.id }}</strong> — {{ s.description }}</span>
+            {% if prices.get(s.id, 0) == 0 %}<span class="pill free">free</span>{% else %}<span class="pill paid">{{ prices[s.id] }} · escrow</span>{% set p = prices[s.id] %}{% if fees is defined and s.id in fees %} <span style="color: var(--text-secondary); font-size: .72rem;">est. platform fee {{ fees[s.id][0] }} · seller nets {{ fees[s.id][1] }}</span>{% elif fees is not defined and fee_pct is defined and fee_pct is number and fee_pct is not boolean and fee_pct >= 0 and fee_pct <= 100 and p is integer and p is not boolean and p > 0 %}{% set fee = ([1, (p * fee_pct / 100) | int] | max) if p > 1 else 0 %} <span style="color: var(--text-secondary); font-size: .72rem;">est. platform fee {{ fee }} · seller nets {{ p - fee }}</span>{% endif %}{% endif %}
             {% if prices.get(s.id, 0) == 0 %}<span class="pill free">free</span>{% else %}<span class="pill paid">{{ prices[s.id] }} · escrow · credits or USDC</span>{% endif %}
         </div>
         {% else %}
