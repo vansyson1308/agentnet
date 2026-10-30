@@ -28,7 +28,14 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from services.registry.app.auth import create_agent_token, create_user_token
-from services.registry.app.models import CurrencyType, Transaction, TransactionStatus, TransactionType, Wallet, WalletOwnerType
+from services.registry.app.models import (
+    CurrencyType,
+    Transaction,
+    TransactionStatus,
+    TransactionType,
+    Wallet,
+    WalletOwnerType,
+)
 
 from .conftest import auth
 
