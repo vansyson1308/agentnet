@@ -22,7 +22,7 @@ from typing import Any, Callable, Dict, List, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from . import daily_report, goals, promotion_queue
+from . import daily_report, goals, promotion_queue, rejections
 from .config import SocietySettings
 from .events import emit_event, utcnow
 from .secret_redaction import redact_text
@@ -92,7 +92,8 @@ def digest(db: Session, settings: SocietySettings, now: Optional[datetime] = Non
     lines = [f"AgentNet boardroom {now.date().isoformat()} (UTC)",
              f"Last 24h: {d['cycles']} cycle(s); model spend ${d['spend_usd_total']:.2f} ({roles})",
              f"Builds: {d['builds']['delivered']} delivered / {d['builds']['attempted']} attempted",
-             f"Design reviews: {reviews}"]
+             f"Design reviews: {reviews}",
+             rejections.summary(d["rejections"])]
     card = goals.scorecard(db, now)
     if card.get("north_star"):
         lines += goals.summary(card).splitlines()

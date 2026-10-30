@@ -28,8 +28,9 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..models import Agent, AgentCapabilityGrant, AgentRun, AgentRunStatus, IntentRiskClass, PolicyDecision
+from ..models import Agent, AgentCapabilityGrant, AgentRun, AgentRunStatus, IntentRiskClass, PolicyDecision, SocietyEvent
 from .config import SocietySettings
+from .events import OWNER_EVENT_TYPES
 from .intents import A2A_INTENT_TYPES, FORBIDDEN_INTENT_TYPES, REPO_READ_INTENT_TYPES, IntentType, ValidatedIntent
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ RISK_BY_TYPE = {
     IntentType.REVIEW_DESIGN: IntentRiskClass.LOW,
     IntentType.DECIDE_DESIGN: IntentRiskClass.LOW,
     IntentType.PROPOSE_OWNER_ACTION: IntentRiskClass.LOW,
+    IntentType.RESPOND_TO_OWNER: IntentRiskClass.LOW,
     IntentType.EVALUATE_CODE_CANDIDATE: IntentRiskClass.MEDIUM,
     IntentType.SECURITY_REVIEW_CANDIDATE: IntentRiskClass.MEDIUM,
     IntentType.REQUEST_STAGING_DEPLOY: IntentRiskClass.MEDIUM,
@@ -297,6 +299,14 @@ def spend_today_usd(db: Session, *, agent_id=None, now: Optional[datetime] = Non
     return Decimal(str(q.scalar() or 0))
 
 
+def owner_spend_today_usd(db: Session, now: Optional[datetime] = None) -> Decimal:
+    """Model spend today of runs woken by an owner event (the owner reserve's use)."""
+    now = now or datetime.now(timezone.utc)
+    v = (db.query(func.coalesce(func.sum(AgentRun.cost_usd), 0)).join(SocietyEvent, SocietyEvent.id == AgentRun.event_id)
+         .filter(AgentRun.created_at >= _day_start(now), SocietyEvent.event_type.in_(OWNER_EVENT_TYPES)).scalar())
+    return Decimal(str(v or 0))
+
+
 def last_run_started_at(db: Session, agent_id, exclude_run_id=None) -> Optional[datetime]:
     q = db.query(func.max(AgentRun.started_at)).filter(AgentRun.agent_id == agent_id)
     if exclude_run_id is not None:
@@ -312,8 +322,14 @@ def check_run_budget(
     settings: SocietySettings,
     run: AgentRun,
     now: Optional[datetime] = None,
+    owner: bool = False,
 ) -> RunBudgetVerdict:
-    """Cheap gates before spending model budget on a run."""
+    """Cheap gates before spending model budget on a run.
+
+    ``owner``: the run answers an owner event (events.OWNER_EVENT_TYPES). It skips the wake cooldown
+    and, while ``SOCIETY_OWNER_RESERVE_USD`` > 0, spends that reserve instead of the role's daily
+    budget; every other run leaves the reserve's unspent part alone. The global daily budget, the
+    runs/hour limits, the circuit breaker and the correlation budget apply to every run."""
     now = now or datetime.now(timezone.utc)
     if not settings.runtime_enabled:
         return RunBudgetVerdict(False, "SOCIETY_RUNTIME_ENABLED is off")
@@ -334,16 +350,25 @@ def check_run_budget(
     global_spend = spend_today_usd(db, now=now)
     if global_spend >= settings.daily_model_budget_usd:
         return RunBudgetVerdict(False, f"daily model budget exhausted ({global_spend} >= {settings.daily_model_budget_usd} USD)")
-    agent_spend = spend_today_usd(db, agent_id=agent.id, now=now)
-    if agent_spend >= Decimal(str(grant.daily_model_budget_usd)):
-        return RunBudgetVerdict(False, f"agent daily model budget exhausted ({agent_spend} USD)")
+    reserve = Decimal(str(settings.owner_reserve_usd or 0))
+    owner_spent = owner_spend_today_usd(db, now) if reserve > 0 else Decimal(0)
+    if owner and reserve > 0:
+        if owner_spent >= reserve:
+            return RunBudgetVerdict(False, f"owner reserve exhausted ({owner_spent} >= {reserve} USD, SOCIETY_OWNER_RESERVE_USD)")
+    else:
+        held = max(Decimal(0), reserve - owner_spent)
+        if held > 0 and global_spend >= settings.daily_model_budget_usd - held:
+            return RunBudgetVerdict(False, f"daily model budget exhausted ({global_spend} USD; {held} USD of it is the owner reserve)")
+        agent_spend = spend_today_usd(db, agent_id=agent.id, now=now)
+        if agent_spend >= Decimal(str(grant.daily_model_budget_usd)):
+            return RunBudgetVerdict(False, f"agent daily model budget exhausted ({agent_spend} USD)")
 
     corr_spend = Decimal(str(db.query(func.coalesce(func.sum(AgentRun.cost_usd), 0)).filter(AgentRun.correlation_id == run.correlation_id).scalar() or 0))
     if corr_spend >= settings.max_correlation_cost_usd:
         return RunBudgetVerdict(False, f"correlation model budget exhausted ({corr_spend} >= {settings.max_correlation_cost_usd} USD)")
 
     last = last_run_started_at(db, agent.id, exclude_run_id=run.id)
-    cooldown = int(grant.wake_cooldown_seconds or 0)
+    cooldown = 0 if owner else int(grant.wake_cooldown_seconds or 0)
     if last is not None and cooldown > 0 and (now - last).total_seconds() < cooldown:
         remaining = max(1, int(math.ceil(cooldown - (now - last).total_seconds())))
         return RunBudgetVerdict(False, f"agent wake cooldown ({cooldown}s) not elapsed", retry_after_seconds=remaining)

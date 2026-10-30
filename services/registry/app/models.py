@@ -901,6 +901,7 @@ class CodeCandidateStatus(str, enum.Enum):
     QA_FAILED = "qa_failed"
     SECURITY_REVIEW = "security_review"
     READY = "ready"              # QA (and security, if required) passed — human may merge
+    MERGED = "merged"            # its promotion merged (society/promotion.py): the change is on main
     REJECTED = "rejected"
     FAILED = "failed"
     ABANDONED = "abandoned"
@@ -981,6 +982,9 @@ class AgentRun(Base):
     model_tier = Column(String(16))
     route_reason = Column(String(255))
     tokens_cached = Column(Integer)
+    # prompt-cache writes (every TTL) and their 1-hour part; reads are tokens_cached
+    tokens_cache_write = Column(Integer)
+    tokens_cache_write_1h = Column(Integer)
     output_format = Column(String(16))
     format_fallbacks = Column(Integer, nullable=False, default=0)
     error = Column(Text)
@@ -1306,6 +1310,8 @@ class CompanyCycle(Base):
     # the scheduled slot of its day (SOCIETY_COMPANY_CYCLES_PER_DAY); 0 for operator cycles
     slot = Column(SmallInteger, nullable=False, server_default=text("0"))
     event_id = Column(UUID(as_uuid=True))
+    # the owner's directive this operator cycle was started for (one cycle per directive; owner_thread.py)
+    directive_id = Column(UUID(as_uuid=True))
     evidence = Column(PG_JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     outcome = Column(String(32))
     outcome_detail = Column(PG_JSONB, nullable=False, server_default=text("'{}'::jsonb"))

@@ -34,7 +34,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Optional, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import bindparam, func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -179,6 +179,9 @@ def portfolio_accounting(db: Session, settings: SocietySettings, now: Optional[d
       ``SOCIETY_CANDIDATE_STALL_HOURS`` without lifecycle progress (the rest
       ended): surfaced to the operator queue (candidate_health), never
       abandoned automatically; progress makes it active again;
+    * **backlog** -- a proposal that rides a ticket still ``proposed`` or ``planned``: work
+      waiting for a plan's approval is the company's backlog, not a hypothesis being pursued
+      (owner 2026-10-29 G1v: the backlog must stay full, so it cannot hold the cap);
     * **active** -- everything else (PROPOSED, UNDER_REVIEW, fresh APPROVED,
       work in flight, a conversion with no linked work found).
 
@@ -193,7 +196,7 @@ def portfolio_accounting(db: Session, settings: SocietySettings, now: Optional[d
         .limit(_PORTFOLIO_SCAN)
         .all()
     )
-    out: Dict[str, list] = {"active": [], "concluded": [], "shelved": [], "stalled": []}
+    out: Dict[str, list] = {"active": [], "concluded": [], "shelved": [], "stalled": [], "backlog": []}
     for pid, (bucket, _outcome) in _classify(db, rows, settings, now).items():
         out[bucket].append(pid)
     return out
@@ -228,25 +231,34 @@ def _classify(db: Session, rows: list, settings: SocietySettings, now: datetime)
                 .all()
             ):
                 latest_promo[cid] = _status_value(st)
-        open_ids = [c for lst in cands.values() for c, st in lst if st not in _CANDIDATE_ENDED]
+        open_ids = [c for lst in cands.values() for c, st in lst if st not in _CANDIDATE_ENDED and st != CodeCandidateStatus.MERGED.value]
         stalled = candidate_health.stalled_ids(db, settings, open_ids, now)
         task_ids = [r.converted_task_id for r in rows if r.converted_task_id is not None]
         if task_ids:
             tasks = {tid: _status_value(st) for tid, st in db.query(TaskSession.id, TaskSession.status).filter(TaskSession.id.in_(task_ids)).all()}
 
     def ended(cid: uuid.UUID, status: str) -> bool:
-        if status in _CANDIDATE_ENDED:
+        if status in _CANDIDATE_ENDED or status == CodeCandidateStatus.MERGED.value:
             return True
         return status == CodeCandidateStatus.READY.value and latest_promo.get(cid) in _PROMOTION_ENDED
 
     def merged(cid: uuid.UUID, status: str) -> bool:
+        if status == CodeCandidateStatus.MERGED.value:
+            return True
         return status == CodeCandidateStatus.READY.value and latest_promo.get(cid) == PromotionStatus.MERGED.value
 
+    waiting = set()
+    if rows:
+        waiting = {str(pid) for (pid,) in db.execute(text(
+            "SELECT proposal_id FROM society_tickets WHERE status IN ('proposed', 'planned') AND proposal_id IN :ids").bindparams(
+            bindparam("ids", expanding=True)), {"ids": [r.id for r in rows]}).all()}
     out: Dict[str, Tuple[str, Optional[str]]] = {}
     for r in rows:
         status = _status_value(r.status)
         bucket, outcome = "active", None
-        if status == ProposalStatus.CONVERTED_TO_TASK.value:
+        if str(r.id) in waiting and status != ProposalStatus.CONVERTED_TO_TASK.value:
+            bucket = "backlog"
+        elif status == ProposalStatus.CONVERTED_TO_TASK.value:
             linked = cands.get(r.id, [])
             task_status = tasks.get(r.converted_task_id) if r.converted_task_id is not None else None
             if linked:
@@ -297,7 +309,7 @@ def active_hypothesis_count(db: Session, settings: SocietySettings, now: Optiona
 def _portfolio(db: Session, settings: SocietySettings) -> Dict[str, Any]:
     accounting = portfolio_accounting(db, settings)
     active = len(accounting["active"])
-    closed = [CodeCandidateStatus.READY, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED]
+    closed = [CodeCandidateStatus.READY, CodeCandidateStatus.MERGED, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED]
     red = db.query(func.count(CodeCandidate.id)).filter(CodeCandidate.risk_tier == RiskTier.RED.value, CodeCandidate.status.notin_(closed)).scalar() or 0
     return {
         "active_hypotheses": active,
@@ -351,30 +363,38 @@ def _canonical_size(obj: Any) -> int:
 
 
 def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Optional[datetime] = None, operator_id: Optional[uuid.UUID] = None,
-                provider: Any = None, slot: int = 0) -> Optional[CompanyCycle]:
+                provider: Any = None, slot: int = 0, directive_id: Optional[uuid.UUID] = None, event_type: str = COMPANY_CYCLE_EVENT,
+                extra_payload: Optional[Dict[str, Any]] = None, idempotency_key: Optional[str] = None) -> Optional[CompanyCycle]:
     """Create a cycle + its ``company.cycle`` event. A scheduled cycle is
-    idempotent per UTC date and slot (returns None when that one already exists)."""
+    idempotent per UTC date and slot, a directive's cycle per directive (returns None
+    when that one already exists). A directive's cycle is opened by the owner's own
+    event (owner_thread.directive_set: ``event_type``/``extra_payload``/``idempotency_key``)."""
     if trigger not in ("scheduled", "operator"):
         raise ValueError("trigger must be scheduled or operator")
     now = now or utcnow()
     cycle_day: date = now.date()
     evidence = evidence_bundle(db, now)
-    cycle = CompanyCycle(id=uuid.uuid4(), cycle_date=cycle_day, trigger=trigger, evidence=evidence, slot=slot if trigger == "scheduled" else 0)
+    cycle = CompanyCycle(id=uuid.uuid4(), cycle_date=cycle_day, trigger=trigger, evidence=evidence, slot=slot if trigger == "scheduled" else 0,
+                         directive_id=directive_id)
     try:
         with db.begin_nested():
             db.add(cycle)
             db.flush()
     except IntegrityError:
-        return None  # today's scheduled cycle already exists
+        return None  # today's scheduled cycle (or this directive's cycle) already exists
+    payload = {**cycle_event_payload(cycle.id, trigger, evidence, _portfolio(db, settings)), **(extra_payload or {})}
+    if "fitness" in payload and _canonical_size(payload) > TXT_LONG:  # the owner's ids fit the same bound
+        del payload["fitness"]
+        payload["omitted"] = ["fitness"]
     event = emit_event(
         db,
-        event_type=COMPANY_CYCLE_EVENT,
-        payload=cycle_event_payload(cycle.id, trigger, evidence, _portfolio(db, settings)),
+        event_type=event_type,
+        payload=payload,
         actor_type="operator" if trigger == "operator" else "system",
         actor_id=operator_id,
         subject_type="company_cycle",
         subject_id=cycle.id,
-        idempotency_key=f"company.cycle:{cycle.id}",
+        idempotency_key=idempotency_key or f"company.cycle:{cycle.id}",
     )
     cycle.event_id = event.id
     # Observe: every open backlog item an objective owns becomes a proposed ticket
@@ -383,6 +403,12 @@ def start_cycle(db: Session, settings: SocietySettings, *, trigger: str, now: Op
 
     supplied = tickets.supply(db, backlog.collect(db, settings, provider) + backlog.kr_gap_items(db, now), now)
     cycle.evidence = {**(cycle.evidence or {}), "tickets_supplied": len(supplied)}
+    if settings.work_generator_enabled:  # the standing work generator tops every active objective's backlog up (G1v)
+        from . import work_generator  # noqa: PLC0415
+
+        gen = work_generator.generate(db, settings, now)
+        cycle.evidence = {**cycle.evidence, "tickets_generated": len(gen["created"]), "generated_by_origin": gen["by_origin"],
+                          "generator_duplicates": gen["duplicates"]}
     from . import goals, owner_actions  # noqa: PLC0415
 
     if goals.enabled(settings):  # outside actions of the active north-star objectives wait in the owner's queue

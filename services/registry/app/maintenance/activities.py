@@ -146,6 +146,9 @@ class ModelReply:
     tokens_out: int = 0
     cost_usd: Decimal = Decimal("0")
     finish_reason: str = ""
+    # prompt cache (anthropic): input tokens read from it / written to it (part of tokens_in)
+    tokens_cached: int = 0
+    tokens_cache_write: int = 0
 
 
 class ActivityModel(Protocol):
@@ -199,7 +202,8 @@ class LiveActivityModel:
         except EmptyContentError as exc:
             raise ActivityError("empty", str(exc)[:300]) from None
         cost = self._m.outcome_cost(out.served_model or self.model_name, out)
-        return ModelReply(out.content, out.tokens_in, out.tokens_out, cost.quantize(Decimal("0.000001")), out.finish_reason)
+        return ModelReply(out.content, out.tokens_in, out.tokens_out, cost.quantize(Decimal("0.000001")), out.finish_reason,
+                          int(out.tokens_cached or 0), out.tokens_cache_write)
 
 
 class ScriptedActivityModel:
@@ -261,6 +265,8 @@ class ActivityResult:
     tokens_in: int = 0
     tokens_out: int = 0
     cost_usd: Decimal = Decimal("0")
+    tokens_cached: int = 0
+    tokens_cache_write: int = 0
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     #: structural per-turn telemetry (no text): action, tool, bytes, tokens
     turn_log: List[Dict[str, Any]] = field(default_factory=list)
@@ -403,7 +409,8 @@ async def run_activity(
             messages.append({"role": "user", "content": TRUNCATION_RETRY_DIRECTIVE})
             continue
         problem, action = _parse(reply)
-        log = {"turn": res.turns, "action": (action.get("action") if problem is None else f"invalid:{problem[0]}"), "tokens_in": reply.tokens_in, "tokens_out": reply.tokens_out}
+        log = {"turn": res.turns, "action": (action.get("action") if problem is None else f"invalid:{problem[0]}"), "tokens_in": reply.tokens_in, "tokens_out": reply.tokens_out,
+               "cache_read": reply.tokens_cached, "cache_write": reply.tokens_cache_write}
         res.turn_log.append(log)
         if problem is None:
             name = action.get("action")

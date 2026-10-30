@@ -131,4 +131,14 @@ class ApiClient:
     def register(self, email: str, password: str) -> dict:
         return self._request("POST", "/v1/auth/user/register", json={"email": email, "password": password})
 
+    # ── Owner Console (registry /v1/society/*, operator routes) ───────
+    # The user's own session token goes on THIS request only (never on the
+    # shared session headers); the registry's require_operator decides.
+    def operator_get(self, token: str, path: str):
+        return self._request("GET", f"/v1/society{path}", headers={"Authorization": f"Bearer {token}"}, timeout=15)
+
+    def operator_post(self, token: str, path: str, body: Optional[dict] = None):
+        return self._request("POST", f"/v1/society{path}", headers={"Authorization": f"Bearer {token}"}, json=body or {}, timeout=15)
+
+
 api_client = ApiClient()

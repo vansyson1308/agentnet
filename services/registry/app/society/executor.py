@@ -393,6 +393,13 @@ def _every_attempt_failed(ctx: ExecContext, proposal: ImprovementProposal) -> bo
 def _create_improvement(ctx: ExecContext) -> ExecOutcome:
     p = ctx.validated.payload
     _require_ref(ctx, TaskSession, p.source_task_id, "source_task_id")
+    from . import owner_thread  # noqa: PLC0415
+
+    story = owner_thread.story_ticket_count(ctx.db, getattr(ctx.run, "correlation_id", None))
+    if ctx.grant.role == "governor" and (story is None or p.ticket is None):
+        # The chair files tickets ONLY for the owner, in the story an owner event opened (G1v):
+        # everywhere else the Scout and the backlog supply work, as before.
+        raise ExecutionError("the Governor files CREATE_IMPROVEMENT only in an owner story, and only with a ticket")
     if ctx.event.event_type in WORLD_SIGNAL_EVENTS and p.evidence is None:
         # An event existing is not evidence. Signal-driven proposals must say
         # what was observed, against what baseline, over what window, and why
@@ -460,11 +467,15 @@ def _create_improvement(ctx: ExecContext) -> ExecOutcome:
         if ctx.settings.company_cycle_enabled:
             # The backlog supplies tickets deterministically (tickets.supply); a model may
             # only ADD, with evidence, at most MODEL_TICKETS_PER_DEPARTMENT a day per department.
-            refused = tickets.model_ticket_refusal(ctx.db, ctx.grant.role, p.evidence is not None, ctx.now)
+            refused = tickets.model_ticket_refusal(ctx.db, ctx.grant.role, p.evidence is not None, ctx.now, owner_story_tickets=story)
             if refused:
                 raise ExecutionError(refused)
-        src = "backlog" if ctx.event.event_type == EventType.BACKLOG_ITEM else "scout" if ctx.grant.role == "scout" else "department"
+        src = ("owner_story" if story is not None else "backlog" if ctx.event.event_type == EventType.BACKLOG_ITEM
+               else "scout" if ctx.grant.role == "scout" else "department")
         ticket_id = tickets.create(ctx.db, proposal_id=proposal.id, title=p.title, fields=p.ticket.model_dump(), source=src, role=ctx.grant.role, importance=p.importance)
+        if story is not None:  # the funnel counts owner tickets by what the owner said: a directive or a message
+            entry = owner_thread.entry_for_correlation(ctx.db, getattr(ctx.run, "correlation_id", None)) or {}
+            ctx.db.execute(text("UPDATE society_tickets SET origin = :o WHERE id = :id"), {"o": str(entry.get("kind") or "message")[:48], "id": ticket_id})
     ev = _emit(
         ctx,
         EventType.PROPOSAL_CREATED,
@@ -795,6 +806,22 @@ def _propose_owner_action(ctx: ExecContext) -> ExecOutcome:
     return ExecOutcome(result={"owner_action_id": made["id"]}, events=[str(ev.id)])
 
 
+def _respond_to_owner(ctx: ExecContext) -> ExecOutcome:
+    """The Governor's one answer to the owner event that opened this story (owner_thread.py). It is
+    stored for the Owner Console only; nothing is sent, decided or granted."""
+    from . import owner_thread  # noqa: PLC0415
+
+    p = ctx.validated.payload
+    try:
+        made = owner_thread.answer(ctx.db, correlation_id=ctx.run.correlation_id, agent_id=ctx.agent.id, reply=p.reply, plan_steps=[st.model_dump() for st in p.plan_steps],
+                                   ticket_ids=[str(t) for t in p.ticket_ids], owner_actions_needed=list(p.owner_actions_needed),
+                                   credentials=(ctx.settings.model_api_key,), now=utcnow(), run_id=ctx.run.id)
+    except ValueError as exc:
+        raise ExecutionError(str(exc)) from exc
+    ev = _emit(ctx, EventType.OWNER_REPLIED, {"owner_entry_id": made["owner_entry_id"], "reply_id": made["reply_id"], "tickets": len(made["ticket_ids"])})
+    return ExecOutcome(result=made, events=[str(ev.id)])
+
+
 def _design_review_call(ctx: ExecContext, fn: Callable[[], Dict[str, Any]], what: str) -> ExecOutcome:
     try:
         review = fn()
@@ -870,7 +897,7 @@ def _request_code_change(ctx: ExecContext) -> ExecOutcome:
             ctx.db.query(CodeCandidate)
             .filter(
                 CodeCandidate.risk_tier == RiskTier.RED.value,
-                CodeCandidate.status.notin_([CodeCandidateStatus.READY, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED]),
+                CodeCandidate.status.notin_([CodeCandidateStatus.READY, CodeCandidateStatus.MERGED, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED, CodeCandidateStatus.ABANDONED]),
             )
             .count()
         )
@@ -1067,6 +1094,8 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
     ctx.run.tokens_in = int(ctx.run.tokens_in or 0) + out.result.tokens_in
     ctx.run.tokens_out = int(ctx.run.tokens_out or 0) + out.result.tokens_out
     ctx.run.cost_usd = Decimal(str(ctx.run.cost_usd or 0)) + out.result.cost_usd
+    ctx.run.tokens_cached = int(ctx.run.tokens_cached or 0) + out.result.tokens_cached
+    ctx.run.tokens_cache_write = int(ctx.run.tokens_cache_write or 0) + out.result.tokens_cache_write
     ticket = tickets.for_proposal(ctx.db, cand.proposal_id)
     if ticket is not None:
         tickets.add_cost(ctx.db, ticket["id"], out.result.cost_usd)
@@ -1999,6 +2028,7 @@ HANDLERS: Dict[IntentType, Callable[[ExecContext], ExecOutcome]] = {
     IntentType.DECLINE_CODE_CANDIDATE: _decline_code_candidate,
     IntentType.TICKET_NEEDS_INFO: _ticket_needs_info,
     IntentType.PROPOSE_OWNER_ACTION: _propose_owner_action,
+    IntentType.RESPOND_TO_OWNER: _respond_to_owner,
     IntentType.PROPOSE_DESIGN: _propose_design,
     IntentType.REVIEW_DESIGN: _review_design,
     IntentType.DECIDE_DESIGN: _decide_design,

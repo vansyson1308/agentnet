@@ -77,7 +77,7 @@ def test_turn_log_is_structural_only():
     script = iter([{"action": "read_range", "args": {"path": "a"}}, SUBMIT])
     res, _ = _run(lambda m: next(script), {n: (lambda a: {"lines": [secret_text]}) for n in SPEC.tools})
     assert secret_text not in json.dumps(res.turn_log)
-    assert set(res.turn_log[0]) == {"turn", "action", "tokens_in", "tokens_out", "bytes", "ok", "read"} and res.turn_log[0]["bytes"] > 0
+    assert set(res.turn_log[0]) == {"turn", "action", "tokens_in", "tokens_out", "cache_read", "cache_write", "bytes", "ok", "read"} and res.turn_log[0]["bytes"] > 0
 
 
 def test_apply_patch_refuses_python_that_does_not_parse_and_writes_nothing(tmp_path):

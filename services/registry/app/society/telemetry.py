@@ -125,7 +125,7 @@ def _escrow_anomaly(db: Session, since: datetime) -> Optional[Anomaly]:
 
 
 def _candidate_rejections(db: Session, since: datetime) -> Optional[Anomaly]:
-    total = db.query(func.count(CodeCandidate.id)).filter(CodeCandidate.updated_at >= since, CodeCandidate.status.in_([CodeCandidateStatus.READY, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED])).scalar() or 0
+    total = db.query(func.count(CodeCandidate.id)).filter(CodeCandidate.updated_at >= since, CodeCandidate.status.in_([CodeCandidateStatus.READY, CodeCandidateStatus.MERGED, CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED])).scalar() or 0
     rejected = db.query(func.count(CodeCandidate.id)).filter(CodeCandidate.updated_at >= since, CodeCandidate.status.in_([CodeCandidateStatus.REJECTED, CodeCandidateStatus.FAILED])).scalar() or 0
     if total < 3 or rejected < 3:
         return None

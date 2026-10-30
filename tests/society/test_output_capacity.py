@@ -42,7 +42,7 @@ def test_raising_capacity_did_not_raise_any_budget(monkeypatch):
     assert str(s.daily_model_budget_usd) == "2.0", "the money cap is unchanged"
     assert s.max_runs_per_correlation == 40
     assert s.max_runs_per_hour == 120
-    assert s.max_intents_per_run == 5
+    assert s.max_intents_per_run == 7, "G1v: an owner story holds up to 5 tickets + the reply; each grant keeps its own cap"
 
 
 def test_truncation_is_still_a_typed_failure():

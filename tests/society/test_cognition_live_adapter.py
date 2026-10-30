@@ -162,7 +162,7 @@ def test_malformed_content_is_a_validation_error_not_a_retry(monkeypatch):
     model = OpenAICompatibleModel(settings, transport=transport)
     with pytest.raises(DecisionValidationError):
         asyncio.run(model.decide(_context()))
-    assert calls["n"] == 1
+    assert calls["n"] == 2, "not a transport retry: ONE corrective turn (cognition.CORRECTIVE_TURNS), then invalid"
 
 
 def test_privileged_intent_in_prose_is_not_extracted(monkeypatch):

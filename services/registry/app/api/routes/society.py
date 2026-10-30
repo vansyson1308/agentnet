@@ -850,13 +850,86 @@ def decide_plan(plan_id: uuid.UUID, decision: Literal["approve", "reject"], db: 
     return {"id": str(plan["id"]), "status": plan["status"], "ranking": plan["ranking"]}
 
 
+class DirectiveBody(BaseModel):
+    text: str = Field(..., min_length=1, max_length=2000)
+    objective_ids: List[str] = Field(default_factory=list, max_length=5)
+
+
+@router.get("/company/directive")
+def get_directive(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """The owner's active directive ("Kim chi nam"), the earlier ones, and what came from the active one
+    (tickets of its objectives since it was set, with their review, candidate and PR)."""
+    from ...society import charter, directives
+
+    current = directives.active(db)
+    return {"active": current, "history": directives.history(db), "following": directives.following(db, current), "weight": directives.WEIGHT,
+            "objectives": [{"id": o["id"], "title": o["title"], "status": o["status"],
+                            "key_results": [{k: kr[k] for k in ("metric_id", "direction")} for kr in o["key_results"]]} for o in charter.objectives(db)]}
+
+
+@router.post("/company/directive", status_code=status.HTTP_201_CREATED)
+def set_directive(body: DirectiveBody, db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """Set the company's direction: supersedes the active directive (append-only). Every role sees it as
+    owner input; the plan weighs its objectives. It grants nothing, and no intent can write it."""
+    from ...society import directives, owner_thread
+
+    try:
+        made = directives.set_directive(db, text_=body.text, objective_ids=body.objective_ids, user_id=operator.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    # The company starts on it now: an owner event (priority) and, with company mode on, one cycle + plan.
+    return {**made, "owner_entry": owner_thread.directive_set(db, get_settings(), made, user_id=operator.id)}
+
+
 @router.post("/company/tickets", status_code=status.HTTP_201_CREATED)
 def create_owner_ticket(body: OwnerTicketBody, db: Session = Depends(get_db), operator: User = Depends(require_operator)):
     """An owner task: approved at once (no plan), still checked by the meaning gate."""
     from ...society import tickets
 
+    from ...society import owner_thread
+
     fields = body.model_dump(include={"objective_id", "metric_id", "expected_effect", "direction", "proof"})
-    return tickets.create_owner_ticket(db, user_id=operator.id, title=body.title, problem=body.problem, fields=fields)
+    made = tickets.create_owner_ticket(db, user_id=operator.id, title=body.title, problem=body.problem, fields=fields)
+    entry = owner_thread.record(db, kind="task", text_=f"{body.title}: {body.problem}"[:owner_thread.MAX_TEXT], user_id=operator.id,
+                                refs={"ticket_id": made["ticket_id"], "objective_id": body.objective_id})
+    db.commit()
+    return {**made, "owner_entry_id": entry["id"]}
+
+
+class OwnerMessageBody(BaseModel):
+    text: str = Field(..., min_length=1, max_length=2000)
+
+
+@router.post("/company/owner-messages", status_code=status.HTTP_201_CREATED)
+def post_owner_message(body: OwnerMessageBody, db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """The owner speaks to the company (Owner Console): a priority owner event the Governor answers
+    once (RESPOND_TO_OWNER). Owner input; it grants nothing."""
+    from ...society import owner_thread
+
+    try:
+        entry = owner_thread.record(db, kind="message", text_=body.text, user_id=operator.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    db.commit()
+    return {**entry, "status": "received"}
+
+
+@router.get("/company/owner-thread")
+def get_owner_thread(db: Session = Depends(get_db), operator: User = Depends(require_operator), limit: int = Query(20, ge=1, le=100)):
+    """The owner's conversation with the company: each message/directive/task, its status
+    (received -> working -> answered), the Governor's reply, what came from it, and the latency SLOs."""
+    from ...society import owner_thread
+
+    return {**owner_thread.view(db, limit), "slo": owner_thread.slo(db)}
+
+
+@router.get("/company/funnel")
+def get_company_funnel(db: Session = Depends(get_db), operator: User = Depends(require_operator), hours: int = Query(24, ge=2, le=168)):
+    """The throughput funnel (society/funnel.py): spend, runs by role, tickets, designs, builds, READY,
+    PRs, CI, merges, rejections, $/READY, $/PR, 2-hour buckets and the current bottleneck."""
+    from ...society import funnel
+
+    return funnel.funnel(db, hours=hours, daily_budget_usd=funnel.worker_budget(db, float(get_settings().daily_model_budget_usd)))
 
 
 @router.get("/company/tickets")

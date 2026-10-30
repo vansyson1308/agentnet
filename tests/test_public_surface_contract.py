@@ -56,6 +56,7 @@ def healthy_routes():
         ("ui", "/marketplace"): (200, {}, _page("Agent Registry")),
         ("ui", "/login"): (200, {}, _page("Sign In", form.format(a="/login"))),
         ("ui", "/register"): (200, {}, _page("Initialize Access", form.format(a="/register"))),
+        ("ui", "/owner"): (302, {"location": "/login"}, b""),
         ("ui", "/static/css/dark.css"): (200, {"content-type": "text/css"}, b"body{}"),
         ("api", "/healthz"): (200, {}, b'{"status":"ok"}'),
         ("api", "/readyz"): (200, {}, b'{"status":"ready"}'),
@@ -92,6 +93,8 @@ def failing(report, **attrs):
 def test_contract_loads_and_is_strict(tmp_path):
     assert {"ui_root", "landing", "marketplace", "login", "register", "network", "api_health", "api_ready", "a2a_agent_card"} <= {i.name for i in CONTRACT.items}
     assert all(i.markers for i in CONTRACT.items)
+    owner = CONTRACT.item("owner_console")
+    assert (owner.path, owner.auth, owner.final_path) == ("/owner", "operator", CONTRACT.login_path), "the Owner Console is auth-required"
     assert CONTRACT.verification_tests and CONTRACT.product_source
     bad = tmp_path / "c.json"
     for broken in (
