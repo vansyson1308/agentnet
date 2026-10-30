@@ -62,6 +62,8 @@ def _act(*intents):
     return {"decision_summary": "act", "intents": list(intents), "sleep_for_seconds": 1}
 
 
+#: exists on the fixture repository's main (the spec gate checks the design against it)
+ACCEPTANCE = "tests/acceptance/test_parse_bool_regression.py"
 IDLE = {"decision_summary": "nothing to do", "intents": [], "sleep_for_seconds": 60}
 
 
@@ -79,7 +81,8 @@ def test_an_approved_ticket_meets_before_it_is_designed_and_go_wakes_the_archite
             seen["architect"] = ctx.engineering["company"]["design_review"]
             return _act({"type": "PROPOSE_DESIGN", "payload": {
                 "review_id": _review_id(ctx), "approach": "extend parse_bool's affirmative set with yes/on and test both",
-                "files": ["src/textutil.py", "tests/test_textutil.py"], "proof": "a new test fails on base and passes after", "risks": ["callers relying on 'yes' -> False"]}})
+                "files": ["src/textutil.py", "tests/test_textutil.py"], "proof": "a new test fails on base and passes after", "risks": ["callers relying on 'yes' -> False"],
+                "acceptance_tests": [ACCEPTANCE]}})
         if etype == EventType.DESIGN_REVIEW_PROPOSED and ctx.role in ("scout", "qa", "security"):
             stance = "concern" if ctx.role == "qa" else "support"
             return _act({"type": "REVIEW_DESIGN", "payload": {"review_id": _review_id(ctx), "stance": stance, "points": [f"{ctx.role}: the proof is specific"]}})
@@ -119,7 +122,7 @@ def _proposing(db, report):
     review = design_review._row(db, "ticket_id = :t", {"t": t["id"]})
     corr = review["correlation_id"]
     design_review.propose(db, review_id=review["id"], correlation_id=corr, agent=_agent(db, report, "architect"),
-                          proposal={"approach": "a" * 30, "files": ["src/textutil.py"], "proof": "a failing test", "risks": []}, causation=None)
+                          proposal={"approach": "a" * 30, "files": ["src/textutil.py"], "acceptance_tests": [ACCEPTANCE], "proof": "a failing test", "risks": []}, causation=None)
     return t, design_review.get(db, review["id"])
 
 
@@ -132,7 +135,8 @@ def test_security_objection_bars_go_the_last_round_has_no_revise_and_drop_refuse
                                     position={"stance": "support", "points": ["fine"]}, causation=None)
     for role, stance in (("scout", "support"), ("qa", "support"), ("security", "object")):
         design_review.post_position(db, review_id=review["id"], correlation_id=corr, agent=_agent(db, report, role), role=role,
-                                    position={"stance": stance, "points": [f"{role} point"]}, causation=None)
+                                    position={"stance": stance, "points": [f"{role} point"], "constraints": ["no new dependency"] if stance == "object" else []},
+                                    causation=None)
         if role == "scout":
             with pytest.raises(design_review.ReviewRefused, match="scout already reviewed round 1"):
                 design_review.post_position(db, review_id=review["id"], correlation_id=corr, agent=_agent(db, report, "scout"), role="scout",
@@ -215,7 +219,7 @@ def test_each_stage_wakes_exactly_the_roles_that_must_act(db, SessionLocal, revi
         etype = ctx.event["type"]
         if etype == EventType.DESIGN_REVIEW_REQUESTED:
             assert ctx.role == "architect"
-            return _act({"type": "PROPOSE_DESIGN", "payload": {"review_id": _review_id(ctx), "approach": "a" * 30, "files": ["src/textutil.py"],
+            return _act({"type": "PROPOSE_DESIGN", "payload": {"review_id": _review_id(ctx), "approach": "a" * 30, "files": ["src/textutil.py"], "acceptance_tests": [ACCEPTANCE],
                                                                "proof": "a failing test", "risks": []}})
         if etype == EventType.DESIGN_REVIEW_PROPOSED:
             assert ctx.role in design_review.REVIEWERS
@@ -299,7 +303,7 @@ def test_a_timeout_is_never_approval(db, review_on):
     # one objection, the rest silent: still the Governor's call, still a return on silence
     t3, r3 = _proposing(db, report)
     design_review.post_position(db, review_id=r3["id"], correlation_id=r3["correlation_id"], agent=_agent(db, report, "security"), role="security",
-                                position={"stance": "object", "points": ["it widens an auth path"]}, causation=None)
+                                position={"stance": "object", "points": ["it widens an auth path"], "constraints": ["no auth path change"]}, causation=None)
     for _ in range(4):  # reviewers re-woken, then silent; the Governor re-woken, then the return
         _expire_stage(db, r3)
         assert design_review.sweep(db, utcnow()) == 1

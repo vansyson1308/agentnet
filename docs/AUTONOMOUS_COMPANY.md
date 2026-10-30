@@ -231,7 +231,7 @@ every staging audit). The design review (`society/design_review.py`) is the meet
 | Step | Who | Typed intent | What the runtime enforces |
 | --- | --- | --- | --- |
 | Request | runtime | — | an approved ticket (owner or board) opens a review in a **fresh story** (`design_review.requested`); owner/incident tickets skip it |
-| Propose | Architect | `PROPOSE_DESIGN {review_id, approach, files, proof, risks}` | only in the review's current round |
+| Propose | Architect | `PROPOSE_DESIGN {review_id, approach, files, proof, risks, acceptance_tests, test_first, unchanged}` | only in the review's current round; the spec gate first |
 | Review | Scout (evidence, value), QA (provability), Security (risk) | `REVIEW_DESIGN {review_id, stance: support\|concern\|object, points}` | once per role per round; only these three roles |
 | Decide | Governor | `DECIDE_DESIGN {review_id, verdict: go\|revise\|drop, rationale, conditions}` | a Security `object` bars `go`; round 2 is the last (no `revise`) |
 | Design | Architect | `REQUEST_CODE_CHANGE` | `go` emits `company.ticket_approved` in a **fresh** design story with the minutes; the candidate spec and the PR body carry them (structural only) |
@@ -253,6 +253,34 @@ every staging audit). The design review (`society/design_review.py`) is the meet
 - **Authority unchanged.** The review decides only whether and how a ticket is designed. It cannot
   merge, deploy, change a grant, budget or the risk tier; QA, Security and the promotion controller
   still judge the built candidate.
+- **Spec gate before the meeting** (`society/spec_gate.py`, deterministic). A `PROPOSE_DESIGN`
+  that cannot become READY is refused before any review, and the Architect is re-woken with the
+  structural reasons (`gate` in its wake, at most `GATE_RETRIES` times per round, then the ticket
+  returns to `proposed`). Rules: every `acceptance_tests` entry exists on main or is a `test_first`
+  file the Architect writes in the design (new `tests/**/test_*.py`, at most 2, never in `files`);
+  no new test file outside `tests/` (required CI does not collect it, and the test-discovery
+  sentinel fails the PR: staging PR #115; QA checks the same as `ci_collects_new_tests`);
+  no acceptance file is in `files` (the Builder never writes its judge); a dashboard template must
+  be rendered by a view, and that view is in `files` or named in `unchanged` with the reason; no
+  file on a risky surface (`qa.RISKY_PATH_RE`: the Security static scan fails any change there).
+  Staging 2026-10-26 lost 4/4 candidates to exactly these faults.
+- **Test first.** The executor pins the approved design's `test_first` files (sha256) from the
+  persisted minutes, never from the model, and commits them on the candidate branch before the
+  build; the harness resets to that commit. A test-first that already passes on base is refused
+  (it cannot judge the change). QA exempts only a byte-identical pinned file from the allow-list and
+  self-judging checks (`test_first_intact`); a Builder edit to it fails QA.
+- **Security constraints.** Only Security names `constraints` in `REVIEW_DESIGN`, and an `object`
+  must name at least one: the constraint the spec must carry (staging 7ae459d7 passed QA and failed
+  Security on a constraint nobody had stated). They are numbered `S<n>` across the ticket's rounds;
+  every later proposal answers each in `carries` ("S1: how") or the spec gate refuses it; the
+  minutes (`security_constraints`), the candidate spec and the candidate's Security review event
+  carry them.
+- **Rescope, not a dead end.** A Builder's `spec_outside_files_allowed` decline of a ticket whose
+  review said `go` re-designs the SAME ticket: a new review in a fresh story (ticket back to
+  `approved`, no candidate), whose proposal must cover the `blocking_paths` in `files` or say in
+  `unchanged` why not, and carry the earlier constraints. Once per ticket (`MAX_RESCOPES`); a second
+  decline closes it as before. While it is open nobody builds the old design and the stale-design
+  sweep leaves the ticket alone.
 - **Visible.** `GET /v1/society/company/reviews` (operator: minutes, positions, history) and
   `mode.design_review_enabled` in `GET /v1/society/company`.
 - Off by default: `SOCIETY_DESIGN_REVIEW_ENABLED=false`. Schema `SOCIETY_DESIGN_REVIEW_SQL`,
@@ -338,3 +366,274 @@ into its own plan, and a missed slot is not back-filled. `SOCIETY_COMPANY_PLAN_M
 `SOCIETY_COMPANY_PLAN_PER_DEPARTMENT` (2) size each plan; builds in flight stay capped by
 `SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES`. The board, the RED merge law and the budgets are unchanged.
 Each cycle wakes the roles that subscribe to `company.cycle` once, so more cycles cost more model calls.
+
+## Hygiene: no key in an intent row, no worker config in a test, no silent READY
+
+- **Redaction** (`society/secret_redaction.py`): before an `agent_intents` row is written (payload,
+  policy reason, result, error) every key-shaped (`sk-…`/`dsk-…`) or JWT-shaped string becomes
+  `[redacted-key]`/`[redacted-jwt]`. A match whose fingerprint is the configured model credential or
+  on the compromised list logs `secret.redacted … credential_match=True ROTATE THIS CREDENTIAL`;
+  the string itself is never logged or stored. Audit `X01` locates older rows the same way.
+- **Test environment** (`engineering/qa.scrubbed_env`): QA's acceptance run, the harness's targeted
+  runs, red-on-base and the test_first gate get an allowlist (`PATH`, `HOME`, locale, `TZ`,
+  `TMPDIR`, `VIRTUAL_ENV`, `SSL_CERT_*`) plus fixed safe flags -- never the worker's
+  `SOCIETY_*`, `DATABASE_URL` or any credential (staging 877a0ceb was judged by
+  `SOCIETY_AUTO_MERGE_ENABLED=true`).
+- **test_first proof** (QA `test_first_red_on_base` / `test_first_green_on_head`): the Architect's
+  pinned tests must fail on the candidate base with nothing but themselves added (exit 1 or a
+  collection error) and pass on the head, on every QA verdict.
+- **READY without a PR** (`society/promotion_queue.py`): each READY candidate without an active
+  promotion has one reason -- `promotion_<status>` (ended, e.g. the owner closed the PR; never
+  re-offered), `provider_disabled`, `cap_promotions_per_day`, `cap_open_prs`, `refused`,
+  `awaiting_request`. While capacity lasts the oldest waiting ones are re-offered to the Governor
+  (a fresh system `code_candidate.ready`) once per candidate per `capacity_token` -- the UTC day, the
+  two caps and the number of ended promotions -- so a re-offer goes out as soon as capacity can have
+  appeared (a cap raised, a PR closed or merged, a promotion ended), not the next day (owner
+  2026-10-29). A wake younger than 1h is still the Governor's unless capacity changed since it was
+  sent. The request still goes through policy, the change budgets and the controller. The daily
+  report lists them (`READY without a PR`), the validator in `promotions` (`P04`).
+- **A red PR is still a PR** (staging 2026-10-28: #115, `ci_failed` and closed by the owner, held
+  the only open-PR slot for 40h and both real READY candidates were refused). The controller keeps
+  reading `ci_failed` promotions at the poll interval: a closed PR ends the promotion `rejected`
+  (`closed_by_owner: ...`) and its candidate `rejected`; a human merge ends both `merged` (a new
+  candidate status: the change is on main); checks that re-run go back to `ci_pending`.
+  `promotion_queue.settle_ended` moves older READY rows whose promotion already ended the same way,
+  so `ready=N` counts only work still waiting. `stale_base` names a READY candidate whose base is no
+  longer an ancestor of main (it needs a rebuild and is not re-offered); a base merely behind main
+  is fine -- the open PR is reconciled with GitHub's update-branch. The change budget in effect
+  (`promotion_queue.caps`: per-day and open-PR caps, what is spent, provider, auto-merge) is in
+  every heartbeat payload, the daily report and the validator (`P05`). Raising the open-PR cap is
+  the owner's env change (`SOCIETY_MAX_OPEN_AUTONOMOUS_PRS`, default 3), never an intent.
+- **Rejections by reason** (`society/rejections.py`): every candidate rejected since #114 gets one
+  structured reason from what the runtime recorded (`closed_by_owner`, `declined`,
+  `outside_files_allowed`, `build_attempts_exhausted`, `already_satisfied`, `red_on_base`,
+  `test_first_red`, `busywork`, `security`, `no_self_judging`, `test_first_green`, `ci_orphan`,
+  `test_first_tampered`, `acceptance_failed`, `qa_other`), with the designs the spec gate refused
+  before a build beside them. Same numbers in the daily report, the digest and the validator
+  (`candidates`, `R01`).
+- **Design-review limits**: the prompts state the exact limits (points 1-5 items of 3-300 chars,
+  constraints at most 4, conditions at most 5, rationale 10-800 chars). Before validation
+  `intents.normalize_payload` fits a reviewer's `points` (drops items under 3 chars, cuts at 300,
+  keeps the first 5) and cuts over-long constraint/condition items and the rationale; a Security
+  constraint or a Governor condition is never dropped (too many stays a schema violation). A reply
+  that is not a decision gets ONE corrective turn (told the parser's reason, never its own text
+  echoed) before the run fails; both turns are billed.
+
+## Telegram boardroom (G2, step 1: read-only digest)
+
+`society/boardroom.py` builds one plain-text page, deterministically: the daily report's numbers,
+the north-star scorecard, the latest plan (and the operator call that approves or rejects it), the
+READY candidates with their PR link or the reason there is none (`promotion_queue.py`), and the open
+owner actions (and the operator call that closes one). With `SOCIETY_TELEGRAM_ENABLED=true` the
+society worker sends it once per UTC day at/after `SOCIETY_TELEGRAM_DIGEST_HOUR_UTC` to ONE chat,
+`SOCIETY_TELEGRAM_CHAT_ID` (a private chat with the owner); a failed send is recorded
+(`boardroom.digest_failed`) and retried an hour later.
+
+- Structural text only. A title a model wrote (candidate, agent-proposed owner action, ticket) is
+  redacted like an intent row (`secret_redaction.py`), flattened to one line and cut to 90
+  characters; rationales, payloads, minutes and QA/Security text are never forwarded.
+- The bot token `SOCIETY_TELEGRAM_BOT_TOKEN` is read only in `society/boardroom_telegram.py`; it
+  never reaches a log, an event, a row or a model context. The send has no parse mode and no link
+  previews.
+- The digest decides nothing. The plan and the owner actions are still decided only through the
+  operator API (`POST /v1/society/company/plans/{id}/approve|reject`,
+  `POST /v1/society/company/owner-actions/{id}/done|dismissed`).
+- `GET /v1/society/company/boardroom/digest` shows the page as it would be sent; `POST` sends it now
+  (refused while the boardroom is off). Both are operator only.
+- The Bot API puts the token in the URL path and httpx logs request URLs at INFO, so
+  `boardroom_telegram.py` filters the `httpx`/`httpcore` loggers: a record naming the Bot API path
+  is dropped at any log level.
+
+### Telegram boardroom, step 2: owner commands
+
+`society/boardroom_commands.py` (`SOCIETY_TELEGRAM_COMMANDS_ENABLED`, default off, needs
+`SOCIETY_TELEGRAM_ENABLED`) lets the owner decide from the same chat. It adds no authority and no
+decision path: a command runs the very code behind the operator routes.
+
+- Who: a Telegram account speaks for an operator only once that operator linked it.
+  `POST /v1/society/company/boardroom/link` (operator) returns a one-time code (10 minutes, stored as
+  its sha256); `/link <code>` from the account in the operator chat claims it. A new code replaces
+  the old link; `DELETE .../boardroom/link` or `/unlink` removes it; `GET` shows it. On EVERY command
+  `operator_auth.operator_for_telegram` re-checks the durable operator role, so revoking the role
+  stops the account at once.
+- Where: only `SOCIETY_TELEGRAM_CHAT_ID`; other chats are dropped unanswered. A bot, a channel or
+  anonymous admin (`sender_chat`) or a forwarded message never commands.
+- What: `/approve <plan id>`, `/reject <plan id>` call `tickets.decide_plan`; `/done <id> [note]`,
+  `/dismiss <id> [note]` call `owner_actions.decide`, with the operator's user id. An id is at least
+  the 8 characters the digest shows and must match exactly one waiting plan / open action. `/plan`
+  and `/digest` read; `/help` lists the commands.
+- When: the worker polls `getUpdates` at most every 10 s (no inbound webhook). Each update is handled
+  once (`boardroom.command:<update_id>`); a command older than 15 minutes is refused (send it
+  again), so a backlog never fires after an outage.
+- What is kept: a `boardroom.command` event with the command, the outcome, the id prefix and the
+  operator's user id. The message text is never stored and never reaches the Society.
+
+## Owner Console and the directive ("Kim chỉ nam")
+
+Owner 2026-10-29: the Telegram boardroom is parked (flags stay off, code kept); the owner works from
+ONE dashboard page, `/owner`.
+
+- **Who**: operators only. The page calls the registry's operator routes with the signed-in user's
+  own token; `require_operator` (durable `users.society_role`) decides. Anonymous visitors go to
+  `/login`, anyone else signed in gets 403. The page itself makes no role decision and compares no
+  email. Every POST carries the session's CSRF token.
+- **What**: the north-star scorecard and the daily report; today's plan with Approve/Reject; owner
+  actions with Done/Dismiss; READY candidates with their PR link or the reason there is none, and the
+  change budget; open freezes with Lift; model budget and spend; a "New task" form
+  (`POST /company/tickets`, an owner ticket). All existing operator routes.
+- **The directive** (`society/directives.py`, `society_owner_directives`, migration
+  `0026_owner_directives`): the owner writes the company's direction in plain text and may pick the
+  objectives it serves (`POST /v1/society/company/directive`, operator; `GET` shows it, the earlier
+  ones and what came from it). Append-only (a DB trigger refuses rewrites and deletes), one active.
+  Every role sees it in its context as `owner_directive`, labelled owner input, after the policy text;
+  the daily plan multiplies the score of a ticket of its objectives by `1 + directives.WEIGHT` (1.0).
+  It grants nothing: grants, budgets, flags, `files_allowed`, the RED/merge law and auto-merge are
+  untouched, and no intent can write it. Scout and Governor turn it into tickets and owner actions
+  through the existing intents; the console lists the tickets of its objectives since it was set,
+  with their review, candidate and PR.
+- **The owner's account**: staging has no SMTP. The owner registers on the dashboard with their own
+  password, then the validator step `owner:grant:<email>` (`PHASE5_PLAN=owner:grant:<email>`) checks
+  the account exists (it never creates one or touches a password), marks it verified on the database
+  and assigns the durable `operator` role through `POST /v1/society/operators`
+  (`operator_auth.assign_role`). It prints only the email prefix, existed, verified and role. On
+  production it refuses unless `OWNER_GRANT_CONFIRM` names the same email: never automatic.
+- The public-surface contract names `/owner` (`owner_console`, auth required: an anonymous request
+  ends on the login page).
+
+### Owner Console as a live conversation (owner 2026-10-29)
+
+"A CEO speaks and the team answers in minutes." Deterministic plumbing (`society/owner_thread.py`,
+`society_owner_thread`, migration `0027_owner_conversation`); the model still only proposes typed
+intents and nothing here grants anything.
+
+- **Owner events wake the company now.** Setting a directive, creating an owner task
+  (`POST /company/tickets`) or sending a message (`POST /company/owner-messages`, the console's
+  "Ra lệnh / hỏi công ty" box) writes an `owner` row (append-only, redacted like intent rows) and ONE
+  durable event `owner.directive_set` / `owner.task_created` / `owner.message` with the key
+  `owner:<row id>`. Owner events are PRIORITY: dispatched and claimed before any other pending event,
+  by a dedicated owner lane in the worker (its own thread and wake listener, so a long build or
+  controller pass never delays it), never subject to the heartbeat precheck or the wake cooldown.
+  While `SOCIETY_OWNER_RESERVE_USD` > 0 (staging: 5) they spend that reserve instead of the role's
+  daily budget, and every other run leaves the reserve's unspent part alone; the reserve is inside
+  `SOCIETY_DAILY_MODEL_BUDGET`. The global cap, the runs/hour limits (a capped owner run is retried
+  after 60 s, not dropped), the loop breaker and `max_runs_per_correlation` still apply.
+- **A directive starts work immediately.** `owner.directive_set` wakes the Governor (chair) and the
+  Scout and IS the event of one operator company cycle started at once (`company.start_cycle`, the
+  code of `POST /company/cycles`, unique per directive): the backlog supplies tickets and the plan is
+  ranked now, marked `directive_id` / `owner_entry_id` ("from directive" on the console).
+- **The Governor answers.** `RESPOND_TO_OWNER {reply <= 1200 chars, plan_steps <= 5, ticket_ids <= 5,
+  owner_actions_needed <= 3}` is Governor-only, LOW, valid only in the story an owner event opened, at
+  most one per owner event (a unique index; a second one fails). Shown ONLY on `/owner`.
+- **Tickets for the owner are planned in minutes.** In an owner story the Governor (and the Scout) file
+  up to 5 tickets in all (`CREATE_IMPROVEMENT` with `ticket` + `evidence`) outside the department's
+  daily cap; the owner lane ranks them into a plan of their own (`owner_entry_id`) in the same pass.
+  See "Never out of work" below.
+- **The panel** shows each owner message, its status (received → working → answered, or no_reply when
+  every run ended without one), the reply, and what came from it (tickets, plans, design reviews,
+  candidates, PRs). `/owner` polls `/owner/thread` every 5 s while something is working.
+- **SLOs** (`owner_thread.slo`, on `/owner` and validator step `owner:slo`): owner event → first run
+  start p95 < 30 s; → Governor reply p95 < 2 min; directive → first ticket in a plan < 10 min. An owner
+  row left unanswered (or a directive unplanned) past its target counts against it.
+- **Live truth, not memory** (owner 2026-10-29: the Governor said "1 PR open" and "only e14a7bb1" while
+  `/owner` showed 0/5 open and 3 READY). Every role's context in an owner story carries
+  `owner_request.portfolio` (`owner_thread.portfolio`), read from the DB at run time and labelled
+  LIVE DATA: READY candidates with their promotion reason (`promotion_queue.ready_view`, the worker's
+  caps), the change budget (promotions today, open PRs, caps), today's plan, tickets by status and in
+  flight, candidates in flight, and the model budget left (daily, owner reserve, per role). The prompt
+  says a count or status stated to the owner comes from this block, never from memory. Structural
+  only: ids, titles, statuses, numbers; no payloads, no secrets.
+- **Words → work.** In an owner story the Governor's decision carries its normal intents
+  (`REQUEST_PR_PROMOTION`, `CREATE_IMPROVEMENT`, `DECIDE_DESIGN`, `PROPOSE_OWNER_ACTION`, ...)
+  together with `RESPOND_TO_OWNER`; the reply runs last, so each `plan_steps` item
+  `{step, intent | ticket_id}` is linked to the sibling intent (1-based position in the decision) or
+  ticket that started it, with that intent's real status. A step with neither is shown as `next`; a
+  reference that names nothing is counted (`unlinked_steps`), never shown as started. Each message on
+  `/owner` lists the side-effecting intents its story executed and their results ("Work started"), or
+  "No work started yet: words only." Nothing here adds authority: each intent still goes through
+  policy, budgets and the controller.
+- **SLO first work**: owner message → first side-effecting intent EXECUTED in its story, p95 < 5 min
+  (`first_work`, validator `L04`); a row older than 5 min with no work counts against it.
+- **Throughput funnel** (`society/funnel.py`, `GET /company/funnel?hours=` operator-only, the
+  `/owner` card, the daily report line, a `society.funnel` worker log line every 2 h, validator
+  `funnel:<hours>`): spend and runs by role, tickets created/approved, designs go/returned, builds
+  attempted/delivered, fresh READY, PRs opened, CI green, merged, rejections by reason, $/READY and
+  $/PR, the same numbers in 2-hour buckets, and the bottleneck: the stage (ticket proposed → plan
+  awaiting owner → approved awaiting design → design review → build → QA/Security → READY awaiting PR
+  → PR CI → PR awaiting merge) whose waiting work has the highest median wait right now.
+- **Focus warning**: a directive that selects more than 2 objectives gets a warning on `/owner`
+  ("everything x2 = no priority"); it is still saved, the registry decides.
+- The READY list on `/owner` and the daily report judge "no PR" with the WORKER's provider and caps
+  (its last heartbeat's `change_budget`, the `P05` source), not the registry's own env.
+
+### Never out of work (owner 2026-10-29, G1v)
+
+At full throttle ($80/day) the company spent ~$7.7 in 3.5 h: the Builder skipped 16 runs as idle, the
+newest plan was empty and the directive produced 0 tickets in 6 h. The cause was supply, so supply is
+now deterministic plumbing. No new authority: policy, budgets, files_allowed, the spec gate, QA and
+Security, the RED/merge law and auto-merge are unchanged.
+
+- **Owner words → tickets, in the same story.** The Governor decomposes a directive or message into
+  1..5 `CREATE_IMPROVEMENT` tickets (objective + KR + expected effect + proof, `evidence.signal =
+  owner_request`) in the decision that answers it. It is granted `CREATE_IMPROVEMENT` for this alone:
+  outside a story an owner event opened, or without a `ticket`, the executor refuses it. At most 5 per
+  owner event (Governor and Scout together). The tickets carry `source = owner_story` and the owner lane
+  ranks ALL of them into one plan of their own in the same pass (the per-department split spreads a
+  scheduled cycle, it does not drop half an owner request). `RESPOND_TO_OWNER`'s `ticket_ids` and the
+  started `plan_steps` list the tickets the story filed.
+- **A story without work is re-woken once.** An owner message or directive whose runs all ended with no
+  ticket and no executed side-effecting intent is recorded `owner_event_without_work`: `owner.rewake`
+  (key `owner-rewake:<row>`, an owner event: priority lane, owner reserve) wakes the Governor again in
+  the same story with that reason. Never twice. The console shows it; validator `owner:slo` counts it
+  (`L06`).
+- **SLO** owner message → ticket in a plan p95 < 10 min (`message_to_plan`, validator `L05`).
+- **Tickets waiting for a plan are backlog**, not hypotheses: a model-filed proposal whose ticket is
+  `proposed`/`planned` no longer counts toward `SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES` (it did, so the
+  portfolio filled with tickets nobody had approved and every further ticket was refused).
+- **An approved ticket nobody designs wakes the Architect again** (`tickets.wake_undesigned`): no
+  candidate, no open design review, and no run queued or moving in its stories for 10 min → the
+  `company.ticket_approved` wake is re-sent (payload `rewake: n`, at most 2). A wake is not an
+  approval: the design-failure count and the 6 h stale sweep still run from the real approval. The
+  Architect's heartbeat precheck counts "approved ticket(s) without a design" as work.
+- **READY → PR happens or says why** (`promotion_queue.settle_reoffers`). A re-offered READY candidate
+  the Governor did not request within its wake gets `promotion.reoffer_settled` with a structured reason
+  (`governor_did_not_request`, `governor_not_woken`, `governor_run_skipped`, `governor_run_dead`) shown
+  as `not_requested` on `/owner`. With `SOCIETY_READY_FALLBACK_ENABLED=true` (default false) and
+  capacity free, the runtime then requests the promotion as the Governor's run in that story, through
+  the Governor's own policy verdict (an approval gate stays a human gate: `policy_approval_required`),
+  the same change budget, Builder independence and the same controller; otherwise the reason it did
+  not (`no_capacity`, `stale_base`, `provider_disabled`, ...) is recorded.
+- **Throughput limits are reachable.** Validator `runs:<role>:<n>` sets a grant's
+  `max_runs_per_hour` (1-200); a re-seed keeps the larger of it and the role default. The Governor may
+  return up to 7 intents a run (5 tickets + the reply + one more); `SOCIETY_MAX_INTENTS_PER_RUN` (global,
+  default 7) still caps every grant.
+
+#### The standing work generator (G1v, PR B)
+
+`society/work_generator.py`, run by every company cycle when `SOCIETY_WORK_GENERATOR_ENABLED=true`
+(default false). Deterministic: no model, no event, no new authority. It tops up each ACTIVE
+objective's PROPOSED tickets to `SOCIETY_WORK_GENERATOR_MIN_BACKLOG` (5), at most
+`SOCIETY_WORK_GENERATOR_MAX_PER_CYCLE` (10) new tickets per cycle (both 0..20), source `generator`
+(or `rescope`) with an `origin`:
+
+| origin | evidence (proof) | what it asks |
+|---|---|---|
+| `rescope` | a candidate REJECTED in 7 days whose ticket is closed (not closed by the owner, not already satisfied, not busywork); the original proof + `rescope:<id>` | a smaller design on the same key result that avoids the rejection reason, once |
+| `directive` | the active directive's themes (fixed keyword map: UI, traffic, signup, agents; none -> UI) x the public pages of `public_surface_contract.json`; `surface:<page>` + `directive:<id>:<theme>` | one small change per page, for the directive's objectives. Titles are system-written; the owner's text is matched, never copied |
+| `surface` | the latest trusted observation (24 h) of a public page failed and NO open maintenance incident covers it; `surface:<page>` | make the page pass its contract check. Maintenance incidents never enter the innovation portfolio |
+| `tests` | a pytest node id named by a failed promotion CI in 7 days, still on base (the node id is the acceptance proof) | make it pass; never skip or weaken it |
+| `kr_lever` | every off-target KR of an active objective with product levers (`work_packet.METRIC_LEVERS`), every cycle; `probe:<metric>` + `idea:<metric>:<n>` | one ticket per product idea |
+| `docs_sdk` | read-only: SDK client methods missing from the SDK README (5 per ticket), public SDK methods without a docstring, example agents without a README; `repo:...` | document it |
+| `todo` | TODO/FIXME in owned product code (`repo_intel.search`, bounded; the trusted base is not scanned); `repo:todo:<path>` | do it or remove it |
+
+A ticket whose title or proof matches one that is open or was created in the last 7 days is refused.
+Each item goes to the active objective with the largest deficit whose key result it moves (and which is
+still off target). Every generated ticket still goes through the plan, the board/owner, the design
+review, the spec gate, files_allowed, QA/Security and the RED/merge law. The cycle records
+`tickets_generated`, `generated_by_origin` and `generator_duplicates` in its evidence.
+
+**Funnel by source** (`funnel.py`, `/owner`, the daily report, the 2-hourly `society.funnel` line,
+validator `funnel:<h>[:proof]`): tickets created by source (owner, directive, generator, kr_gap,
+rescope, bench, backlog, incident, agents), per-role runs worked, idle wakes, idle % and queue now,
+$/hour, and spend vs the window's share of the WORKER's daily budget (its heartbeat). `funnel:12:proof`
+checks the G1v live proof from these numbers: >= 20 tickets, >= 8 designs go, >= 5 builds delivered,
+>= 3 PRs, Builder idle < 30%, spend >= $30.

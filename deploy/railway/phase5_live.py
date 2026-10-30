@@ -35,7 +35,8 @@ never stops the plan so the evidence of the later steps is still recorded):
     autonomy[:<days>]             does the company run without the owner? plans decided by the board vs the owner and how long they
                                   waited, design reviews and their conversation, growth tickets, merged work, the federated network (default 7 d)
     costs[:<days>[:<budget>]]     model spend p50/p95 per role+model (decide runs), per build, per maintenance activity, per day;
-                                  the caps it implies inside <budget> USD/day (default 7 d, 6.0) -- a recommendation, never applied
+                                  the caps it implies inside <budget> USD/day (default 7 d, 6.0) -- a recommendation, never applied;
+                                  prompt cache per role/model/activity (24h, 7d): reads/writes/uncached, hit rate, $ per run, cadence
     budget:<role>:<usd>           operator command: that role's grant daily_model_budget_usd (a re-seed keeps the larger of it and the default)
     freezes:lift-recovered        lift (operator API) ONLY the open freezes that outlived their cause (maintenance incident recovered/closed,
                                   or public surface recovered >= 6 h ago and green now); others untouched
@@ -53,6 +54,7 @@ Environment (never printed):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pathlib
@@ -71,7 +73,7 @@ if str(HERE) not in sys.path:
 
 import validate_staging as vs  # noqa: E402  (same directory; stdlib + psycopg2 only)
 
-STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes", "costs", "budget", "routes")
+STEPS = ("status", "baseline", "fund", "gate", "canary", "signal", "audit", "intents", "memory", "refute", "promotions", "candidates", "taskfail", "abandon", "company", "journey", "autonomy", "freezes", "costs", "budget", "routes", "owner", "funnel", "runs")
 SCENARIOS = ("single", "multi", "approval")
 DECISIONS = ("approve", "reject")
 MAX_LINE = 12000
@@ -156,8 +158,15 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("costs[:<days>[:<daily-budget-usd>]]")
         if name == "budget" and (len(args) != 2 or not re.fullmatch(r"[a-z_]{2,32}", args[0]) or not re.fullmatch(r"\d{1,2}(\.\d{1,2})?", args[1]) or float(args[1]) <= 0):
             raise ValueError("budget:<role>:<usd> (0 < usd < 100, two decimals)")
+        if name == "runs" and (len(args) != 2 or not re.fullmatch(r"[a-z_]{2,32}", args[0]) or not re.fullmatch(r"\d{1,3}", args[1]) or not 1 <= int(args[1]) <= 200):
+            raise ValueError("runs:<role>:<n> (1 <= n <= 200 runs per hour)")
         if name == "routes" and (len(args) > 1 or (args and not re.fullmatch(r"\d{1,3}", args[0]))):
             raise ValueError("routes[:<limit>]")
+        if name == "owner" and args != ["slo"] and (len(args) != 2 or args[0] != "grant" or not OWNER_EMAIL_RE.fullmatch(args[1])):
+            raise ValueError("owner:grant:<email> (an account that already registered on the dashboard) | owner:slo")
+        if name == "funnel" and (len(args) > 2 or (args and not re.fullmatch(r"\d{1,3}", args[0])) or (args and not 2 <= int(args[0]) <= 168)
+                                 or (len(args) == 2 and args[1] != "proof")):
+            raise ValueError("funnel[:<hours 2..168>[:proof]]")
         if name == "freezes" and args != ["lift-recovered"]:
             raise ValueError("freezes:lift-recovered")
         if name == "company" and not _company_args_ok(args):
@@ -408,6 +417,17 @@ def snapshot(conn, since: Optional[datetime]) -> Dict[str, Any]:
         snap["events_by_type"] = _kv(_rows(cur, f"SELECT event_type, count(*) FROM society_events {w} GROUP BY 1 ORDER BY 2 DESC LIMIT 40", p))
         snap["loop_breaker_tripped"] = _rows(cur, f"SELECT count(*) FROM society_events {w + (' AND' if w else 'WHERE')} event_type = 'loop_breaker.tripped'", p)[0][0]
         snap["loop_breaker_suppressed"] = _rows(cur, f"SELECT count(*) FROM society_events {w + (' AND' if w else 'WHERE')} dispatch_note LIKE 'loop breaker%%'", p)[0][0]
+        # L01 names each trip: which story, why (depth vs runs), what was swallowed, where the story began, re-delivered?
+        lw = "AND lb.created_at >= %s" if since else ""
+        snap["loop_breaker_trips"] = [
+            {"correlation": str(r[0])[:8], "note": scrub(r[1] or "")[:90], "swallowed": r[2], "depth": r[3], "runs": r[4], "root": r[5],
+             "subject": f"{r[6]}:{str(r[7] or '')[:8]}", "redelivered": bool(r[8])}
+            for r in _rows(cur, "SELECT lb.correlation_id, coalesce(lb.payload ->> 'note', lb.payload ->> 'reason'), sw.event_type, sw.causation_depth, "
+                                "(SELECT count(*) FROM agent_runs a WHERE a.correlation_id = lb.correlation_id), "
+                                "(SELECT e0.event_type FROM society_events e0 WHERE e0.correlation_id = lb.correlation_id ORDER BY e0.created_at LIMIT 1), "
+                                "sw.subject_type, sw.subject_id, EXISTS (SELECT 1 FROM society_events rd WHERE rd.idempotency_key = 'redeliver:' || sw.id::text) "
+                                f"FROM society_events lb LEFT JOIN society_events sw ON sw.id::text = lb.payload ->> 'event_id' "
+                                f"WHERE lb.event_type = 'loop_breaker.tripped' {lw} ORDER BY lb.created_at DESC LIMIT 10", p)]
         snap["runs_by_status"] = _kv(_rows(cur, f"SELECT status, count(*) FROM agent_runs {w} GROUP BY 1", p))
         snap["runs_by_role"] = [list(r) for r in _rows(cur, f"SELECT role, status, count(*) FROM agent_runs {w} GROUP BY 1, 2 ORDER BY 1, 2", p)]
         snap["runs_by_model"] = [list(r) for r in _rows(cur, f"SELECT model_provider, model_name, count(*), coalesce(sum(tokens_in),0), coalesce(sum(tokens_out),0), coalesce(sum(cost_usd),0), coalesce(sum(model_requests),0), coalesce(sum(model_retries),0), coalesce(sum(model_timeouts),0) FROM agent_runs {w} GROUP BY 1, 2", p)]
@@ -482,6 +502,80 @@ def secret_scan(cur, since: Optional[datetime]) -> Dict[str, Any]:
         r = _rows(cur, f"SELECT count(*) FILTER (WHERE row_to_json(t)::text ~ %s), count(*) FILTER (WHERE row_to_json(t)::text ~ %s), count(*) FILTER (WHERE row_to_json(t)::text ~* %s), count(*) FROM society_events t WHERE {cond} {w}", p)[0]
         out[label] = {"key_shaped": int(r[0]), "jwt_shaped": int(r[1]), "cot_markers": int(r[2]), "rows": int(r[3])}
     return out
+
+
+#: Verbatim copy of services/registry/app/society/canary.py COMPROMISED_CREDENTIAL_FINGERPRINTS (sha256 of
+#: keys that leaked in git history; tests/society/test_secret_redaction.py asserts the two are identical).
+COMPROMISED_CREDENTIAL_FINGERPRINTS = frozenset(
+    {
+        "7557e924b55eba39ac318b87ae34f1fffc435bfc92d207830c6801613b1fdcae",
+        "0da0e5d60ebfe5529eca6a5ef6bab689d5884b57f92e5e8009628e60bd2cc781",
+        "1ec5a2b2179f6f63cbab18b3195f6957224989e316f9eda470deeba995b01449",
+    }
+)
+#: sha256 fingerprints (hex, comma-separated) of the credentials to check X01 matches against, e.g.
+#: ``printf %s "$KEY" | sha256sum``. The validator never reads a credential itself, only fingerprints.
+CREDENTIAL_FINGERPRINTS_ENV = "X01_CREDENTIAL_SHA256"
+
+
+def _shape_paths(value: Any, field: str) -> List[Tuple[str, str, str]]:
+    """(field path, pattern class, sha256) of every key-/JWT-shaped substring -- the text never leaves here."""
+    if isinstance(value, str):
+        return [(field, cls, hashlib.sha256(m.group(0).encode("utf-8")).hexdigest()) for cls, shape in (("key", KEY_SHAPE), ("jwt", JWT_SHAPE)) for m in shape.finditer(value)]
+    if isinstance(value, dict):
+        return [x for k, v in value.items() for x in _shape_paths(v, f"{field}.{k}" if field else str(k))]
+    if isinstance(value, list):
+        return [x for i, v in enumerate(value) for x in _shape_paths(v, f"{field}[{i}]")]
+    return []
+
+
+def secret_locations(cur, since: Optional[datetime], env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Where the key-/JWT-shaped strings in ``agent_intents`` are: intent type, role, field, pattern class and
+    whether the fingerprint is a configured credential or on the compromised list. Never the string."""
+    env = os.environ if env is None else env
+    given = [f.strip().lower() for f in (env.get(CREDENTIAL_FINGERPRINTS_ENV) or "").split(",") if re.fullmatch(r"[0-9a-fA-F]{64}", f.strip())]
+    configured = {fp: f"{CREDENTIAL_FINGERPRINTS_ENV}[{i}]" for i, fp in enumerate(given)}
+    w = "AND i.created_at >= %s" if since else ""
+    rows = _rows(cur, "SELECT i.id, i.intent_type, coalesce(r.role, ''), i.policy_decision, i.execution_status, i.payload, i.policy_reason, i.result, i.error, i.created_at "
+                      f"FROM agent_intents i LEFT JOIN agent_runs r ON r.id = i.run_id WHERE (row_to_json(i)::text ~ %s OR row_to_json(i)::text ~ %s) {w} ORDER BY i.created_at",
+                 (SQL_KEY_RE, SQL_JWT_RE) + ((since,) if since else ()))
+    found = []
+    for r in rows:
+        cols = {"payload": r[5], "policy_reason": r[6], "result": r[7], "error": r[8]}
+        for name, value in cols.items():
+            for path, cls, fp in _shape_paths(value, name):
+                match = configured.get(fp) or ("compromised_list" if fp in COMPROMISED_CREDENTIAL_FINGERPRINTS else "none")
+                found.append({"intent": str(r[0])[:8], "intent_type": r[1], "role": r[2], "decision": str(r[3]), "status": str(r[4]), "field": path, "class": cls,
+                              "credential_match": match, "created_at": r[9].isoformat() if r[9] else None})
+    return {"credentials_checked": list(configured.values()) + ["compromised_list"], "locations": found}
+
+
+_SCHEMA_ERR = re.compile(r"'type': '([^']+)', 'loc': \[([^\]]*)\]")
+
+
+def refusal_class(reason: str) -> str:
+    """A refused intent's reason as a groupable class: the schema errors' ``type@loc`` (structural, from
+    intents.safe_error_summary), otherwise the reason with ids and numbers collapsed."""
+    reason = reason or ""
+    if reason.startswith("payload schema violation"):
+        errs = [f"{t}@{'.'.join(x.strip().strip(chr(39)) for x in loc.split(',') if x.strip())}" for t, loc in _SCHEMA_ERR.findall(reason)]
+        return "schema: " + (", ".join(errs) or "?")
+    reason = re.sub(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "<id>", reason)
+    return scrub(re.sub(r"\d+(\.\d+)?", "<n>", reason))[:120]
+
+
+def refused_intents(cur, since: Optional[datetime]) -> Dict[str, Any]:
+    """Invalid and denied intents in the window, by intent type and reason class (never the payload)."""
+    w = "WHERE created_at >= %s" if since else ""
+    rows = _rows(cur, f"SELECT intent_type, policy_decision::text, coalesce(policy_reason, '') FROM agent_intents {w}", (since,) if since else ())
+    groups: Dict[Tuple[str, str, str], int] = {}
+    for itype, decision, reason in rows:
+        if decision in ("invalid", "deny"):
+            key = (decision, itype, refusal_class(reason))
+            groups[key] = groups.get(key, 0) + 1
+    by = sorted(({"decision": d, "intent_type": t, "reason": r, "count": n} for (d, t, r), n in groups.items()), key=lambda x: (-x["count"], x["intent_type"]))
+    return {"intents": len(rows), "invalid": sum(x["count"] for x in by if x["decision"] == "invalid"),
+            "denied": sum(x["count"] for x in by if x["decision"] == "deny"), "by_type_reason": by}
 
 
 # ── steps ──────────────────────────────────────────────────────────────
@@ -977,6 +1071,99 @@ def _by_source(rows: Sequence[Tuple]) -> Dict[str, int]:
     return out
 
 
+OWNER_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}")
+
+
+def _production() -> bool:
+    return "production" in (vs.env("ENVIRONMENT", "") + " " + vs.env("RAILWAY_ENVIRONMENT_NAME", "")).lower()
+
+
+def step_owner_grant(out: Out, base: str, token: str, conn, email: str) -> None:
+    """Make an EXISTING account an operator (staging has no SMTP, so the owner cannot verify by email).
+    The owner registers on the dashboard with their own password first; this step never creates a user
+    and never reads or writes a password. It marks the account verified on the database (like O01b) and
+    assigns the durable ``operator`` role through the operator API (POST /v1/society/operators ->
+    operator_auth.assign_role). Prints only {email prefix, existed, verified, role}. On production it runs
+    only when OWNER_GRANT_CONFIRM names the same email (never automatically)."""
+    prefix = email.split("@")[0]
+    if _production() and vs.env("OWNER_GRANT_CONFIRM", "").strip().lower() != email.lower():
+        out.check("owner", "G00", False, f"production: owner:grant:{prefix}@... runs only with OWNER_GRANT_CONFIRM set to the same email")
+        return
+    with conn.cursor() as cur:
+        row = _rows(cur, "SELECT id, email, is_email_verified FROM users WHERE lower(email) = lower(%s)", (email,))
+        if not row:
+            conn.rollback()
+            out.check("owner", "G01", False, f"no account for {prefix}@...: register on the dashboard first (this step never creates one)")
+            out.json("owner", "grant", {"email": prefix, "existed": False, "verified": False, "role": None})
+            return
+        user_id, stored_email, verified_before = row[0]
+        if not verified_before:
+            cur.execute("UPDATE users SET is_email_verified = TRUE WHERE id = %s", (user_id,))
+    conn.commit()
+    out.check("owner", "G01", True, f"account {prefix}@... exists; email verified on the database ({'already' if verified_before else 'now'})")
+    st, body = api("POST", f"{base}/v1/society/operators", token, {"email": stored_email, "role": "operator"})
+    role = body.get("role") if st == 200 and isinstance(body, dict) else None
+    out.check("owner", "G02", role == "operator", f"durable role via operator_auth.assign_role: HTTP {st}, role={role}")
+    out.json("owner", "grant", {"email": prefix, "existed": True, "verified": True, "role": role})
+
+
+OWNER_SLO_NAMES = (("first_run_start", "L01", "owner event -> first run start"), ("reply", "L02", "owner event -> Governor reply"),
+                   ("directive_to_plan", "L03", "directive -> first ticket in a plan"), ("first_work", "L04", "owner event -> first side-effecting intent executed"),
+                   ("message_to_plan", "L05", "owner message -> first ticket in a plan"))
+
+
+def step_owner_slo(out: Out, base: str, token: str) -> None:
+    """The Owner Console's latency SLOs, read from the operator API (owner_thread.slo): p95 under its
+    target and no owner row left late. A metric with no sample in the window is reported, not failed."""
+    st, body = api("GET", f"{base}/v1/society/company/owner-thread?limit=5", token)
+    if not out.check("owner", "L00", st == 200 and isinstance(body, dict), f"GET company/owner-thread HTTP {st}"):
+        return
+    slo = body.get("slo") or {}
+    for key, code, label in OWNER_SLO_NAMES:
+        m = slo.get(key) or {}
+        detail = f"{label}: p95 {m.get('p95_s')}s / target {m.get('target_s')}s over {m.get('n', 0)} sample(s), {m.get('late_unanswered', 0)} late"
+        if m.get("ok") is None:
+            out.info("owner", f"{code} no data yet -- {detail}")
+        else:
+            out.check("owner", code, bool(m.get("ok")), detail)
+    if slo.get("without_work_rewakes"):
+        out.info("owner", f"L06 {slo['without_work_rewakes']} owner stor(y/ies) ended with no work and were re-woken once (owner_event_without_work)")
+    out.json("owner", "slo", slo)
+    out.json("owner", "thread", [{"kind": e.get("kind"), "status": e.get("status"), "created_at": e.get("created_at"), "replied": bool(e.get("reply")),
+                                  "tickets": len(e.get("tickets") or []), "plans": len(e.get("plans") or [])} for e in body.get("entries") or []])
+
+
+#: owner 2026-10-29 G1v live proof at full throttle (12 h): (code, label, funnel key or callable, minimum or None, maximum or None)
+G1V_PROOF = (("G01", "new tickets", "tickets_created", 20, None), ("G02", "designs go", "designs_go", 8, None),
+             ("G03", "builds delivered", "builds_delivered", 5, None), ("G04", "PRs opened", "prs_opened", 3, None),
+             ("G05", "Builder idle %", lambda b: ((b.get("roles") or {}).get("builder") or {}).get("idle_pct"), None, 30),
+             ("G06", "spend USD", "spend_usd", 30, None))
+
+
+def step_funnel(out: Out, base: str, token: str, hours: int, proof: bool = False) -> None:
+    """Read-only: the throughput funnel (society/funnel.py) from the operator API -- spend, runs by role,
+    tickets, designs, builds, READY, PRs, CI, merges, rejections, $/READY, $/PR, 2-hour buckets and the
+    stage where work waits longest. Counts only."""
+    st, body = api("GET", f"{base}/v1/society/company/funnel?hours={hours}", token)
+    if not out.check("funnel", "F00", st == 200 and isinstance(body, dict), f"GET company/funnel?hours={hours} HTTP {st}"):
+        return
+    b = body.get("bottleneck") or {}
+    out.info("funnel", f"{hours}h: ${body.get('spend_usd')} | tickets {body.get('tickets_created')}/{body.get('tickets_approved')} | designs go {body.get('designs_go')} "
+                       f"returned {body.get('designs_returned')} | builds {body.get('builds_delivered')}/{body.get('builds_attempted')} | READY {body.get('ready')} | "
+                       f"PRs {body.get('prs_opened')} CI green {body.get('ci_green')} merged {body.get('merged')} | $/READY {body.get('usd_per_ready')} $/PR {body.get('usd_per_pr')} | "
+                       f"bottleneck {b.get('stage', 'none')} ({b.get('waiting', 0)} waiting, median {b.get('median_h')}h)")
+    out.check("funnel", "F01", len(body.get("by_2h") or []) >= 1 and isinstance(body.get("stages"), list), f"{len(body.get('by_2h') or [])} 2h bucket(s), {len(body.get('stages') or [])} stages")
+    roles = body.get("roles") or {}
+    out.info("funnel", f"tickets by source: {body.get('tickets_by_source') or {}} | $/hour {body.get('usd_per_hour')} | budget {body.get('budget_usd')} "
+                       f"({body.get('spend_pct_of_budget')}%) | idle %: " + ", ".join(f"{r} {v.get('idle_pct')} (queue {v.get('queued')})" for r, v in sorted(roles.items())))
+    if proof:  # G1v: structural numbers, not claims
+        for code, label, key, lo, hi in G1V_PROOF:
+            v = key(body) if callable(key) else body.get(key)
+            ok = v is not None and (lo is None or float(v) >= lo) and (hi is None or float(v) < hi)
+            out.check("funnel", code, ok, f"{label} {v} (needs {'>= ' + str(lo) if lo is not None else '< ' + str(hi)}) in {hours}h")
+    out.json("funnel", "funnel", body)
+
+
 def step_freezes(out: Out, base: str, token: str, conn) -> None:
     """Lift, through the operator API, ONLY the open freezes that outlived their cause
     (``OUTLIVED_FREEZES_SQL``). Any other freeze is never touched. Idempotent: a second run
@@ -1020,6 +1207,20 @@ COST_DECIDE_SQL = (
 COST_ACTIVITY_SQL = (
     "SELECT kind, COALESCE(model_name, '?'), cost_usd, (started_at AT TIME ZONE 'UTC')::date, status = 'succeeded', error_class = 'cost_budget' "
     "FROM repair_activities WHERE started_at >= NOW() - (%s * INTERVAL '1 day') AND model_provider = ANY(%s) AND cost_usd > 0")
+#: prompt cache per run (24h and 7d windows): input = uncached + cache reads + cache writes; writes are
+#: NULL on rows written before migration 0027 (counted as "write_unrecorded", never guessed)
+COST_CACHE_SQL = (
+    "SELECT r.role, COALESCE(r.model_name, '?'), "
+    "EXISTS (SELECT 1 FROM agent_intents i WHERE i.run_id = r.id AND i.intent_type = %s), "
+    "r.created_at, COALESCE(r.tokens_in, 0), COALESCE(r.tokens_cached, 0), r.tokens_cache_write, r.cost_usd "
+    "FROM agent_runs r WHERE r.created_at >= NOW() - (%s * INTERVAL '1 day') AND r.model_provider = ANY(%s) AND r.cost_usd > 0")
+COST_CACHE_ACTIVITY_SQL = (
+    "SELECT kind, COALESCE(model_name, '?'), started_at, tokens_in, "
+    "COALESCE((SELECT SUM((t->>'cache_read')::int) FROM jsonb_array_elements(turn_log) t), 0), "
+    "(SELECT SUM((t->>'cache_write')::int) FROM jsonb_array_elements(turn_log) t), cost_usd "
+    "FROM repair_activities WHERE started_at >= NOW() - (%s * INTERVAL '1 day') AND model_provider = ANY(%s) AND cost_usd > 0")
+#: the owner's target (2026-10-29): >= 50% of the input tokens of Sonnet/Opus decide runs read from cache
+CACHE_TARGET = {"goal": 0.5, "min_runs": 10, "models": ("sonnet", "opus")}
 #: what the recommendation plans for: builds/day, the minimum caps, the share of the daily budget one build may take
 COST_PLAN = {"builds_per_day": 2, "min_case_cap": 0.50, "max_case_share": 0.25, "min_role_budget": 0.25, "headroom": 1.5, "story_decides": 6}
 
@@ -1072,6 +1273,69 @@ def cost_summary(runs: Sequence[Tuple], activities: Sequence[Tuple]) -> Dict[str
     }
 
 
+def ttl_for_gap(p50_gap_min: Optional[float]) -> str:
+    """The cache TTL a cadence implies: a read refreshes an entry, so runs <= 5 minutes apart keep the
+    5-minute cache warm; up to an hour apart only the 1-hour cache survives; further apart neither does."""
+    if p50_gap_min is None:
+        return "1h"
+    return "5m" if p50_gap_min <= 5 else "1h" if p50_gap_min <= 60 else "cold"
+
+
+def cache_summary(runs: Sequence[Tuple], activities: Sequence[Tuple], now: datetime) -> Dict[str, Any]:
+    """runs: (role, model, is_build, created_at, tokens_in, cache_read, cache_write|None, cost);
+    activities: (kind, model, started_at, tokens_in, cache_read, cache_write|None, cost).
+    Per role+model (decide runs), per model (builds), per kind+model (activities), each for 24h and 7d:
+    cache reads / writes / uncached input, hit rate (reads / input) and $ per run; per day and role the
+    decide hit rate and $ per run (before/after); per role the cadence and the TTL it implies."""
+    windows = {"24h": now - timedelta(days=1), "7d": now - timedelta(days=7)}
+
+    def stats(rows: List[Tuple]) -> Dict[str, Any]:
+        tin = sum(int(r[0]) for r in rows)
+        read = sum(int(r[1]) for r in rows)
+        write = sum(int(r[2]) for r in rows if r[2] is not None)
+        usd = sum(float(r[3] or 0) for r in rows)
+        return {"runs": len(rows), "input": tin, "cache_read": read, "cache_write": write, "write_unrecorded": sum(1 for r in rows if r[2] is None),
+                "uncached": tin - read - write, "hit_rate": round(read / tin, 4) if tin else None, "usd": round(usd, 4),
+                "usd_per_run": round(usd / len(rows), 4) if rows else None}
+
+    def by_window(groups: Dict[str, List[Tuple]]) -> Dict[str, Any]:
+        return {k: {w: stats([r[1:] for r in v if r[0] >= since]) for w, since in windows.items()} for k, v in sorted(groups.items())}
+
+    decide: Dict[str, List[Tuple]] = {}
+    builds: Dict[str, List[Tuple]] = {}
+    days: Dict[str, Dict[str, List[Tuple]]] = {}
+    times: Dict[str, List[datetime]] = {}
+    target: List[Tuple] = []
+    for role, model, is_build, at, tin, read, write, cost in runs:
+        row = (at, tin, read, write, cost)
+        if is_build:
+            builds.setdefault(str(model), []).append(row)
+            continue
+        decide.setdefault(f"{role}/{model}", []).append(row)
+        days.setdefault(str(at.date()), {}).setdefault(str(role), []).append(row[1:])
+        times.setdefault(str(role), []).append(at)
+        if at >= windows["24h"] and write is not None and any(m in str(model) for m in CACHE_TARGET["models"]):
+            target.append(row[1:])
+    acts: Dict[str, List[Tuple]] = {}
+    for kind, model, at, tin, read, write, cost in activities:
+        acts.setdefault(f"{kind}/{model}", []).append((at, tin, read, write, cost))
+    cadence = {}
+    for role, ts in sorted(times.items()):
+        ts = sorted(ts)
+        gaps = [(b - a).total_seconds() / 60 for a, b in zip(ts, ts[1:])]
+        p50 = _pct(gaps, 0.5)
+        cadence[role] = {"runs": len(ts), "p50_gap_min": round(p50, 1) if p50 is not None else None, "ttl": ttl_for_gap(p50)}
+    t = stats(target)
+    return {
+        "decide": by_window(decide),
+        "builds": by_window(builds),
+        "activities": by_window(acts),
+        "decide_days": {d: {r: {k: stats(v)[k] for k in ("runs", "hit_rate", "usd_per_run")} for r, v in sorted(roles.items())} for d, roles in sorted(days.items())},
+        "cadence": cadence,
+        "target": {"runs": t["runs"], "hit_rate": t["hit_rate"], "goal": CACHE_TARGET["goal"]},
+    }
+
+
 def recommend_costs(summary: Dict[str, Any], daily_budget: float, plan: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Deterministic caps from measured spend (every rule is printed with its inputs):
     case cap = p95 build x1.25 (x2 when builds hit the cap: the sample is censored), within
@@ -1118,6 +1382,19 @@ def step_costs(out: Out, conn, days: int, daily_budget: float) -> None:
     out.json("costs", "recommend", rec)
     out.check("costs", "C01", bool(runs), f"{len(runs)} priced live runs and {len(acts)} activities in {days}d")
     out.check("costs", "C02", rec["fits_daily_budget"], f"recommended grants sum {rec['grants_total']} within the daily budget {daily_budget}")
+    with conn.cursor() as cur:
+        cruns = _rows(cur, COST_CACHE_SQL, (BUILD_INTENT, max(days, 7), list(LIVE_PROVIDERS)))
+        cacts = _rows(cur, COST_CACHE_ACTIVITY_SQL, (max(days, 7), list(LIVE_PROVIDERS)))
+    conn.rollback()
+    cache = cache_summary(cruns, cacts, _now())
+    for key in ("decide", "builds", "activities", "decide_days", "cadence", "target"):
+        out.json("costs", f"cache_{key}", cache[key])
+    tgt = cache["target"]
+    if tgt["runs"] >= CACHE_TARGET["min_runs"]:
+        out.check("costs", "C03", (tgt["hit_rate"] or 0) >= tgt["goal"],
+                  f"{tgt['hit_rate']} of Sonnet/Opus decide input read from cache in 24h ({tgt['runs']} runs; goal {tgt['goal']})")
+    else:
+        out.info("costs", f"C03 n/a: {tgt['runs']} Sonnet/Opus decide runs with recorded cache writes in 24h (< {CACHE_TARGET['min_runs']})")
 
 
 def step_budget(out: Out, conn, role: str, usd: str) -> None:
@@ -1132,6 +1409,21 @@ def step_budget(out: Out, conn, role: str, usd: str) -> None:
         conn.commit()
         after = _rows(cur, "SELECT daily_model_budget_usd FROM agent_capability_grants WHERE id = %s", (gid,))[0][0]
     out.check("budget", "B01", float(after) == float(usd), f"role={role.lower()} daily_model_budget_usd {float(before)} -> {float(after)}")
+
+
+def step_runs(out: Out, conn, role: str, n: str) -> None:
+    """Operator command: one role's grant max_runs_per_hour (a re-seed keeps the larger of it and the role default).
+    The global SOCIETY_MAX_RUNS_PER_HOUR still caps the fleet."""
+    with conn.cursor() as cur:
+        row = _rows(cur, "SELECT id, max_runs_per_hour FROM agent_capability_grants WHERE role = %s", (role.lower(),))
+        if not row:
+            out.check("runs", "R01", False, f"no grant for role {role!r}")
+            return
+        gid, before = row[0]
+        cur.execute("UPDATE agent_capability_grants SET max_runs_per_hour = %s, updated_at = now() WHERE id = %s", (int(n), gid))
+        conn.commit()
+        after = _rows(cur, "SELECT max_runs_per_hour FROM agent_capability_grants WHERE id = %s", (gid,))[0][0]
+    out.check("runs", "R01", int(after) == int(n), f"role={role.lower()} max_runs_per_hour {before} -> {after}")
 
 
 ROUTES_SQL = (
@@ -1326,6 +1618,59 @@ def step_candidates(out: Out, conn, limit: int) -> None:
         )
     out.check("candidates", "N01", True, f"{len(view)} candidate(s); statuses={sorted({v['status'] for v in view})}")
     out.json("candidates", "records", view)
+    with conn.cursor() as cur:
+        rej = rejection_breakdown(cur)
+    out.check("candidates", "R01", True, f"rejected since {rej['since'][:16]}Z: {rej['rejected']} -- "
+              + (", ".join(f"{k} {v}" for k, v in rej["by_reason"].items()) or "none") + f"; spec gate refused {rej['spec_gate_refusals']} design(s) before a build")
+    out.json("candidates", "rejections", rej)
+
+
+# ── rejections by structured reason: a VERBATIM copy of services/registry/app/society/rejections.py
+# (classify + its tables); tests/society/test_rejections.py asserts the two agree. ──
+SINCE_SPEC_GATE = datetime(2026, 10, 27, 4, 47, tzinfo=timezone.utc)
+QA_CHECKS = {"no_self_judging": "no_self_judging", "allow_list": "outside_files_allowed", "test_first_red_on_base": "test_first_red",
+             "test_first_green_on_head": "test_first_green", "ci_collects_new_tests": "ci_orphan", "test_first_intact": "test_first_tampered",
+             "acceptance_tests": "acceptance_failed", "acceptance_tests_exist": "acceptance_failed"}
+
+
+def classify_rejection(event: Optional[Dict[str, Any]], qa_failures: Optional[Sequence[str]], security_verdict: Optional[str], error: Optional[str]) -> str:
+    event = event if isinstance(event, dict) else {}
+    if (error or "").startswith("closed_by_owner"):
+        return "closed_by_owner"
+    if event.get("declined"):
+        # the Builder could not meet the spec inside files_allowed: the design was out of scope
+        return "outside_files_allowed" if event.get("reason_code") == "spec_outside_files_allowed" else "declined"
+    if event.get("build_attempts_exhausted"):
+        return "build_attempts_exhausted"
+    if event.get("already_satisfied"):
+        return "already_satisfied"
+    if event.get("red_on_base") is not None:
+        return "red_on_base"
+    if event.get("test_first_green") is not None:
+        return "test_first_red"
+    if event.get("busywork"):
+        return "busywork"
+    if security_verdict == "fail":
+        return "security"
+    names = [str(f).split(":", 1)[0].strip() for f in (qa_failures or [])]
+    for name in names:
+        if name in QA_CHECKS:
+            return QA_CHECKS[name]
+    return "qa_other" if names else "other"
+
+
+def rejection_breakdown(cur, since: datetime = SINCE_SPEC_GATE) -> Dict[str, Any]:
+    rows = _rows(cur, """
+        SELECT c.qa_report -> 'failures', c.security_report ->> 'verdict', c.error,
+               (SELECT e.payload FROM society_events e WHERE e.subject_id = c.id AND e.event_type = 'code_candidate.rejected' ORDER BY e.created_at DESC LIMIT 1)
+        FROM code_candidates c WHERE c.status::text = 'rejected' AND c.updated_at >= %s""", (since,))
+    by: Dict[str, int] = {}
+    for failures, verdict, error, payload in rows:
+        reason = classify_rejection(payload, failures if isinstance(failures, list) else [], verdict, error)
+        by[reason] = by.get(reason, 0) + 1
+    gate = _rows(cur, """SELECT COUNT(*) FROM agent_intents WHERE created_at >= %s AND ((intent_type = 'PROPOSE_DESIGN' AND result ->> 'did' = 'gate_refused')
+                         OR error LIKE 'spec gate:%%')""", (since,))[0][0]
+    return {"since": since.isoformat(), "rejected": len(rows), "by_reason": dict(sorted(by.items(), key=lambda kv: (-kv[1], kv[0]))), "spec_gate_refusals": int(gate or 0)}
 
 
 def step_promotions(out: Out, conn, limit: int) -> None:
@@ -1388,6 +1733,61 @@ def step_promotions(out: Out, conn, limit: int) -> None:
     auto = [v for v in view if v["gates"].get("auto_merge_enabled") or v["gates"].get("auto_merge_allowed")]
     out.check("promotions", "P03", not auto, f"no promotion was auto-merge eligible ({len(auto)} found)")
     out.json("promotions", "records", view)
+    with conn.cursor() as cur:
+        waiting = ready_without_promotion(cur)
+    silent = [w for w in waiting if not w["requests"] and not w["ended_promotion"]]
+    out.check("promotions", "P04", not silent, f"READY candidates without an active promotion: {len(waiting)}, never requested: {len(silent)}"
+              + "".join(f"; [{w['candidate']}] requests={w['requests']} last={w['last_request']} {w['last_error'] or ''} ended={w['ended_promotion'] or '-'} wakes={w['ready_wakes']}"
+                        for w in waiting[:5]))
+    out.json("promotions", "ready_without_promotion", waiting)
+    with conn.cursor() as cur:
+        budget = change_budget(cur)
+    out.check("promotions", "P05", budget["caps"] is not None,
+              f"change budget in effect: {budget['caps']} (heartbeat {budget['at'] or '-'}); counted open PRs now {budget['open_prs']}; "
+              f"ci_failed promotions {budget['ci_failed']}, READY rows whose promotion already ended {budget['ready_ended']}")
+    out.json("promotions", "change_budget", budget)
+
+
+#: promotion.OPEN_PR_STATUSES as text
+OPEN_PR = ("pr_open", "ci_pending", "ci_passed", "ci_failed", "awaiting_approval", "merge_eligible")
+
+
+def change_budget(cur) -> Dict[str, Any]:
+    """The worker's change budget as its last heartbeat reported it (promotion_queue.caps), and what the rows count now."""
+    hb = _rows(cur, "SELECT payload, created_at FROM society_events WHERE event_type IN ('society.heartbeat', 'society.heartbeat.idle') "
+                    "AND payload -> 'change_budget' IS NOT NULL ORDER BY created_at DESC LIMIT 1")
+    open_now = _rows(cur, "SELECT COUNT(*) FROM code_promotions WHERE status::text = ANY(%s)", (list(OPEN_PR),))[0][0]
+    ci_failed = _rows(cur, "SELECT COUNT(*) FROM code_promotions WHERE status::text = 'ci_failed'")[0][0]
+    ended = _rows(cur, """SELECT COUNT(*) FROM code_candidates c WHERE c.status::text = 'ready' AND EXISTS (
+                              SELECT 1 FROM code_promotions p WHERE p.candidate_id = c.id AND p.status::text IN ('merged', 'rejected')
+                              AND p.created_at = (SELECT max(q.created_at) FROM code_promotions q WHERE q.candidate_id = c.id))""")[0][0]
+    return {"caps": (hb[0][0] or {}).get("change_budget") if hb else None, "at": hb[0][1].isoformat() if hb else None,
+            "open_prs": int(open_now or 0), "ci_failed": int(ci_failed or 0), "ready_ended": int(ended or 0)}
+
+
+#: promotion.ACTIVE_STATUSES as text (tests/society/test_promotion_queue.py asserts they are identical).
+ACTIVE_PROMOTION = ("requested", "validating", "branch_ready", "pr_open", "ci_pending", "ci_passed", "awaiting_approval", "merge_eligible", "blocked_external")
+
+
+def ready_without_promotion(cur) -> List[Dict[str, Any]]:
+    """Every READY candidate with no active promotion, and why (promotion_queue.ready_backlog, from the rows):
+    its REQUEST_PR_PROMOTION intents (count, last status, last refusal -- our words), an ended promotion, its READY wakes."""
+    rows = _rows(cur, """
+        SELECT c.id, c.updated_at,
+               (SELECT count(*) FROM agent_intents i WHERE i.intent_type = 'REQUEST_PR_PROMOTION' AND i.payload ->> 'candidate_id' = c.id::text),
+               (SELECT i.execution_status::text || '|' || coalesce(i.error, i.policy_reason, '') FROM agent_intents i WHERE i.intent_type = 'REQUEST_PR_PROMOTION'
+                  AND i.payload ->> 'candidate_id' = c.id::text ORDER BY i.created_at DESC LIMIT 1),
+               (SELECT p.status::text FROM code_promotions p WHERE p.candidate_id = c.id ORDER BY p.created_at DESC LIMIT 1),
+               (SELECT count(*) FROM society_events e WHERE e.event_type = 'code_candidate.ready' AND e.subject_id = c.id)
+        FROM code_candidates c
+        WHERE c.status::text = 'ready' AND NOT EXISTS (SELECT 1 FROM code_promotions p WHERE p.candidate_id = c.id AND p.status::text = ANY(%s))
+        ORDER BY c.updated_at""", (list(ACTIVE_PROMOTION),))
+    out = []
+    for r in rows:
+        status, _, error = (r[3] or "").partition("|")
+        out.append({"candidate": str(r[0])[:8], "ready_since": r[1].isoformat() if r[1] else None, "requests": int(r[2]), "last_request": status or None,
+                    "last_error": scrub(error)[:200] or None, "ended_promotion": r[4], "ready_wakes": int(r[5])})
+    return out
 
 
 def step_intents(out: Out, base: str, token: str, correlation: str) -> None:
@@ -1665,7 +2065,9 @@ def step_audit(out: Out, base: str, token: str, conn, hours: int) -> None:
     since = _now() - timedelta(hours=hours)
     snap = snapshot(conn, since)
     out.json("audit", "snapshot", snap)
-    out.check("audit", "L01", int(snap["loop_breaker_tripped"]) == 0 and int(snap["loop_breaker_suppressed"]) == 0, f"loop breaker tripped={snap['loop_breaker_tripped']} suppressed={snap['loop_breaker_suppressed']} in the last {hours}h")
+    out.check("audit", "L01", int(snap["loop_breaker_tripped"]) == 0 and int(snap["loop_breaker_suppressed"]) == 0, f"loop breaker tripped={snap['loop_breaker_tripped']} suppressed={snap['loop_breaker_suppressed']} in the last {hours}h"
+              + "".join(f"; [{t['correlation']}] {t['note']} swallowed={t['swallowed']} depth={t['depth']} runs={t['runs']} root={t['root']} {t['subject']}"
+                        f" redelivered={t['redelivered']}" for t in snap.get("loop_breaker_trips") or []))
     dead = int(snap["runs_by_status"].get("dead", 0))
     out.check("audit", "L02", dead == 0, f"DEAD runs in the last {hours}h: {dead} {snap['dead_runs'][:3]}")
     out.check("audit", "L03", int(snap["forbidden_high_executed"]) == 0, f"forbidden HIGH intents ever executed: {snap['forbidden_high_executed']}; high-risk rows={snap['high_risk_intents']}")
@@ -1676,6 +2078,8 @@ def step_audit(out: Out, base: str, token: str, conn, hours: int) -> None:
         tasks, txs, inflight = society_tasks(cur, since)
         wallets = society_wallets(cur)
         scan = secret_scan(cur, since)
+        located = secret_locations(cur, since)
+        refused = refused_intents(cur, since)
     out.json("audit", "tasks", [{k: t[k] for k in ("id", "caller", "callee", "status", "escrow_amount", "created_at", "completed_at", "refund_at")} for t in tasks])
     out.json("audit", "transactions", txs)
     out.json("audit", "wallets", wallets)
@@ -1685,7 +2089,14 @@ def step_audit(out: Out, base: str, token: str, conn, hours: int) -> None:
     runtime_keys = sum(v["key_shaped"] for k, v in scan.items() if k != "society_events_from_users")
     runtime_jwt = sum(v["jwt_shaped"] for k, v in scan.items() if k != "society_events_from_users")
     cot = sum(v["cot_markers"] for v in scan.values())
-    out.check("audit", "X01", runtime_keys == 0, f"secret-shaped strings in runtime-produced rows: {runtime_keys} (user-injected payloads: {scan['society_events_from_users']['key_shaped']}, untrusted data)")
+    out.json("audit", "secret_locations", located)
+    out.json("audit", "refused_intents", refused)
+    out.check("audit", "I01", True, f"invalid intents {refused['invalid']}/{refused['intents']}, denied {refused['denied']} in the last {hours}h"
+              + "".join(f"; {x['decision']} {x['intent_type']} x{x['count']}: {x['reason']}" for x in refused["by_type_reason"][:6]))
+    real = [x for x in located["locations"] if x["credential_match"] != "none"]
+    out.check("audit", "X01", runtime_keys == 0, f"secret-shaped strings in runtime-produced rows: {runtime_keys} (user-injected payloads: {scan['society_events_from_users']['key_shaped']}, untrusted data)"
+              + "".join(f"; [{x['intent']}] {x['intent_type']} role={x['role']} {x['field']} class={x['class']} credential_match={x['credential_match']}" for x in located["locations"][:5])
+              + (f"; REAL CREDENTIAL MATCHED ({len(real)}): rotate it" if real else f"; checked against {', '.join(located['credentials_checked'])}"))
     out.check("audit", "X02", cot == 0, f"chain-of-thought markers stored: {cot}")
     out.check("audit", "X03", runtime_jwt == 0, f"token-shaped strings in runtime-produced rows: {runtime_jwt}")
     st, budget = api("GET", f"{base}/v1/society/budget", token)
@@ -1749,7 +2160,8 @@ def main() -> int:
     conn = None
     for name, args in plan:
         try:
-            if name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes", "costs", "budget", "routes") and conn is None:
+            if conn is None and (name in ("baseline", "fund", "gate", "audit", "memory", "taskfail", "refute", "promotions", "candidates", "abandon", "journey", "autonomy", "freezes", "costs", "budget", "runs", "routes")
+                                 or (name == "owner" and args[0] == "grant")):
                 conn = vs.db_connect()
             if name == "status":
                 step_status(out, base, token)
@@ -1791,8 +2203,16 @@ def main() -> int:
                 step_costs(out, conn, int(args[0]) if args else 7, float(args[1]) if len(args) > 1 else 6.0)
             elif name == "budget":
                 step_budget(out, conn, args[0], args[1])
+            elif name == "runs":
+                step_runs(out, conn, args[0], args[1])
             elif name == "routes":
                 step_routes(out, conn, int(args[0]) if args else 20)
+            elif name == "funnel":
+                step_funnel(out, base, token, int(args[0]) if args else 24, proof=len(args) == 2)
+            elif name == "owner" and args == ["slo"]:
+                step_owner_slo(out, base, token)
+            elif name == "owner":
+                step_owner_grant(out, base, token, conn, args[1])
         except Exception as exc:  # noqa: BLE001 — record, never abort the remaining evidence
             if conn is not None:
                 try:

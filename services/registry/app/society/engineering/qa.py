@@ -23,8 +23,10 @@ Reviewer and *also* fail QA when a secret pattern is found.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -33,6 +35,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 
 from ..config import SocietySettings
 from ..risk import assess as assess_risk
+from . import workspace as ws_mod
 from .workspace import Workspace, diff_text, is_protected
 
 logger = logging.getLogger(__name__)
@@ -56,7 +59,12 @@ RISKY_PATH_RE = re.compile(
     r"(auth|secret|config|payment|wallet|escrow|sandbox|websocket|rate_limit|security|\.github/|Dockerfile|requirements|migrations|init-db)",
     re.IGNORECASE,
 )
-_SCRUB_ENV_RE = re.compile(r"(PASSWORD|_KEY|SECRET|TOKEN|CREDENTIAL)", re.IGNORECASE)
+# The test subprocess (QA acceptance, the harness's targeted runs, red-on-base, test_first) gets
+# an ALLOWLIST of the worker's environment, never the rest: the worker's own config
+# (SOCIETY_AUTO_MERGE_ENABLED, DATABASE_URL, ...) must not judge a candidate (staging 877a0ceb)
+# nor reach code a model wrote.
+_TEST_ENV_PASS = re.compile(r"^(PATH|HOME|LANG|LC_\w+|TZ|TMPDIR|VIRTUAL_ENV|SSL_CERT_(FILE|DIR))$")
+TEST_ENV_FIXED = ("PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "ENVIRONMENT", "JAEGER_ENABLED", "SOCIETY_RUNTIME_ENABLED", "SOCIETY_AUTONOMOUS_CODE_ENABLED", "HOME")
 
 
 @dataclass
@@ -86,7 +94,7 @@ class QAReport:
 
 
 def scrubbed_env(ws: Workspace) -> Dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if not _SCRUB_ENV_RE.search(k)}
+    env = {k: v for k, v in os.environ.items() if _TEST_ENV_PASS.match(k)}
     env.update(
         {
             "PYTHONPATH": str(ws.path),
@@ -164,6 +172,46 @@ def _run_acceptance(ws: Workspace, tests: Sequence[str], timeout: int) -> Check:
     return Check("acceptance_tests", ok, tail.strip()[-1500:])
 
 
+def _pytest(ws: Workspace, targets: Sequence[str], timeout: int) -> tuple:
+    """(returncode, output tail); -1 when pytest did not finish."""
+    argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *targets]
+    try:
+        proc = subprocess.run(argv, cwd=str(ws.path), env=scrubbed_env(ws), capture_output=True, text=True, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return -1, f"timed out after {timeout}s"
+    except OSError as exc:
+        return -1, f"could not start pytest: {exc}"
+    return proc.returncode, (proc.stdout + "\n" + proc.stderr).strip()[-600:]
+
+
+def _test_first_proof(ws: Workspace, pinned: Sequence[Dict], timeout: int) -> List[Check]:
+    """An Architect test_first judges the change only if it is RED on the candidate base with nothing but
+    itself added, and GREEN on the head -- otherwise a trivial test could judge anything (spec_gate.py)."""
+    paths = [str(f["path"]) for f in pinned]
+    rc, tail = _pytest(ws, paths, timeout)
+    green = Check("test_first_green_on_head", rc == 0, f"{paths} pass on the head" if rc == 0 else f"{paths} do not pass on the head: {tail[-300:]}")
+    base = ws.path.parent / f"{ws.path.name}.test-first-base"
+    try:
+        ws_mod._git(["worktree", "prune"], cwd=ws.repo_root)
+        ws_mod._git(["worktree", "add", "--detach", "--force", str(base), ws.base_sha], cwd=ws.repo_root, timeout=120)
+        for f in pinned:
+            target = ws_mod.contained_path(base, str(f["path"]))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(str(f["content"]), encoding="utf-8")
+        rc, tail = _pytest(dataclasses.replace(ws, path=base), paths, timeout)
+    except ws_mod.WorkspaceError as exc:
+        rc, tail = -1, f"no base worktree: {exc}"
+    finally:
+        try:
+            ws_mod._git(["worktree", "remove", "--force", str(base)], cwd=ws.repo_root)
+        except ws_mod.WorkspaceError:
+            ws_mod._git(["worktree", "prune"], cwd=ws.repo_root)
+    # 1 = tests failed, 2 = collection error (the code under test does not exist yet): both are red
+    red = Check("test_first_red_on_base", rc in (1, 2), f"{paths} fail on the base {ws.base_sha[:10]}" if rc in (1, 2)
+                else (f"{paths} pass on the base {ws.base_sha[:10]}: they cannot judge the change" if rc == 0 else f"{paths} not proven red on the base (exit {rc}): {tail[-300:]}"))
+    return [red, green]
+
+
 def evaluate_candidate(settings: SocietySettings, ws: Workspace, spec: Dict, changed: Sequence[str], *, attempts: int = 1,
                        bench_runner: Optional[Callable[[str], Dict]] = None) -> QAReport:
     """``bench_runner(task_id)`` runs a ``bench:<task>`` proof (engineering/bench_proof.py) after the
@@ -181,12 +229,20 @@ def evaluate_candidate(settings: SocietySettings, ws: Workspace, spec: Dict, cha
     else:
         checks.append(Check("acceptance_criteria_present", True, f"{len(tests)} acceptance test target(s), {len(benches)} bench proof(s)"))
 
-    # 2. change must be non-empty and on the allow-list
-    if not changed:
-        checks.append(Check("non_empty_change", False, "candidate contains no changes"))
+    # 2. change must be non-empty and on the allow-list; the approved design's test_first files are
+    #    the Architect's (spec_gate.py), exempt only while byte-identical to the pinned content
+    from ..spec_gate import intact  # noqa: PLC0415
+
+    pinned = intact(ws.path, spec.get("test_first") or [])
+    tampered = [p for p, ok in pinned.items() if not ok]
+    if pinned:
+        checks.append(Check("test_first_intact", not tampered, "; ".join(tampered) if tampered else f"{len(pinned)} test_first file(s) as the design pinned them"))
+    authored = [c for c in changed if not pinned.get(c)]  # what the Builder wrote
+    if not authored:
+        checks.append(Check("non_empty_change", False, "candidate contains no changes" + (" beyond the test_first files" if changed else "")))
     else:
-        checks.append(Check("non_empty_change", True, f"{len(changed)} file(s) changed"))
-    off_list = [c for c in changed if c not in allowed]
+        checks.append(Check("non_empty_change", True, f"{len(authored)} file(s) changed"))
+    off_list = [c for c in authored if c not in allowed]
     checks.append(Check("allow_list", not off_list, "; ".join(off_list) if off_list else "all changed files are on files_allowed"))
     protected = [c for c in changed if is_protected(c)]
     checks.append(Check("protected_paths", not protected, "; ".join(protected) if protected else "no never-writable path touched"))
@@ -197,8 +253,14 @@ def evaluate_candidate(settings: SocietySettings, ws: Workspace, spec: Dict, cha
     test_paths = set()
     for t in tests:
         test_paths.add(t.split("::")[0])
-    self_judged = [c for c in changed if c in test_paths]
+    self_judged = [c for c in authored if c in test_paths]
     checks.append(Check("no_self_judging", not self_judged, "; ".join(self_judged) if self_judged else "acceptance tests untouched by Builder"))
+    from ..spec_gate import ci_orphans  # noqa: PLC0415
+
+    base_root = pathlib.Path(settings.repo_root) if getattr(settings, "repo_root", "") else ws.path / ".no-base"
+    orphans = ci_orphans(base_root, authored)  # required CI would fail the PR (scripts/ci/check_test_discovery.py)
+    checks.append(Check("ci_collects_new_tests", not orphans, "; ".join(f"{o}: new test outside tests/, a CI orphan" for o in orphans)
+                        if orphans else "every new test file is collected by required CI"))
     missing_tests = [t for t in test_paths if not (ws.path / t).exists()]
     checks.append(Check("acceptance_tests_exist", not missing_tests, "; ".join(missing_tests) if missing_tests else "acceptance tests present in worktree"))
 
@@ -220,6 +282,8 @@ def evaluate_candidate(settings: SocietySettings, ws: Workspace, spec: Dict, cha
             acc = _run_acceptance(ws, tests, settings.qa_test_timeout_seconds)
             checks.append(acc)
             test_tail = acc.detail
+        if spec.get("test_first"):
+            checks.extend(_test_first_proof(ws, spec["test_first"], settings.qa_test_timeout_seconds))
         # 7. a bench proof runs only on a candidate whose pytest acceptance is green (it costs model calls)
         for task_id in benches:
             if not all(c.passed for c in checks):

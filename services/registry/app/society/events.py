@@ -144,6 +144,23 @@ class EventType:
     DEPLOYMENT_REQUESTED = "deployment.requested"
     DEPLOYMENT_BLOCKED = "deployment.blocked"
     DEPLOYMENT_REFUSED = "deployment.refused"
+    # The owner spoke on the Owner Console (owner_thread.py): PRIORITY events -- dispatched and
+    # claimed before any other, spending the owner reserve (SOCIETY_OWNER_RESERVE_USD).
+    OWNER_DIRECTIVE_SET = "owner.directive_set"
+    OWNER_TASK_CREATED = "owner.task_created"
+    OWNER_MESSAGE = "owner.message"
+    #: an owner story ended with no work started: the Governor is woken ONCE more in that story
+    #: (owner_thread.rewake_without_work, reason owner_event_without_work)
+    OWNER_REWAKE = "owner.rewake"
+    #: a re-offered READY candidate the Governor did not request: the recorded reason, and the
+    #: runtime's own request when the fallback is on (promotion_queue.settle_reoffers)
+    READY_REOFFER_SETTLED = "promotion.reoffer_settled"
+    #: the Governor answered the owner (RESPOND_TO_OWNER; no subscriber, the Owner Console shows it)
+    OWNER_REPLIED = "company.owner_replied"
+
+
+#: the owner's own events (EventType.OWNER_*): first in the queue, never a heartbeat
+OWNER_EVENT_TYPES = (EventType.OWNER_DIRECTIVE_SET, EventType.OWNER_TASK_CREATED, EventType.OWNER_MESSAGE, EventType.OWNER_REWAKE)
 
 
 # ── rehearsal (canary) provenance ──────────────────────────────────────

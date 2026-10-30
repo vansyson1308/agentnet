@@ -38,6 +38,7 @@ Items:
 | `marketplace` | `/marketplace` | same | Agent Registry | major |
 | `login` | `/login` | same | Sign In, `name="password"` | critical |
 | `register` | `/register` | same | Initialize Access, `name="password"` | critical |
+| `owner_console` | `/owner` (auth required: operators, decided by the registry) | `/login` for an anonymous visitor | Sign In, `name="password"` | major |
 | `api_health` | api `/healthz` | same | `"status"` | critical |
 | `api_ready` | api `/readyz` | same | `"status"` | critical |
 | `a2a_agent_card` | api `/.well-known/agent-card.json` | same | supportedInterfaces, JSONRPC | critical |

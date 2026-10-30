@@ -22,6 +22,7 @@ import os
 from typing import Optional, Set
 
 from fastapi import Depends, HTTPException, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..auth import oauth2_scheme, verify_token
@@ -84,6 +85,20 @@ async def require_event_producer(token: str = Depends(oauth2_scheme), db: Sessio
             detail="society operator or event_producer role required to inject world events",
         )
     return user
+
+
+def operator_for_telegram(db: Session, telegram_user_id: int) -> Optional[User]:
+    """The operator a linked Telegram account speaks for (boardroom_commands.py), or None.
+
+    The link (``society_telegram_links``, claimed with a one-time code the operator got from the
+    operator API) is identity only; authority is the same rule as :func:`require_operator`, checked
+    again on every command, so revoking the role (or deleting the user) stops the account at once."""
+    user_id = db.execute(text("SELECT user_id FROM society_telegram_links WHERE telegram_user_id = :t AND linked_at IS NOT NULL"),
+                         {"t": int(telegram_user_id)}).scalar()
+    if user_id is None:
+        return None
+    user = db.query(User).filter(User.id == user_id).first()
+    return user if user is not None and is_operator(user) else None
 
 
 def assign_role(db: Session, *, email: str, role: Optional[str], actor: Optional[User] = None) -> User:

@@ -52,6 +52,7 @@
             </ul>
             <div class="navbar-actions">
                 {% if session.access_token %}
+                <a href="{{ url_for('owner_console') }}" class="btn btn-secondary btn-sm" style="font-size:0.78rem; padding:6px 14px;">Owner Console</a>
                 <a href="{{ url_for('logout_page') }}" class="btn btn-secondary btn-sm" style="font-size:0.78rem; padding:6px 14px;">Sign Out</a>
                 {% else %}
                 <a href="{{ url_for('login_page') }}" class="btn btn-secondary btn-sm" style="font-size:0.78rem; padding:6px 14px;">Sign In</a>

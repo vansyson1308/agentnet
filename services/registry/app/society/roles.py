@@ -140,8 +140,19 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             IntentType.DECIDE_DESIGN.value,
             # an outside action only the owner can take goes to the owner's queue (owner_actions.py)
             IntentType.PROPOSE_OWNER_ACTION.value,
+            # the chair answers the owner, once per owner event (owner_thread.py)
+            IntentType.RESPOND_TO_OWNER.value,
+            # ... and turns the owner's words into tickets in that same story -- ONLY there
+            # (executor._create_improvement refuses it elsewhere; owner 2026-10-29 G1v)
+            IntentType.CREATE_IMPROVEMENT.value,
         ),
         subscriptions=(
+            # the owner spoke on the Owner Console: the chair answers first (priority events)
+            EventType.OWNER_DIRECTIVE_SET,
+            EventType.OWNER_TASK_CREATED,
+            EventType.OWNER_MESSAGE,
+            # an owner story that started no work wakes the chair once more (owner_thread.rewake_without_work)
+            EventType.OWNER_REWAKE,
             EventType.DESIGN_REVIEW_READY,
             EventType.PROPOSAL_CREATED,
             EventType.CODE_CANDIDATE_READY,
@@ -160,7 +171,8 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
         risk_ceiling=IntentRiskClass.MEDIUM.value,
         resource_scopes={"memory_scopes": ["agent", "society"], "goal_owners": ["agent", "society"]},
         max_runs_per_hour=12,
-        max_intents_per_run=4,
+        # an owner story: up to tickets.OWNER_STORY_TICKETS tickets + the work they start + the reply
+        max_intents_per_run=7,
     ),
     ROLE_SCOUT: RoleDefinition(
         role=ROLE_SCOUT,
@@ -181,6 +193,8 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             IntentType.PROPOSE_OWNER_ACTION.value,
         ),
         subscriptions=(
+            EventType.OWNER_DIRECTIVE_SET,
+            EventType.OWNER_MESSAGE,
             EventType.DESIGN_REVIEW_PROPOSED,
             EventType.COMPANY_CYCLE,
             EventType.BACKLOG_ITEM,
