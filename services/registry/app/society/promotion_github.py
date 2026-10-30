@@ -55,7 +55,7 @@ import subprocess
 import tempfile
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from .config import SocietySettings
+from .config import AUTO_MERGE_TIERS, SocietySettings
 from .engineering import workspace as ws_mod
 from .github_credentials import (
     CredentialRefused,
@@ -396,8 +396,12 @@ class GitHubPromotionProvider:
         gates = dict(getattr(promotion, "eligibility", None) or {})
         if gates.get("auto_merge_allowed") is not True:
             raise ProviderRefused("the promotion controller did not authorise an autonomous merge (auto_merge_allowed is not true)")
-        if str(gates.get("trusted_risk_tier") or getattr(promotion, "risk_tier", "")) != "green":
-            raise ProviderRefused(f"autonomous merge is GREEN-only; this promotion is {gates.get('trusted_risk_tier') or promotion.risk_tier}")
+        tier = str(gates.get("trusted_risk_tier") or getattr(promotion.risk_tier, "value", promotion.risk_tier) or "")
+        allowed = AUTO_MERGE_TIERS[: AUTO_MERGE_TIERS.index(self.settings.auto_merge_max_tier) + 1] if self.settings.auto_merge_max_tier in AUTO_MERGE_TIERS else ("green",)
+        if tier not in allowed:
+            raise ProviderRefused(f"autonomous merge is limited to {'/'.join(allowed)} (SOCIETY_AUTO_MERGE_MAX_TIER); this promotion is {tier or '?'}")
+        if gates.get("owner_merge_reasons"):
+            raise ProviderRefused(f"only the owner merges this change: {', '.join(list(gates['owner_merge_reasons'])[:4])}")
         if gates.get("merge_freeze"):
             raise ProviderRefused(f"merge authority is frozen: {', '.join(list(gates['merge_freeze'])[:4])}")
         if not expected_head_sha:
