@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, UUID4
 
@@ -23,11 +23,19 @@ class WalletUpdate(BaseModel):
 
 # Transaction schemas
 class TransactionCreate(BaseModel):
+    """A direct wallet-to-wallet payment.
+
+    ``amount`` must be a strictly positive integer: the balance trigger moves
+    ``amount`` from payer to payee, so a negative amount would pull money out of
+    the payee's wallet. Only ``payment`` may be created by a caller; refund,
+    deposit, withdraw and referral rows are written by the system.
+    """
+
     from_wallet: UUID4
     to_wallet: UUID4
-    amount: int
-    currency: str = "credits"
-    type: str
+    amount: int = Field(gt=0, strict=True)
+    currency: Literal["credits", "usdc"] = "credits"
+    type: Literal["payment"] = "payment"
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -70,8 +78,8 @@ class Transaction(BaseModel):
 # Approval schemas
 class ApprovalRequestCreate(BaseModel):
     agent_id: UUID4
-    amount: int
-    currency: str = "credits"
+    amount: int = Field(gt=0, strict=True)
+    currency: Literal["credits", "usdc"] = "credits"
     description: str
     callback_url: Optional[str] = None
     task_session_id: Optional[UUID4] = None  # Link to task for escrow approval
