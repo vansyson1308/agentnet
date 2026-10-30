@@ -50,8 +50,9 @@ recorded as unrecoverable (`base_reconcile_recovery`) and stops being re-examine
 **Draft → ready for review.** The provider opens every PR as a draft, and a draft PR cannot be merged by anyone.
 The trusted controller takes it out of draft (GraphQL `markPullRequestReadyForReview` — REST cannot) only when
 the candidate is READY, QA passed, Security passed or was not required with no findings, the trusted tier is
-**GREEN**, and the head is unchanged. It never does this for AMBER/RED/CONSTITUTIONAL: a human may still take
-those out of draft and merge them, which is exactly the governance path those tiers keep. The decision is the
+**GREEN** (or one the controller may merge itself, see `SOCIETY_AUTO_MERGE_MAX_TIER` below), and the head is
+unchanged. Any other change stays a draft: a human may still take it out of draft and merge it, which is exactly
+the governance path those tiers keep. The decision is the
 controller's, never the model's, and it emits `promotion.ready_for_review`.
 
 Validation (`promotion.validate`) requires: candidate READY on the exact head; branch under `SOCIETY_BRANCH_PREFIX`;
@@ -61,8 +62,14 @@ when the tier is AMBER/RED or findings exist; no secret-pattern finding; indepen
 
 Merge eligibility (`compute_eligibility`) — all must hold: `risk_promotable`, `ci_passed`, `branch_up_to_date`,
 `head_unchanged`, `qa_pass`, `security_pass`, `no_critical_findings`, `fitness_precheck`, `no_unresolved_review`,
-`change_budget`, `human_approval_satisfied`. `auto_merge_allowed` additionally needs tier GREEN,
-`SOCIETY_AUTO_MERGE_ENABLED=true` (default false), **`pr_not_draft`** and **no merge freeze**. The daily bound
+`change_budget`, `human_approval_satisfied`. `auto_merge_allowed` additionally needs the tier at or below
+`SOCIETY_AUTO_MERGE_MAX_TIER` (`green` default, `amber`, `red`), no path in the owner-only core
+(`risk.OWNER_MERGE_PATTERNS`: risk/fitness/promotion/policy/config, `.github/**`, `pytest.ini`, `scripts/ci/**` and
+the tests that judge them), `SOCIETY_AUTO_MERGE_ENABLED=true` (default false), **`pr_not_draft`** and **no merge
+freeze**; the reasons the controller may not merge are recorded as `owner_merge_reasons`. A PR the controller may
+merge is taken out of draft once gated, whatever its tier. **Merge queue:** each merge moves `main`, so every other
+open PR is brought up to date (update-branch, never a rebase) and re-checked before it can merge — up to
+`MAX_BASE_RECONCILES` (12) times; a red PR on a stale base is updated too, since `main` may already hold its fix. The daily bound
 is `SOCIETY_MAX_AUTONOMOUS_MERGES_PER_DAY` (default 1), which counts only merges the *controller* performed
 (`evidence.auto_merged`) — a human merge is recorded but never spends the autonomous budget. No agent can raise
 it: `MODIFY_BUDGET` is a forbidden HIGH intent with no executor.
