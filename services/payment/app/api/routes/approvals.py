@@ -135,7 +135,7 @@ async def create_approval_request(
         agent_id=agent_id,
         user_id=current_user.id,
         amount=approval_request.amount,
-        currency=CurrencyType(approval_request.currency.upper()),
+        currency=CurrencyType(approval_request.currency),
         description=approval_request.description,
         callback_url=approval_request.callback_url,
         status=ApprovalStatus.PENDING,

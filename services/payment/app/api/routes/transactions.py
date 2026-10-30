@@ -37,13 +37,61 @@ def wallet_owned_by(db: Session, wallet: Wallet, principal) -> bool:
     return False
 
 
+def _lock_wallets(db: Session, *wallet_ids) -> Dict[uuid.UUID, Wallet]:
+    """``SELECT ... FOR UPDATE`` the wallets in id order (one global order, so two
+    opposite-direction transfers never deadlock) and return fresh rows by id."""
+    rows = (
+        db.query(Wallet)
+        .filter(Wallet.id.in_(set(wallet_ids)))
+        .order_by(Wallet.id)
+        .with_for_update()
+        .populate_existing()
+        .all()
+    )
+    return {w.id: w for w in rows}
+
+
+def _check_can_spend(wallet: Wallet, amount: int, currency: str) -> None:
+    """Same rule as ``task_service.create_task_with_escrow``: only the balance NET
+    of escrow is spendable, and spent-today + reserved + amount must fit the cap.
+    The caller holds the wallet's row lock."""
+    if amount <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Transaction amount must be positive")
+    if currency == "credits":
+        available = wallet.balance_credits - wallet.reserved_credits
+        if available < amount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Insufficient available credits: required {amount}, available {available}",
+            )
+        committed = wallet.daily_spent + wallet.reserved_credits
+        if committed + amount > wallet.spending_cap:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Transaction would exceed daily spending cap of {wallet.spending_cap}",
+            )
+    else:
+        available = float(wallet.balance_usdc) - float(wallet.reserved_usdc)
+        if available < amount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Insufficient available USDC: required {amount}, available {available}",
+            )
+
+
 @router.post("/create", response_model=Dict[str, Any])
 async def create_transaction(
     transaction: TransactionCreate,
     db: Session = Depends(get_db),
     current_user_or_agent=Depends(get_current_user_or_agent),
 ):
-    """Initiate a transaction."""
+    """Initiate a direct payment (PENDING until the payer confirms it).
+
+    Money invariant: a direct payment moves ``amount > 0`` from the payer's
+    AVAILABLE balance (balance minus escrow). The check here is advisory (a
+    pending row reserves nothing); ``confirm_transaction`` re-checks it under
+    the payer's row lock before any money moves.
+    """
     # Get the source wallet
     from_wallet = db.query(Wallet).filter(Wallet.id == transaction.from_wallet).first()
 
@@ -73,27 +121,7 @@ async def create_transaction(
             detail="Source and destination wallets cannot be the same",
         )
 
-    # Check if the source wallet has sufficient balance
-    if transaction.currency == "credits":
-        if from_wallet.balance_credits < transaction.amount:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient credits balance: required {transaction.amount}, available {from_wallet.balance_credits}",
-            )
-
-        # Check if the transaction would exceed the spending cap
-        if from_wallet.daily_spent + transaction.amount > from_wallet.spending_cap:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Transaction would exceed daily spending cap of {from_wallet.spending_cap}",
-            )
-    else:
-        # USDC handling
-        if from_wallet.balance_usdc < transaction.amount:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient USDC balance: required {transaction.amount}, available {from_wallet.balance_usdc}",
-            )
+    _check_can_spend(from_wallet, transaction.amount, transaction.currency)
 
     # Create the transaction
     db_transaction = Transaction(
@@ -101,9 +129,9 @@ async def create_transaction(
         from_wallet=from_wallet.id,
         to_wallet=to_wallet.id,
         amount=transaction.amount,
-        currency=CurrencyType[transaction.currency.upper()],
+        currency=CurrencyType(transaction.currency),
         status=TransactionStatus.PENDING,
-        type=TransactionType[transaction.type.upper()],
+        type=TransactionType.PAYMENT,
         metadata=transaction.metadata or {},
     )
 
@@ -120,9 +148,21 @@ async def confirm_transaction(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Confirm a pending transaction (used after escrow release)."""
-    # Get the transaction
-    transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    """Confirm (settle) a pending direct payment.
+
+    Locks the transaction row, then both wallets in id order, and re-checks the
+    payer's available balance and cap before the status flips; the balance
+    trigger then moves the money inside the same locks. Concurrent confirms of
+    one payer's transfers therefore serialize and never spend the same credits
+    twice; a second confirm of the same row finds it no longer PENDING.
+    """
+    transaction = (
+        db.query(Transaction)
+        .filter(Transaction.id == transaction_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
 
     if not transaction:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
@@ -134,9 +174,17 @@ async def confirm_transaction(
             detail=f"Transaction is in {transaction.status} status, cannot confirm",
         )
 
-    # Get the source and destination wallets
-    from_wallet = db.query(Wallet).filter(Wallet.id == transaction.from_wallet).first()
-    to_wallet = db.query(Wallet).filter(Wallet.id == transaction.to_wallet).first()
+    # Task escrow payments settle only through the task lifecycle
+    # (task_service.confirm_task_completion), never through this route.
+    if transaction.task_session_id is not None or transaction.to_wallet is None or transaction.from_wallet is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task escrow payments settle through the task lifecycle",
+        )
+
+    wallets = _lock_wallets(db, transaction.from_wallet, transaction.to_wallet)
+    from_wallet = wallets.get(transaction.from_wallet)
+    to_wallet = wallets.get(transaction.to_wallet)
 
     if not from_wallet or not to_wallet:
         raise HTTPException(
@@ -150,6 +198,9 @@ async def confirm_transaction(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have access to the source wallet",
         )
+
+    currency = transaction.currency.value if hasattr(transaction.currency, "value") else str(transaction.currency)
+    _check_can_spend(from_wallet, transaction.amount, currency)
 
     # Update the transaction status
     transaction.status = TransactionStatus.COMPLETED
