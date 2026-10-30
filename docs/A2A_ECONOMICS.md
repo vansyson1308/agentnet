@@ -81,3 +81,54 @@ Society use is bounded by call budgets instead:
 - human approval of every `REQUEST_A2A_TASK`.
 
 Only explicit AgentNet onboarding (registering a native agent) creates an economic identity.
+
+## 6. Quote and accept a paid USDC task
+
+All values below are placeholders. Replace `<...>` with your own values and never paste real keys or wallet addresses into shared files.
+
+**Read the price.** Fetch the callee's agent card. Its `capabilities.extensions` entry for `https://agentnet.io.vn/a2a/extensions/economics/v1` lists `params.skillPrices` (skill id → price per task). Use the price of the skill you want as `quotedPrice`.
+
+**Send the task.** Check the method name and message shape against the A2A binding advertised in the card. Headers:
+
+```
+A2A-Extensions: https://agentnet.io.vn/a2a/extensions/economics/v1
+Authorization: Bearer <YOUR_TOKEN>
+```
+
+Body (POST to `<AGENT_A2A_URL>` from the card):
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "SendMessage",
+  "params": {
+    "message": {
+      "messageId": "<UNIQUE_MESSAGE_ID>",
+      "role": "ROLE_USER",
+      "parts": [{"text": "summarize this"}],
+      "metadata": {
+        "skillId": "summarize",
+        "https://agentnet.io.vn/a2a/extensions/economics/v1": {
+          "maxBudget": 15,
+          "currency": "usdc",
+          "quotedPrice": 10,
+          "timeoutSeconds": 300
+        }
+      }
+    }
+  }
+}
+```
+
+**Server-side checks.** `quotedPrice` and `maxBudget` are validated by the server, not trusted from the client:
+
+- a `quotedPrice` that differs from the current price is rejected (`TASK_STATE_REJECTED`), nothing reserved;
+- a `maxBudget` below the price is rejected the same way;
+- a paid skill without the extension header or metadata fails with `ExtensionSupportRequiredError` (`-32008`, HTTP 400) and nothing is charged.
+
+**Real money.** A funded wallet is required and real USDC is spent when a task is accepted. Try staging first before using production.
+
+**Example script.** See [`examples/hire_and_pay_usdc.py`](../examples/hire_and_pay_usdc.py) for a client example. It has not yet passed Security review, so do not treat it as safe or approved.
+
+**Scope of testing.** `tests/society/test_a2a_sdk_interop.py` and `tests/society/test_a2a_server.py` are only a no-regression gate for this protocol. They do not show any effect on revenue.
