@@ -46,7 +46,7 @@ done
 
 cd "$(dirname "$0")/.."
 INIT_DIR="services/registry/init-db"
-EXPECTED_HEAD="0029_ticket_sources"
+EXPECTED_HEAD="0030_transaction_amount_check"
 PG_USER="${POSTGRES_USER:-agentnet}"
 PG_HOST="${POSTGRES_HOST:-127.0.0.1}"
 PG_PORT="${POSTGRES_PORT:-5432}"
@@ -190,7 +190,8 @@ for hop in \
   "0025_telegram_links -> 0026_owner_directives" \
   "0026_owner_directives -> 0027_owner_conversation" \
   "0027_owner_conversation -> 0028_model_cache_accounting" \
-  "0028_model_cache_accounting -> $EXPECTED_HEAD"; do
+  "0028_model_cache_accounting -> 0029_ticket_sources" \
+  "0029_ticket_sources -> $EXPECTED_HEAD"; do
   [[ "$out" == *"$hop"* ]] && ok "$UPGRADE_DB: ran $hop" || bad "$UPGRADE_DB: hop did not run ($hop): $out"
 done
 expect_head "$UPGRADE_DB"
