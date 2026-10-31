@@ -327,7 +327,8 @@ def _validator():
 def test_the_validator_sets_a_roles_runs_per_hour_and_a_reseed_keeps_it(db, society_settings):
     mod = _validator()
     assert mod.parse_plan("runs:governor:40") == [("runs", ["governor", "40"])]
-    for bad in ("runs:governor", "runs:governor:0", "runs:governor:201", "runs:Gov!:5"):
+    assert mod.parse_plan("runs:architect:120") == [("runs", ["architect", "120"])]
+    for bad in ("runs:governor", "runs:governor:0", "runs:governor:121", "runs:governor:201", "runs:Gov!:5"):
         try:
             mod.parse_plan(bad)
         except ValueError:
