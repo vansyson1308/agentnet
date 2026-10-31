@@ -15,7 +15,10 @@ an activity is a bounded tool loop:
 
 Failures are classified into stable error classes (``timeout``,
 ``rate_limit``, ``provider_error``, ``invalid_json``, ``invalid_output``,
-``partial``, ``empty``, ``turn_budget``, ``read_budget``, ``cost_budget``).
+``partial``, ``truncated_output``, ``empty``, ``turn_budget``, ``read_budget``,
+``cost_budget``). A reply cut at the token limit is discarded unread and
+retried once with a larger, capped token limit (``TRUNCATION_RETRY_MAX_TOKENS``);
+a second cut reply ends the try with ``truncated_output``.
 An invalid answer gets exactly one corrective turn; the next invalid answer
 fails the try. The RECONCILER decides whether another try follows
 (``MAINTENANCE_ACTIVITY_MAX_TRIES``) and, when tries are exhausted, re-scopes
@@ -309,6 +312,11 @@ def _fit(messages: List[Dict[str, str]], budget: int) -> None:
 #: Sent once the per-try read budget is used up (AuthorPatch).
 READ_BUDGET_DIRECTIVE = "READ BUDGET USED: read tools are no longer offered. Edit with apply_patch (run_tests, read_diff, reset_attempt) and submit, or answer needs_rescope."
 INPUT_MAX_CHARS = 60_000
+#: Hard ceiling for the one retry after a reply cut at the token limit.
+#: A code constant on purpose: never read from env or settings.
+TRUNCATION_RETRY_MAX_TOKENS = 8000
+#: Static directive sent with the truncation retry (no placeholders, no cut text).
+TRUNCATION_RETRY_DIRECTIVE = "TRUNCATED: your previous answer was cut off at the token limit and was discarded unread. Answer again with one smaller json object: use smaller steps (fewer or shorter patch operations per call)."
 
 #: Sent before the last allowed model turn of an activity.
 FINAL_TURN_DIRECTIVE = (
@@ -354,6 +362,8 @@ async def run_activity(
     refusal: Optional[Dict[str, Any]] = None
     turns_left = max_turns or spec.max_turns
     corrective_used = False
+    token_cap = max_tokens or spec.max_tokens
+    truncation_retried = False
     loop = asyncio.get_running_loop()
     started = loop.time()
     while turns_left > 0:
@@ -372,7 +382,7 @@ async def run_activity(
             messages.append({"role": "user", "content": FINAL_TURN_DIRECTIVE})
         _fit(messages, CONTEXT_BUDGET_BYTES)
         try:
-            reply = await asyncio.wait_for(model.complete(messages, max_tokens=max_tokens or spec.max_tokens, **sampling), timeout=max(5.0, timeout_seconds - (loop.time() - started)))
+            reply = await asyncio.wait_for(model.complete(messages, max_tokens=token_cap, **sampling), timeout=max(5.0, timeout_seconds - (loop.time() - started)))
         except asyncio.TimeoutError:
             res.error_class, res.error = "timeout", "model call timed out"
             return res
@@ -385,8 +395,19 @@ async def run_activity(
         res.tokens_in += reply.tokens_in
         res.tokens_out += reply.tokens_out
         res.cost_usd += reply.cost_usd
-        res.tokens_cached += reply.tokens_cached
-        res.tokens_cache_write += reply.tokens_cache_write
+        if reply.finish_reason == "length":
+            # a cut reply is discarded: never parsed, repaired, applied,
+            # appended to the transcript or logged as content
+            res.turn_log.append({"turn": res.turns, "action": "truncated", "tokens_in": reply.tokens_in, "tokens_out": reply.tokens_out, "max_tokens": token_cap})
+            if truncation_retried:
+                res.error_class, res.error = "truncated_output", f"the answer was cut off at the token limit again after one retry (max_tokens {token_cap})"
+                return res
+            truncation_retried = True
+            token_cap = min(2 * token_cap, TRUNCATION_RETRY_MAX_TOKENS)
+            if turns_left == 0:
+                turns_left = 1  # the one retry is always granted
+            messages.append({"role": "user", "content": TRUNCATION_RETRY_DIRECTIVE})
+            continue
         problem, action = _parse(reply)
         log = {"turn": res.turns, "action": (action.get("action") if problem is None else f"invalid:{problem[0]}"), "tokens_in": reply.tokens_in, "tokens_out": reply.tokens_out,
                "cache_read": reply.tokens_cached, "cache_write": reply.tokens_cache_write}
@@ -509,4 +530,5 @@ __all__ = [
     "PostmortemOutput",
     "READ_TOOLS",
     "PATCH_TOOLS",
+    "TRUNCATION_RETRY_MAX_TOKENS",
 ]
