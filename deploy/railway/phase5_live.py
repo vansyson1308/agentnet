@@ -38,6 +38,7 @@ never stops the plan so the evidence of the later steps is still recorded):
                                   the caps it implies inside <budget> USD/day (default 7 d, 6.0) -- a recommendation, never applied;
                                   prompt cache per role/model/activity (24h, 7d): reads/writes/uncached, hit rate, $ per run, cadence
     budget:<role>:<usd>           operator command: that role's grant daily_model_budget_usd (a re-seed keeps the larger of it and the default)
+    runs:<role>:<n>               operator command: that role's grant max_runs_per_hour, 1..120 (a re-seed keeps the larger of it and the default)
     freezes:lift-recovered        lift (operator API) ONLY the open freezes that outlived their cause (maintenance incident recovered/closed,
                                   or public surface recovered >= 6 h ago and green now); others untouched
 
@@ -158,8 +159,8 @@ def parse_plan(text: str) -> List[Tuple[str, List[str]]]:
             raise ValueError("costs[:<days>[:<daily-budget-usd>]]")
         if name == "budget" and (len(args) != 2 or not re.fullmatch(r"[a-z_]{2,32}", args[0]) or not re.fullmatch(r"\d{1,2}(\.\d{1,2})?", args[1]) or float(args[1]) <= 0):
             raise ValueError("budget:<role>:<usd> (0 < usd < 100, two decimals)")
-        if name == "runs" and (len(args) != 2 or not re.fullmatch(r"[a-z_]{2,32}", args[0]) or not re.fullmatch(r"\d{1,3}", args[1]) or not 1 <= int(args[1]) <= 200):
-            raise ValueError("runs:<role>:<n> (1 <= n <= 200 runs per hour)")
+        if name == "runs" and (len(args) != 2 or not re.fullmatch(r"[a-z_]{2,32}", args[0]) or not re.fullmatch(r"\d{1,3}", args[1]) or not 1 <= int(args[1]) <= 120):
+            raise ValueError("runs:<role>:<n> (1 <= n <= 120 runs per hour)")
         if name == "routes" and (len(args) > 1 or (args and not re.fullmatch(r"\d{1,3}", args[0]))):
             raise ValueError("routes[:<limit>]")
         if name == "owner" and args != ["slo"] and (len(args) != 2 or args[0] != "grant" or not OWNER_EMAIL_RE.fullmatch(args[1])):
@@ -428,6 +429,8 @@ def snapshot(conn, since: Optional[datetime]) -> Dict[str, Any]:
                                 "sw.subject_type, sw.subject_id, EXISTS (SELECT 1 FROM society_events rd WHERE rd.idempotency_key = 'redeliver:' || sw.id::text) "
                                 f"FROM society_events lb LEFT JOIN society_events sw ON sw.id::text = lb.payload ->> 'event_id' "
                                 f"WHERE lb.event_type = 'loop_breaker.tripped' {lw} ORDER BY lb.created_at DESC LIMIT 10", p)]
+        # How long is a NORMAL complete story? Runs per correlation of ticket stories that reached READY.
+        snap["story_runs"] = [int(r[0]) for r in _rows(cur, STORY_RUNS_SQL, (since or datetime(1970, 1, 1, tzinfo=timezone.utc),))]
         snap["runs_by_status"] = _kv(_rows(cur, f"SELECT status, count(*) FROM agent_runs {w} GROUP BY 1", p))
         snap["runs_by_role"] = [list(r) for r in _rows(cur, f"SELECT role, status, count(*) FROM agent_runs {w} GROUP BY 1, 2 ORDER BY 1, 2", p)]
         snap["runs_by_model"] = [list(r) for r in _rows(cur, f"SELECT model_provider, model_name, count(*), coalesce(sum(tokens_in),0), coalesce(sum(tokens_out),0), coalesce(sum(cost_usd),0), coalesce(sum(model_requests),0), coalesce(sum(model_retries),0), coalesce(sum(model_timeouts),0) FROM agent_runs {w} GROUP BY 1, 2", p)]
@@ -2061,6 +2064,24 @@ def step_signal(out: Out, base: str, token: str, *, expect_candidate: bool, time
     out.json("signal", "story", {"correlation_id": correlation, "runs": len(runs), "events": len(detail.get("events") or []), "candidates": [c.get("id") for c in candidates], "decided": sorted(decided)})
 
 
+STORY_RUNS_SQL = (
+    "SELECT (SELECT count(*) FROM agent_runs a WHERE a.correlation_id = r.correlation_id) FROM society_events r "
+    "WHERE r.event_type = 'code_candidate.ready' AND r.created_at >= %s "
+    "AND (SELECT e0.event_type FROM society_events e0 WHERE e0.correlation_id = r.correlation_id ORDER BY e0.created_at LIMIT 1) = 'company.ticket_approved' "
+    "GROUP BY r.correlation_id")
+
+
+def story_run_stats(counts: Sequence[int]) -> Dict[str, Any]:
+    """Runs per complete ticket story (ticket_approved ... READY): n, p50, p95, max and the
+    SOCIETY_MAX_RUNS_PER_CORRELATION it implies (p95 x 1.5, at least p95 + 6) -- a proposal
+    for the owner, never applied. Real loops are caught by SOCIETY_MAX_SAME_WAKES_PER_CORRELATION."""
+    vals = sorted(int(c) for c in counts)
+    if not vals:
+        return {"n": 0, "p50": None, "p95": None, "max": None, "proposed_cap": None}
+    p95 = _pct(vals, 0.95)
+    return {"n": len(vals), "p50": _pct(vals, 0.5), "p95": p95, "max": vals[-1], "proposed_cap": int(max(-(-p95 * 3 // 2), p95 + 6))}
+
+
 def step_audit(out: Out, base: str, token: str, conn, hours: int) -> None:
     since = _now() - timedelta(hours=hours)
     snap = snapshot(conn, since)
@@ -2068,6 +2089,9 @@ def step_audit(out: Out, base: str, token: str, conn, hours: int) -> None:
     out.check("audit", "L01", int(snap["loop_breaker_tripped"]) == 0 and int(snap["loop_breaker_suppressed"]) == 0, f"loop breaker tripped={snap['loop_breaker_tripped']} suppressed={snap['loop_breaker_suppressed']} in the last {hours}h"
               + "".join(f"; [{t['correlation']}] {t['note']} swallowed={t['swallowed']} depth={t['depth']} runs={t['runs']} root={t['root']} {t['subject']}"
                         f" redelivered={t['redelivered']}" for t in snap.get("loop_breaker_trips") or []))
+    st = story_run_stats(snap.get("story_runs") or [])
+    out.info("audit", f"story runs (ticket_approved -> READY, {hours}h): n={st['n']} p50={st['p50']} p95={st['p95']} max={st['max']} "
+                      f"-> proposed SOCIETY_MAX_RUNS_PER_CORRELATION={st['proposed_cap']} (owner decides)")
     dead = int(snap["runs_by_status"].get("dead", 0))
     out.check("audit", "L02", dead == 0, f"DEAD runs in the last {hours}h: {dead} {snap['dead_runs'][:3]}")
     out.check("audit", "L03", int(snap["forbidden_high_executed"]) == 0, f"forbidden HIGH intents ever executed: {snap['forbidden_high_executed']}; high-risk rows={snap['high_risk_intents']}")
