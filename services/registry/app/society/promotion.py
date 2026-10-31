@@ -60,6 +60,7 @@ from .engineering import workspace as ws_mod
 from .engineering.qa import static_security_scan
 from .events import EventType, emit_event, utcnow
 from .risk import assess as assess_risk
+from .risk import owner_merge_paths, tier_at_least
 
 logger = logging.getLogger(__name__)
 
@@ -594,6 +595,9 @@ def _settle_candidate(promotion: CodePromotion, candidate: CodeCandidate, new_st
 
 
 def _release(db: Session, promotion: CodePromotion) -> None:
+    if (promotion.evidence or {}).get(TRANSIENT_KEY):
+        # a step that completed is the end of a run of provider faults
+        promotion.evidence = {**(promotion.evidence or {}), TRANSIENT_KEY: 0}
     promotion.worker_id = None
     promotion.lease_expires_at = None
     promotion.updated_at = utcnow()
@@ -772,10 +776,40 @@ def _fitness_satisfied(exp: Optional[ChangeExperiment]) -> bool:
     return exp.confidence == "high"
 
 
+def promotion_paths(promotion: CodePromotion, candidate: CodeCandidate) -> List[str]:
+    """Every path this promotion changes, from persisted rows (candidate + validation)."""
+    paths = list(candidate.changed_files or []) + list((promotion.eligibility or {}).get("changed_files") or [])
+    return list(dict.fromkeys(str(p) for p in paths))
+
+
+def autonomous_merge_scope(settings: SocietySettings, tier: RiskTier, paths: List[str]) -> List[str]:
+    """Why the CONTROLLER may not merge this change on its own ([] = it may,
+    once every gate holds). Tier above SOCIETY_AUTO_MERGE_MAX_TIER, NEVER, or a
+    path in the owner-only core (risk.OWNER_MERGE_PATTERNS) keep the owner's merge."""
+    reasons: List[str] = []
+    if not settings.auto_merge_enabled:
+        reasons.append("auto_merge_disabled")
+    if tier == RiskTier.NEVER:
+        reasons.append("risk_tier_never")
+    else:
+        try:
+            ceiling = RiskTier(settings.auto_merge_max_tier)
+        except ValueError:
+            ceiling = RiskTier.GREEN
+        if ceiling == RiskTier.NEVER or (tier != ceiling and tier_at_least(tier, ceiling)):
+            reasons.append(f"risk_tier_{tier.value}_above_{ceiling.value}")
+    core = owner_merge_paths(paths)
+    if core:
+        reasons.append("owner_merge_core:" + ",".join(core[:5]))
+    return reasons
+
+
 def compute_eligibility(db: Session, settings: SocietySettings, promotion: CodePromotion, candidate: CodeCandidate, state: Optional[PRState]) -> Dict[str, Any]:
-    """Merge gates from persisted facts. Human approval is required for AMBER
-    and RED always, and for GREEN whenever auto-merge is off."""
+    """Merge gates from persisted facts. Human approval is required whenever
+    the controller may not merge on its own (``autonomous_merge_scope``): auto-merge
+    off, a tier above SOCIETY_AUTO_MERGE_MAX_TIER (default green), or the owner-only core."""
     tier = RiskTier(promotion.risk_tier)
+    scope = autonomous_merge_scope(settings, tier, promotion_paths(promotion, candidate))
     exp = latest_experiment(db, promotion)
     exp_status = getattr(exp.status, "value", exp.status) if exp else None
     gates = {
@@ -795,7 +829,8 @@ def compute_eligibility(db: Session, settings: SocietySettings, promotion: CodeP
         "change_budget": open_prs(db) <= settings.max_open_autonomous_prs,
         # A draft PR cannot be merged by anyone, so it can never be merge-eligible.
         "pr_not_draft": (not state.draft) if state else True,
-        "human_approval_required": tier != RiskTier.GREEN or not settings.auto_merge_enabled,
+        "human_approval_required": bool(scope),
+        "owner_merge_reasons": scope,
         "human_approvals": list(state.approvals) if state else [],
         "auto_merge_enabled": bool(settings.auto_merge_enabled),
     }
@@ -803,7 +838,7 @@ def compute_eligibility(db: Session, settings: SocietySettings, promotion: CodeP
     hard = ["risk_promotable", "ci_passed", "branch_up_to_date", "head_unchanged", "qa_pass", "security_pass", "no_critical_findings", "fitness_precheck", "no_unresolved_review", "change_budget", "human_approval_satisfied"]
     gates["blocking"] = [g for g in hard if not gates.get(g)]
     gates["merge_eligible"] = not gates["blocking"]
-    # ── the GREEN-only autonomous merge law (§23) ──────────────────────
+    # ── the autonomous merge law (§23), up to SOCIETY_AUTO_MERGE_MAX_TIER ──
     # "PR not draft" gates AUTO-merge, not eligibility: a draft PR cannot be
     # merged by anyone, but a human may take a non-GREEN PR out of draft and
     # merge it themselves -- which is exactly the governance path RED keeps.
@@ -812,8 +847,7 @@ def compute_eligibility(db: Session, settings: SocietySettings, promotion: CodeP
     gates["merge_budget_remaining"] = max(0, settings.max_autonomous_merges_per_day - autonomous_merges_today(db))
     gates["auto_merge_allowed"] = bool(
         gates["merge_eligible"]
-        and tier == RiskTier.GREEN          # never AMBER, RED or CONSTITUTIONAL
-        and settings.auto_merge_enabled
+        and not scope                       # tier <= ceiling, flag on, no owner-only core path
         and gates["pr_not_draft"]
         and not freeze
     )
@@ -846,8 +880,15 @@ def design_review_lines(spec: Dict[str, Any]) -> List[str]:
             f" · {int(dr.get('conditions') or 0)} condition(s)", f"- positions: {stances}", ""]
 
 
-def pr_body_from_facts(db: Session, promotion: CodePromotion, candidate: CodeCandidate) -> str:
+def pr_body_from_facts(db: Session, promotion: CodePromotion, candidate: CodeCandidate, settings: Optional[SocietySettings] = None) -> str:
     """PR description generated ONLY from durable records (never model prose)."""
+    tier_value = str(getattr(promotion.risk_tier, "value", promotion.risk_tier)).lower()
+    if settings is not None and tier_value in {t.value for t in RiskTier}:
+        owner_merges = bool(autonomous_merge_scope(settings, RiskTier(tier_value), promotion_paths(promotion, candidate)))
+        merge_note = (" · **owner merge queue**: never auto-merged; the owner merges" if owner_merges
+                      else " · **auto-merge**: the controller merges once CI is green and every gate holds")
+    else:
+        merge_note = " · **owner merge queue**: never auto-merged; the owner merges" if tier_value in ("red", "never") else ""
     from ..models import ImprovementProposal
 
     prop = db.query(ImprovementProposal).filter(ImprovementProposal.id == candidate.proposal_id).first() if candidate.proposal_id else None
@@ -861,7 +902,7 @@ def pr_body_from_facts(db: Session, promotion: CodePromotion, candidate: CodeCan
         f"- candidate: `{candidate.id}` · correlation: `{candidate.correlation_id}` · promotion: `{promotion.id}`",
         f"- proposal: {('`' + str(prop.id) + '` — ' + prop.title) if prop else 'none'}",
         f"- trusted risk tier: **{promotion.risk_tier}** (classified from the base revision)"
-        + (" · **owner merge queue**: never auto-merged; the owner merges" if str(getattr(promotion.risk_tier, "value", promotion.risk_tier)).lower() in ("red", "never") else ""),
+        + merge_note,
         f"- base `{(candidate.base_sha or '')[:12]}` → head `{(candidate.head_sha or '')[:12]}` · {len(candidate.changed_files or [])} file(s), {candidate.diff_lines or 0} diff line(s)",
         "",
         "### Files",
@@ -894,7 +935,12 @@ def pr_body_from_facts(db: Session, promotion: CodePromotion, candidate: CodeCan
 
 
 #: A base that moves faster than CI finishes would reconcile forever. Bounded.
-MAX_BASE_RECONCILES = 3
+# Each autonomous merge moves main, so every other open PR needs one update per
+# merge ahead of it: the bound is the merge queue's depth, not a retry count.
+MAX_BASE_RECONCILES = 12
+# evidence key: provider faults in a row (reset by any step that completes)
+TRANSIENT_KEY = "transient_failures"
+PROVIDER_FAULT_REASON = "provider kept failing after"
 
 
 def _reconcile_base(db: Session, settings: SocietySettings, provider: PromotionProvider, promotion: CodePromotion, candidate: CodeCandidate, state: PRState) -> bool:
@@ -1041,15 +1087,15 @@ def _decline_recovery(promotion: CodePromotion, note: str) -> None:
     promotion.evidence = evidence
 
 
-def _ready_blockers(candidate: CodeCandidate, promotion: CodePromotion, state: PRState) -> List[str]:
+def _ready_blockers(settings: SocietySettings, candidate: CodeCandidate, promotion: CodePromotion, state: PRState) -> List[str]:
     """Why this draft PR may NOT be offered for review yet.
 
     A draft PR cannot merge, so leaving it draft is the safe default and the
     transition out of it is an authority decision -- taken by the trusted
-    controller from persisted facts, never by the model, and never on a change
-    whose trusted tier is not GREEN (an AMBER/RED/CONSTITUTIONAL candidate may
-    be published for humans to read, but it is not put in the queue that
-    autonomous merge draws from).
+    controller from persisted facts, never by the model. GREEN is offered
+    always; a higher tier only when the controller may merge it on its own
+    (``autonomous_merge_scope`` is empty). Anything else stays a draft for the
+    owner to read, outside the queue autonomous merge draws from.
     """
     blockers: List[str] = []
     if getattr(candidate.status, "value", candidate.status) != CodeCandidateStatus.READY.value:
@@ -1061,18 +1107,19 @@ def _ready_blockers(candidate: CodeCandidate, promotion: CodePromotion, state: P
         blockers.append("security_not_passed")
     if sec.get("findings") or sec.get("static_findings"):
         blockers.append("security_findings_present")
-    if str(promotion.risk_tier) != RiskTier.GREEN.value:
-        blockers.append(f"risk_tier_{promotion.risk_tier}")
+    tier = RiskTier(str(getattr(promotion.risk_tier, "value", promotion.risk_tier)))
+    if tier != RiskTier.GREEN and autonomous_merge_scope(settings, tier, promotion_paths(promotion, candidate)):
+        blockers.append(f"risk_tier_{tier.value}")
     if state.head_sha and promotion.candidate_sha and state.head_sha != promotion.candidate_sha:
         blockers.append("head_moved")
     return blockers
 
 
-def _offer_for_review(db: Session, provider: PromotionProvider, promotion: CodePromotion, candidate: CodeCandidate, state: PRState) -> None:
-    """Take a GREEN, fully gated draft PR out of draft. Records why, either way."""
+def _offer_for_review(db: Session, settings: SocietySettings, provider: PromotionProvider, promotion: CodePromotion, candidate: CodeCandidate, state: PRState) -> None:
+    """Take a fully gated draft PR the controller may merge out of draft. Records why, either way."""
     if not state.draft:
         return
-    blockers = _ready_blockers(candidate, promotion, state)
+    blockers = _ready_blockers(settings, candidate, promotion, state)
     if blockers:
         promotion.evidence = {**(promotion.evidence or {}), "ready_for_review_blocked_by": blockers}
         return
@@ -1145,7 +1192,7 @@ def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvid
             _release(db, promotion)
             return PromotionStatus.BRANCH_READY.value
         if status == PromotionStatus.BRANCH_READY:
-            pr = provider.open_or_update_pr(promotion, candidate, f"[agentnet-auto] {candidate.title}"[:200], pr_body_from_facts(db, promotion, candidate))
+            pr = provider.open_or_update_pr(promotion, candidate, f"[agentnet-auto] {candidate.title}"[:200], pr_body_from_facts(db, promotion, candidate, settings))
             promotion.external_pr_number = pr.number
             promotion.external_pr_url = pr.url
             promotion.evidence = {**(promotion.evidence or {}), "pr_created": pr.created}
@@ -1191,7 +1238,9 @@ def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvid
                 _transition(db, promotion, candidate, PromotionStatus.SUPERSEDED, reason="PR head moved away from the validated candidate sha")
                 _release(db, promotion)
                 return PromotionStatus.SUPERSEDED.value
-            if state.base_moved and status in (PromotionStatus.CI_PASSED, PromotionStatus.AWAITING_APPROVAL, PromotionStatus.MERGE_ELIGIBLE):
+            # A red PR on a stale base is updated too: main may already hold the
+            # fix (or the conflict) its checks are failing on.
+            if state.base_moved and status in (PromotionStatus.CI_PASSED, PromotionStatus.CI_FAILED, PromotionStatus.AWAITING_APPROVAL, PromotionStatus.MERGE_ELIGIBLE):
                 promotion.merge_state = "stale"
                 promotion.eligibility = {**(promotion.eligibility or {}), "branch_up_to_date": False}
                 if status == PromotionStatus.MERGE_ELIGIBLE:
@@ -1212,6 +1261,7 @@ def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvid
                 _release(db, promotion)
                 return promotion.status.value if isinstance(promotion.status, PromotionStatus) else str(promotion.status)
             # CI passed
+            ensure_fitness_requested(db, settings, promotion, candidate)
             if status in (PromotionStatus.PR_OPEN, PromotionStatus.CI_PENDING):
                 _transition(db, promotion, candidate, PromotionStatus.CI_PASSED)
                 _release(db, promotion)
@@ -1219,7 +1269,7 @@ def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvid
             # Offer a fully gated GREEN candidate for review BEFORE eligibility is
             # computed: a draft PR can never merge, so leaving it draft would make
             # merge_eligible unreachable for exactly the changes that qualify.
-            _offer_for_review(db, provider, promotion, candidate, state)
+            _offer_for_review(db, settings, provider, promotion, candidate, state)
             gates = compute_eligibility(db, settings, promotion, candidate, state)
             promotion.eligibility = {**(promotion.eligibility or {}), **gates}
             promotion.merge_state = "eligible" if gates["merge_eligible"] else "blocked"
@@ -1254,14 +1304,20 @@ def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvid
     except ProviderTransient as exc:
         db.rollback()
         promotion = db.merge(promotion)
-        if int(promotion.attempt or 0) >= settings.promotion_max_attempts:
+        # ``attempt`` counts every CLAIM (each poll of an open PR is one), so it
+        # is not a fault budget: staging 2026-10-30 rejected #135-#137 "after
+        # 221-322 attempts" on ONE GitHub 500. The budget is CONSECUTIVE faults.
+        faults = int((promotion.evidence or {}).get(TRANSIENT_KEY) or 0) + 1
+        promotion.evidence = {**(promotion.evidence or {}), TRANSIENT_KEY: faults}
+        if faults >= settings.promotion_max_attempts and not promotion.external_pr_number:
             candidate = db.merge(candidate)
-            _transition(db, promotion, candidate, PromotionStatus.REJECTED, reason=f"provider kept failing after {promotion.attempt} attempts: {exc}")
+            _transition(db, promotion, candidate, PromotionStatus.REJECTED, reason=f"{PROVIDER_FAULT_REASON} {faults} consecutive attempts: {exc}")
             _release(db, promotion)
             return PromotionStatus.REJECTED.value
-        # keep the lease so the step is retried after backoff (lease expiry)
-        promotion.failure_reason = f"transient: {exc}"[:2000]
-        promotion.lease_expires_at = utcnow() + timedelta(seconds=min(settings.promotion_lease_seconds, 5 * (2 ** max(0, int(promotion.attempt or 1) - 1))))
+        # An open PR is never ended by the provider's own faults: it is held and
+        # re-read with a capped backoff until GitHub answers again.
+        promotion.failure_reason = f"transient ({faults} in a row): {exc}"[:2000]
+        promotion.lease_expires_at = utcnow() + timedelta(seconds=min(settings.promotion_lease_seconds, 5 * (2 ** min(10, faults - 1))))
         promotion.updated_at = utcnow()
         db.commit()
         return "retry"
@@ -1292,9 +1348,90 @@ def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvid
         return PromotionStatus.BLOCKED_EXTERNAL.value
 
 
+# Promotions ended by the PROVIDER's faults, not by a decision: GitHub 5xx /
+# timeouts past the old (cumulative) budget, or a 4xx on a READ.
+_FAULT_REASONS = (PROVIDER_FAULT_REASON, "refused: GitHub error 409 for GET", "refused: GitHub error 422 for GET")
+MAX_REVIVALS = 3
+
+
+def revive_faulted_promotions(db: Session, *, limit: int = 20) -> int:
+    """Resume the open PR of a still-READY candidate whose promotion was ended by
+    provider faults (staging 2026-10-30: 7 READY rows, PRs #132-#137 still open).
+
+    Not a new request: the Governor's request, the policy verdict and the change
+    budget it passed stay those of the faulted row (same requester, run and PR,
+    counted once). The new row starts at PR_OPEN on the head the controller had
+    validated, so the next poll reads the PR as it is now: merged -> MERGED,
+    closed -> closed_by_owner, base moved -> update-branch and CI again. Bounded
+    by MAX_REVIVALS per candidate. Commits."""
+    revived = 0
+    rows = (db.query(CodePromotion).join(CodeCandidate, CodeCandidate.id == CodePromotion.candidate_id)
+            .filter(CodePromotion.status == PromotionStatus.REJECTED, CodePromotion.external_pr_number.isnot(None),
+                    CodeCandidate.status == CodeCandidateStatus.READY)
+            .order_by(CodePromotion.updated_at).limit(200).all())
+    for old in rows:
+        if revived >= limit:
+            break
+        if not (old.failure_reason or "").startswith(_FAULT_REASONS):
+            continue
+        if active_promotion_for(db, old.candidate_id) is not None:
+            continue
+        chain = int((old.evidence or {}).get("revivals") or 0) + 1
+        if chain > MAX_REVIVALS:
+            continue
+        newer = (db.query(CodePromotion).filter(CodePromotion.candidate_id == old.candidate_id, CodePromotion.created_at > old.created_at).first())
+        if newer is not None:
+            continue  # the candidate has moved on (a later promotion exists)
+        candidate = db.query(CodeCandidate).filter(CodeCandidate.id == old.candidate_id).first()
+        keep = {k: v for k, v in (old.evidence or {}).items() if k in ("requested_by", "run_id", "base_reconciles", "base_reconciled_from", "approvals", "branch_sha", "pr_created")}
+        promo = CodePromotion(
+            id=uuid.uuid4(), candidate_id=old.candidate_id, correlation_id=old.correlation_id, risk_tier=old.risk_tier,
+            base_sha=old.base_sha, candidate_sha=old.candidate_sha, previous_good_sha=old.previous_good_sha, provider=old.provider,
+            external_branch=old.external_branch, external_pr_number=old.external_pr_number, external_pr_url=old.external_pr_url,
+            status=PromotionStatus.PR_OPEN, requested_by_agent_id=old.requested_by_agent_id, requested_by_run_id=old.requested_by_run_id,
+            eligibility={k: v for k, v in (old.eligibility or {}).items() if k in ("changed_files", "risk_tier", "risk_reasons", "security_required")},
+            evidence={**keep, "revived_from": str(old.id), "revivals": chain, "revived_reason": (old.failure_reason or "")[:300]},
+        )
+        db.add(promo)
+        db.flush()
+        emit_event(db, event_type=EventType.PROMOTION_PR_OPEN, payload=_event_payload(promo, candidate, reason=f"resumed after provider faults (revival {chain})", revived_from=str(old.id)),
+                   actor_type="system", subject_type="code_promotion", subject_id=promo.id, correlation_id=promo.correlation_id,
+                   idempotency_key=f"promotion:{old.id}:revived", notify=False)
+        db.commit()
+        revived += 1
+    return revived
+
+
+def ensure_fitness_requested(db: Session, settings: SocietySettings, promotion: CodePromotion, candidate: CodeCandidate) -> bool:
+    """CI is green: make sure the trusted fitness engine evaluates this head.
+
+    The gate needs an experiment, and only an agent intent
+    (REQUEST_MERGE_EVALUATION) used to create one -- none ever did on staging, so
+    ``fitness_precheck`` blocked every promotion. The controller asks for it as
+    a deterministic step; the verdict is still the fitness engine's (trusted
+    base, judged from the running revision), never the controller's."""
+    from .fitness import request_experiment  # noqa: PLC0415 -- fitness imports promotion
+
+    if latest_experiment(db, promotion) is not None:
+        return False
+    cause = db.query(SocietyEvent).filter(SocietyEvent.subject_type == "code_promotion", SocietyEvent.subject_id == promotion.id).order_by(SocietyEvent.created_at.desc()).first()
+    _, created = request_experiment(db, settings=settings, promotion=promotion, candidate=candidate, agent=None, causation=cause, source_run_id=None)
+    return created
+
+
 def process_promotions(db_factory, *, settings: SocietySettings, provider: PromotionProvider, worker_id: str, max_items: int = 20) -> Dict[str, int]:
     """Worker loop step: claim and advance promotions until none is claimable."""
     stats: Dict[str, int] = {}
+    db = db_factory()
+    try:
+        revived = revive_faulted_promotions(db)
+        if revived:
+            stats["revived"] = revived
+    except Exception:  # noqa: BLE001 -- a recovery sweep must never stop the controller
+        db.rollback()
+        logger.exception("promotion revival sweep failed")
+    finally:
+        db.close()
     for _ in range(max_items):
         db = db_factory()
         try:

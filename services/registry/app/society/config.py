@@ -137,6 +137,7 @@ ANTHROPIC_MIN_CACHEABLE_TOKENS = 512
 # SOCIETY_MODEL_CACHE_TTL: the TTL of a decide run's stable prompt prefix.
 # auto = by the agent's cadence (1h when its runs are usually > 5 minutes apart).
 MODEL_CACHE_TTLS = ("auto", "5m", "1h", "off")
+AUTO_MERGE_TIERS = ("green", "amber", "red")
 # Models the API may re-run on a fallback model when they decline a request
 # (``fallbacks: "default"``); Haiku has no server-side fallback.
 ANTHROPIC_FALLBACK_MODELS = ("claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5")
@@ -219,6 +220,11 @@ class SocietySettings:
     # then pass the ordinary role gates, still first in the queue).
     owner_reserve_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_OWNER_RESERVE_USD", "0"))
     max_causation_depth: int = field(default_factory=lambda: _int("SOCIETY_MAX_CAUSATION_DEPTH", 24, minimum=1))
+    # The REAL-loop breaker, independent of the story's length: how many times
+    # one (event type, subject) may wake agents within a story. A re-emitted
+    # event or a ping-pong between two roles repeats the pair; a long legitimate
+    # pipeline (ticket -> design -> build -> QA -> security -> READY -> PR) does not.
+    max_same_wakes_per_correlation: int = field(default_factory=lambda: _int("SOCIETY_MAX_SAME_WAKES_PER_CORRELATION", 4, minimum=1))
     max_runs_per_correlation: int = field(default_factory=lambda: _int("SOCIETY_MAX_RUNS_PER_CORRELATION", 40, minimum=1))
     max_intents_per_run: int = field(default_factory=lambda: _int("SOCIETY_MAX_INTENTS_PER_RUN", 7, minimum=1))
     repeat_message_window_seconds: int = field(
@@ -309,6 +315,12 @@ class SocietySettings:
     # ── promotion / evaluation / deployment providers ──
     promotion_provider: str = field(default_factory=lambda: os.getenv("SOCIETY_PROMOTION_PROVIDER", "disabled").strip().lower())
     auto_merge_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_AUTO_MERGE_ENABLED", False))
+    # The highest trusted tier the controller may merge on its own once every
+    # gate holds (CI green, QA + Security PASS on the exact head, fitness, no
+    # freeze, up to date). green (default) | amber | red. NEVER is never
+    # promotable, and the owner-only core (risk.OWNER_MERGE_PATTERNS) always
+    # waits for the owner whatever this says.
+    auto_merge_max_tier: str = field(default_factory=lambda: os.getenv("SOCIETY_AUTO_MERGE_MAX_TIER", "green").strip().lower())
     github_repository: str = field(default_factory=lambda: os.getenv("SOCIETY_GITHUB_REPOSITORY", ""))
     github_base_branch: str = field(default_factory=lambda: os.getenv("SOCIETY_GITHUB_BASE_BRANCH", "main"))
     github_api_url: str = field(default_factory=lambda: os.getenv("SOCIETY_GITHUB_API_URL", "https://api.github.com"))
@@ -469,6 +481,7 @@ class SocietySettings:
             "deployment_provider": self.deployment_provider,
             "auto_merge_enabled": self.auto_merge_enabled,
             "max_autonomous_merges_per_day": self.max_autonomous_merges_per_day,
+            "auto_merge_max_tier": self.auto_merge_max_tier,
         }
 
 
@@ -526,6 +539,8 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
         problems.append("SOCIETY_MODEL_USD_PER_1K_* must be >= 0")
     if s.run_lease_seconds <= s.model_timeout_seconds // 2 and s.run_lease_seconds < 30:
         problems.append("SOCIETY_RUN_LEASE_SECONDS is too short for the model timeout (a run would lose its lease mid-call)")
+    if s.auto_merge_max_tier not in AUTO_MERGE_TIERS:
+        problems.append(f"SOCIETY_AUTO_MERGE_MAX_TIER must be one of {'|'.join(AUTO_MERGE_TIERS)} (NEVER is never promotable)")
     if s.auto_merge_enabled:
         # This used to refuse auto-merge with the GitHub provider outright, as a
         # phase guard, because no real promotion had ever been exercised. One has

@@ -90,6 +90,13 @@ def drive(db_factory, settings, provider, *, worker_id="w-promo", rounds=12):
 
 
 def _experiment_pass(db, promo, cand):
+    # The controller requests the experiment itself once CI is green; the fitness
+    # engine then fills THAT row. Mirror it: pass the planned row when it exists.
+    planned = db.query(ChangeExperiment).filter(ChangeExperiment.promotion_id == promo.id, ChangeExperiment.status == "planned").first()
+    if planned is not None:
+        planned.status, planned.decision, planned.confidence = "pass", "pass", "high"
+        db.commit()
+        return planned
     exp = ChangeExperiment(id=uuid.uuid4(), candidate_id=cand.id, promotion_id=promo.id, correlation_id=cand.correlation_id, baseline_sha=cand.base_sha, candidate_sha=cand.head_sha, status="pass", decision="pass", confidence="high", criteria_snapshot={"version": "fitness-v1"})
     db.add(exp)
     db.commit()
@@ -320,8 +327,9 @@ def test_ci_failure_base_move_head_change_and_closed_pr(db, db_factory, society_
     provider.move_base("base0001")
     drive(db_factory, society_settings, provider)   # drives to quiescence
     db.refresh(p2)
-    assert provider.update_branch_count == 1, "the base was merged INTO the head exactly once"
-    assert "update_branch" in [c[0] for c in provider.calls]
+    updates = [c[1] for c in provider.calls if c[0] == "update_branch"]
+    assert updates.count(c2.branch_name) == 1, "the base was merged INTO the head exactly once"
+    assert updates.count(c1.branch_name) == 1, "the red PR on the stale base is updated too (main may hold its fix)"
     assert provider.merge_count == 0, "reconciling must never merge the PR"
     assert provider.prs[c2.branch_name]["head_sha"] != stale_head, "the head is a new merge commit, not a rewrite"
     assert p2.candidate_sha == provider.prs[c2.branch_name]["head_sha"], "the reconciled head is now the validated sha"
@@ -828,7 +836,7 @@ def test_the_github_provider_checks_the_persisted_verdict_not_just_the_flag(monk
     for gates, why in [
         ({}, "did not authorise"),
         ({"auto_merge_allowed": False, "trusted_risk_tier": "green"}, "did not authorise"),
-        ({"auto_merge_allowed": True, "trusted_risk_tier": "red"}, "GREEN-only"),
+        ({"auto_merge_allowed": True, "trusted_risk_tier": "red"}, "limited to green"),
         ({"auto_merge_allowed": True, "trusted_risk_tier": "green", "merge_freeze": ["daily_merge_cap_reached(1)"]}, "frozen"),
     ]:
         with pytest.raises(pm.ProviderRefused) as exc:

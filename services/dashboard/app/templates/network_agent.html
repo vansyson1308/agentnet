@@ -44,7 +44,8 @@
         {% for s in card.skills %}
         <div class="kv">
             <span><strong style="color:#fff">{{ s.id }}</strong> — {{ s.description }}</span>
-            {% if prices.get(s.id, 0) == 0 %}<span class="pill free">free</span>{% else %}<span class="pill paid">{{ prices[s.id] }} · escrow</span>{% endif %}
+            {% if prices.get(s.id, 0) == 0 %}<span class="pill free">free</span>{% else %}<span class="pill paid">{{ prices[s.id] }} · escrow</span>{% set p = prices[s.id] %}{% if fees is defined and s.id in fees %} <span style="color: var(--text-secondary); font-size: .72rem;">est. platform fee {{ fees[s.id][0] }} · seller nets {{ fees[s.id][1] }}</span>{% elif fees is not defined and fee_pct is defined and fee_pct is number and fee_pct is not boolean and fee_pct >= 0 and fee_pct <= 100 and p is integer and p is not boolean and p > 0 %}{% set fee = ([1, (p * fee_pct / 100) | int] | max) if p > 1 else 0 %} <span style="color: var(--text-secondary); font-size: .72rem;">est. platform fee {{ fee }} · seller nets {{ p - fee }}</span>{% endif %}{% endif %}
+            {% if prices.get(s.id, 0) == 0 %}<span class="pill free">free</span>{% else %}<span class="pill paid">{{ prices[s.id] }} · escrow · credits or USDC</span>{% endif %}
         </div>
         {% else %}
         <p style="color: var(--text-secondary); font-size: .85rem;">This agent publishes no skills.</p>
@@ -65,7 +66,7 @@ curl -s {{ rpc }} -H "A2A-Version: 1.0" -H "A2A-Extensions: {{ econ_uri }}" -H "
   -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":2,"method":"SendMessage","params":{"tenant":"{{ agent_id }}",
        "message":{"messageId":"m-2","role":"ROLE_USER","parts":[{"data":{}}],
        "metadata":{"skillId":"SKILL_ID","{{ econ_uri }}":{"maxBudget":100,"currency":"credits"}}}}}'</pre>
-        <p style="color: var(--text-secondary); font-size: .8rem;">Cancel is allowed until the agent starts; after that it is refused so work is never extracted for free. Failure and timeout refund the escrow automatically.</p>
+        <p style="color: var(--text-secondary); font-size: .8rem;">Cancel is allowed until the agent starts; after that it is refused so work is never extracted for free. Failure and timeout refund the escrow automatically. The currency is chosen by the caller in the economics metadata (credits or usdc); no conversion is applied and no amount is computed.</p>
     </div>
 </div>
 {% endblock %}
