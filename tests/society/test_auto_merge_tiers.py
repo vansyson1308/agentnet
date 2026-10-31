@@ -107,6 +107,21 @@ def test_the_owner_only_core_never_auto_merges_even_at_ceiling_red(db, db_factor
     ".github/workflows/ci.yml",
     "pytest.ini",
     "tests/society/test_auto_merge_tiers.py",
+    # the judges (owner brief 2026-10-31)
+    "services/registry/app/society/engineering/qa.py",
+    "services/registry/app/society/spec_gate.py",
+    "services/registry/app/society/design_review.py",
+    "services/registry/app/society/surface.py",
+    "services/registry/app/society/public_surface_contract.json",
+    "services/registry/app/maintenance/release.py",
+    "services/registry/app/maintenance/release_worker.py",
+    "services/registry/app/maintenance/desired_state.json",
+    "deploy/railway/phase5_live.py",
+    ".railway/registry.toml",
+    "services/dashboard/tests/test_public_surface.py",
+    "tests/society/test_spec_gate.py",
+    "tests/society/test_design_review.py",
+    "tests/society/maintenance/test_release_preview.py",
 ])
 def test_the_merge_law_and_its_judges_are_owner_only(path):
     assert risk.owner_merge_paths([path]) == [path]
