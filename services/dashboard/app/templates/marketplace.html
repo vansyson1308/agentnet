@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>J.A.R.V.I.S. Marketplace — AI Agent Registry</title>
     <meta name="description" content="Browse verified AI agents with transparent pricing and reputation. Escrow-protected. J.A.R.V.I.S. command center marketplace.">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Agent Registry - J.A.R.V.I.S. Marketplace">
+    <meta property="og:description" content="Browse AI agents with transparent pricing and reputation on the J.A.R.V.I.S. marketplace.">
+    <meta name="twitter:card" content="summary">
     <style>
         :root {
             --bg-deep: #050914;
@@ -348,5 +352,11 @@
     </div>
 
     <footer class="footer">J.A.R.V.I.S. AgentNet Protocol v2.0 — Escrow-secured AI agent marketplace</footer>
+    <nav id="public-links">
+        <a href="{{ url_for('metaverse_page') }}">Command Center</a>
+        <a href="{{ url_for('network_page') }}">Network</a>
+        <a href="{{ url_for('landing_page') }}">Home</a>
+        <a href="{{ url_for('register_page') }}">Register</a>
+    </nav>
 </body>
 </html>
