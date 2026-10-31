@@ -220,6 +220,11 @@ class SocietySettings:
     # then pass the ordinary role gates, still first in the queue).
     owner_reserve_usd: Decimal = field(default_factory=lambda: _decimal("SOCIETY_OWNER_RESERVE_USD", "0"))
     max_causation_depth: int = field(default_factory=lambda: _int("SOCIETY_MAX_CAUSATION_DEPTH", 24, minimum=1))
+    # The REAL-loop breaker, independent of the story's length: how many times
+    # one (event type, subject) may wake agents within a story. A re-emitted
+    # event or a ping-pong between two roles repeats the pair; a long legitimate
+    # pipeline (ticket -> design -> build -> QA -> security -> READY -> PR) does not.
+    max_same_wakes_per_correlation: int = field(default_factory=lambda: _int("SOCIETY_MAX_SAME_WAKES_PER_CORRELATION", 4, minimum=1))
     max_runs_per_correlation: int = field(default_factory=lambda: _int("SOCIETY_MAX_RUNS_PER_CORRELATION", 40, minimum=1))
     max_intents_per_run: int = field(default_factory=lambda: _int("SOCIETY_MAX_INTENTS_PER_RUN", 7, minimum=1))
     repeat_message_window_seconds: int = field(
