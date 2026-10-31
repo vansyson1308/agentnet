@@ -146,6 +146,14 @@ correlation to `SOCIETY_MAX_RUNS_PER_CORRELATION=12` exactly when the Architect'
 `code_change.requested` arrived. The loop breaker ignored it and the candidate stranded in
 `REQUESTED`. It happened twice that day, to candidates 9da14a08 (later abandoned by an operator)
 and a2788678 (correlation b8db5936). Now each read wakes only its reader, and no cap changed.
+
+**Length is not a loop (2026-10-31).** A complete ticket story (ticket approved -> design review -> build -> QA ->
+Security -> READY -> PR) legitimately takes more than 12 runs; staging tripped 6 times in 12 h on ordinary
+stories. Real loops repeat: the same event re-emitted, or two roles ping-ponging, wake agents again and again on
+the same (event type, subject). `SOCIETY_MAX_SAME_WAKES_PER_CORRELATION` (default 4) cuts exactly that, whatever
+the story's length, so `SOCIETY_MAX_RUNS_PER_CORRELATION` can be sized to real stories: the validator's `audit`
+step prints the runs of each ticket story that reached READY (p50/p95/max) and the cap it implies (p95 x 1.5, at
+least p95 + 6). The owner decides the value.
 - A subscription to a targeted-only type wakes nobody extra; this includes one added through
   `SOCIETY_ROLES_FILE`.
 - If the target cannot be resolved, the event is ignored with the dispatch note
