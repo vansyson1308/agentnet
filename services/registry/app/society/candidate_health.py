@@ -260,7 +260,7 @@ _PROMOTION_OPEN = ("requested", "validating", "branch_ready", "pr_open", "ci_pen
 
 
 def owner_merge_queue(db: Session) -> List[Dict[str, Any]]:
-    """RED candidates' open PRs: only the owner merges them. Each row carries the ticket's
+    """RED candidates' open PRs the owner must merge (not those the controller may auto-merge). Each row carries the ticket's
     objective link and the BENCH VERDICT numbers from the persisted QA report (structural)."""
     from . import tickets  # noqa: PLC0415
 
@@ -269,6 +269,8 @@ def owner_merge_queue(db: Session) -> List[Dict[str, Any]]:
             .order_by(CodePromotion.created_at.desc()).limit(50).all())
     out = []
     for promo, cand in rows:
+        if (promo.eligibility or {}).get("human_approval_required") is False:
+            continue  # the controller merges it on its own (SOCIETY_AUTO_MERGE_MAX_TIER)
         t = tickets.for_proposal(db, cand.proposal_id)
         out.append({
             "candidate_id": str(cand.id), "promotion_id": str(promo.id), "title": cand.title, "risk_tier": _ev(promo.risk_tier), "status": _ev(promo.status),

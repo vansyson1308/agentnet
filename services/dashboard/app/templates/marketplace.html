@@ -319,6 +319,7 @@
                     <div class="price">
                         {% if agent.price_per_task and agent.price_per_task > 0 %}
                         {{ "%.0f"|format(agent.price_per_task) }} credits
+                         <span class="pay-hint" data-testid="pay-hint">Pay with credits or USDC</span>
                         {% else %}
                         Free
                         {% endif %}

@@ -55,7 +55,7 @@ import subprocess
 import tempfile
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from .config import SocietySettings
+from .config import AUTO_MERGE_TIERS, SocietySettings
 from .engineering import workspace as ws_mod
 from .github_credentials import (
     CredentialRefused,
@@ -170,6 +170,11 @@ class GitHubPromotionProvider:
             raise ProviderRefused(f"GitHub refused {method} {path} ({status})")
         if status == 404:
             return None
+        if method == "GET" and status in (409, 422):
+            # A READ refused as "unprocessable" changes nothing and is answered
+            # differently a minute later (staging 2026-10-30: GET /pulls/132 422
+            # ended the promotion of a PR the owner then merged). Retry, never end.
+            raise ProviderTransient(f"GitHub returned {status} for {method} {path}")
         if status >= 400:
             raise ProviderRefused(f"GitHub error {status} for {method} {path}")
         return body
@@ -229,6 +234,9 @@ class GitHubPromotionProvider:
             shutil.rmtree(helper_dir, ignore_errors=True)
         if proc.returncode != 0:
             err = redact((proc.stderr or "")[:300], cred.token)
+            if any(m in err for m in ("Internal Server Error", "returned error: 5", "HTTP 5", "Service Unavailable", "Bad Gateway")):
+                # the remote failed; git then also prints "rejected" (staging 2026-10-30)
+                raise ProviderTransient(f"git push: remote error: {err}")
             if "rejected" in err or "non-fast-forward" in err or "fetch first" in err:
                 raise ProviderConflict(f"push rejected (non-fast-forward): {err}")
             if "Authentication failed" in err or "401" in err or "403" in err:
@@ -396,8 +404,12 @@ class GitHubPromotionProvider:
         gates = dict(getattr(promotion, "eligibility", None) or {})
         if gates.get("auto_merge_allowed") is not True:
             raise ProviderRefused("the promotion controller did not authorise an autonomous merge (auto_merge_allowed is not true)")
-        if str(gates.get("trusted_risk_tier") or getattr(promotion, "risk_tier", "")) != "green":
-            raise ProviderRefused(f"autonomous merge is GREEN-only; this promotion is {gates.get('trusted_risk_tier') or promotion.risk_tier}")
+        tier = str(gates.get("trusted_risk_tier") or getattr(promotion.risk_tier, "value", promotion.risk_tier) or "")
+        allowed = AUTO_MERGE_TIERS[: AUTO_MERGE_TIERS.index(self.settings.auto_merge_max_tier) + 1] if self.settings.auto_merge_max_tier in AUTO_MERGE_TIERS else ("green",)
+        if tier not in allowed:
+            raise ProviderRefused(f"autonomous merge is limited to {'/'.join(allowed)} (SOCIETY_AUTO_MERGE_MAX_TIER); this promotion is {tier or '?'}")
+        if gates.get("owner_merge_reasons"):
+            raise ProviderRefused(f"only the owner merges this change: {', '.join(list(gates['owner_merge_reasons'])[:4])}")
         if gates.get("merge_freeze"):
             raise ProviderRefused(f"merge authority is frozen: {', '.join(list(gates['merge_freeze'])[:4])}")
         if not expected_head_sha:
