@@ -135,6 +135,57 @@ GREEN_PATTERNS: Sequence[str] = (
     "examples/**/*.md",
 )
 
+# The OWNER-ONLY core: the code that decides what may be merged, and the CI
+# that judges it. A candidate touching any of these is never merged by the
+# controller, whatever SOCIETY_AUTO_MERGE_MAX_TIER says -- otherwise one
+# candidate could rewrite the merge law and then merge itself under it.
+OWNER_MERGE_PATTERNS: Sequence[str] = (
+    "services/registry/app/society/risk.py",
+    "services/registry/app/society/fitness.py",
+    "services/registry/app/society/promotion.py",
+    "services/registry/app/society/promotion_github.py",
+    "services/registry/app/society/promotion_queue.py",
+    "services/registry/app/society/policy.py",
+    "services/registry/app/society/approvals.py",
+    "services/registry/app/society/operator_auth.py",
+    "services/registry/app/society/config.py",
+    "services/registry/app/society/github_credentials.py",
+    "services/registry/app/society/secret_redaction.py",
+    "services/registry/app/maintenance/policy.py",
+    "tests/society/test_promotion.py",
+    "tests/society/test_auto_merge_tiers.py",
+    "tests/society/test_risk_and_meta_change.py",
+    "tests/society/test_fitness.py",
+    # The JUDGES: how a candidate is built, reviewed, tested and released. A
+    # candidate may not change how it is judged and then merge itself.
+    "services/registry/app/society/engineering/qa.py",
+    "services/registry/app/society/spec_gate.py",
+    "services/registry/app/society/design_review.py",
+    "services/registry/app/society/surface.py",
+    "services/registry/app/society/public_surface_contract.json",
+    "services/registry/app/maintenance/release*.py",
+    "services/registry/app/maintenance/desired_state.json",
+    "services/dashboard/tests/test_public_surface.py",
+    "services/dashboard/tests/test_experience_contract.py",
+    "tests/society/test_engineering.py",
+    "tests/society/test_qa_env.py",
+    "tests/society/test_spec_gate.py",
+    "tests/society/test_ticket_spec_gate.py",
+    "tests/society/test_design_review.py",
+    "tests/society/test_public_surface_monitor.py",
+    "tests/society/maintenance/test_release_preview.py",
+    "tests/society/maintenance/test_boundaries.py",
+    "deploy/*",
+    "deploy/**",
+    ".railway/*",
+    ".railway/**",
+    ".github/*",
+    ".github/**",
+    "pytest.ini",
+    "scripts/ci/*",
+    "scripts/ci/**",
+)
+
 # Exceptions evaluated BEFORE the RED list: harmless acceptance tests for
 # documentation candidates live under tests/society/ but are GREEN.
 GREEN_OVERRIDE_PATTERNS: Sequence[str] = ("tests/society/acceptance/*",)
@@ -202,6 +253,11 @@ def tier_for_path(path: str) -> RiskTier:
     if _match(path, GREEN_PATTERNS):
         return RiskTier.GREEN
     return RiskTier.AMBER
+
+
+def owner_merge_paths(paths: Iterable[str]) -> List[str]:
+    """The changed paths only the owner may merge (OWNER_MERGE_PATTERNS)."""
+    return [p for p in paths if _match(p, OWNER_MERGE_PATTERNS)]
 
 
 def max_tier(tiers: Iterable[RiskTier]) -> RiskTier:
@@ -299,6 +355,8 @@ __all__ = [
     "NEVER_WRITE_PATTERNS",
     "NEVER_READ_PATTERNS",
     "RED_PATTERNS",
+    "OWNER_MERGE_PATTERNS",
+    "owner_merge_paths",
     "GREEN_PATTERNS",
     "is_never_writable",
     "is_never_readable",

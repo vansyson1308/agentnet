@@ -40,3 +40,24 @@ BEGIN
             ADD CONSTRAINT chk_reserved_usdc_nonneg CHECK (reserved_usdc >= 0);
     END IF;
 END $$;
+
+-- ============================================================
+-- Transaction amount non-negative CHECK
+-- ============================================================
+-- update_wallet_balances() moves NEW.amount from from_wallet to
+-- to_wallet, so a negative amount reverses the flow and pulls money
+-- out of the payee. Free tasks escrow 0, so 0 stays legal; the direct
+-- payment API itself requires amount > 0. NOT VALID: binds every new
+-- row and every UPDATE (a legacy negative PENDING row can never be
+-- completed) without failing on historical rows.
+-- ============================================================
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chk_transaction_amount_nonneg'
+    ) THEN
+        ALTER TABLE transactions
+            ADD CONSTRAINT chk_transaction_amount_nonneg CHECK (amount >= 0) NOT VALID;
+    END IF;
+END $$;
