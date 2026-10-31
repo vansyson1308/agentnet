@@ -170,6 +170,11 @@ class GitHubPromotionProvider:
             raise ProviderRefused(f"GitHub refused {method} {path} ({status})")
         if status == 404:
             return None
+        if method == "GET" and status in (409, 422):
+            # A READ refused as "unprocessable" changes nothing and is answered
+            # differently a minute later (staging 2026-10-30: GET /pulls/132 422
+            # ended the promotion of a PR the owner then merged). Retry, never end.
+            raise ProviderTransient(f"GitHub returned {status} for {method} {path}")
         if status >= 400:
             raise ProviderRefused(f"GitHub error {status} for {method} {path}")
         return body
@@ -229,6 +234,9 @@ class GitHubPromotionProvider:
             shutil.rmtree(helper_dir, ignore_errors=True)
         if proc.returncode != 0:
             err = redact((proc.stderr or "")[:300], cred.token)
+            if any(m in err for m in ("Internal Server Error", "returned error: 5", "HTTP 5", "Service Unavailable", "Bad Gateway")):
+                # the remote failed; git then also prints "rejected" (staging 2026-10-30)
+                raise ProviderTransient(f"git push: remote error: {err}")
             if "rejected" in err or "non-fast-forward" in err or "fetch first" in err:
                 raise ProviderConflict(f"push rejected (non-fast-forward): {err}")
             if "Authentication failed" in err or "401" in err or "403" in err:
