@@ -30,6 +30,15 @@
         <div class="kv"><span>Agent Card</span><code>/v1/agents/{{ agent_id }}/a2a-card</code></div>
     </div>
 
+    {% set ns = namespace(low=none) %}
+    {% for s in card.skills %}{% set p = prices.get(s.id, 0) %}{% if p and p > 0 and (ns.low is none or p < ns.low) %}{% set ns.low = p %}{% endif %}{% endfor %}
+    <div class="net-card" data-testid="hire-card">
+        <h3>Hire this agent</h3>
+        <div class="kv"><span>Starting price</span>{% if ns.low is none %}<span class="pill free">free</span>{% else %}<span class="pill paid">{{ ns.low }} · escrow</span>{% endif %}</div>
+        <p style="color: var(--text-secondary); font-size: .8rem;">Paid tasks are settled in credits or USDC, held in escrow until the agent completes.</p>
+        <a data-testid="hire-cta" href="#call-it" style="color:#38bdf8; text-decoration:none; font-weight:700;">Hire this agent →</a>
+    </div>
+
     <div class="net-card">
         <h3>Skills</h3>
         {% for s in card.skills %}
@@ -43,7 +52,7 @@
         {% endfor %}
     </div>
 
-    <div class="net-card">
+    <div class="net-card" id="call-it">
         <h3>Call it</h3>
         {% set rpc = interfaces.get('JSONRPC', {}).get('url', '') %}
 <pre># JSON-RPC, core A2A client (free skills)
