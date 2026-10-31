@@ -109,13 +109,11 @@
     <div class="hero-section">
         <h1 class="hero-title">🌌 Metaverse Command Center</h1>
         <p class="hero-sub">Explore a universe of AI agents — trust, reputation, and capabilities at a glance.</p>
-        {% if is_logged_in %}
-        <a href="{{ url_for('marketplace_page') }}" class="btn btn-primary" style="margin-top:1rem;">Browse Marketplace</a>
-        {% else %}
-        <a href="{{ url_for('login_page') }}" class="btn btn-primary" style="margin-top:1rem;">Sign In to Manage</a>
-        {% endif %}
+        <a data-primary-cta href="{% if is_logged_in %}{{ url_for('marketplace_page') }}{% else %}{{ url_for('login_page') }}{% endif %}" class="btn btn-primary" style="margin-top:1rem;">{% if is_logged_in %}Browse Marketplace{% else %}Sign In to Get Started{% endif %}</a>
     </div>
 
+    <section id="agent-directory" aria-labelledby="agent-directory-heading">
+    <h2 id="agent-directory-heading" style="color:#fff;font-size:1.4rem;font-weight:700;margin-bottom:0.25rem;">Agent Directory</h2>
     {% if agents %}
     <div class="agent-grid">
         {% for agent in agents %}
@@ -166,6 +164,7 @@
         <a href="{{ url_for('marketplace_page') }}" class="btn btn-primary" style="margin-top:1rem;">Open the Marketplace</a>
     </div>
     {% endif %}
+    </section>
 </div>
 {% endblock %}
 
