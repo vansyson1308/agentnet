@@ -62,7 +62,13 @@ when the tier is AMBER/RED or findings exist; no secret-pattern finding; indepen
 
 Merge eligibility (`compute_eligibility`) — all must hold: `risk_promotable`, `ci_passed`, `branch_up_to_date`,
 `head_unchanged`, `qa_pass`, `security_pass`, `no_critical_findings`, `fitness_precheck`, `no_unresolved_review`,
-`change_budget`, `human_approval_satisfied`. `auto_merge_allowed` additionally needs the tier at or below
+`human_approval_satisfied`. The open-PR cap (`SOCIETY_MAX_OPEN_AUTONOMOUS_PRS`) gates OPENING a PR only
+(`request_promotion`, the READY fallback); as a merge gate it deadlocked staging on 2026-10-31 (14 open > cap 8,
+and merging is what lowers the count), so it is shown as `open_prs_within_cap` and blocks nothing. The daily
+`SOCIETY_MAX_PROMOTIONS_PER_DAY` does not count a revived row (`evidence.revived_from`: it resumes an existing PR).
+Security findings stop a PR leaving draft and freeze its auto-merge when they come from the static scan, or from
+the reviewer on anything but a PASS; notes the Security agent attaches to its own PASS are shown in the PR body
+(`promotion.security_findings_block`). `auto_merge_allowed` additionally needs the tier at or below
 `SOCIETY_AUTO_MERGE_MAX_TIER` (`green` default, `amber`, `red`), no path in the owner-only core
 (`risk.OWNER_MERGE_PATTERNS`: risk/fitness/promotion/policy/config, `.github/**`, `pytest.ini`, `scripts/ci/**` and
 the tests that judge them), `SOCIETY_AUTO_MERGE_ENABLED=true` (default false), **`pr_not_draft`** and **no merge
