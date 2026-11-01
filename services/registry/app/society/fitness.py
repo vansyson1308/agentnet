@@ -70,7 +70,7 @@ from .risk import assess as assess_risk
 
 logger = logging.getLogger(__name__)
 
-CRITERIA_VERSION = "fitness-v1"
+CRITERIA_VERSION = "fitness-v2"
 
 # Trusted, versioned criteria. Thresholds are deliberately conservative.
 TRUSTED_CRITERIA: Dict[str, Any] = {
@@ -89,12 +89,17 @@ TRUSTED_CRITERIA: Dict[str, Any] = {
         "correctness.tests_passed": {"higher_is_better": True, "improve": 1, "regress": 1},
         "correctness.tests_failed": {"higher_is_better": False, "improve": 1, "regress": 1},
         "reliability.timeouts": {"higher_is_better": False, "improve": 1, "regress": 1},
-        "performance.test_duration_s": {"higher_is_better": False, "regress_ratio": 0.5, "regress_min_abs": 1.0, "improve_ratio": 0.3, "improve_min_abs": 1.0},
+        # Durations of DIFFERENT test sets (the candidate added its own test) are not comparable.
+        "performance.test_duration_s": {"higher_is_better": False, "regress_ratio": 0.5, "regress_min_abs": 1.0, "improve_ratio": 0.3, "improve_min_abs": 1.0, "same_tests_only": True},
         "economics.diff_lines": {"higher_is_better": False, "regress_abs_over": 400},
-        "economics.model_cost_usd": {"higher_is_better": False, "regress_abs_over": 0.20},
+        # fitness-v2: the STORY's spend, QA attempts and denied intents are process
+        # observations (recorded, reported), not a property of the change. Under v1
+        # ``model_cost_usd regress_abs_over 0.20`` failed every candidate once stories
+        # ran on Claude (staging 2026-10-31: every AMBER PR stuck on fitness_precheck).
+        "economics.model_cost_usd": {"higher_is_better": False, "observe": True},
         "safety.risky_primitives": {"higher_is_better": False, "regress": 1},
-        "autonomy.qa_attempts": {"higher_is_better": False, "regress": 2},
-        "autonomy.intents_denied": {"higher_is_better": False, "regress": 3},
+        "autonomy.qa_attempts": {"higher_is_better": False, "observe": True},
+        "autonomy.intents_denied": {"higher_is_better": False, "observe": True},
     },
     "confidence": {"high_if_no_timeouts": True},
 }
@@ -116,19 +121,43 @@ class TestOutcome:
     duration_s: float = 0.0
     timed_out: bool = False
     exit_code: int = 0
+    #: targets that do not exist at this revision (missing file, or pytest "not found" for a node id)
+    absent_targets: List[str] = field(default_factory=list)
     per_test: Dict[str, str] = field(default_factory=dict)  # nodeid -> passed|failed|error|skipped
     tail: str = ""
 
+    tail_full: str = field(default="", repr=False)
+
     def to_dict(self) -> Dict[str, Any]:
         d = self.__dict__.copy()
+        d.pop("tail_full", None)
         d["per_test"] = dict(list(self.per_test.items())[:400])
         return d
 
 
+_NOT_FOUND_RE = re.compile(r"ERROR: (?:not found|file or directory not found): (\S+)")
+
+
 def _run_pytest(root: pathlib.Path, targets: Sequence[str], *, timeout: int) -> TestOutcome:
-    existing = [t for t in targets if (root / t.split("::")[0]).exists()]
-    if not existing:
-        return TestOutcome(exit_code=5, tail="no targets exist at this revision")
+    """Run ``targets`` at ``root``. A target that does not exist at this revision
+    (no file, or pytest exit 4 "not found" for a node id the candidate adds) is
+    recorded in ``absent_targets`` and the rest are run; none left is exit 5."""
+    absent = [t for t in targets if not (root / t.split("::")[0]).exists()]
+    existing = [t for t in targets if t not in absent]
+    out = _run_pytest_once(root, existing, timeout=timeout) if existing else TestOutcome(exit_code=5, tail="no targets exist at this revision")
+    if out.exit_code == 4:
+        missing = set(_NOT_FOUND_RE.findall(out.tail_full))
+        gone = [t for t in existing if t in missing or str(root / t) in missing]
+        if gone:
+            absent += gone
+            rest = [t for t in existing if t not in gone]
+            out = _run_pytest_once(root, rest, timeout=timeout) if rest else TestOutcome(exit_code=5, tail="no targets exist at this revision")
+    out.absent_targets = absent
+    out.tail_full = ""
+    return out
+
+
+def _run_pytest_once(root: pathlib.Path, existing: Sequence[str], *, timeout: int) -> TestOutcome:
     report = root / f".fitness-{uuid.uuid4().hex[:8]}.xml"
     argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--timeout", str(min(timeout, 600)), f"--junitxml={report}", *existing]
     env = scrubbed_env(ws_mod.Workspace(candidate_id=uuid.uuid4(), path=root, branch="", base_sha="", repo_root=root))
@@ -137,12 +166,14 @@ def _run_pytest(root: pathlib.Path, targets: Sequence[str], *, timeout: int) -> 
     try:
         proc = subprocess.run(argv, cwd=str(root), env=env, capture_output=True, text=True, timeout=timeout + 30, check=False)
         out.exit_code = proc.returncode
-        out.tail = (proc.stdout + "\n" + proc.stderr)[-2000:]
+        out.tail_full = (proc.stdout + "\n" + proc.stderr)[-20000:]
+        out.tail = out.tail_full[-2000:]
         if proc.returncode != 0 and "unrecognized arguments: --timeout" in out.tail:
             argv = [a for a in argv if a not in ("--timeout", str(min(timeout, 600)))]
             proc = subprocess.run(argv, cwd=str(root), env=env, capture_output=True, text=True, timeout=timeout + 30, check=False)
             out.exit_code = proc.returncode
-            out.tail = (proc.stdout + "\n" + proc.stderr)[-2000:]
+            out.tail_full = (proc.stdout + "\n" + proc.stderr)[-20000:]
+            out.tail = out.tail_full[-2000:]
     except subprocess.TimeoutExpired:
         out.timed_out = True
         out.exit_code = -1
@@ -223,7 +254,8 @@ def request_experiment(db: Session, *, settings: SocietySettings, promotion: Cod
         .order_by(ChangeExperiment.created_at.desc())
         .first()
     )
-    if existing is not None:
+    if existing is not None and ((existing.criteria_snapshot or {}).get("version") == CRITERIA_VERSION
+                                 or getattr(existing.status, "value", existing.status) in _ACTIVE_EXPERIMENT):
         return existing, False
     exp = ChangeExperiment(
         id=uuid.uuid4(),
@@ -245,15 +277,23 @@ def request_experiment(db: Session, *, settings: SocietySettings, promotion: Cod
     return exp, True
 
 
+_ACTIVE_EXPERIMENT = ("planned", "baseline", "candidate", "evaluating")
+
+# Experiments of promotions the controller may merge ITSELF come first (an empty
+# ``owner_merge_reasons``, or not computed yet); a RED / owner-only one waits for the
+# owner anyway, so it must not hold the queue (staging 2026-10-31). Oldest first within.
 _CLAIM_SQL = text(
     """
     WITH candidate AS (
-        SELECT id FROM change_experiments
-        WHERE status IN ('planned','baseline','candidate','evaluating')
-          AND (lease_expires_at IS NULL OR lease_expires_at < :now)
-        ORDER BY created_at
+        SELECT e.id FROM change_experiments e
+        LEFT JOIN code_promotions p ON p.id = e.promotion_id
+        WHERE e.status IN ('planned','baseline','candidate','evaluating')
+          AND (e.lease_expires_at IS NULL OR e.lease_expires_at < :now)
+        ORDER BY CASE WHEN jsonb_typeof(p.eligibility -> 'owner_merge_reasons') = 'array'
+                       AND jsonb_array_length(p.eligibility -> 'owner_merge_reasons') > 0 THEN 1 ELSE 0 END,
+                 e.created_at
         LIMIT 1
-        FOR UPDATE SKIP LOCKED
+        FOR UPDATE OF e SKIP LOCKED
     )
     UPDATE change_experiments e
        SET worker_id = :worker_id, lease_expires_at = :lease_until, attempt = e.attempt + 1
@@ -295,6 +335,12 @@ def _remove_base_worktree(settings: SocietySettings, path: pathlib.Path) -> None
         ws_mod._git(["worktree", "prune"], cwd=repo_root)
 
 
+def _same_tests(base: Dict[str, Any], cand: Dict[str, Any]) -> bool:
+    b = set(((base.get("_tests") or {}).get("per_test") or {}).keys())
+    c = set(((cand.get("_tests") or {}).get("per_test") or {}).keys())
+    return b == c
+
+
 def _compare(criteria: Dict[str, Any], base: Dict[str, Any], cand: Dict[str, Any]) -> Dict[str, Any]:
     deltas: Dict[str, Any] = {}
     for key, rule in criteria["soft"].items():
@@ -305,7 +351,11 @@ def _compare(criteria: Dict[str, Any], base: Dict[str, Any], cand: Dict[str, Any
         hib = rule.get("higher_is_better", True)
         good = delta if hib else -delta
         verdict = "neutral"
-        if "regress_abs_over" in rule:
+        if rule.get("observe"):
+            verdict = "observed"
+        elif rule.get("same_tests_only") and not _same_tests(base, cand):
+            verdict = "observed"
+        elif "regress_abs_over" in rule:
             if c > float(rule["regress_abs_over"]):
                 verdict = "regression"
         elif "regress_ratio" in rule:
