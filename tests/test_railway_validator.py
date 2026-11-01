@@ -443,7 +443,8 @@ def test_promotions_step_is_read_only_and_checks_the_gates_not_just_the_status()
     import inspect
 
     p5 = _driver()
-    src = inspect.getsource(p5.step_promotions)
+    # the step reads its records through promotion_records (G1y: + each record's fitness)
+    src = inspect.getsource(p5.step_promotions) + inspect.getsource(p5.promotion_records) + repr(p5.RECORD_GATES)
     lowered = src.lower()
     for forbidden in ("update ", "delete ", "insert ", "drop "):
         assert forbidden not in lowered, f"the promotion reader must stay read-only: {forbidden!r}"
