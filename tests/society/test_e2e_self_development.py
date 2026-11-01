@@ -144,7 +144,7 @@ def test_one_anomaly_becomes_a_real_code_fix_shadow_pr_and_fitness_verdict(db, S
     assert exp.requested_by_agent_id in (None, report.agents["evaluator"])
     assert _ev(exp.status) == "pass" and exp.decision == "pass", (exp.hard_gate_results, exp.metric_deltas, exp.error)
     assert all(g["passed"] for g in exp.hard_gate_results)
-    assert exp.criteria_snapshot["version"] == "fitness-v1"
+    assert exp.criteria_snapshot["version"] == "fitness-v2"
     assert exp.baseline_metrics["correctness"]["tests_failed"] >= 1, "the regression test fails on the base revision"
     assert exp.candidate_metrics["correctness"]["tests_failed"] == 0
     assert exp.metric_deltas["correctness.tests_passed"]["verdict"] == "improvement"

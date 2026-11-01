@@ -637,3 +637,24 @@ rescope, bench, backlog, incident, agents), per-role runs worked, idle wakes, id
 $/hour, and spend vs the window's share of the WORKER's daily budget (its heartbeat). `funnel:12:proof`
 checks the G1v live proof from these numbers: >= 20 tickets, >= 8 designs go, >= 5 builds delivered,
 >= 3 PRs, Builder idle < 30%, spend >= $30.
+
+### Tests next to what they judge, one piece of work per file (owner 2026-11-01, G1y)
+
+- **Placement** (`society/spec_gate.py` `PLACEMENT`, `placement_problems`): a candidate's NEW test lives next to
+  what it judges -- dashboard templates/static -> `tests/dashboard/`, `sdk/` -> `tests/sdk/`, `docs/` and `*.md`
+  (examples' READMEs included) -> `tests/docs/`. `tests/society/**` only when the change touches society or
+  maintenance code. Staging 2026-10-31: 9 of 11 bot PRs were RED only because their acceptance test sat in
+  `tests/society/**` (RED_PATTERNS) while the product change was a template or a README, so under the amber ceiling
+  they waited for the owner forever. The spec gate refuses such a design with a structural `test_placement:` reason
+  that names the right directory; the Architect re-places the test. There is no GREEN override for `tests/society/**`.
+- **Dedup** (`society/dedup.py`): one piece of live work per PRODUCT file (tests excluded) and objective. The design
+  gate refuses a design whose file is already targeted for the same objective by another ticket's approved design, a
+  live candidate or an open PR (`duplicate: <file> ... by candidate <id> (PR #n)`); the work generator files no ticket
+  for such a file. When two already exist (staging: #136/#143 landing CTA, #150/#151 marketplace section, #141/#145
+  SDK README) the controller step `supersede_duplicates` keeps one -- the one the controller may merge itself, else
+  the one with an open PR, else the earlier -- and supersedes the other: candidate REJECTED (`superseded_duplicate`),
+  its bot PR closed through the promotion provider with that reason as a comment (only a PR on the bot's branch
+  prefix), its ticket closed, and its own implementation task refunded ONCE through
+  `task_service.fail_task_with_refund` (run last; no wallet write). Tests: `tests/society/test_placement_and_dedup.py`.
+- **RED ceiling** (`config.validate_settings`): `SOCIETY_AUTO_MERGE_MAX_TIER=red` is refused unless every judge in
+  `risk.JUDGE_PATHS` is owner-only (`risk.judges_not_owner_only()` empty).
