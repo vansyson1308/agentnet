@@ -122,10 +122,10 @@ def test_reward_hacking_by_editing_thresholds_uses_trusted_snapshot(db, code_set
     broken = _src(code_repo).replace('return (slug or "item")[:max_len]', 'return (slug or "item")[:1]')
     cand, ws = make_candidate(db, code_settings, code_repo, [(SRC, broken), ("services/registry/app/society/fitness.py", forged)], targets=["tests/test_textutil.py"])
     exp = run_experiment(db, code_settings, cand)
-    assert exp.criteria_snapshot["version"] == "fitness-v1" and exp.criteria_snapshot["hard_gates"]
+    assert exp.criteria_snapshot["version"] == "fitness-v2" and exp.criteria_snapshot["hard_gates"]
     assert exp.decision == "fail"
     # tampering with the snapshot row after the fact does not change the persisted decision
-    assert fitness.TRUSTED_CRITERIA["version"] == "fitness-v1"
+    assert fitness.TRUSTED_CRITERIA["version"] == "fitness-v2"
 
 
 @pytest.mark.timeout(300)

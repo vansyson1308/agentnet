@@ -419,5 +419,14 @@ class GitHubPromotionProvider:
             raise ProviderConflict("merge was not performed (head moved or checks pending)")
         return body.get("sha", "")
 
+    def close_pr(self, promotion, reason: str) -> None:
+        """Close the controller's OWN bot PR (dedup.supersede_duplicates): a structural reason as
+        a comment, then ``state: closed``. Only a PR on the bot's branch prefix is ever closed."""
+        if not str(getattr(promotion, "external_branch", "") or "").startswith(self.settings.branch_prefix.rstrip("/") + "/"):
+            raise ProviderRefused("only the controller's own branch PRs are closed")
+        number = int(promotion.external_pr_number)
+        self._request("POST", f"/repos/{self.repo}/issues/{number}/comments", json={"body": reason[:1000]})
+        self._request("PATCH", f"/repos/{self.repo}/pulls/{number}", json={"state": "closed"})
+
 
 __all__ = ["ASKPASS_SCRIPT", "ASKPASS_TOKEN_ENV", "ASKPASS_USER_ENV", "GitHubPromotionProvider", "push_base_url"]
