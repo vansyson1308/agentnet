@@ -90,6 +90,13 @@ def drive(db_factory, settings, provider, *, worker_id="w-promo", rounds=12):
 
 
 def _experiment_pass(db, promo, cand):
+    # The controller requests the experiment itself once CI is green; the fitness
+    # engine then fills THAT row. Mirror it: pass the planned row when it exists.
+    planned = db.query(ChangeExperiment).filter(ChangeExperiment.promotion_id == promo.id, ChangeExperiment.status == "planned").first()
+    if planned is not None:
+        planned.status, planned.decision, planned.confidence = "pass", "pass", "high"
+        db.commit()
+        return planned
     exp = ChangeExperiment(id=uuid.uuid4(), candidate_id=cand.id, promotion_id=promo.id, correlation_id=cand.correlation_id, baseline_sha=cand.base_sha, candidate_sha=cand.head_sha, status="pass", decision="pass", confidence="high", criteria_snapshot={"version": "fitness-v1"})
     db.add(exp)
     db.commit()

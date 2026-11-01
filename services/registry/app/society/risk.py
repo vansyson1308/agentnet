@@ -156,6 +156,29 @@ OWNER_MERGE_PATTERNS: Sequence[str] = (
     "tests/society/test_auto_merge_tiers.py",
     "tests/society/test_risk_and_meta_change.py",
     "tests/society/test_fitness.py",
+    # The JUDGES: how a candidate is built, reviewed, tested and released. A
+    # candidate may not change how it is judged and then merge itself.
+    "services/registry/app/society/engineering/qa.py",
+    "services/registry/app/society/spec_gate.py",
+    "services/registry/app/society/design_review.py",
+    "services/registry/app/society/surface.py",
+    "services/registry/app/society/public_surface_contract.json",
+    "services/registry/app/maintenance/release*.py",
+    "services/registry/app/maintenance/desired_state.json",
+    "services/dashboard/tests/test_public_surface.py",
+    "services/dashboard/tests/test_experience_contract.py",
+    "tests/society/test_engineering.py",
+    "tests/society/test_qa_env.py",
+    "tests/society/test_spec_gate.py",
+    "tests/society/test_ticket_spec_gate.py",
+    "tests/society/test_design_review.py",
+    "tests/society/test_public_surface_monitor.py",
+    "tests/society/maintenance/test_release_preview.py",
+    "tests/society/maintenance/test_boundaries.py",
+    "deploy/*",
+    "deploy/**",
+    ".railway/*",
+    ".railway/**",
     ".github/*",
     ".github/**",
     "pytest.ini",
@@ -165,6 +188,45 @@ OWNER_MERGE_PATTERNS: Sequence[str] = (
 
 # Exceptions evaluated BEFORE the RED list: harmless acceptance tests for
 # documentation candidates live under tests/society/ but are GREEN.
+#: The JUDGES as concrete files: what decides whether a candidate is built right,
+#: passes, ships and stays. ``SOCIETY_AUTO_MERGE_MAX_TIER=red`` is refused unless
+#: every one of them is owner-only (config.validate_settings): at a RED ceiling a
+#: candidate could otherwise rewrite its judge and merge itself (G1w item 3).
+JUDGE_PATHS: Sequence[str] = (
+    "services/registry/app/society/engineering/qa.py",
+    "services/registry/app/society/spec_gate.py",
+    "services/registry/app/society/design_review.py",
+    "services/registry/app/society/surface.py",
+    "services/registry/app/society/public_surface_contract.json",
+    "services/registry/app/society/risk.py",
+    "services/registry/app/society/fitness.py",
+    "services/registry/app/society/promotion.py",
+    "services/registry/app/society/policy.py",
+    "services/registry/app/maintenance/release.py",
+    "services/registry/app/maintenance/release_worker.py",
+    "services/registry/app/maintenance/release_providers.py",
+    "services/registry/app/maintenance/desired_state.json",
+    "services/dashboard/tests/test_public_surface.py",
+    "services/dashboard/tests/test_experience_contract.py",
+    "tests/society/test_engineering.py",
+    "tests/society/test_qa_env.py",
+    "tests/society/test_spec_gate.py",
+    "tests/society/test_design_review.py",
+    "tests/society/test_fitness.py",
+    "tests/society/test_risk_and_meta_change.py",
+    "deploy/railway/phase5_live.py",
+    ".github/workflows/ci.yml",
+    "pytest.ini",
+    "scripts/ci/check_test_discovery.py",
+)
+
+
+def judges_not_owner_only(patterns: Sequence[str] = None) -> List[str]:
+    """The judge files ``OWNER_MERGE_PATTERNS`` (or ``patterns``) leaves mergeable by the controller."""
+    pats = OWNER_MERGE_PATTERNS if patterns is None else patterns
+    return [p for p in JUDGE_PATHS if not _match(p, pats)]
+
+
 GREEN_OVERRIDE_PATTERNS: Sequence[str] = ("tests/society/acceptance/*",)
 
 # Diff-level NEVER findings (reward hacking / gate disabling), matched on

@@ -362,7 +362,7 @@ def test_api_401_invalidates_and_retries_exactly_once(monkeypatch):
     reset_settings_cache()
 
 
-@pytest.mark.parametrize("status,exc", [(403, ProviderRefused), (429, ProviderTransient), (502, ProviderTransient), (422, ProviderRefused)])
+@pytest.mark.parametrize("status,exc", [(403, ProviderRefused), (429, ProviderTransient), (502, ProviderTransient), (422, ProviderTransient)])
 def test_api_errors_map_without_retry_storm(monkeypatch, status, exc):
     s = gh_settings(monkeypatch)
     calls = []

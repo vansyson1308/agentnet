@@ -139,10 +139,12 @@ def test_one_anomaly_becomes_a_real_code_fix_shadow_pr_and_fitness_verdict(db, S
 
     # ── fitness: base vs candidate, hard gates, PASS, memory ──
     exp = db.query(ChangeExperiment).filter(ChangeExperiment.promotion_id == promo.id).one()
-    assert exp.requested_by_agent_id == report.agents["evaluator"]
+    # one experiment per head: the controller requests it when CI is green (no agent), or the
+    # Evaluator's REQUEST_MERGE_EVALUATION got there first -- either way the same row
+    assert exp.requested_by_agent_id in (None, report.agents["evaluator"])
     assert _ev(exp.status) == "pass" and exp.decision == "pass", (exp.hard_gate_results, exp.metric_deltas, exp.error)
     assert all(g["passed"] for g in exp.hard_gate_results)
-    assert exp.criteria_snapshot["version"] == "fitness-v1"
+    assert exp.criteria_snapshot["version"] == "fitness-v2"
     assert exp.baseline_metrics["correctness"]["tests_failed"] >= 1, "the regression test fails on the base revision"
     assert exp.candidate_metrics["correctness"]["tests_failed"] == 0
     assert exp.metric_deltas["correctness.tests_passed"]["verdict"] == "improvement"

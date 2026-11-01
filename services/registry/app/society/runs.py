@@ -124,6 +124,14 @@ def runs_in_correlation(db: Session, correlation_id: uuid.UUID) -> int:
     return int(db.query(func.count(AgentRun.id)).filter(AgentRun.correlation_id == correlation_id).scalar() or 0)
 
 
+def same_wakes_in_correlation(db: Session, event: SocietyEvent) -> int:
+    """Earlier events of this story with the same (type, subject) that woke an agent."""
+    q = (db.query(func.count(func.distinct(SocietyEvent.id))).join(AgentRun, AgentRun.event_id == SocietyEvent.id)
+         .filter(SocietyEvent.correlation_id == event.correlation_id, SocietyEvent.event_type == event.event_type, SocietyEvent.id != event.id))
+    q = q.filter(SocietyEvent.subject_id == event.subject_id) if event.subject_id is not None else q.filter(SocietyEvent.subject_id.is_(None))
+    return int(q.scalar() or 0)
+
+
 def dispatch_pending_events(
     db: Session,
     *,
@@ -156,6 +164,8 @@ def dispatch_pending_events(
             note = f"loop breaker: causation depth {event.causation_depth} > {settings.max_causation_depth}"
         elif runs_in_correlation(db, event.correlation_id) >= settings.max_runs_per_correlation:
             note = f"loop breaker: correlation {event.correlation_id} reached {settings.max_runs_per_correlation} runs"
+        elif same_wakes_in_correlation(db, event) >= settings.max_same_wakes_per_correlation:
+            note = f"loop breaker: {event.event_type} on the same subject woke agents {settings.max_same_wakes_per_correlation} times in correlation {event.correlation_id}"
         if note:
             event.status = SocietyEventStatus.IGNORED
             event.dispatch_note = note
@@ -165,7 +175,7 @@ def dispatch_pending_events(
             stats.loop_breaks += 1
             # one structural line per trip (the audit's L01 names the same facts from the DB)
             logger.warning("loop_breaker.tripped correlation=%s kind=%s event_type=%s depth=%s subject=%s:%s", str(event.correlation_id)[:8],
-                           "depth" if "depth" in note else "runs", event.event_type, event.causation_depth, event.subject_type, str(event.subject_id or "")[:8])
+                           "depth" if "depth" in note else ("repeat" if "same subject" in note else "runs"), event.event_type, event.causation_depth, event.subject_type, str(event.subject_id or "")[:8])
             # One breaker event per correlation, never chained (no causation, depth 0),
             # so it cannot itself trip the breaker.
             emit_event(
