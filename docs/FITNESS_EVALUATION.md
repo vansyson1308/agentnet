@@ -13,11 +13,23 @@ Code: `services/registry/app/society/fitness.py` · Rows: `change_experiments` �
    risk_tier_not_never                            correctness.tests_passed / tests_failed        any gate fails      → FAIL
    no_test_regression (per-test id)               reliability.timeouts                           any soft regression → FAIL
    no_test_removal (collected count + ids)        performance.test_duration_s (ratio+abs)        ≥1 improvement      → PASS
-   no_security_regression (secrets, shell…)       economics.diff_lines, model_cost_usd           otherwise           → INCONCLUSIVE
+   no_security_regression (secrets, shell…)       economics.diff_lines                           otherwise           → INCONCLUSIVE
    no_never_findings (risk diff scan)             safety.risky_primitives
-   no_metric_collection_disabled                  autonomy.qa_attempts, intents_denied
-   candidate_tests_completed
+   no_metric_collection_disabled                  observed only (fitness-v2): model_cost_usd,
+   candidate_tests_completed                        autonomy.qa_attempts, intents_denied
 ```
+
+**fitness-v2 (2026-11-01).** Under fitness-v1 `economics.model_cost_usd` regressed above $0.20 of STORY spend, and
+QA attempts / denied intents regressed too. Once stories ran on Claude every candidate cost more than that, so every
+experiment ended `fail` whatever its code did and no AMBER bot PR could merge. The story's spend is a process
+observation (still recorded in `candidate_metrics`, verdict `observed`), not a property of the change. Test duration
+is compared only when base and candidate ran the SAME test ids (a candidate that adds its own test runs more tests;
+verdict `observed` otherwise). A target absent at the base revision — a missing file, or pytest exit 4
+`not found` for a test id the candidate adds — is recorded in `absent_targets` and the remaining targets run (none
+left = exit 5), so confidence stays high. An experiment judged under OLDER criteria that did not satisfy the gate is
+re-requested once by the controller under the current ones (`promotion.ensure_fitness_requested`). Experiments of
+promotions the controller may merge itself (empty `owner_merge_reasons`) are claimed first. Regression tests:
+`tests/society/test_merge_unblock.py`.
 
 Safety is never traded for speed or cost: a candidate that improves correctness but adds `subprocess(..., shell=True)`
 FAILS (`test_security_regression_fails_even_when_tests_improve`). Confidence is `high` only when both runs completed
@@ -25,7 +37,7 @@ without timeouts.
 
 ## Trusted criteria
 
-`TRUSTED_CRITERIA` (version `fitness-v1`) lives in `fitness.py` of the RUNNING revision and is copied onto the
+`TRUSTED_CRITERIA` (version `fitness-v2`) lives in `fitness.py` of the RUNNING revision and is copied onto the
 experiment row (`criteria_snapshot`) when the experiment is requested. The engine decides from the snapshot, never
 from a file in the candidate worktree. A candidate that rewrites thresholds is therefore judged by the pre-change
 criteria (`test_reward_hacking_by_editing_thresholds_uses_trusted_snapshot`); its edit is RED and needs a human merge

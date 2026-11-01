@@ -56,6 +56,7 @@ from . import boardroom as boardroom_mod
 from . import boardroom_commands as boardroom_commands_mod
 from . import boardroom_telegram
 from . import candidate_health as candidate_health_mod
+from . import dedup as dedup_mod
 from . import deployment as dep_mod
 from . import fitness as fitness_mod
 from . import memory_grounding
@@ -842,7 +843,8 @@ class SocietyWorker:
                       ("wake_undesigned", lambda db: tickets_mod.wake_undesigned(db, utcnow())),
                       ("sweep_stale_designs", lambda db: tickets_mod.sweep_stale_designs(db, utcnow())),
                       ("board_decide", lambda db: tickets_mod.board_decide(db, self.settings, utcnow())),
-                      ("design_review_sweep", lambda db: design_review_mod.sweep(db, utcnow()))]
+                      ("design_review_sweep", lambda db: design_review_mod.sweep(db, utcnow())),
+                      ("supersede_duplicates", lambda db: dedup_mod.supersede_duplicates(db, self.promotion_provider))]
         return steps
 
     def process_controllers(self, stats: Optional[CycleStats] = None) -> int:
