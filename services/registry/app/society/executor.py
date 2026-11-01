@@ -67,7 +67,7 @@ from ..models import (
     TaskSession,
     TaskStatus,
 )
-from . import candidate_health, design_review, memory_grounding, repo_intel, router, spec_gate, tickets
+from . import candidate_health, dedup, design_review, memory_grounding, repo_intel, router, spec_gate, tickets
 from .config import SocietySettings
 from ..maintenance import activities
 from ..maintenance import harness as mharness
@@ -840,6 +840,9 @@ def _propose_design(ctx: ExecContext) -> ExecOutcome:
     review = design_review.get(ctx.db, p.review_id)
     if review is not None:  # what an earlier round left to answer: Security constraints, a Builder's blocking paths
         problems += spec_gate.check_obligations(proposal, design_review.obligations(review))
+        ticket = tickets._ticket_ref(ctx.db, review["ticket_id"])  # noqa: SLF001 -- same package
+        if ticket is not None:  # one piece of work per product file and objective (dedup.py)
+            problems += dedup.conflicts(ctx.db, proposal["files"], ticket.get("objective_id"), ticket["id"])
     if problems:  # fixed in the review, before a build is paid for: the Architect is asked again with the reasons
         try:
             out = design_review.gate_refuse(ctx.db, review_id=p.review_id, correlation_id=ctx.run.correlation_id, agent=ctx.agent, problems=problems, causation=ctx.event)
