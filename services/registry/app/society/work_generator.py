@@ -39,7 +39,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
-from . import charter, directives, metrics, rejections, tickets, work_packet
+from . import charter, dedup, directives, metrics, rejections, tickets, work_packet
 from .events import EventType
 
 logger = logging.getLogger("agentnet.society.work_generator")
@@ -373,7 +373,7 @@ def generate(db: Session, settings: Any, now: datetime) -> Dict[str, Any]:
             report["unfit"] += 1
             continue
         obj, (kr, effect) = fit
-        if _duplicate(db, item["title"], item["proof"], now):
+        if _duplicate(db, item["title"], item["proof"], now) or dedup.lever_taken(db, item.get("levers") or [], obj["id"]):
             report["duplicates"] += 1
             continue
         report["created"].append(_insert(db, item, obj, kr, effect, now))

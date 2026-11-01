@@ -195,6 +195,7 @@ class PromotionProvider(Protocol):
     def commit_parents(self, sha: str) -> List[str]: ...  # pragma: no cover
     def mark_ready_for_review(self, promotion: CodePromotion, state: PRState) -> bool: ...  # pragma: no cover
     def merge(self, promotion: CodePromotion, expected_head_sha: str) -> str: ...  # pragma: no cover
+    def close_pr(self, promotion: CodePromotion, reason: str) -> None: ...  # pragma: no cover -- its OWN bot PR (dedup.py)
 
 
 class DisabledPromotionProvider:
@@ -219,6 +220,9 @@ class DisabledPromotionProvider:
         raise ProviderUnavailable("no promotion provider configured")
 
     def merge(self, promotion, expected_head_sha):
+        raise ProviderUnavailable("no promotion provider configured")
+
+    def close_pr(self, promotion, reason):
         raise ProviderUnavailable("no promotion provider configured")
 
 
@@ -271,6 +275,11 @@ class FakePromotionProvider:
                 pr["merged"] = True
                 pr["merged_sha"] = merged_sha or f"merge-{pr_number}"
                 pr["closed"] = True
+
+    def close_pr(self, promotion, reason: str) -> None:
+        self.calls.append(("close_pr", promotion.external_pr_number, reason))
+        self._maybe_fault()
+        self.close(promotion.external_pr_number)
 
     def close(self, pr_number: int) -> None:
         for pr in self.prs.values():
@@ -408,8 +417,13 @@ def _day_start(now: datetime) -> datetime:
 
 
 def promotions_today(db: Session, now: Optional[datetime] = None) -> int:
+    """New promotions started today (UTC). A revived row (``evidence.revived_from``)
+    resumes a PR that already exists and spent the budget when it was first
+    requested, so it is not counted again (staging 2026-10-31: revivals ate the
+    daily cap of 12 and six READY candidates could never get a PR)."""
     now = now or utcnow()
-    return int(db.query(CodePromotion).filter(CodePromotion.created_at >= _day_start(now)).count())
+    return int(db.query(CodePromotion).filter(CodePromotion.created_at >= _day_start(now),
+                                              CodePromotion.evidence["revived_from"].astext.is_(None)).count())
 
 
 def autonomous_merges_today(db: Session, now: Optional[datetime] = None) -> int:
@@ -684,6 +698,15 @@ def latest_experiment(db: Session, promotion: CodePromotion) -> Optional[ChangeE
     return db.query(ChangeExperiment).filter(ChangeExperiment.promotion_id == promotion.id).order_by(ChangeExperiment.created_at.desc()).first()
 
 
+def security_findings_block(sec: Dict[str, Any]) -> bool:
+    """Findings that stop a PR leaving draft and freeze its auto-merge: any STATIC
+    scan finding, or reviewer findings on anything but a Security PASS. The notes
+    the Security agent attaches to its own PASS (staging: every bot PR carries
+    3-5) are shown in the PR body, not a freeze -- under the old rule no reviewed
+    PR could ever auto-merge (G1y, 2026-11-01)."""
+    return bool(sec.get("static_findings") or (sec.get("findings") and sec.get("verdict") != "pass"))
+
+
 def merge_freeze_reasons(db: Session, settings: SocietySettings, promotion: CodePromotion, candidate: CodeCandidate) -> List[str]:
     """Why autonomous MERGE authority is frozen right now (§27).
 
@@ -711,7 +734,7 @@ def merge_freeze_reasons(db: Session, settings: SocietySettings, promotion: Code
     if bad:
         reasons.append(f"previous_autonomous_merge_under_failed_evaluation({bad})")
     sec = candidate.security_report or {}
-    if sec.get("findings") or sec.get("static_findings"):
+    if security_findings_block(sec):
         reasons.append("security_findings_present")
     qa = candidate.qa_report or {}
     if [c for c in (qa.get("checks") or []) if c.get("name") == "no_secret_patterns" and not c.get("passed")]:
@@ -826,7 +849,10 @@ def compute_eligibility(db: Session, settings: SocietySettings, promotion: CodeP
         "fitness_decision": (exp.decision if exp else None),
         "fitness_confidence": (exp.confidence if exp else None),
         "no_unresolved_review": (state.unresolved_reviews == 0) if state else True,
-        "change_budget": open_prs(db) <= settings.max_open_autonomous_prs,
+        # Informational only. The open-PR cap gates OPENING a PR (request_promotion,
+        # the READY fallback); as a merge gate it deadlocked staging on 2026-10-31
+        # (14 open > cap 8: nothing could merge, and merging is what lowers the count).
+        "open_prs_within_cap": open_prs(db) <= settings.max_open_autonomous_prs,
         # A draft PR cannot be merged by anyone, so it can never be merge-eligible.
         "pr_not_draft": (not state.draft) if state else True,
         "human_approval_required": bool(scope),
@@ -835,7 +861,7 @@ def compute_eligibility(db: Session, settings: SocietySettings, promotion: CodeP
         "auto_merge_enabled": bool(settings.auto_merge_enabled),
     }
     gates["human_approval_satisfied"] = bool(gates["human_approvals"]) if gates["human_approval_required"] else True
-    hard = ["risk_promotable", "ci_passed", "branch_up_to_date", "head_unchanged", "qa_pass", "security_pass", "no_critical_findings", "fitness_precheck", "no_unresolved_review", "change_budget", "human_approval_satisfied"]
+    hard = ["risk_promotable", "ci_passed", "branch_up_to_date", "head_unchanged", "qa_pass", "security_pass", "no_critical_findings", "fitness_precheck", "no_unresolved_review", "human_approval_satisfied"]
     gates["blocking"] = [g for g in hard if not gates.get(g)]
     gates["merge_eligible"] = not gates["blocking"]
     # ── the autonomous merge law (§23), up to SOCIETY_AUTO_MERGE_MAX_TIER ──
@@ -1105,7 +1131,7 @@ def _ready_blockers(settings: SocietySettings, candidate: CodeCandidate, promoti
     sec = candidate.security_report or {}
     if candidate.requires_security_review and sec.get("verdict") != "pass":
         blockers.append("security_not_passed")
-    if sec.get("findings") or sec.get("static_findings"):
+    if security_findings_block(sec):
         blockers.append("security_findings_present")
     tier = RiskTier(str(getattr(promotion.risk_tier, "value", promotion.risk_tier)))
     if tier != RiskTier.GREEN and autonomous_merge_scope(settings, tier, promotion_paths(promotion, candidate)):
@@ -1412,8 +1438,18 @@ def ensure_fitness_requested(db: Session, settings: SocietySettings, promotion: 
     base, judged from the running revision), never the controller's."""
     from .fitness import request_experiment  # noqa: PLC0415 -- fitness imports promotion
 
-    if latest_experiment(db, promotion) is not None:
-        return False
+    from .fitness import CRITERIA_VERSION  # noqa: PLC0415
+
+    latest = latest_experiment(db, promotion)
+    if latest is not None:
+        # Judged by the current criteria, or it satisfied the gate: final. An
+        # unsatisfied verdict under OLDER criteria (fitness-v1 called every Claude
+        # story's model spend a regression) is evaluated once more under the
+        # current ones -- never more often, since the new row has the new version.
+        if _fitness_satisfied(latest) or (latest.criteria_snapshot or {}).get("version") == CRITERIA_VERSION:
+            return False
+        if getattr(latest.status, "value", latest.status) not in (ExperimentStatus.PASS.value, ExperimentStatus.FAIL.value, ExperimentStatus.INCONCLUSIVE.value):
+            return False  # still running
     cause = db.query(SocietyEvent).filter(SocietyEvent.subject_type == "code_promotion", SocietyEvent.subject_id == promotion.id).order_by(SocietyEvent.created_at.desc()).first()
     _, created = request_experiment(db, settings=settings, promotion=promotion, candidate=candidate, agent=None, causation=cause, source_run_id=None)
     return created
