@@ -541,6 +541,13 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
         problems.append("SOCIETY_RUN_LEASE_SECONDS is too short for the model timeout (a run would lose its lease mid-call)")
     if s.auto_merge_max_tier not in AUTO_MERGE_TIERS:
         problems.append(f"SOCIETY_AUTO_MERGE_MAX_TIER must be one of {'|'.join(AUTO_MERGE_TIERS)} (NEVER is never promotable)")
+    if s.auto_merge_max_tier == "red":
+        from .risk import judges_not_owner_only  # noqa: PLC0415 -- trusted base, imported lazily
+
+        loose = judges_not_owner_only()
+        if loose:
+            problems.append("SOCIETY_AUTO_MERGE_MAX_TIER=red is refused while a judge is not owner-only "
+                            f"(risk.OWNER_MERGE_PATTERNS misses {', '.join(loose[:5])})")
     if s.auto_merge_enabled:
         # This used to refuse auto-merge with the GitHub provider outright, as a
         # phase guard, because no real promotion had ever been exercised. One has
