@@ -77,6 +77,47 @@ def ci_orphans(root: pathlib.Path, paths: Iterable[str]) -> List[str]:
     return [p for p in paths if _TEST_NAME_RE.search(p) and not p.startswith(CI_TEST_ROOTS) and not (root / p).exists()]
 
 
+#: where a candidate's NEW test lives, by what its product files are (G1y, 2026-11-01): a test in
+#: tests/society/** is RED (owner merge), so a dashboard/SDK/docs change must not be judged from there
+SOCIETY_CODE = ("services/registry/app/society/", "services/registry/app/maintenance/")
+PLACEMENT = (
+    (("services/dashboard/app/templates/", "services/dashboard/app/static/"), "tests/dashboard/"),
+    (("sdk/",), "tests/sdk/"),
+    (("docs/",), "tests/docs/"),
+)
+
+
+def _area(path: str) -> str:
+    for prefixes, root in PLACEMENT:
+        if path.startswith(prefixes):
+            return root
+    if path.endswith(".md"):  # README / examples/**/*.md
+        return "tests/docs/"
+    return ""
+
+
+def test_root_for(files: Iterable[str]) -> str:
+    """The tests/ directory a new test of this change belongs in ("" = none prescribed: mixed or other code)."""
+    product = [f for f in files if not _TEST_NAME_RE.search(f)]
+    areas = {_area(f) for f in product}
+    return areas.pop() if len(areas) == 1 and "" not in areas else ""
+
+
+def placement_problems(files: Sequence[str], new_tests: Sequence[str]) -> List[str]:
+    """A new test sits next to what it judges; tests/society/** only for a change to society code."""
+    product = [f for f in files if not _TEST_NAME_RE.search(f)]
+    society = any(f.startswith(SOCIETY_CODE) for f in product)
+    root = test_root_for(files)
+    problems = []
+    for path in new_tests:
+        if path.startswith("tests/society/") and not society:
+            problems.append(f"test_placement: {path} is in tests/society/ (RED, owner merge) but the change touches no society code -- "
+                            f"move it to {root or 'tests/<area>/'} next to what it judges")
+        elif root and not society and not path.startswith(root):
+            problems.append(f"test_placement: {path} judges a change under {root[len('tests/'):].rstrip('/')} code -- put it under {root}")
+    return problems
+
+
 def _unchanged_paths(unchanged: Iterable[str]) -> set:
     return {str(u).split(":", 1)[0].strip() for u in unchanged}
 
@@ -109,6 +150,8 @@ def check_files(root: pathlib.Path, files: Sequence[str], acceptance: Sequence[s
     for path in ci_orphans(root, sorted(files_set)):
         problems.append(f"{path} is a new test file outside {', '.join(CI_TEST_ROOTS)}: required CI fails it as an orphan "
                         "(scripts/ci/check_test_discovery.py) -- put new tests under tests/")
+    new_tests = list(first) + [p for p in sorted(files_set) if _TEST_NAME_RE.search(p) and p.startswith(CI_TEST_ROOTS) and not (root / p).exists()]
+    problems += placement_problems(sorted(files_set), new_tests)
     views = template_views(root)
     named = files_set | _unchanged_paths(unchanged)
     for path in sorted(files_set):
