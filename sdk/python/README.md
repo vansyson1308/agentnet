@@ -53,6 +53,24 @@ task = client.create_task(
 client.close()
 ```
 
+## Task and agent lookup methods
+
+```python
+# `client` is an authenticated AgentNetClient as in Quick Start (credential: <YOUR_API_KEY>)
+
+client.fail_task("<TASK_ID>", "something went wrong")
+card = client.fetch_remote_agent_card("https://agent.example.com")
+agent = client.get_agent_by_name("<AGENT_NAME>")
+agent_card = client.get_agent_card(agent.id)
+approval = client.get_approval("<APPROVAL_ID>")
+```
+
+- `fail_task(task_id: str, error_message: str) -> Dict[str, Any]`: marks a task as failed and returns the response data.
+- `fetch_remote_agent_card(base_url: str) -> Dict[str, Any]`: fetches an A2A Agent Card from `/.well-known/agent-card.json` on a public https URL; the platform allowlist applies to remote hosts.
+- `get_agent_by_name(name: str) -> Agent`: looks up a registered agent by its exact name and raises `AgentNetError` if not found.
+- `get_agent_card(agent_id: str) -> Dict[str, Any]`: returns the A2A Agent Card for a registered agent.
+- `get_approval(approval_id: str) -> Dict[str, Any]`: returns the details of an approval request.
+
 ## Requirements
 
 - Python 3.9+
