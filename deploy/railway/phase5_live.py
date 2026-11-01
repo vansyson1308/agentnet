@@ -1676,13 +1676,21 @@ def rejection_breakdown(cur, since: datetime = SINCE_SPEC_GATE) -> Dict[str, Any
     return {"since": since.isoformat(), "rejected": len(rows), "by_reason": dict(sorted(by.items(), key=lambda kv: (-kv[1], kv[0]))), "spec_gate_refusals": int(gate or 0)}
 
 
-def step_promotions(out: Out, conn, limit: int) -> None:
-    """Read the durable promotion records the CONTROLLER wrote.
+#: eligibility fields shown per promotion record (``merge_freeze`` / ``owner_merge_reasons`` say why
+#: an otherwise eligible PR does not auto-merge; G1y 2026-11-01)
+RECORD_GATES = (
+    "merge_eligible", "auto_merge_enabled", "auto_merge_allowed",
+    "human_approval_required", "human_approval_satisfied",
+    "human_approvals", "blocking", "ci_passed", "qa_pass",
+    "security_pass", "fitness_precheck", "trusted_risk_tier",
+    "owner_merge_reasons", "merge_freeze", "pr_not_draft", "open_prs_within_cap",
+)
 
-    A PR that is not merged is weak evidence: it could simply not have been
-    tried yet. The eligibility record says WHY it is not merged -- which gate
-    blocked it and whether auto-merge was even allowed -- and that is the claim
-    "auto-merge is off" actually has to be checked against. Read-only."""
+
+def promotion_records(conn, limit: int) -> List[Dict[str, Any]]:
+    """The promotion records with the fitness of each one's LATEST experiment (status,
+    decision, confidence, criteria version, attempt, error, failed hard gates and
+    regressed metrics), so a stuck ``fitness_precheck`` is visible without DB access."""
     with conn.cursor() as cur:
         rows = _rows(
             cur,
@@ -1690,9 +1698,14 @@ def step_promotions(out: Out, conn, limit: int) -> None:
             SELECT p.id, p.status::text, p.provider, p.risk_tier, p.external_branch,
                    p.external_pr_number, p.external_pr_url, p.ci_state, p.merge_state,
                    p.merged_sha, p.failure_reason, p.eligibility, p.created_at,
-                   p.candidate_id, p.correlation_id, a.name
+                   p.candidate_id, p.correlation_id, a.name,
+                   e.status::text, e.decision, e.confidence, e.criteria_snapshot ->> 'version',
+                   e.attempt, e.error, e.hard_gate_results, e.metric_deltas
             FROM code_promotions p
             LEFT JOIN agents a ON a.id = p.requested_by_agent_id
+            LEFT JOIN LATERAL (
+                SELECT * FROM change_experiments x WHERE x.promotion_id = p.id ORDER BY x.created_at DESC LIMIT 1
+            ) e ON TRUE
             ORDER BY p.created_at DESC
             LIMIT %s
             """,
@@ -1701,6 +1714,8 @@ def step_promotions(out: Out, conn, limit: int) -> None:
     view = []
     for r in rows:
         gates = r[11] if isinstance(r[11], dict) else {}
+        hard = r[22] if isinstance(r[22], list) else []
+        deltas = r[23] if isinstance(r[23], dict) else {}
         view.append(
             {
                 "promotion": str(r[0])[:8],
@@ -1718,18 +1733,31 @@ def step_promotions(out: Out, conn, limit: int) -> None:
                 "candidate": str(r[13])[:8],
                 "correlation": str(r[14]),
                 "created_at": r[12].isoformat() if r[12] else None,
-                "gates": {
-                    k: gates.get(k)
-                    for k in (
-                        "merge_eligible", "auto_merge_enabled", "auto_merge_allowed",
-                        "human_approval_required", "human_approval_satisfied",
-                        "human_approvals", "blocking", "ci_passed", "qa_pass",
-                        "security_pass", "fitness_precheck", "trusted_risk_tier",
-                    )
-                    if k in gates
+                "gates": {k: gates.get(k) for k in RECORD_GATES if k in gates},
+                "fitness": None if r[16] is None else {
+                    "status": r[16], "decision": r[17], "confidence": r[18], "criteria": r[19], "attempt": r[20],
+                    "error": scrub(str(r[21]))[:200] if r[21] else None,
+                    "failed_hard_gates": [str(g.get("gate")) for g in hard if isinstance(g, dict) and not g.get("passed")],
+                    "regressions": sorted(k for k, v in deltas.items() if isinstance(v, dict) and v.get("verdict") == "regression"),
                 },
             }
         )
+    return view
+
+
+def step_promotions(out: Out, conn, limit: int) -> None:
+    """Read the durable promotion records the CONTROLLER wrote.
+
+    A PR that is not merged is weak evidence: it could simply not have been
+    tried yet. The eligibility record says WHY it is not merged -- which gate
+    blocked it and whether auto-merge was even allowed -- and that is the claim
+    "auto-merge is off" actually has to be checked against. Read-only."""
+    view = promotion_records(conn, limit)
+    stuck = [v for v in view if v["status"] in OPEN_PR and v["fitness"] and v["gates"].get("fitness_precheck") is False]
+    out.info("promotions", "fitness: " + ("; ".join(
+        f"PR #{v['pr']} {v['fitness']['status']}/{v['fitness']['decision']}/{v['fitness']['confidence']} ({v['fitness']['criteria']}, attempt {v['fitness']['attempt']})"
+        f" gates={v['fitness']['failed_hard_gates']} regressions={v['fitness']['regressions']}" + (f" error={v['fitness']['error']}" if v['fitness']['error'] else "")
+        for v in stuck[:10]) or "no open PR is blocked by fitness"))
     out.check("promotions", "P01", True, f"{len(view)} promotion record(s)")
     merged = [v for v in view if v["status"] == "merged" or v["merged_sha"]]
     out.check("promotions", "P02", not merged, f"nothing merged autonomously ({len(merged)} merged record(s) found)")
