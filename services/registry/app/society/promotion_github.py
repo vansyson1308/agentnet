@@ -170,6 +170,11 @@ class GitHubPromotionProvider:
             raise ProviderRefused(f"GitHub refused {method} {path} ({status})")
         if status == 404:
             return None
+        if method == "GET" and status in (409, 422):
+            # A READ refused as "unprocessable" changes nothing and is answered
+            # differently a minute later (staging 2026-10-30: GET /pulls/132 422
+            # ended the promotion of a PR the owner then merged). Retry, never end.
+            raise ProviderTransient(f"GitHub returned {status} for {method} {path}")
         if status >= 400:
             raise ProviderRefused(f"GitHub error {status} for {method} {path}")
         return body
@@ -229,6 +234,9 @@ class GitHubPromotionProvider:
             shutil.rmtree(helper_dir, ignore_errors=True)
         if proc.returncode != 0:
             err = redact((proc.stderr or "")[:300], cred.token)
+            if any(m in err for m in ("Internal Server Error", "returned error: 5", "HTTP 5", "Service Unavailable", "Bad Gateway")):
+                # the remote failed; git then also prints "rejected" (staging 2026-10-30)
+                raise ProviderTransient(f"git push: remote error: {err}")
             if "rejected" in err or "non-fast-forward" in err or "fetch first" in err:
                 raise ProviderConflict(f"push rejected (non-fast-forward): {err}")
             if "Authentication failed" in err or "401" in err or "403" in err:
@@ -410,6 +418,15 @@ class GitHubPromotionProvider:
         if not body or not body.get("merged"):
             raise ProviderConflict("merge was not performed (head moved or checks pending)")
         return body.get("sha", "")
+
+    def close_pr(self, promotion, reason: str) -> None:
+        """Close the controller's OWN bot PR (dedup.supersede_duplicates): a structural reason as
+        a comment, then ``state: closed``. Only a PR on the bot's branch prefix is ever closed."""
+        if not str(getattr(promotion, "external_branch", "") or "").startswith(self.settings.branch_prefix.rstrip("/") + "/"):
+            raise ProviderRefused("only the controller's own branch PRs are closed")
+        number = int(promotion.external_pr_number)
+        self._request("POST", f"/repos/{self.repo}/issues/{number}/comments", json={"body": reason[:1000]})
+        self._request("PATCH", f"/repos/{self.repo}/pulls/{number}", json={"state": "closed"})
 
 
 __all__ = ["ASKPASS_SCRIPT", "ASKPASS_TOKEN_ENV", "ASKPASS_USER_ENV", "GitHubPromotionProvider", "push_base_url"]
