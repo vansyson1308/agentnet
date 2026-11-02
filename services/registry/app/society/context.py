@@ -54,7 +54,7 @@ from ..models import (
     Wallet,
     WalletOwnerType,
 )
-from . import directives, owner_thread
+from . import directives, owner_thread, toolbox
 from .config import SocietySettings
 from .engineering.docs_contract import (
     DOCS_ACCEPTANCE_TEST,
@@ -161,6 +161,10 @@ class AgentContext:
     # Owner Console: in a story the owner opened (owner_thread.py), what the owner said, labelled
     # owner input, and whether the Governor already answered. A request; it grants nothing.
     owner_request: Dict[str, Any] = field(default_factory=dict)
+    # The toolbox (toolbox.py, SOCIETY_TOOLBOX_ENABLED): the reusable tools this story is assigned
+    # (model-authored advisory text, labelled), the live library (structural) and what keeps going
+    # wrong (counts). Which tools were withheld is NOT shown: it is persisted on the run only.
+    toolbox: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -194,6 +198,8 @@ class AgentContext:
             "repo_reads": [r["data"].get("op") if isinstance(r.get("data"), dict) else None for r in self.repo_reads][:LIMIT_REPO_READS],
             "engineering": self.engineering,
             "promotions": [p["id"] for p in self.promotions][:LIMIT_PROMOTIONS],
+            # the toolbox experiment's assignment for this run: toolbox.record_run turns it into trials
+            **({"toolbox_trials": self.__dict__["_tool_trials"]} if self.__dict__.get("_tool_trials") else {}),
         }
 
 
@@ -1230,4 +1236,6 @@ def build_context(
         owner_directive=directives.context_view(db),
         owner_request=owner_thread.context_view(db, event, settings, now),
     )
+    if getattr(settings, "toolbox_enabled", False) and grant is not None:
+        ctx.toolbox, ctx.__dict__["_tool_trials"] = toolbox.context_view(db, role=role, correlation_id=event.correlation_id, now=now)
     return ctx

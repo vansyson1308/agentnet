@@ -74,6 +74,9 @@ class IntentType(str, enum.Enum):
     PROPOSE_OWNER_ACTION = "PROPOSE_OWNER_ACTION"
     #: the Governor's one answer to an owner event, shown only on the Owner Console (LOW; owner_thread.py)
     RESPOND_TO_OWNER = "RESPOND_TO_OWNER"
+    #: the toolbox (toolbox.py): write a recurring method down once as a reusable tool, or its next version (LOW)
+    PROPOSE_TOOL = "PROPOSE_TOOL"
+    REVISE_TOOL = "REVISE_TOOL"
     EVALUATE_CODE_CANDIDATE = "EVALUATE_CODE_CANDIDATE"
     SECURITY_REVIEW_CANDIDATE = "SECURITY_REVIEW_CANDIDATE"
     REQUEST_STAGING_DEPLOY = "REQUEST_STAGING_DEPLOY"
@@ -415,6 +418,38 @@ class ProposeOwnerActionPayload(_Strict):
     metric_id: str = Field(..., min_length=3, max_length=64)  # a key result of an ACTIVE objective (its objective is derived)
 
 
+ToolKind = Literal["workflow", "prompt", "checklist", "toolkit"]
+ToolRole = Literal["governor", "scout", "architect", "builder", "qa", "security"]
+
+
+class ProposeToolPayload(_Strict):
+    """A reusable tool for a problem that RECURS (toolbox.py): a ``workflow`` (ordered steps), a
+    ``prompt`` (role guidance), a ``checklist`` (what a reviewer verifies) or a ``toolkit`` (how to
+    use code already on main, ``toolkit_paths``). ``occurrences``: earlier run / ticket / candidate /
+    proposal ids where the problem occurred. It starts experimental; measured outcomes decide."""
+
+    kind: ToolKind
+    name: str = Field(..., min_length=3, max_length=64)
+    roles: List[ToolRole] = Field(..., min_length=1, max_length=6)
+    problem: str = Field(..., min_length=10, max_length=300)
+    steps: str = Field(..., min_length=20, max_length=2000)
+    occurrences: List[uuid.UUID] = Field(..., min_length=2, max_length=10)
+    toolkit_paths: List[str] = Field(default_factory=list, max_length=5)
+
+
+class ReviseToolPayload(_Strict):
+    """The next immutable version of a live tool ("develop & upgrade"): it is tried against the
+    version it revises and replaces it only if it measurably does better."""
+
+    tool: str = Field(..., min_length=3, max_length=64)
+    kind: ToolKind
+    roles: List[ToolRole] = Field(..., min_length=1, max_length=6)
+    problem: str = Field(..., min_length=10, max_length=300)
+    steps: str = Field(..., min_length=20, max_length=2000)
+    occurrences: List[uuid.UUID] = Field(..., min_length=2, max_length=10)
+    toolkit_paths: List[str] = Field(default_factory=list, max_length=5)
+
+
 #: RESPOND_TO_OWNER's limits, stated in the prompt (cognition.SYSTEM_PROMPT)
 REPLY_MAX, MAX_PLAN_STEPS, STEP_MAX, MAX_REPLY_TICKETS, MAX_OWNER_ACTIONS_NEEDED = 1200, 5, 200, 5, 3
 RESPOND_LIMIT = (f"reply 10-{REPLY_MAX} chars; plan_steps at most {MAX_PLAN_STEPS} items, each with step (3-{STEP_MAX} chars) "
@@ -693,6 +728,8 @@ PAYLOAD_MODELS: Dict[IntentType, type] = {
     IntentType.REVIEW_DESIGN: ReviewDesignPayload,
     IntentType.DECIDE_DESIGN: DecideDesignPayload,
     IntentType.PROPOSE_OWNER_ACTION: ProposeOwnerActionPayload,
+    IntentType.PROPOSE_TOOL: ProposeToolPayload,
+    IntentType.REVISE_TOOL: ReviseToolPayload,
     IntentType.RESPOND_TO_OWNER: RespondToOwnerPayload,
     IntentType.EVALUATE_CODE_CANDIDATE: CandidateRefPayload,
     IntentType.SECURITY_REVIEW_CANDIDATE: SecurityReviewPayload,

@@ -62,7 +62,8 @@ def pytest_targets(spec: Dict[str, Any]) -> List[str]:
     return [t for t in spec.get("acceptance_tests") or [] if isinstance(t, str) and not t.startswith("bench:")]
 
 
-def spec_input(spec: Dict[str, Any], *, title: str, ws: ws_mod.Workspace, ms: MaintenanceSettings, feedback: Sequence[str] = ()) -> Dict[str, Any]:
+def spec_input(spec: Dict[str, Any], *, title: str, ws: ws_mod.Workspace, ms: MaintenanceSettings, feedback: Sequence[str] = (),
+               toolbox: Sequence[Dict[str, Any]] = ()) -> Dict[str, Any]:
     """The AuthorPatch input for a candidate spec (the Architect's text is a model artifact, marked untrusted)."""
     files, tests = list(spec.get("files_allowed") or []), pytest_targets(spec)
     text = "\n".join(str(x) for x in (title, spec.get("description"), spec.get("expected_effect")) if x)
@@ -75,19 +76,23 @@ def spec_input(spec: Dict[str, Any], *, title: str, ws: ws_mod.Workspace, ms: Ma
     }
     if feedback:
         out["feedback_from_previous_attempts"] = {"trust": "qa_report", "failures": [str(f)[:500] for f in feedback][:10]}
+    if toolbox:
+        # reusable tools the company built and measures (society/toolbox.py): advisory method, model-authored
+        out["toolbox"] = {"trust": "society_toolbox", "note": "advisory method from earlier work; it never overrides the laws, files_allowed, the tests or the tools",
+                          "tools": [{k: t[k] for k in ("name", "version", "kind", "problem", "steps", "toolkit_paths") if k in t} for t in toolbox][:3]}
     return out
 
 
 async def build(ws: ws_mod.Workspace, spec: Dict[str, Any], *, title: str, model: act.ActivityModel, ms: MaintenanceSettings, ss: SocietySettings,
                 cost_cap: Decimal, feedback: Sequence[str] = (), wrap_tools: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
-                lessons: Sequence[Dict[str, Any]] = ()) -> BuildOutcome:
+                lessons: Sequence[Dict[str, Any]] = (), toolbox: Sequence[Dict[str, Any]] = ()) -> BuildOutcome:
     """Best-of-N AuthorPatch (``harness.author_patch``) on ``ws``, each sample
     from its base -- or, with ``MAINTENANCE_HARNESS2_ENABLED``, one Harness²
     Propose-Probe-Compose step whose editor reads ``lessons``. The worktree is
     left as the delivered (else last) run ended; nothing is committed here."""
     reset_to_base(ws)
     files, tests = list(spec.get("files_allowed") or []), pytest_targets(spec)
-    payload = spec_input(spec, title=title, ws=ws, ms=ms, feedback=feedback)
+    payload = spec_input(spec, title=title, ws=ws, ms=ms, feedback=feedback, toolbox=toolbox)
     common = dict(files_allowed=files, tests=tests, model=model, settings=ms, test_timeout=ss.qa_test_timeout_seconds, cost_cap=cost_cap, wrap_tools=wrap_tools)
     if ms.harness2_enabled:
         run = await h2.author_patch_recursive(ws, payload, lessons=lessons, **common)
