@@ -367,6 +367,11 @@ class SocietySettings:
     work_generator_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_WORK_GENERATOR_ENABLED", False))
     work_generator_min_backlog: int = field(default_factory=lambda: _int("SOCIETY_WORK_GENERATOR_MIN_BACKLOG", 5, minimum=0))
     work_generator_max_per_cycle: int = field(default_factory=lambda: _int("SOCIETY_WORK_GENERATOR_MAX_PER_CYCLE", 10, minimum=0))
+    # The toolbox (toolbox.py, owner 2026-11-02 "Hyra"): agents write recurring methods down as reusable
+    # tools (PROPOSE_TOOL / REVISE_TOOL); each is shown to half the stories of its roles and adopted or
+    # retired by measured outcomes after MIN_TRIALS runs per arm. No model call of its own. Off by default.
+    toolbox_enabled: bool = field(default_factory=lambda: _bool("SOCIETY_TOOLBOX_ENABLED", False))
+    toolbox_min_trials: int = field(default_factory=lambda: _int("SOCIETY_TOOLBOX_MIN_TRIALS", 8, minimum=1))
     company_max_active_hypotheses: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_MAX_ACTIVE_HYPOTHESES", 3, minimum=0))
     company_max_high_risk_investigations: int = field(default_factory=lambda: _int("SOCIETY_COMPANY_MAX_HIGH_RISK_INVESTIGATIONS", 1, minimum=0))
     # An APPROVED hypothesis nobody started within this window is SHELVED: it
@@ -519,6 +524,8 @@ def validate_settings(s: "SocietySettings", *, model_caller: bool = False) -> li
         problems.append("SOCIETY_COMPANY_PLAN_MAX must be 1..10 and SOCIETY_COMPANY_PLAN_PER_DEPARTMENT <= it")
     if s.work_generator_min_backlog > 20 or s.work_generator_max_per_cycle > 20:
         problems.append("SOCIETY_WORK_GENERATOR_MIN_BACKLOG and SOCIETY_WORK_GENERATOR_MAX_PER_CYCLE must be 0..20 (the generator is bounded)")
+    if not 4 <= s.toolbox_min_trials <= 50:
+        problems.append("SOCIETY_TOOLBOX_MIN_TRIALS must be 4..50 (fewer trials cannot tell a tool from noise)")
     if s.telegram_digest_hour_utc > 23:
         problems.append("SOCIETY_TELEGRAM_DIGEST_HOUR_UTC must be 0..23")
     if s.telegram_enabled and not re.fullmatch(r"-?\d{1,20}", s.telegram_chat_id):

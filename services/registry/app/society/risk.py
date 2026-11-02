@@ -151,6 +151,9 @@ OWNER_MERGE_PATTERNS: Sequence[str] = (
     "services/registry/app/society/config.py",
     "services/registry/app/society/github_credentials.py",
     "services/registry/app/society/secret_redaction.py",
+    # the toolbox's evaluation law: how a tool is adopted or retired (owner 2026-11-02)
+    "services/registry/app/society/toolbox.py",
+    "tests/society/test_toolbox.py",
     "services/registry/app/maintenance/policy.py",
     "tests/society/test_promotion.py",
     "tests/society/test_auto_merge_tiers.py",
@@ -202,6 +205,7 @@ JUDGE_PATHS: Sequence[str] = (
     "services/registry/app/society/fitness.py",
     "services/registry/app/society/promotion.py",
     "services/registry/app/society/policy.py",
+    "services/registry/app/society/toolbox.py",
     "services/registry/app/maintenance/release.py",
     "services/registry/app/maintenance/release_worker.py",
     "services/registry/app/maintenance/release_providers.py",

@@ -664,3 +664,39 @@ ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS tokens_cache_write_1h INTEGER;
 ALTER TABLE society_tickets DROP CONSTRAINT IF EXISTS society_tickets_source_check;
 ALTER TABLE society_tickets ADD CONSTRAINT society_tickets_source_check CHECK (source IN ('owner', 'scout', 'incident', 'backlog', 'department', 'owner_story', 'generator', 'rescope'));
 ALTER TABLE society_tickets ADD COLUMN IF NOT EXISTS origin VARCHAR(48);
+
+-- The Society toolbox (toolbox.py, owner 2026-11-02 "Hyra"): reusable tools agents design
+-- (workflow / prompt / checklist / toolkit), immutable versions, adopted or retired only by
+-- measured outcomes of later runs (society_tool_trials: one row per tool x completed run, arm =
+-- shown or withheld). Tool text is advisory data; nothing here is executed.
+CREATE TABLE IF NOT EXISTS society_tools (
+    id                    UUID PRIMARY KEY,
+    name                  VARCHAR(64) NOT NULL,
+    version               INTEGER NOT NULL CHECK (version >= 1),
+    parent_id             UUID REFERENCES society_tools(id) ON DELETE SET NULL,
+    kind                  VARCHAR(16) NOT NULL CHECK (kind IN ('workflow', 'prompt', 'checklist', 'toolkit')),
+    roles                 JSONB NOT NULL DEFAULT '[]'::jsonb,
+    problem               VARCHAR(300) NOT NULL,
+    body                  TEXT NOT NULL CHECK (char_length(body) BETWEEN 1 AND 2000),
+    toolkit_paths         JSONB NOT NULL DEFAULT '[]'::jsonb,
+    occurrences           JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status                VARCHAR(16) NOT NULL DEFAULT 'experimental' CHECK (status IN ('experimental', 'adopted', 'retired', 'superseded')),
+    status_reason         VARCHAR(200),
+    proposed_by_agent_id  UUID REFERENCES agents(id) ON DELETE SET NULL,
+    decided_at            TIMESTAMPTZ,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_society_tools_name_version ON society_tools (name, version);
+CREATE INDEX IF NOT EXISTS idx_society_tools_live ON society_tools (status, created_at);
+CREATE TABLE IF NOT EXISTS society_tool_trials (
+    id          UUID PRIMARY KEY,
+    tool_id     UUID NOT NULL REFERENCES society_tools(id) ON DELETE CASCADE,
+    run_id      UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+    role        VARCHAR(64),
+    arm         VARCHAR(16) NOT NULL CHECK (arm IN ('treatment', 'control')),
+    success     BOOLEAN NOT NULL,
+    cost_usd    NUMERIC(12, 6) NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_society_tool_trials_run ON society_tool_trials (tool_id, run_id);
+CREATE INDEX IF NOT EXISTS idx_society_tool_trials_tool ON society_tool_trials (tool_id, arm, created_at);

@@ -61,6 +61,7 @@ from . import deployment as dep_mod
 from . import fitness as fitness_mod
 from . import memory_grounding
 from . import outcomes as outcomes_mod
+from . import toolbox as toolbox_mod
 from . import owner_thread as owner_thread_mod
 from . import funnel as funnel_mod
 from . import tickets as tickets_mod
@@ -693,6 +694,7 @@ class SocietyWorker:
                 logger.info("run %s resumed with persisted intents (attempt %s)", run.id, run.attempt)
 
             self._execute_pending_intents(db, run, agent, grant, event, stats)
+            self._record_tool_trials(db, run)
             self._span(db, run, agent, "society.run", SpanStatus.SUCCESS, started, {"event_type": event.event_type, "intents": run.intents_count, "resumed": resumed})
             complete_run(db, run)
             M_RUNS.labels(status="completed").inc()
@@ -712,6 +714,19 @@ class SocietyWorker:
                 stats.runs_processed += 1
                 stats.processed_run_ids.append(str(run_id))
             db.close()
+
+    def _record_tool_trials(self, db, run: AgentRun) -> None:
+        """The toolbox experiment (toolbox.py): this completed run becomes one trial of every tool its
+        story was assigned, shown or withheld. A failure here never decides the run's outcome."""
+        if not self.settings.toolbox_enabled or not (run.context_summary or {}).get("toolbox_trials"):
+            return
+        try:
+            with db.begin_nested():
+                out = toolbox_mod.record_run(db, run, min_trials=self.settings.toolbox_min_trials, now=utcnow())
+            if out["verdicts"]:
+                logger.info("society.toolbox verdicts=%s", out["verdicts"])
+        except Exception:  # noqa: BLE001
+            logger.exception("toolbox trial for run %s failed", run.id)
 
     @staticmethod
     def _count_fail(status: AgentRunStatus, stats: Optional[CycleStats]) -> str:

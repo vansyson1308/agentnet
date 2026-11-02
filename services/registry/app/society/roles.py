@@ -78,6 +78,10 @@ _LOW_COMMON = (
     IntentType.SEND_MESSAGE.value,
     IntentType.WRITE_MEMORY.value,
     IntentType.SLEEP.value,
+    # the toolbox (toolbox.py): every role may write a recurring method down as a reusable tool
+    # (policy refuses both while SOCIETY_TOOLBOX_ENABLED is off)
+    IntentType.PROPOSE_TOOL.value,
+    IntentType.REVISE_TOOL.value,
 )
 # Bounded, audited, read-only repository intelligence (Phase 3).
 _REPO_READS = (
