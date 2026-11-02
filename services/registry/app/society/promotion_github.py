@@ -419,6 +419,46 @@ class GitHubPromotionProvider:
             raise ProviderConflict("merge was not performed (head moved or checks pending)")
         return body.get("sha", "")
 
+    def replay_files(self, promotion, parent_sha: str, changes: Dict[str, Optional[bytes]], expected: Dict[str, List[Optional[str]]], message: str) -> str:
+        """One fast-forward commit on the controller's OWN PR branch (``rework.py``), through the
+        Git Data API: blobs -> a tree on the parent's tree -> a commit whose only parent is
+        ``parent_sha`` -> the branch ref moved with ``force: false`` (GitHub refuses a non
+        fast-forward). Before anything is written, every path must hold a version the rework
+        knows (``expected``: git blob shas, None = absent), so a human edit or a newer main on
+        the PR branch is a conflict, never overwritten."""
+        import base64  # noqa: PLC0415
+        from urllib.parse import quote  # noqa: PLC0415
+
+        branch = str(getattr(promotion, "external_branch", "") or "")
+        if not branch.startswith(self.settings.branch_prefix.rstrip("/") + "/") or branch in (self.base_branch, "main", "master"):
+            raise ProviderRefused("only the controller's own branch is reworked")
+        actual: Dict[str, Optional[str]] = {}
+        for path in sorted(set(expected) | set(changes)):
+            body = self._request("GET", f"/repos/{self.repo}/contents/{quote(path)}", params={"ref": parent_sha})
+            actual[path] = str(body.get("sha")) if isinstance(body, dict) and body.get("type") == "file" else (None if body is None else "not-a-file")
+        for path, allowed in expected.items():
+            if actual.get(path) not in allowed:
+                raise ProviderConflict(f"{path} on the PR branch is not a version the rework knows")
+        commit = self._request("GET", f"/repos/{self.repo}/git/commits/{parent_sha}") or {}
+        base_tree = ((commit.get("tree") or {}).get("sha")) or ""
+        if not base_tree:
+            raise ProviderRefused("replay: parent commit not found")
+        entries = []
+        for path, content in sorted(changes.items()):
+            if content is None:
+                if actual.get(path):
+                    entries.append({"path": path, "mode": "100644", "type": "blob", "sha": None})
+                continue
+            blob = self._request("POST", f"/repos/{self.repo}/git/blobs", json={"content": base64.b64encode(content).decode("ascii"), "encoding": "base64"}) or {}
+            entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob.get("sha")})
+        tree = self._request("POST", f"/repos/{self.repo}/git/trees", json={"base_tree": base_tree, "tree": entries}) or {}
+        new = self._request("POST", f"/repos/{self.repo}/git/commits", json={"message": message[:500], "tree": tree.get("sha"), "parents": [parent_sha]}) or {}
+        sha = str(new.get("sha") or "")
+        if not sha:
+            raise ProviderRefused("replay: commit not created")
+        self._request("PATCH", f"/repos/{self.repo}/git/refs/heads/{quote(branch)}", json={"sha": sha, "force": False})
+        return sha
+
     def close_pr(self, promotion, reason: str) -> None:
         """Close the controller's OWN bot PR (dedup.supersede_duplicates): a structural reason as
         a comment, then ``state: closed``. Only a PR on the bot's branch prefix is ever closed."""

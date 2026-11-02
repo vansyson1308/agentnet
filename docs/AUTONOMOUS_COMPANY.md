@@ -658,3 +658,17 @@ checks the G1v live proof from these numbers: >= 20 tickets, >= 8 designs go, >=
   `task_service.fail_task_with_refund` (run last; no wallet write). Tests: `tests/society/test_placement_and_dedup.py`.
 - **RED ceiling** (`config.validate_settings`): `SOCIETY_AUTO_MERGE_MAX_TIER=red` is refused unless every judge in
   `risk.JUDGE_PATHS` is owner-only (`risk.judges_not_owner_only()` empty).
+- **Open PRs reworked in place** (`society/rework.py`, trusted base, owner-only merge): an open bot PR whose only RED
+  path is its own NEW top-level `tests/society/test_*.py` while its product files sit in ONE placement area gets the
+  test moved (`relocate_tests`, worker step): `git mv` byte-identical, proven green at the new path first, a NEW plan
+  revision (`spec.plan_revision`, `spec.revisions[]` keeps the previous paths; `files_allowed`/`acceptance_tests`/
+  `test_first` renamed, never widened), QA and Security verdicts cleared and QA asked for the new head. CI red on an
+  up-to-date head (`return_for_ci`) is reproduced by merging main into the candidate workspace and running the change
+  area's tests; only failures that are NEW with the change count. Reproduced -> a plan revision adds those tests to
+  `acceptance_tests`, the candidate goes back to its Builder as `qa_failed` (one more QA attempt, `MAX_CI_REWORKS`=1);
+  the Builder rebuilds, or declines with a reason and the controller closes its own PR. Not reproduced -> the PR stays
+  red for the owner. Once the candidate is READY again, `promotion.validate` re-runs and the change between the old
+  and new head reaches the SAME PR as one fast-forward commit (`replay_files`), only over files whose PR-branch
+  version is the PR's previous one or the new base's; anything else is a conflict and the PR is held, never
+  overwritten. Tier before/after is recorded (`evidence.reworks`) and shown by the validator (`promotions`, `rework:`
+  line). Tests: `tests/society/test_pr_rework.py`.

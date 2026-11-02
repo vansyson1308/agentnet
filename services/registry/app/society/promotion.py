@@ -61,6 +61,7 @@ from .engineering.qa import static_security_scan
 from .events import EventType, emit_event, utcnow
 from .risk import assess as assess_risk
 from .risk import owner_merge_paths, tier_at_least
+from . import rework  # noqa: E402 -- rework imports promotion lazily
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +197,7 @@ class PromotionProvider(Protocol):
     def mark_ready_for_review(self, promotion: CodePromotion, state: PRState) -> bool: ...  # pragma: no cover
     def merge(self, promotion: CodePromotion, expected_head_sha: str) -> str: ...  # pragma: no cover
     def close_pr(self, promotion: CodePromotion, reason: str) -> None: ...  # pragma: no cover -- its OWN bot PR (dedup.py)
+    def replay_files(self, promotion: CodePromotion, parent_sha: str, changes: Dict[str, Optional[bytes]], expected: Dict[str, List[Optional[str]]], message: str) -> str: ...  # pragma: no cover -- rework.py
 
 
 class DisabledPromotionProvider:
@@ -220,6 +222,9 @@ class DisabledPromotionProvider:
         raise ProviderUnavailable("no promotion provider configured")
 
     def merge(self, promotion, expected_head_sha):
+        raise ProviderUnavailable("no promotion provider configured")
+
+    def replay_files(self, promotion, parent_sha, changes, expected, message):
         raise ProviderUnavailable("no promotion provider configured")
 
     def close_pr(self, promotion, reason):
@@ -256,6 +261,9 @@ class FakePromotionProvider:
         self.async_update_branch = True
         #: a human merge (``human_merge``) does not go through this check
         self.require_authorisation = True
+        #: commit sha -> {path: git blob sha}: the PR branch's files, for replay_files
+        self.files: Dict[str, Dict[str, str]] = {}
+        self.replay_count = 0
 
     # test helpers
     def inject(self, exc: Exception) -> None:
@@ -318,7 +326,8 @@ class FakePromotionProvider:
             pr = {"number": self._next_pr, "url": f"fake://pr/{self._next_pr}", "title": title, "body": body, "head_sha": candidate.head_sha, "base_sha": self.base_sha, "approvals": [], "merged": False, "merged_sha": "", "closed": False, "unresolved_reviews": 0, "draft": True}
             self.prs[candidate.branch_name] = pr
             return PRRef(number=pr["number"], url=pr["url"], created=True)
-        pr["title"], pr["body"], pr["head_sha"] = title, body, candidate.head_sha
+        # GitHub's PATCH /pulls/{n} changes title and body only; the head is the branch's
+        pr["title"], pr["body"] = title, body
         return PRRef(number=pr["number"], url=pr["url"], created=False)
 
     def get_pr_state(self, promotion):
@@ -356,6 +365,35 @@ class FakePromotionProvider:
         self.parents[pr["head_sha"]] = [previous, self.base_sha]
         self.branches[promotion.external_branch or ""] = pr["head_sha"]
         return "" if self.async_update_branch else pr["head_sha"]
+
+    def replay_files(self, promotion, parent_sha, changes, expected, message):
+        """One fast-forward commit on the PR branch (rework.py): refused unless the branch is
+        still at ``parent_sha``; a conflict unless every path holds an expected version."""
+        from .rework import git_blob_sha  # noqa: PLC0415
+
+        self.calls.append(("replay_files", promotion.external_branch, parent_sha, sorted(changes)))
+        self._maybe_fault()
+        pr = self.prs.get(promotion.external_branch or "")
+        if pr is None:
+            raise ProviderRefused("no PR")
+        if pr["head_sha"] != parent_sha:
+            raise ProviderRefused("not a fast-forward: the branch moved")
+        tree = dict(self.files.get(parent_sha, {}))
+        for path, allowed in expected.items():
+            if tree.get(path) not in allowed:
+                raise ProviderConflict(f"{path} on the PR branch is not a version the rework knows")
+        for path, content in changes.items():
+            if content is None:
+                tree.pop(path, None)
+            else:
+                tree[path] = git_blob_sha(content)
+        self.replay_count += 1
+        new = f"replayed-{pr['number']}-{self.replay_count}"
+        self.files[new] = tree
+        self.parents[new] = [parent_sha]
+        pr["head_sha"] = new
+        self.branches[promotion.external_branch or ""] = new
+        return new
 
     def commit_parents(self, sha):
         self.calls.append(("commit_parents", sha))
@@ -834,6 +872,8 @@ def compute_eligibility(db: Session, settings: SocietySettings, promotion: CodeP
     tier = RiskTier(promotion.risk_tier)
     scope = autonomous_merge_scope(settings, tier, promotion_paths(promotion, candidate))
     exp = latest_experiment(db, promotion)
+    if exp is not None and exp.candidate_sha and exp.candidate_sha != candidate.head_sha:
+        exp = None  # a verdict belongs to the head it judged (rework.py replaces heads)
     exp_status = getattr(exp.status, "value", exp.status) if exp else None
     gates = {
         "trusted_risk_tier": tier.value,
@@ -1251,6 +1291,8 @@ def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvid
                 _transition(db, promotion, candidate, PromotionStatus.REJECTED, reason=f"{CLOSED_BY_OWNER}: pull request closed without merge")
                 _release(db, promotion)
                 return PromotionStatus.REJECTED.value
+            if rework.owns_step(promotion, state):  # a new head is on its way to THIS PR (rework.py)
+                return rework.step(db, settings, provider, promotion, candidate, state)
             if state.head_sha and state.head_sha != promotion.candidate_sha:
                 verdict = _adopt_reconciled_head(db, promotion=promotion, candidate=candidate, state=state, provider=provider)
                 if verdict is True:
@@ -1278,6 +1320,8 @@ def advance(db: Session, *, settings: SocietySettings, provider: PromotionProvid
                 return promotion.status.value if isinstance(promotion.status, PromotionStatus) else str(promotion.status)
             if state.ci == "failed":
                 _transition(db, promotion, candidate, PromotionStatus.CI_FAILED, reason=state.detail or "CI failed")
+                # up to date and the controller's own head: a reproduced failure goes back to the Builder
+                rework.return_for_ci(db, settings, promotion, candidate)
                 _release(db, promotion)
                 return PromotionStatus.CI_FAILED.value
             if state.ci in ("pending", "unknown") or status == PromotionStatus.CI_FAILED:
@@ -1441,6 +1485,8 @@ def ensure_fitness_requested(db: Session, settings: SocietySettings, promotion: 
     from .fitness import CRITERIA_VERSION  # noqa: PLC0415
 
     latest = latest_experiment(db, promotion)
+    if latest is not None and latest.candidate_sha and latest.candidate_sha != candidate.head_sha:
+        latest = None  # it judged an earlier head (a rework replaced it): this head needs its own verdict
     if latest is not None:
         # Judged by the current criteria, or it satisfied the gate: final. An
         # unsatisfied verdict under OLDER criteria (fitness-v1 called every Claude

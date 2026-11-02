@@ -57,6 +57,7 @@ from . import boardroom_commands as boardroom_commands_mod
 from . import boardroom_telegram
 from . import candidate_health as candidate_health_mod
 from . import dedup as dedup_mod
+from . import rework as rework_mod
 from . import deployment as dep_mod
 from . import fitness as fitness_mod
 from . import memory_grounding
@@ -836,6 +837,9 @@ class SocietyWorker:
         ticket closes, an approved ticket nobody designed is never silently stuck, the board
         approves an undecided plan (or records why it holds) and no design review strands a ticket."""
         steps = [("outcomes", lambda db: outcomes_mod.record(db, utcnow()))]
+        if getattr(self.promotion_provider, "name", "disabled") != "disabled":
+            # G1y item 2: an open PR whose only RED path is its own tests/society test (rework.py)
+            steps.append(("relocate_tests", lambda db: rework_mod.relocate_tests(db, self.settings)))
         if self.settings.company_cycle_enabled:
             steps += [("owner_stories", lambda db: owner_thread_mod.plan_owner_stories(db, self.settings, utcnow())),
                       ("relabel_dead_worker_refusals", tickets_mod.relabel_dead_worker_refusals),
