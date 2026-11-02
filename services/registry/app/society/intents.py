@@ -419,7 +419,7 @@ class ProposeOwnerActionPayload(_Strict):
 
 
 ToolKind = Literal["workflow", "prompt", "checklist", "toolkit"]
-ToolRole = Literal["governor", "scout", "architect", "builder", "qa", "security", "evaluator"]
+ToolRole = Literal["governor", "scout", "architect", "builder", "qa", "security"]
 
 
 class ProposeToolPayload(_Strict):
@@ -430,7 +430,7 @@ class ProposeToolPayload(_Strict):
 
     kind: ToolKind
     name: str = Field(..., min_length=3, max_length=64)
-    roles: List[ToolRole] = Field(..., min_length=1, max_length=7)
+    roles: List[ToolRole] = Field(..., min_length=1, max_length=6)
     problem: str = Field(..., min_length=10, max_length=300)
     steps: str = Field(..., min_length=20, max_length=2000)
     occurrences: List[uuid.UUID] = Field(..., min_length=2, max_length=10)
@@ -443,7 +443,7 @@ class ReviseToolPayload(_Strict):
 
     tool: str = Field(..., min_length=3, max_length=64)
     kind: ToolKind
-    roles: List[ToolRole] = Field(..., min_length=1, max_length=7)
+    roles: List[ToolRole] = Field(..., min_length=1, max_length=6)
     problem: str = Field(..., min_length=10, max_length=300)
     steps: str = Field(..., min_length=20, max_length=2000)
     occurrences: List[uuid.UUID] = Field(..., min_length=2, max_length=10)

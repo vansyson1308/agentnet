@@ -78,8 +78,11 @@ _LOW_COMMON = (
     IntentType.SEND_MESSAGE.value,
     IntentType.WRITE_MEMORY.value,
     IntentType.SLEEP.value,
-    # the toolbox (toolbox.py): every role may write a recurring method down as a reusable tool
-    # (policy refuses both while SOCIETY_TOOLBOX_ENABLED is off)
+)
+# the toolbox (toolbox.py): every working role may write a recurring method down as a reusable tool
+# (policy refuses both while SOCIETY_TOOLBOX_ENABLED is off). Not the Evaluator: its intents stay
+# the narrow judge set (tests/society/test_fitness.py).
+_TOOLBOX = (
     IntentType.PROPOSE_TOOL.value,
     IntentType.REVISE_TOOL.value,
 )
@@ -127,7 +130,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             "the society bounded — never expand any agent's authority."
         ),
         description="Governor — mission keeper, goal prioritisation, proposal review",
-        allowed_intents=_LOW_COMMON
+        allowed_intents=_LOW_COMMON + _TOOLBOX
         + (
             IntentType.CREATE_GOAL.value,
             IntentType.UPDATE_GOAL.value,
@@ -187,7 +190,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             "concrete improvement proposal; never invent work and never repeat a proposal already open."
         ),
         description="Scout — observation, anomaly triage, improvement proposals",
-        allowed_intents=_LOW_COMMON
+        allowed_intents=_LOW_COMMON + _TOOLBOX
         + (
             IntentType.CREATE_IMPROVEMENT.value,
             IntentType.CREATE_GOAL.value,
@@ -229,7 +232,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             "in one isolated change and QA can verify it mechanically."
         ),
         description="Architect — bounded design, task decomposition, acceptance criteria",
-        allowed_intents=_LOW_COMMON
+        allowed_intents=_LOW_COMMON + _TOOLBOX
         + _REPO_READS
         + (
             IntentType.REQUEST_CODE_CHANGE.value,
@@ -264,7 +267,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             "candidate to QA. Never merge, never deploy, never widen scope."
         ),
         description="Builder — isolated worktree implementation",
-        allowed_intents=_LOW_COMMON
+        allowed_intents=_LOW_COMMON + _TOOLBOX
         + _REPO_READS
         + (
             IntentType.SUBMIT_CODE_CANDIDATE.value,
@@ -312,7 +315,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             "trust the Builder's claims and never approve your own work."
         ),
         description="QA — independent evaluation, PASS/FAIL with evidence",
-        allowed_intents=_LOW_COMMON
+        allowed_intents=_LOW_COMMON + _TOOLBOX
         + (
             IntentType.EVALUATE_CODE_CANDIDATE.value,
             IntentType.CREATE_IMPROVEMENT.value,
@@ -335,7 +338,7 @@ DEFAULT_ROLES: Dict[str, RoleDefinition] = {
             "cannot be ruled out is a FAIL. You are independently permissioned and cannot be overruled by QA."
         ),
         description="Security Reviewer — risky-surface review, fail closed",
-        allowed_intents=_LOW_COMMON + (IntentType.SECURITY_REVIEW_CANDIDATE.value, IntentType.READ_DIFF.value, IntentType.READ_REPO_FILE.value, IntentType.READ_CANDIDATE_STATE.value,
+        allowed_intents=_LOW_COMMON + _TOOLBOX + (IntentType.SECURITY_REVIEW_CANDIDATE.value, IntentType.READ_DIFF.value, IntentType.READ_REPO_FILE.value, IntentType.READ_CANDIDATE_STATE.value,
                                        IntentType.REVIEW_DESIGN.value),
         subscriptions=(EventType.CODE_CANDIDATE_SECURITY_REVIEW, EventType.REPO_READ_RESULT, EventType.DESIGN_REVIEW_PROPOSED),
         risk_ceiling=IntentRiskClass.MEDIUM.value,

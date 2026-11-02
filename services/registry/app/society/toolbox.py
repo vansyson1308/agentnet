@@ -52,7 +52,7 @@ from sqlalchemy.orm import Session
 
 KINDS = ("workflow", "prompt", "checklist", "toolkit")
 STATUSES = ("experimental", "adopted", "retired", "superseded")
-ROLES = ("governor", "scout", "architect", "builder", "qa", "security", "evaluator")
+ROLES = ("governor", "scout", "architect", "builder", "qa", "security")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 BODY_MAX, PROBLEM_MAX = 2000, 300
 MIN_OCCURRENCES = 2
