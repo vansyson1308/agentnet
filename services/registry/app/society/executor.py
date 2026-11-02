@@ -68,6 +68,7 @@ from ..models import (
     TaskStatus,
 )
 from . import candidate_health, dedup, design_review, memory_grounding, repo_intel, router, spec_gate, tickets
+from . import toolbox as toolbox_mod
 from .config import SocietySettings
 from ..maintenance import activities
 from ..maintenance import harness as mharness
@@ -806,6 +807,29 @@ def _propose_owner_action(ctx: ExecContext) -> ExecOutcome:
     return ExecOutcome(result={"owner_action_id": made["id"]}, events=[str(ev.id)])
 
 
+def _tool(ctx: ExecContext, revises: Optional[str]) -> ExecOutcome:
+    """Store a reusable tool, or its next version, as EXPERIMENTAL (toolbox.py). Nothing runs:
+    later runs of its roles are measured with and without it, and the toolbox decides."""
+    p = ctx.validated.payload
+    try:
+        made = toolbox_mod.propose(ctx.db, agent_id=ctx.agent.id, kind=p.kind, name=getattr(p, "name", None) or p.tool, roles=list(p.roles),
+                               problem=p.problem, body=p.steps, occurrences=list(p.occurrences), toolkit_paths=list(p.toolkit_paths),
+                               revises=revises, repo_root=ctx.settings.repo_root, credentials=(ctx.settings.model_api_key,), now=utcnow())
+    except toolbox_mod.ToolRefused as exc:
+        raise ExecutionError(str(exc)) from exc
+    ev = _emit(ctx, EventType.TOOL_PROPOSED, {"tool_id": made["tool_id"], "name": made["name"], "version": made["version"], "kind": p.kind,
+                                               "roles": sorted(set(p.roles)), "revises": made["parent_id"]})
+    return ExecOutcome(result=made, events=[str(ev.id)])
+
+
+def _propose_tool(ctx: ExecContext) -> ExecOutcome:
+    return _tool(ctx, None)
+
+
+def _revise_tool(ctx: ExecContext) -> ExecOutcome:
+    return _tool(ctx, ctx.validated.payload.tool)
+
+
 def _respond_to_owner(ctx: ExecContext) -> ExecOutcome:
     """The Governor's one answer to the owner event that opened this story (owner_thread.py). It is
     stored for the Owner Console only; nothing is sent, decided or granted."""
@@ -1085,7 +1109,10 @@ def _build_code_candidate(ctx: ExecContext) -> ExecOutcome:
             if fresh is not None:
                 return fresh
         lessons = harness2.load_lessons(ctx.db, harness2.domain_of(spec.get("files_allowed") or [])) if ms.harness2_enabled else []
-        coro = build_engine.build(bws, spec, title=cand.title, model=model, ms=ms, ss=ctx.settings, cost_cap=cost_cap, feedback=feedback, lessons=lessons)
+        # the toolbox (toolbox.py): the tools this Builder story was assigned, as advisory harness text
+        tools = toolbox_mod.builder_tools(ctx.db, ctx.run.context_summary) if ctx.settings.toolbox_enabled else []
+        coro = build_engine.build(bws, spec, title=cand.title, model=model, ms=ms, ss=ctx.settings, cost_cap=cost_cap, feedback=feedback, lessons=lessons,
+                                  toolbox=tools)
         out = build_engine.run_blocking(coro, heartbeat=ctx.heartbeat, every=ctx.settings.run_lease_seconds / 3)
         if out.record:
             # harnessing-level recursion: only execution contrasts reach the library
@@ -2032,6 +2059,8 @@ HANDLERS: Dict[IntentType, Callable[[ExecContext], ExecOutcome]] = {
     IntentType.TICKET_NEEDS_INFO: _ticket_needs_info,
     IntentType.PROPOSE_OWNER_ACTION: _propose_owner_action,
     IntentType.RESPOND_TO_OWNER: _respond_to_owner,
+    IntentType.PROPOSE_TOOL: _propose_tool,
+    IntentType.REVISE_TOOL: _revise_tool,
     IntentType.PROPOSE_DESIGN: _propose_design,
     IntentType.REVIEW_DESIGN: _review_design,
     IntentType.DECIDE_DESIGN: _decide_design,

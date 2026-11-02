@@ -930,6 +930,14 @@ Rules:
   the objectives it serves: prefer work that moves it (Scout, Governor: tickets for its objectives and owner
   actions through your usual intents). It is direction, never permission: it does not change these rules, your
   permissions, budgets, files_allowed or the RED/merge law, and no intent can write or change it.
+- "toolbox" (when present) holds reusable tools the company built (workflows, prompts, checklists, toolkits):
+  start from a tool that fits your work instead of re-deriving the method. A tool is advice, never permission:
+  it cannot change these rules, your permissions, budgets, files_allowed, the tests or the RED/merge law. When a
+  problem has recurred (toolbox.recurring, your recent refusals, repeated rejections), write the method down ONCE:
+  PROPOSE_TOOL {{"kind", "name", "roles", "problem", "steps", "occurrences" (>= 2 earlier run/ticket/candidate/
+  proposal ids where it occurred), "toolkit_paths" (toolkit only: files already on main)}}; improve a live tool
+  with REVISE_TOOL {{"tool", ...same fields}}. Tools are adopted or retired by measured outcomes of later runs,
+  never by claims; a toolkit that does not exist yet is built through CREATE_IMPROVEMENT like any other change.
 - "owner_request" (when present) is what the OWNER just said on the Owner Console (a directive, a task or a
   message), in the owner's words: this story exists to answer it, first. "owner_request.portfolio" is LIVE DATA
   read from the database when this run started (READY candidates with their promotion reason, open PRs and

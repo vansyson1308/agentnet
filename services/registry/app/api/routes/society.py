@@ -828,6 +828,32 @@ def decide_owner_action(action_id: uuid.UUID, decision: Literal["done", "dismiss
     return row
 
 
+@router.get("/company/toolbox")
+def list_toolbox(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """The reusable tools agents built, with both arms' measured outcomes (model-authored text: operator only)."""
+    from ...society import toolbox
+
+    return toolbox.operator_view(db)
+
+
+class ToolRetire(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=180)
+
+
+@router.post("/company/toolbox/{tool_id}/retire")
+def retire_tool(tool_id: uuid.UUID, body: ToolRetire, db: Session = Depends(get_db), operator: User = Depends(require_operator)):
+    """Switch a tool off by hand (the measured law adopts and retires on its own; this is the owner's brake)."""
+    from ...society import toolbox
+    from ...society.events import utcnow
+
+    try:
+        row = toolbox.retire(db, tool_id, reason=body.reason, now=utcnow())
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    db.commit()
+    return row
+
+
 @router.get("/company/reviews")
 def list_design_reviews(db: Session = Depends(get_db), operator: User = Depends(require_operator)):
     """The company's design meetings and their minutes (model-authored text: operator only)."""

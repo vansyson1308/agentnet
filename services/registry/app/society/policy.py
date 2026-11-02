@@ -61,6 +61,8 @@ RISK_BY_TYPE = {
     IntentType.DECIDE_DESIGN: IntentRiskClass.LOW,
     IntentType.PROPOSE_OWNER_ACTION: IntentRiskClass.LOW,
     IntentType.RESPOND_TO_OWNER: IntentRiskClass.LOW,
+    IntentType.PROPOSE_TOOL: IntentRiskClass.LOW,
+    IntentType.REVISE_TOOL: IntentRiskClass.LOW,
     IntentType.EVALUATE_CODE_CANDIDATE: IntentRiskClass.MEDIUM,
     IntentType.SECURITY_REVIEW_CANDIDATE: IntentRiskClass.MEDIUM,
     IntentType.REQUEST_STAGING_DEPLOY: IntentRiskClass.MEDIUM,
@@ -183,6 +185,9 @@ def evaluate_intent(
         return PolicyVerdict(PolicyDecision.DENY, risk, "SOCIETY_AUTONOMOUS_CODE_ENABLED is off")
     if itype in (IntentType.REQUEST_STAGING_DEPLOY, IntentType.REQUEST_STAGING_EVALUATION) and not settings.staging_deploy_enabled:
         return PolicyVerdict(PolicyDecision.DENY, risk, "SOCIETY_STAGING_DEPLOY_ENABLED is off")
+
+    if itype in (IntentType.PROPOSE_TOOL, IntentType.REVISE_TOOL) and not settings.toolbox_enabled:
+        return PolicyVerdict(PolicyDecision.DENY, risk, "SOCIETY_TOOLBOX_ENABLED is off")
 
     if itype in A2A_INTENT_TYPES:
         refusal = _a2a_refusal(itype, intent.payload, settings)

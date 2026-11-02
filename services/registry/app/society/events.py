@@ -97,6 +97,8 @@ class EventType:
     COMPANY_TICKET_NEEDS_INFO = "company.ticket_needs_info"
     #: an outside action was queued for the owner (PROPOSE_OWNER_ACTION, owner_actions.py)
     OWNER_ACTION_PROPOSED = "company.owner_action_proposed"
+    #: a reusable tool (or its next version) went on trial (toolbox.py; no subscriber: measured, not reviewed)
+    TOOL_PROPOSED = "society.tool_proposed"
     #: the design review (design_review.py): the Architect proposes, Scout/QA/Security review, the Governor decides
     DESIGN_REVIEW_REQUESTED = "design_review.requested"
     DESIGN_REVIEW_PROPOSED = "design_review.proposed"
