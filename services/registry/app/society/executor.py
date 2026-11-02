@@ -67,7 +67,7 @@ from ..models import (
     TaskSession,
     TaskStatus,
 )
-from . import candidate_health, dedup, design_review, memory_grounding, repo_intel, router, spec_gate, tickets
+from . import candidate_health, dedup, design_review, memory_grounding, repo_intel, rework, router, spec_gate, tickets
 from .config import SocietySettings
 from ..maintenance import activities
 from ..maintenance import harness as mharness
@@ -1326,7 +1326,11 @@ def _decline_code_candidate(ctx: ExecContext) -> ExecOutcome:
             return ExecOutcome(result={"candidate_id": str(cand.id), "status": status, "duplicate": True})
     if status not in DECLINABLE_STATUSES:
         raise ExecutionError(f"candidate is {status}; only a requested or qa_failed candidate can be declined")
-    if ctx.db.query(CodePromotion).filter(CodePromotion.candidate_id == cand.id).first() is not None:
+    promos = ctx.db.query(CodePromotion).filter(CodePromotion.candidate_id == cand.id).all()
+    # One exception (G1y item 4): CI went red on its open PR and the controller handed it back
+    # (rework.return_for_ci). The Builder fixes it or declines; the controller closes its own PR.
+    ci_rework = any(((p_.evidence or {}).get(rework.PENDING) or {}).get("kind") == "ci_fix" and _ev(p_.status) not in ("merged", "rejected", "superseded") for p_ in promos)
+    if promos and not (ci_rework and status == CodeCandidateStatus.QA_FAILED.value):
         raise ExecutionError("candidate has a promotion; it cannot be declined")
     built_red = (cand.error or "").startswith(BUILD_FAILED) and NAMED_FAILING in (cand.error or "")
     if p.reason_code == "acceptance_unsatisfiable" and status != CodeCandidateStatus.QA_FAILED.value and not built_red:

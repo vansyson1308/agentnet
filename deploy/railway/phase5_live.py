@@ -1700,7 +1700,7 @@ def promotion_records(conn, limit: int) -> List[Dict[str, Any]]:
                    p.merged_sha, p.failure_reason, p.eligibility, p.created_at,
                    p.candidate_id, p.correlation_id, a.name,
                    e.status::text, e.decision, e.confidence, e.criteria_snapshot ->> 'version',
-                   e.attempt, e.error, e.hard_gate_results, e.metric_deltas
+                   e.attempt, e.error, e.hard_gate_results, e.metric_deltas, p.evidence
             FROM code_promotions p
             LEFT JOIN agents a ON a.id = p.requested_by_agent_id
             LEFT JOIN LATERAL (
@@ -1716,6 +1716,7 @@ def promotion_records(conn, limit: int) -> List[Dict[str, Any]]:
         gates = r[11] if isinstance(r[11], dict) else {}
         hard = r[22] if isinstance(r[22], list) else []
         deltas = r[23] if isinstance(r[23], dict) else {}
+        evidence = r[24] if isinstance(r[24], dict) else {}
         view.append(
             {
                 "promotion": str(r[0])[:8],
@@ -1740,9 +1741,26 @@ def promotion_records(conn, limit: int) -> List[Dict[str, Any]]:
                     "failed_hard_gates": [str(g.get("gate")) for g in hard if isinstance(g, dict) and not g.get("passed")],
                     "regressions": sorted(k for k, v in deltas.items() if isinstance(v, dict) and v.get("verdict") == "regression"),
                 },
+                "rework": rework_view(evidence),
             }
         )
     return view
+
+
+def rework_view(evidence: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Structural rework facts (society/rework.py): pending kind, tier before/after of each
+    replay onto the same PR, why a PR was not reworked. Paths and test ids only, no text."""
+    pending = evidence.get("rework_pending") if isinstance(evidence.get("rework_pending"), dict) else None
+    done = [r for r in evidence.get("reworks") or [] if isinstance(r, dict)]
+    skipped = evidence.get("rework_skipped") if isinstance(evidence.get("rework_skipped"), dict) else {}
+    if not (pending or done or skipped):
+        return None
+    return {
+        "pending": None if not pending else {k: pending.get(k) for k in ("kind", "tier_before", "tier_after_predicted", "moves", "failing") if pending.get(k) is not None}
+        | ({"blocked": scrub(str(pending["blocked"]))[:200]} if pending.get("blocked") else {}),
+        "done": [{k: r.get(k) for k in ("kind", "tier_before", "tier_after", "moves", "failing")} for r in done],
+        "skipped": {k: scrub(str((v or {}).get("reason")))[:200] for k, v in skipped.items()},
+    }
 
 
 def step_promotions(out: Out, conn, limit: int) -> None:
@@ -1758,6 +1776,11 @@ def step_promotions(out: Out, conn, limit: int) -> None:
         f"PR #{v['pr']} {v['fitness']['status']}/{v['fitness']['decision']}/{v['fitness']['confidence']} ({v['fitness']['criteria']}, attempt {v['fitness']['attempt']})"
         f" gates={v['fitness']['failed_hard_gates']} regressions={v['fitness']['regressions']}" + (f" error={v['fitness']['error']}" if v['fitness']['error'] else "")
         for v in stuck[:10]) or "no open PR is blocked by fitness"))
+    reworked = [v for v in view if v.get("rework")]
+    out.info("promotions", "rework: " + ("; ".join(
+        f"PR #{v['pr']} " + (f"pending {v['rework']['pending']['kind']}" + (" BLOCKED" if v['rework']['pending'].get('blocked') else "") if v['rework']['pending'] else "")
+        + "".join(f" {d['kind']} {d['tier_before']}->{d['tier_after']}" for d in v['rework']['done'])
+        for v in reworked[:12]) or "no PR reworked"))
     out.check("promotions", "P01", True, f"{len(view)} promotion record(s)")
     merged = [v for v in view if v["status"] == "merged" or v["merged_sha"]]
     out.check("promotions", "P02", not merged, f"nothing merged autonomously ({len(merged)} merged record(s) found)")
