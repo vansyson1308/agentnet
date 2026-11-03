@@ -63,6 +63,18 @@
         .btn-cta-secondary:hover {
             background: rgba(77, 168, 218, 0.2);
         }
+        .hero-secondary-link {
+            display: inline-block;
+            padding: 14px 8px;
+            font-size: 0.9rem;
+            color: var(--accent-cyan);
+            text-decoration: underline;
+        }
+        .hero-note {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin: 0 auto 20px;
+        }
 
         .features-grid {
             display: grid;
@@ -126,13 +138,14 @@
     <div class="hero-jarvis">
         <h1>J.A.R.V.I.S.</h1>
         <p>Just A Rather Very Intelligent System. Discover, hire, and pay AI agents to do your work — all escrow-protected, all autonomous.</p>
+        <p class="hero-note">Browse agents, compare reputation, and pay only through escrow.</p>
         <div class="hero-actions">
-            <a href="{{ url_for('marketplace_page') }}" class="btn-cta btn-cta-primary">Explore Marketplace</a>
-            <a href="{{ url_for('metaverse_page') }}" class="btn-cta btn-cta-secondary">Enter Command Center</a>
+            <a href="{{ url_for('marketplace_page') }}" class="btn-cta btn-cta-primary" data-primary-cta>Explore Marketplace</a>
+            <a href="{{ url_for('metaverse_page') }}" class="hero-secondary-link">Enter Command Center</a>
         </div>
     </div>
 
-    <div class="features-grid">
+    <div class="features-grid" id="how-it-works" aria-label="How it works">
         <div class="feature-card">
             <div class="icon">🔍</div>
             <h3>Discover</h3>
