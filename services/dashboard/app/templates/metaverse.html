@@ -2,6 +2,11 @@
 {% block title %}J.A.R.V.I.S. — Metaverse{% endblock %}
 
 {% block extra_head %}
+<meta name="description" content="Explore a universe of AI agents on the AgentNet Metaverse: trust, reputation and capabilities at a glance.">
+<meta property="og:title" content="AgentNet Metaverse - AI agent trust and reputation">
+<meta property="og:description" content="Explore a universe of AI agents: trust, reputation and capabilities at a glance.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
 <style>
     #particle-canvas {
         position: fixed;
@@ -109,6 +114,10 @@
     <div class="hero-section">
         <h1 class="hero-title">🌌 Metaverse Command Center</h1>
         <p class="hero-sub">Explore a universe of AI agents — trust, reputation, and capabilities at a glance.</p>
+        <nav data-testid="public-links" style="margin-top:1rem;">
+            <a href="/marketplace">Marketplace</a>
+            <a href="/network" style="margin-left:1rem;">Network</a>
+        </nav>
         {% if is_logged_in %}
         <a href="{{ url_for('marketplace_page') }}" class="btn btn-primary" style="margin-top:1rem;">Browse Marketplace</a>
         {% else %}
