@@ -19,11 +19,14 @@ money invariants:
 4. Idempotency: a request carrying an ``Idempotency-Key`` is deduped
    via the UNIQUE constraint on ``transactions.idempotency_key``; the
    second call returns the existing task instead of double-locking
-   escrow.
+   escrow. A key belongs to ONE caller: client keys (REST, WS) are
+   stored scoped by ``scoped_idempotency_key`` and a stored key whose
+   escrow came from another caller's wallet is never returned.
 """
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Tuple
@@ -83,6 +86,11 @@ class EscrowError(Exception):
 # ---------------------------------------------------------------------------
 
 
+def _caller_wallet_id(db: Session, caller_agent: Agent):
+    row = db.query(Wallet.id).filter(Wallet.owner_type == "agent", Wallet.owner_id == caller_agent.id).first()
+    return row[0] if row else None
+
+
 def _agent_status_str(agent: Agent) -> str:
     val = agent.status
     return val.value if hasattr(val, "value") else str(val)
@@ -109,6 +117,35 @@ def _validate_capability(callee_agent: Agent, capability_name: str, input_data: 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+
+def scoped_idempotency_key(caller_agent_id, raw_key: Optional[str]) -> Optional[str]:
+    """The stored form of a CLIENT-supplied Idempotency-Key: bound to the caller.
+
+    ``transactions.idempotency_key`` is globally UNIQUE (VARCHAR(64)), so a raw
+    client key would collide across callers. REST and WebSocket both store
+    ``c:`` + sha256(caller id, key) (62 chars), so the same caller dedupes
+    across both paths and two callers never share a key. Internal callers
+    (A2A, proposals, Society intents) pass keys already derived from their own
+    identity and do not use this.
+    """
+    if not raw_key:
+        return None
+    digest = hashlib.sha256(f"{caller_agent_id}\n{raw_key}".encode("utf-8")).hexdigest()
+    return f"c:{digest[:60]}"
+
+
+def _idempotent_replay(db: Session, tx: Transaction, caller_wallet_id, request_hash: str) -> Optional[TaskSession]:
+    """The task an earlier request with this key created, if it was THIS caller's."""
+    if tx.from_wallet != caller_wallet_id:
+        raise EscrowError("Idempotency-Key is already used by another caller")
+    stored_hash = (tx.extra_data or {}).get("request_hash")
+    if stored_hash and stored_hash != request_hash:
+        raise EscrowError(
+            "Idempotency-Key reused with a different request payload — "
+            "refusing to return the cached task"
+        )
+    return db.query(TaskSession).filter(TaskSession.id == tx.task_session_id).first()
 
 
 def create_task_with_escrow(
@@ -149,8 +186,8 @@ def create_task_with_escrow(
     )
 
     # Idempotency: short-circuit if this key already exists with the same
-    # payload. The UNIQUE index on transactions.idempotency_key is the
-    # ultimate guard against racing inserts.
+    # payload AND the same caller. The UNIQUE index on
+    # transactions.idempotency_key is the ultimate guard against racing inserts.
     if idempotency_key:
         existing_tx = (
             db.query(Transaction)
@@ -158,17 +195,7 @@ def create_task_with_escrow(
             .first()
         )
         if existing_tx is not None:
-            stored_hash = (existing_tx.extra_data or {}).get("request_hash")
-            if stored_hash and stored_hash != request_hash:
-                raise EscrowError(
-                    "Idempotency-Key reused with a different request payload — "
-                    "refusing to return the cached task"
-                )
-            existing_task = (
-                db.query(TaskSession)
-                .filter(TaskSession.id == existing_tx.task_session_id)
-                .first()
-            )
+            existing_task = _idempotent_replay(db, existing_tx, _caller_wallet_id(db, caller_agent), request_hash)
             if existing_task is not None:
                 return existing_task, existing_tx
 
@@ -287,18 +314,11 @@ def create_task_with_escrow(
             .filter(Transaction.idempotency_key == idempotency_key)
             .first()
         )
-        winner_task = (
-            db.query(TaskSession).filter(TaskSession.id == winner_tx.task_session_id).first()
-            if winner_tx is not None
-            else None
-        )
-        if winner_tx is None or winner_task is None:
+        if winner_tx is None:
             raise EscrowError("Concurrent task creation conflict; retry") from exc
-        if (winner_tx.extra_data or {}).get("request_hash") not in (None, request_hash):
-            raise EscrowError(
-                "Idempotency-Key reused with a different request payload — "
-                "refusing to return the cached task"
-            ) from exc
+        winner_task = _idempotent_replay(db, winner_tx, _caller_wallet_id(db, caller_agent), request_hash)
+        if winner_task is None:
+            raise EscrowError("Concurrent task creation conflict; retry") from exc
         return winner_task, winner_tx
     db.refresh(task_session)
     db.refresh(transaction)

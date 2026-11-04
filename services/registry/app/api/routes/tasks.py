@@ -30,6 +30,7 @@ from ...task_service import (
     confirm_task_completion,
     create_task_with_escrow,
     fail_task_with_refund,
+    scoped_idempotency_key,
     start_task as start_task_session,
 )
 from ...task_dispatch import build_execute_message, dispatch_execute
@@ -198,7 +199,8 @@ async def create_task_session(
             timeout_seconds=task.timeout_seconds,
             parent_span_id=getattr(task, "parent_span_id", None),
             retry_of_id=task.retry_of_id,
-            idempotency_key=idempotency_key,
+            # A client key is bound to its caller (task_service.scoped_idempotency_key).
+            idempotency_key=scoped_idempotency_key(current_agent.id, idempotency_key),
         )
     except EscrowError as e:
         db.rollback()  # also drops any scoped-token charge made above

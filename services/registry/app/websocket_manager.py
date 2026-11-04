@@ -301,6 +301,8 @@ class ConnectionManager:
         fail_fn,
         escrow_err,
     ) -> Optional[dict]:
+        from .task_service import scoped_idempotency_key
+
         _uuid = uuid_mod
         _Agent = agent_model
 
@@ -367,7 +369,7 @@ class ConnectionManager:
                     max_budget=exec_params.payment.max_budget,
                     currency=exec_params.payment.currency,
                     timeout_seconds=exec_params.timeout_seconds or 300,
-                    idempotency_key=idem_key,
+                    idempotency_key=scoped_idempotency_key(agent.id, idem_key),
                 )
             except EscrowError as e:
                 db.rollback()
